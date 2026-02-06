@@ -1,0 +1,22 @@
+# V8 build artifacts
+v8-build/
+v8/
+
+# Go binaries
+/gnode
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+vendor/
