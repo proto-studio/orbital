@@ -6,14 +6,15 @@ import (
 	"strings"
 	"time"
 
+	pkgconsole "github.com/andrewcurioso/gnode/pkg/console"
 	"github.com/andrewcurioso/gnode/pkg/runtime"
 	"github.com/andrewcurioso/gnode/pkg/v8go"
 )
 
 // Console provides console logging functionality.
 type Console struct {
-	writer     Writer
-	formatter  Formatter
+	writer     pkgconsole.Writer
+	formatter  pkgconsole.Formatter
 	timers     map[string]time.Time
 	counts     map[string]int
 	groupDepth int
@@ -23,25 +24,25 @@ type Console struct {
 // Colors are auto-detected based on terminal capabilities.
 func New() *Console {
 	return &Console{
-		writer:    DefaultWriter(),
-		formatter: AutoColorFormatter(),
+		writer:    pkgconsole.DefaultWriter(),
+		formatter: pkgconsole.AutoColorFormatter(),
 		timers:    make(map[string]time.Time),
 		counts:    make(map[string]int),
 	}
 }
 
 // NewWithWriter creates a Console with a custom writer.
-func NewWithWriter(w Writer) *Console {
+func NewWithWriter(w pkgconsole.Writer) *Console {
 	return &Console{
 		writer:    w,
-		formatter: AutoColorFormatter(),
+		formatter: pkgconsole.AutoColorFormatter(),
 		timers:    make(map[string]time.Time),
 		counts:    make(map[string]int),
 	}
 }
 
 // NewWithWriterAndFormatter creates a Console with custom writer and formatter.
-func NewWithWriterAndFormatter(w Writer, f Formatter) *Console {
+func NewWithWriterAndFormatter(w pkgconsole.Writer, f pkgconsole.Formatter) *Console {
 	return &Console{
 		writer:    w,
 		formatter: f,
@@ -51,22 +52,22 @@ func NewWithWriterAndFormatter(w Writer, f Formatter) *Console {
 }
 
 // Writer returns the current writer.
-func (c *Console) Writer() Writer {
+func (c *Console) Writer() pkgconsole.Writer {
 	return c.writer
 }
 
 // Formatter returns the current formatter.
-func (c *Console) Formatter() Formatter {
+func (c *Console) Formatter() pkgconsole.Formatter {
 	return c.formatter
 }
 
 // SetWriter sets the console writer.
-func (c *Console) SetWriter(w Writer) {
+func (c *Console) SetWriter(w pkgconsole.Writer) {
 	c.writer = w
 }
 
 // SetFormatter sets the console formatter.
-func (c *Console) SetFormatter(f Formatter) {
+func (c *Console) SetFormatter(f pkgconsole.Formatter) {
 	c.formatter = f
 }
 
@@ -350,19 +351,19 @@ func (c *Console) createLogFunc(level string) v8go.FunctionCallback {
 // formatValue formats a v8go.Value with type-based coloring.
 func (c *Console) formatValue(v *v8go.Value) string {
 	if v == nil {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsUndefined() {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsNull() {
-		return c.formatter.FormatValue("null", TypeNull)
+		return c.formatter.FormatValue("null", pkgconsole.TypeNull)
 	}
 	if v.IsBoolean() {
-		return c.formatter.FormatValue(v.String(), TypeBoolean)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeBoolean)
 	}
 	if v.IsNumber() {
-		return c.formatter.FormatValue(v.String(), TypeNumber)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeNumber)
 	}
 	if v.IsString() {
 		// For console.log, strings are printed without quotes and without color
@@ -370,7 +371,7 @@ func (c *Console) formatValue(v *v8go.Value) string {
 		return v.String()
 	}
 	if v.IsFunction() {
-		return c.formatter.FormatValue("[Function]", TypeFunction)
+		return c.formatter.FormatValue("[Function]", pkgconsole.TypeFunction)
 	}
 	if v.IsArray() {
 		return c.formatArray(v)
@@ -389,27 +390,27 @@ func (c *Console) formatValueQuoted(v *v8go.Value) string {
 // formatValueQuotedWithDepth formats a value with depth control.
 func (c *Console) formatValueQuotedWithDepth(v *v8go.Value, depth int) string {
 	if v == nil {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsUndefined() {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsNull() {
-		return c.formatter.FormatValue("null", TypeNull)
+		return c.formatter.FormatValue("null", pkgconsole.TypeNull)
 	}
 	if v.IsBoolean() {
-		return c.formatter.FormatValue(v.String(), TypeBoolean)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeBoolean)
 	}
 	if v.IsNumber() {
-		return c.formatter.FormatValue(v.String(), TypeNumber)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeNumber)
 	}
 	if v.IsString() {
 		// In arrays/objects, strings are quoted and colored
 		quoted := fmt.Sprintf("'%s'", v.String())
-		return c.formatter.FormatValue(quoted, TypeString)
+		return c.formatter.FormatValue(quoted, pkgconsole.TypeString)
 	}
 	if v.IsFunction() {
-		return c.formatter.FormatValue("[Function]", TypeFunction)
+		return c.formatter.FormatValue("[Function]", pkgconsole.TypeFunction)
 	}
 	if v.IsArray() {
 		return c.formatArrayWithDepth(v, depth-1)
@@ -440,7 +441,7 @@ func (c *Console) formatArrayWithDepth(v *v8go.Value, depth int) string {
 	for i := 0; i < length; i++ {
 		elem, err := v.GetIndex(i)
 		if err != nil || elem == nil {
-			parts[i] = c.formatter.FormatValue("undefined", TypeUndefined)
+			parts[i] = c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 		} else {
 			parts[i] = c.formatValueQuotedWithDepth(elem, depth)
 		}
@@ -485,18 +486,18 @@ func (c *Console) formatObjectWithDepth(v *v8go.Value, depth int) string {
 
 		var valStr string
 		if val.IsUndefined() {
-			valStr = c.formatter.FormatValue("undefined", TypeUndefined)
+			valStr = c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 		} else if val.IsNull() {
-			valStr = c.formatter.FormatValue("null", TypeNull)
+			valStr = c.formatter.FormatValue("null", pkgconsole.TypeNull)
 		} else if val.IsBoolean() {
-			valStr = c.formatter.FormatValue(val.String(), TypeBoolean)
+			valStr = c.formatter.FormatValue(val.String(), pkgconsole.TypeBoolean)
 		} else if val.IsNumber() {
-			valStr = c.formatter.FormatValue(val.String(), TypeNumber)
+			valStr = c.formatter.FormatValue(val.String(), pkgconsole.TypeNumber)
 		} else if val.IsString() {
 			quoted := fmt.Sprintf("'%s'", val.String())
-			valStr = c.formatter.FormatValue(quoted, TypeString)
+			valStr = c.formatter.FormatValue(quoted, pkgconsole.TypeString)
 		} else if val.IsFunction() {
-			valStr = c.formatter.FormatValue("[Function]", TypeFunction)
+			valStr = c.formatter.FormatValue("[Function]", pkgconsole.TypeFunction)
 		} else if val.IsArray() {
 			valStr = c.formatArrayWithDepth(val, depth-1)
 		} else if val.IsObject() {
@@ -549,7 +550,7 @@ func (c *Console) countFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	c.counts[label]++
-	c.writer.Log(fmt.Sprintf("%s: %s", label, c.formatter.FormatValue(c.counts[label], TypeNumber)))
+	c.writer.Log(fmt.Sprintf("%s: %s", label, c.formatter.FormatValue(c.counts[label], pkgconsole.TypeNumber)))
 	return nil
 }
 
@@ -599,7 +600,7 @@ func (c *Console) timeEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	elapsed := time.Since(start)
 	delete(c.timers, label)
-	c.writer.Log(fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), TypeNumber)))
+	c.writer.Log(fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), pkgconsole.TypeNumber)))
 	return nil
 }
 
@@ -618,7 +619,7 @@ func (c *Console) timeLogFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	elapsed := time.Since(start)
-	parts := []string{fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), TypeNumber))}
+	parts := []string{fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), pkgconsole.TypeNumber))}
 	for i := 1; i < len(args); i++ {
 		parts = append(parts, c.formatValue(args[i]))
 	}
@@ -668,7 +669,7 @@ func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		for i := 0; i < length; i++ {
 			elem, err := data.GetIndex(i)
 			if err != nil || elem == nil {
-				values[i] = c.formatter.FormatValue("undefined", TypeUndefined)
+				values[i] = c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 			} else {
 				values[i] = c.formatValueQuoted(elem)
 			}
@@ -689,7 +690,7 @@ func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		c.writer.Log(fmt.Sprintf("%s├─%s─┼─%s─┤", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
 
 		for i, val := range values {
-			idxStr := c.formatter.FormatValue(i, TypeNumber)
+			idxStr := c.formatter.FormatValue(i, pkgconsole.TypeNumber)
 			plainIdx := stripAnsi(idxStr)
 			plainVal := stripAnsi(val)
 			// Pad based on plain text width
@@ -752,13 +753,13 @@ func (c *Console) noopFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 // formatValueDeep formats a value with depth control.
 func (c *Console) formatValueDeep(v *v8go.Value, depth int) string {
 	if v == nil {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsUndefined() {
-		return c.formatter.FormatValue("undefined", TypeUndefined)
+		return c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 	}
 	if v.IsNull() {
-		return c.formatter.FormatValue("null", TypeNull)
+		return c.formatter.FormatValue("null", pkgconsole.TypeNull)
 	}
 	if depth <= 0 {
 		if v.IsArray() {
@@ -769,17 +770,17 @@ func (c *Console) formatValueDeep(v *v8go.Value, depth int) string {
 		}
 	}
 	if v.IsBoolean() {
-		return c.formatter.FormatValue(v.String(), TypeBoolean)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeBoolean)
 	}
 	if v.IsNumber() {
-		return c.formatter.FormatValue(v.String(), TypeNumber)
+		return c.formatter.FormatValue(v.String(), pkgconsole.TypeNumber)
 	}
 	if v.IsString() {
 		quoted := fmt.Sprintf("'%s'", v.String())
-		return c.formatter.FormatValue(quoted, TypeString)
+		return c.formatter.FormatValue(quoted, pkgconsole.TypeString)
 	}
 	if v.IsFunction() {
-		return c.formatter.FormatValue("[Function]", TypeFunction)
+		return c.formatter.FormatValue("[Function]", pkgconsole.TypeFunction)
 	}
 	if v.IsArray() {
 		return c.formatArrayDeep(v, depth)
@@ -800,7 +801,7 @@ func (c *Console) formatArrayDeep(v *v8go.Value, depth int) string {
 	for i := 0; i < length; i++ {
 		elem, err := v.GetIndex(i)
 		if err != nil || elem == nil {
-			parts[i] = c.formatter.FormatValue("undefined", TypeUndefined)
+			parts[i] = c.formatter.FormatValue("undefined", pkgconsole.TypeUndefined)
 		} else {
 			parts[i] = c.formatValueDeep(elem, depth-1)
 		}

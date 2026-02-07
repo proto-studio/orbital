@@ -101,23 +101,3 @@ func TestNoOpWriter(t *testing.T) {
 	w.Error("test")
 	w.Clear()
 }
-
-func TestStripAnsi(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"plain text", "plain text"},
-		{"\033[31mred\033[0m", "red"},
-		{"\033[1m\033[33mbold yellow\033[0m", "bold yellow"},
-		{"no colors", "no colors"},
-		{"\033[90mundefined\033[0m", "undefined"},
-	}
-
-	for _, tt := range tests {
-		result := stripAnsi(tt.input)
-		if result != tt.expected {
-			t.Errorf("stripAnsi(%q) = %q, want %q", tt.input, result, tt.expected)
-		}
-	}
-}
