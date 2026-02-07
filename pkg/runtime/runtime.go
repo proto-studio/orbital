@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/andrewcurioso/gnode/pkg/filesystem"
+	"github.com/andrewcurioso/gnode/pkg/network"
+	"github.com/andrewcurioso/gnode/pkg/system"
 	"github.com/andrewcurioso/gnode/pkg/v8go"
 )
 
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
-	isolate   *v8go.Isolate
-	context   *v8go.Context
-	eventLoop *EventLoop
-	modules   map[string]Module
-	mu        sync.Mutex
+	isolate    *v8go.Isolate
+	context    *v8go.Context
+	eventLoop  *EventLoop
+	modules    map[string]Module
+	filesystem filesystem.Filesystem
+	systemInfo system.SystemInfo
+	httpClient network.HTTPClient
+	mu         sync.Mutex
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -31,6 +37,15 @@ type Config struct {
 	EnableConsole bool
 	// EnableTimers enables setTimeout, setInterval, etc.
 	EnableTimers bool
+	// Filesystem is the filesystem implementation to use.
+	// If nil, a local filesystem with no restrictions is used.
+	Filesystem filesystem.Filesystem
+	// SystemInfo is the system information provider.
+	// If nil, real system information is used.
+	SystemInfo system.SystemInfo
+	// HTTPClient is the HTTP client for outbound requests.
+	// If nil, a real HTTP client with no restrictions is used.
+	HTTPClient network.HTTPClient
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -38,6 +53,9 @@ func DefaultConfig() *Config {
 	return &Config{
 		EnableConsole: true,
 		EnableTimers:  true,
+		Filesystem:    nil, // Will default to unrestricted local filesystem
+		SystemInfo:    nil, // Will default to real system info
+		HTTPClient:    nil, // Will default to real HTTP client
 	}
 }
 
@@ -58,14 +76,50 @@ func New(cfg *Config) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to create context: %w", err)
 	}
 
+	// Set up filesystem
+	fs := cfg.Filesystem
+	if fs == nil {
+		fs = filesystem.NewLocalFilesystem("")
+	}
+
+	// Set up system info
+	sysInfo := cfg.SystemInfo
+	if sysInfo == nil {
+		sysInfo = system.NewRealSystemInfo()
+	}
+
+	// Set up HTTP client
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = network.NewRealHTTPClient()
+	}
+
 	rt := &Runtime{
-		isolate:   iso,
-		context:   ctx,
-		eventLoop: NewEventLoop(),
-		modules:   make(map[string]Module),
+		isolate:    iso,
+		context:    ctx,
+		eventLoop:  NewEventLoop(),
+		modules:    make(map[string]Module),
+		filesystem: fs,
+		systemInfo: sysInfo,
+		httpClient: httpClient,
 	}
 
 	return rt, nil
+}
+
+// Filesystem returns the filesystem implementation for this runtime.
+func (rt *Runtime) Filesystem() filesystem.Filesystem {
+	return rt.filesystem
+}
+
+// SystemInfo returns the system information provider for this runtime.
+func (rt *Runtime) SystemInfo() system.SystemInfo {
+	return rt.systemInfo
+}
+
+// HTTPClient returns the HTTP client for this runtime.
+func (rt *Runtime) HTTPClient() network.HTTPClient {
+	return rt.httpClient
 }
 
 // Isolate returns the underlying V8 isolate.
