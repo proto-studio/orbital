@@ -1,3 +1,6 @@
+// Package console provides interfaces for console output customization.
+// Implement these interfaces to control how console.log and related
+// methods output data in the JavaScript runtime.
 package console
 
 import (
@@ -8,7 +11,7 @@ import (
 	"golang.org/x/term"
 )
 
-// ANSI color codes
+// ANSI color codes for terminal output.
 const (
 	Reset     = "\033[0m"
 	Bold      = "\033[1m"
