@@ -1,5 +1,5 @@
 // CommonJS Module System Demo
-// Run from this directory: gnode main.js
+// Run from this directory: orbital main.js
 
 console.log("=== CommonJS Module Demo ===\n");
 

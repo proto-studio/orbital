@@ -35,22 +35,27 @@ func NewRealEnvironment() *RealEnvironment {
 	return &RealEnvironment{}
 }
 
+// Get retrieves an environment variable from the real environment.
 func (e *RealEnvironment) Get(key string) (string, bool) {
 	return os.LookupEnv(key)
 }
 
+// Set sets an environment variable in the real environment.
 func (e *RealEnvironment) Set(key, value string) error {
 	return os.Setenv(key, value)
 }
 
+// Unset removes an environment variable from the real environment.
 func (e *RealEnvironment) Unset(key string) error {
 	return os.Unsetenv(key)
 }
 
+// List returns all environment variables as key=value pairs.
 func (e *RealEnvironment) List() []string {
 	return os.Environ()
 }
 
+// All returns all environment variables as a map.
 func (e *RealEnvironment) All() map[string]string {
 	result := make(map[string]string)
 	for _, env := range os.Environ() {
@@ -96,6 +101,7 @@ func NewSandboxedEnvironmentWithDefaults() *SandboxedEnvironment {
 	})
 }
 
+// Get retrieves an environment variable from the sandbox.
 func (e *SandboxedEnvironment) Get(key string) (string, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -103,6 +109,7 @@ func (e *SandboxedEnvironment) Get(key string) (string, bool) {
 	return val, ok
 }
 
+// Set sets an environment variable in the sandbox.
 func (e *SandboxedEnvironment) Set(key, value string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -110,6 +117,7 @@ func (e *SandboxedEnvironment) Set(key, value string) error {
 	return nil
 }
 
+// Unset removes an environment variable from the sandbox.
 func (e *SandboxedEnvironment) Unset(key string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -117,6 +125,7 @@ func (e *SandboxedEnvironment) Unset(key string) error {
 	return nil
 }
 
+// List returns all sandbox environment variables as key=value pairs.
 func (e *SandboxedEnvironment) List() []string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -127,6 +136,7 @@ func (e *SandboxedEnvironment) List() []string {
 	return result
 }
 
+// All returns all sandbox environment variables as a map.
 func (e *SandboxedEnvironment) All() map[string]string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -165,6 +175,7 @@ func NewFilteredEnvironment(base Environment, allowList, denyList []string) *Fil
 	return f
 }
 
+// isAllowed checks if a key is allowed by the filter rules.
 func (e *FilteredEnvironment) isAllowed(key string) bool {
 	if e.allowList != nil {
 		return e.allowList[key]
@@ -175,6 +186,7 @@ func (e *FilteredEnvironment) isAllowed(key string) bool {
 	return true
 }
 
+// Get retrieves an environment variable if it's allowed by the filter.
 func (e *FilteredEnvironment) Get(key string) (string, bool) {
 	if !e.isAllowed(key) {
 		return "", false
@@ -182,6 +194,7 @@ func (e *FilteredEnvironment) Get(key string) (string, bool) {
 	return e.base.Get(key)
 }
 
+// Set sets an environment variable if it's allowed by the filter.
 func (e *FilteredEnvironment) Set(key, value string) error {
 	if !e.isAllowed(key) {
 		return nil // Silently ignore writes to filtered vars
@@ -189,6 +202,7 @@ func (e *FilteredEnvironment) Set(key, value string) error {
 	return e.base.Set(key, value)
 }
 
+// Unset removes an environment variable if it's allowed by the filter.
 func (e *FilteredEnvironment) Unset(key string) error {
 	if !e.isAllowed(key) {
 		return nil
@@ -196,6 +210,7 @@ func (e *FilteredEnvironment) Unset(key string) error {
 	return e.base.Unset(key)
 }
 
+// List returns all allowed environment variables as key=value pairs.
 func (e *FilteredEnvironment) List() []string {
 	all := e.base.List()
 	result := make([]string, 0, len(all))
@@ -209,6 +224,7 @@ func (e *FilteredEnvironment) List() []string {
 	return result
 }
 
+// All returns all allowed environment variables as a map.
 func (e *FilteredEnvironment) All() map[string]string {
 	all := e.base.All()
 	result := make(map[string]string)
@@ -230,22 +246,27 @@ func NewReadOnlyEnvironment(base Environment) *ReadOnlyEnvironment {
 	return &ReadOnlyEnvironment{base: base}
 }
 
+// Get retrieves an environment variable from the underlying environment.
 func (e *ReadOnlyEnvironment) Get(key string) (string, bool) {
 	return e.base.Get(key)
 }
 
+// Set silently ignores modifications.
 func (e *ReadOnlyEnvironment) Set(key, value string) error {
 	return nil // Silently ignore
 }
 
+// Unset silently ignores modifications.
 func (e *ReadOnlyEnvironment) Unset(key string) error {
 	return nil // Silently ignore
 }
 
+// List returns all environment variables from the underlying environment.
 func (e *ReadOnlyEnvironment) List() []string {
 	return e.base.List()
 }
 
+// All returns all environment variables from the underlying environment.
 func (e *ReadOnlyEnvironment) All() map[string]string {
 	return e.base.All()
 }

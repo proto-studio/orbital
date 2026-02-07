@@ -74,6 +74,7 @@ func NewRealHTTPClientWithTimeout(timeout time.Duration) *RealHTTPClient {
 	}
 }
 
+// Do performs an HTTP request and returns the response.
 func (c *RealHTTPClient) Do(ctx context.Context, req *Request) (*Response, error) {
 	var bodyReader io.Reader
 	if req.Body != nil {
@@ -125,6 +126,7 @@ func (c *RealHTTPClient) Do(ctx context.Context, req *Request) (*Response, error
 	}, nil
 }
 
+// Get performs a GET request to the specified URL.
 func (c *RealHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
 	return c.Do(ctx, &Request{
 		Method: "GET",
@@ -132,6 +134,7 @@ func (c *RealHTTPClient) Get(ctx context.Context, url string) (*Response, error)
 	})
 }
 
+// Post performs a POST request with the specified content type and body.
 func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
 	return c.Do(ctx, &Request{
 		Method: "POST",
@@ -220,6 +223,7 @@ func (c *SandboxedHTTPClient) SetDefaultResponse(resp *Response) {
 	c.DefaultResponse = resp
 }
 
+// isHostAllowed checks if a host is permitted by the sandbox rules.
 func (c *SandboxedHTTPClient) isHostAllowed(host string) bool {
 	// Check blocked hosts first
 	for _, pattern := range c.BlockedHosts {
@@ -246,6 +250,7 @@ func (c *SandboxedHTTPClient) isHostAllowed(host string) bool {
 	return c.AllowRealRequests
 }
 
+// isSchemeAllowed checks if a URL scheme is permitted.
 func (c *SandboxedHTTPClient) isSchemeAllowed(scheme string) bool {
 	for _, s := range c.AllowedSchemes {
 		if strings.EqualFold(s, scheme) {
@@ -255,6 +260,7 @@ func (c *SandboxedHTTPClient) isSchemeAllowed(scheme string) bool {
 	return false
 }
 
+// findMockResponse finds a mock response matching the request URL.
 func (c *SandboxedHTTPClient) findMockResponse(reqURL string) *Response {
 	for pattern, resp := range c.MockResponses {
 		if matchURLPattern(pattern, reqURL) {
@@ -264,6 +270,7 @@ func (c *SandboxedHTTPClient) findMockResponse(reqURL string) *Response {
 	return nil
 }
 
+// Do performs an HTTP request with sandbox restrictions applied.
 func (c *SandboxedHTTPClient) Do(ctx context.Context, req *Request) (*Response, error) {
 	// Check request size
 	if c.MaxRequestSize > 0 && int64(len(req.Body)) > c.MaxRequestSize {
@@ -313,6 +320,7 @@ func (c *SandboxedHTTPClient) Do(ctx context.Context, req *Request) (*Response, 
 	return nil, ErrRequestBlocked
 }
 
+// Get performs a sandboxed GET request.
 func (c *SandboxedHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
 	return c.Do(ctx, &Request{
 		Method: "GET",
@@ -320,6 +328,7 @@ func (c *SandboxedHTTPClient) Get(ctx context.Context, url string) (*Response, e
 	})
 }
 
+// Post performs a sandboxed POST request.
 func (c *SandboxedHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
 	return c.Do(ctx, &Request{
 		Method: "POST",
@@ -397,6 +406,7 @@ func NewNoOpHTTPClient() *NoOpHTTPClient {
 	}
 }
 
+// Do returns the default response or ErrRequestBlocked.
 func (c *NoOpHTTPClient) Do(ctx context.Context, req *Request) (*Response, error) {
 	if c.DefaultResponse != nil {
 		return c.DefaultResponse, nil
@@ -404,10 +414,12 @@ func (c *NoOpHTTPClient) Do(ctx context.Context, req *Request) (*Response, error
 	return nil, ErrRequestBlocked
 }
 
+// Get returns the default response or ErrRequestBlocked.
 func (c *NoOpHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
 	return c.Do(ctx, nil)
 }
 
+// Post returns the default response or ErrRequestBlocked.
 func (c *NoOpHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
 	return c.Do(ctx, nil)
 }

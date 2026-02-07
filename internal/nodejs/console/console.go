@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	pkgconsole "github.com/andrewcurioso/gnode/pkg/console"
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	pkgconsole "proto.zip/studio/orbital/pkg/console"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 // Console provides console logging functionality.

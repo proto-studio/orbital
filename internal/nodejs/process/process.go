@@ -3,12 +3,14 @@ package process
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
-	goruntime "github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	goruntime "proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 // Process provides the process global object.
@@ -253,6 +255,27 @@ func (p *Process) cwdFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	if err != nil {
 		return nil
 	}
+
+	// If document root is set, return path relative to it
+	docRoot := p.rt.DocumentRoot()
+	if docRoot != "" {
+		absRoot, err := filepath.Abs(docRoot)
+		if err == nil {
+			if strings.HasPrefix(cwd+string(filepath.Separator), absRoot+string(filepath.Separator)) {
+				relPath := strings.TrimPrefix(cwd, absRoot)
+				if relPath == "" {
+					relPath = "/"
+				} else if !strings.HasPrefix(relPath, "/") {
+					relPath = "/" + relPath
+				}
+				cwd = relPath
+			} else {
+				// CWD is outside sandbox, return root
+				cwd = "/"
+			}
+		}
+	}
+
 	val, _ := info.Context().NewString(cwd)
 	return val
 }

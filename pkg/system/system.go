@@ -88,15 +88,18 @@ func NewRealSystemInfo() *RealSystemInfo {
 	return &RealSystemInfo{}
 }
 
+// Hostname returns the system hostname.
 func (r *RealSystemInfo) Hostname() string {
 	name, _ := os.Hostname()
 	return name
 }
 
+// Platform returns the operating system platform (e.g., linux, darwin, windows).
 func (r *RealSystemInfo) Platform() string {
 	return runtime.GOOS
 }
 
+// Arch returns the CPU architecture in Node.js naming convention.
 func (r *RealSystemInfo) Arch() string {
 	arch := runtime.GOARCH
 	// Convert to Node.js naming
@@ -114,11 +117,13 @@ func (r *RealSystemInfo) Arch() string {
 	}
 }
 
+// Release returns the operating system release version.
 func (r *RealSystemInfo) Release() string {
 	// This would need platform-specific implementation
 	return "unknown"
 }
 
+// Type returns the operating system type (e.g., Darwin, Linux, Windows_NT).
 func (r *RealSystemInfo) Type() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -134,14 +139,17 @@ func (r *RealSystemInfo) Type() string {
 	}
 }
 
+// Version returns the operating system version.
 func (r *RealSystemInfo) Version() string {
 	return "unknown"
 }
 
+// Machine returns the machine type (CPU architecture).
 func (r *RealSystemInfo) Machine() string {
 	return runtime.GOARCH
 }
 
+// CPUs returns information about each CPU core.
 func (r *RealSystemInfo) CPUs() []CPUInfo {
 	numCPU := runtime.NumCPU()
 	cpus := make([]CPUInfo, numCPU)
@@ -155,17 +163,20 @@ func (r *RealSystemInfo) CPUs() []CPUInfo {
 	return cpus
 }
 
+// TotalMem returns total system memory in bytes.
 func (r *RealSystemInfo) TotalMem() uint64 {
 	// Would need platform-specific implementation
 	// Return a reasonable default
 	return 8 * 1024 * 1024 * 1024 // 8GB
 }
 
+// FreeMem returns free system memory in bytes.
 func (r *RealSystemInfo) FreeMem() uint64 {
 	// Would need platform-specific implementation
 	return 4 * 1024 * 1024 * 1024 // 4GB
 }
 
+// HomeDir returns the current user's home directory.
 func (r *RealSystemInfo) HomeDir() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return home
@@ -173,10 +184,12 @@ func (r *RealSystemInfo) HomeDir() string {
 	return ""
 }
 
+// TmpDir returns the system's temporary directory.
 func (r *RealSystemInfo) TmpDir() string {
 	return os.TempDir()
 }
 
+// UserInfo returns information about the current user.
 func (r *RealSystemInfo) UserInfo() (*UserInfo, error) {
 	u, err := user.Current()
 	if err != nil {
@@ -191,6 +204,7 @@ func (r *RealSystemInfo) UserInfo() (*UserInfo, error) {
 	}, nil
 }
 
+// NetworkInterfaces returns network interface information.
 func (r *RealSystemInfo) NetworkInterfaces() map[string][]NetworkInterface {
 	// Simplified - would need net.Interfaces() for real implementation
 	return map[string][]NetworkInterface{
@@ -206,16 +220,19 @@ func (r *RealSystemInfo) NetworkInterfaces() map[string][]NetworkInterface {
 	}
 }
 
+// Uptime returns the system uptime in seconds.
 func (r *RealSystemInfo) Uptime() float64 {
 	// Would need platform-specific implementation
 	return 0
 }
 
+// LoadAvg returns the 1, 5, and 15 minute load averages.
 func (r *RealSystemInfo) LoadAvg() [3]float64 {
 	// Would need platform-specific implementation
 	return [3]float64{0, 0, 0}
 }
 
+// EOL returns the platform-specific line ending.
 func (r *RealSystemInfo) EOL() string {
 	if runtime.GOOS == "windows" {
 		return "\r\n"
@@ -223,6 +240,7 @@ func (r *RealSystemInfo) EOL() string {
 	return "\n"
 }
 
+// DevNull returns the path to the null device.
 func (r *RealSystemInfo) DevNull() string {
 	if runtime.GOOS == "windows" {
 		return "\\\\.\\NUL"
@@ -230,6 +248,7 @@ func (r *RealSystemInfo) DevNull() string {
 	return "/dev/null"
 }
 
+// Endianness returns the CPU endianness ("LE" or "BE").
 func (r *RealSystemInfo) Endianness() string {
 	// Most common architectures are little-endian
 	return "LE"
@@ -340,20 +359,46 @@ func NewSandboxedSystemInfo(cfg *SandboxConfig) *SandboxedSystemInfo {
 	}
 }
 
-func (s *SandboxedSystemInfo) Hostname() string  { return s.hostname }
-func (s *SandboxedSystemInfo) Platform() string  { return s.platform }
-func (s *SandboxedSystemInfo) Arch() string      { return s.arch }
-func (s *SandboxedSystemInfo) Release() string   { return s.release }
-func (s *SandboxedSystemInfo) Type() string      { return s.osType }
-func (s *SandboxedSystemInfo) Version() string   { return s.version }
-func (s *SandboxedSystemInfo) Machine() string   { return s.machine }
-func (s *SandboxedSystemInfo) TotalMem() uint64  { return s.totalMem }
-func (s *SandboxedSystemInfo) FreeMem() uint64   { return s.freeMem }
-func (s *SandboxedSystemInfo) HomeDir() string   { return s.homeDir }
-func (s *SandboxedSystemInfo) TmpDir() string    { return s.tmpDir }
-func (s *SandboxedSystemInfo) Uptime() float64   { return s.uptime }
+// Hostname returns the configured sandbox hostname.
+func (s *SandboxedSystemInfo) Hostname() string { return s.hostname }
+
+// Platform returns the configured sandbox platform.
+func (s *SandboxedSystemInfo) Platform() string { return s.platform }
+
+// Arch returns the configured sandbox architecture.
+func (s *SandboxedSystemInfo) Arch() string { return s.arch }
+
+// Release returns the configured sandbox release version.
+func (s *SandboxedSystemInfo) Release() string { return s.release }
+
+// Type returns the configured sandbox OS type.
+func (s *SandboxedSystemInfo) Type() string { return s.osType }
+
+// Version returns the configured sandbox OS version.
+func (s *SandboxedSystemInfo) Version() string { return s.version }
+
+// Machine returns the configured sandbox machine type.
+func (s *SandboxedSystemInfo) Machine() string { return s.machine }
+
+// TotalMem returns the configured sandbox total memory.
+func (s *SandboxedSystemInfo) TotalMem() uint64 { return s.totalMem }
+
+// FreeMem returns the configured sandbox free memory.
+func (s *SandboxedSystemInfo) FreeMem() uint64 { return s.freeMem }
+
+// HomeDir returns the configured sandbox home directory.
+func (s *SandboxedSystemInfo) HomeDir() string { return s.homeDir }
+
+// TmpDir returns the configured sandbox temp directory.
+func (s *SandboxedSystemInfo) TmpDir() string { return s.tmpDir }
+
+// Uptime returns the configured sandbox uptime.
+func (s *SandboxedSystemInfo) Uptime() float64 { return s.uptime }
+
+// LoadAvg returns fixed load averages for the sandbox.
 func (s *SandboxedSystemInfo) LoadAvg() [3]float64 { return [3]float64{0.5, 0.5, 0.5} }
 
+// CPUs returns the configured sandbox CPU information.
 func (s *SandboxedSystemInfo) CPUs() []CPUInfo {
 	cpus := make([]CPUInfo, s.cpuCount)
 	for i := 0; i < s.cpuCount; i++ {
@@ -372,6 +417,7 @@ func (s *SandboxedSystemInfo) CPUs() []CPUInfo {
 	return cpus
 }
 
+// UserInfo returns the configured sandbox user information.
 func (s *SandboxedSystemInfo) UserInfo() (*UserInfo, error) {
 	return &UserInfo{
 		UID:      "1000",
@@ -382,10 +428,12 @@ func (s *SandboxedSystemInfo) UserInfo() (*UserInfo, error) {
 	}, nil
 }
 
+// NetworkInterfaces returns the configured sandbox network interfaces.
 func (s *SandboxedSystemInfo) NetworkInterfaces() map[string][]NetworkInterface {
 	return s.networkInterfaces
 }
 
+// EOL returns the line ending based on sandbox platform.
 func (s *SandboxedSystemInfo) EOL() string {
 	if strings.Contains(s.platform, "win") {
 		return "\r\n"
@@ -393,6 +441,7 @@ func (s *SandboxedSystemInfo) EOL() string {
 	return "\n"
 }
 
+// DevNull returns the null device path based on sandbox platform.
 func (s *SandboxedSystemInfo) DevNull() string {
 	if strings.Contains(s.platform, "win") {
 		return "\\\\.\\NUL"
@@ -400,6 +449,7 @@ func (s *SandboxedSystemInfo) DevNull() string {
 	return "/dev/null"
 }
 
+// Endianness returns the CPU endianness (always "LE" for sandbox).
 func (s *SandboxedSystemInfo) Endianness() string {
 	return "LE"
 }

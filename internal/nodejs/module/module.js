@@ -8,14 +8,42 @@
 	const builtinModules = {
 		'events': () => __events_module,
 		'fs': () => __fs_module,
+		'fs/promises': () => __fs_promises_module,
 		'path': () => __path_module,
 		'buffer': () => __buffer_module,
 		'stream': () => __stream_module,
+		'stream/promises': () => __stream_promises_module,
+		'stream/web': () => __stream_web_module,
 		'url': () => __url_module,
 		'os': () => __os_module,
 		'util': () => __util_module,
 		'crypto': () => __crypto_module,
+		'crypto/webcrypto': () => __webcrypto_module,
+		'net': () => __net_module,
+		'dgram': () => __dgram_module,
+		'tls': () => __tls_module,
 		'http': () => __http_module,
+		'https': () => __https_module,
+		'http2': () => __http2_module,
+		'timers': () => ({ setTimeout, setInterval, setImmediate, clearTimeout, clearInterval, clearImmediate }),
+		'timers/promises': () => __timers_promises_module,
+		'string_decoder': () => __string_decoder_module,
+		'querystring': () => __querystring_module,
+		'assert': () => __assert_module,
+		'assert/strict': () => __assert_strict_module,
+		'zlib': () => __zlib_module,
+		'dns': () => __dns_module,
+		'dns/promises': () => __dns_promises_module,
+		'readline': () => __readline_module,
+		'readline/promises': () => __readline_promises_module,
+		'perf_hooks': () => __perf_hooks_module,
+		'punycode': () => __punycode_module,
+		'sys': () => __sys_module,
+		'diagnostics_channel': () => __diagnostics_channel_module,
+		'domain': () => __domain_module,
+		'repl': () => __repl_module,
+		'node:test': () => __test_module,
+		'child_process': () => __child_process_module,
 	};
 
 	// Check if a native module is registered (via Runtime.RegisterNativeModule)
@@ -52,6 +80,24 @@
 		return mod;
 	}
 
+	// Get directory from a filename
+	function getDirname(filename) {
+		if (!filename || filename === '.' || filename === process.cwd()) {
+			return process.cwd();
+		}
+		
+		// Check if filename ends with .js, .json, .mjs (it's a file)
+		if (filename.endsWith('.js') || filename.endsWith('.json') || filename.endsWith('.mjs')) {
+			const lastSlash = filename.lastIndexOf('/');
+			if (lastSlash >= 0) {
+				return filename.substring(0, lastSlash);
+			}
+		}
+		
+		// It's likely a directory path
+		return filename;
+	}
+
 	// Resolve module path
 	function resolveModule(request, parent) {
 		// Built-in module
@@ -66,26 +112,25 @@
 		}
 
 		// Get the directory of the parent module
+		// Priority: parent.filename > globalThis.module.filename > globalThis.__filename > cwd
 		let basePath = process.cwd();
 		
-		// First check if parent has a valid filename
+		// First check if parent has a valid filename (for nested requires)
 		if (parent && parent.filename && parent.filename !== '.' && parent.filename !== process.cwd()) {
-			// Check if filename ends with .js or .json (it's a file)
-			if (parent.filename.endsWith('.js') || parent.filename.endsWith('.json') || parent.filename.endsWith('.mjs')) {
-				const lastSlash = parent.filename.lastIndexOf('/');
-				if (lastSlash >= 0) {
-					basePath = parent.filename.substring(0, lastSlash);
-				}
-			} else {
-				// It's likely a directory path
-				basePath = parent.filename;
-			}
-		} else if (globalThis.__filename && globalThis.__filename !== '.') {
-			// Fall back to global __filename (set by main script execution)
-			const lastSlash = globalThis.__filename.lastIndexOf('/');
-			if (lastSlash >= 0) {
-				basePath = globalThis.__filename.substring(0, lastSlash);
-			}
+			basePath = getDirname(parent.filename);
+		} 
+		// Check the global module object (may have been updated by runCodeWithPath)
+		else if (globalThis.module && globalThis.module.filename && 
+		         globalThis.module.filename !== '.' && globalThis.module.filename !== process.cwd()) {
+			basePath = getDirname(globalThis.module.filename);
+		}
+		// Fall back to global __filename (set by main script execution)
+		else if (globalThis.__filename && globalThis.__filename !== '.') {
+			basePath = getDirname(globalThis.__filename);
+		}
+		// Finally try __dirname directly
+		else if (globalThis.__dirname && globalThis.__dirname !== '.') {
+			basePath = globalThis.__dirname;
 		}
 
 		// Use Go to resolve the path

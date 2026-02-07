@@ -4,9 +4,9 @@
   "description": "Example demonstrating lodash usage with GNode",
   "main": "main.js",
   "scripts": {
-    "start": "../../gnode main.js"
+    "start": "../../orbital main.js"
   },
-  "keywords": ["gnode", "lodash", "example"],
+  "keywords": ["orbital", "lodash", "example"],
   "author": "",
   "license": "MIT",
   "dependencies": {

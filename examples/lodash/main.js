@@ -1,5 +1,5 @@
 // Lodash Example - Demonstrates using npm packages with GNode
-// Run with: ./gnode examples/lodash/main.js
+// Run with: ./orbital examples/lodash/main.js
 //
 // First install lodash: cd examples/lodash && npm install lodash
 

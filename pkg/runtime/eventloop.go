@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,14 +26,20 @@ func (t *Task) Cancel() {
 // taskHeap implements heap.Interface for tasks ordered by scheduled time.
 type taskHeap []*Task
 
-func (h taskHeap) Len() int           { return len(h) }
+// Len returns the number of tasks in the heap.
+func (h taskHeap) Len() int { return len(h) }
+
+// Less returns true if task i should be executed before task j.
 func (h taskHeap) Less(i, j int) bool { return h[i].scheduled.Before(h[j].scheduled) }
+
+// Swap swaps two tasks in the heap.
 func (h taskHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 	h[i].index = i
 	h[j].index = j
 }
 
+// Push adds a task to the heap.
 func (h *taskHeap) Push(x interface{}) {
 	n := len(*h)
 	task := x.(*Task)
@@ -40,6 +47,7 @@ func (h *taskHeap) Push(x interface{}) {
 	*h = append(*h, task)
 }
 
+// Pop removes and returns the task with the earliest scheduled time.
 func (h *taskHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -60,16 +68,49 @@ type EventLoop struct {
 	running     bool
 	shouldStop  bool
 	pendingWork int32 // atomic counter for pending async work
+	ctx         context.Context
+	cancelCtx   context.CancelFunc
 }
 
 // NewEventLoop creates a new event loop.
 func NewEventLoop() *EventLoop {
+	ctx, cancel := context.WithCancel(context.Background())
 	el := &EventLoop{
-		timers: make(taskHeap, 0),
+		timers:    make(taskHeap, 0),
+		ctx:       ctx,
+		cancelCtx: cancel,
 	}
 	el.cond = sync.NewCond(&el.mu)
 	heap.Init(&el.timers)
 	return el
+}
+
+// NewEventLoopWithContext creates a new event loop with a parent context.
+// The event loop will stop when the context is cancelled.
+func NewEventLoopWithContext(ctx context.Context) *EventLoop {
+	childCtx, cancel := context.WithCancel(ctx)
+	el := &EventLoop{
+		timers:    make(taskHeap, 0),
+		ctx:       childCtx,
+		cancelCtx: cancel,
+	}
+	el.cond = sync.NewCond(&el.mu)
+	heap.Init(&el.timers)
+	return el
+}
+
+// SetContext sets the context for the event loop.
+// If the context is cancelled, the event loop will stop.
+func (el *EventLoop) SetContext(ctx context.Context) {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	
+	// Cancel old context
+	if el.cancelCtx != nil {
+		el.cancelCtx()
+	}
+	
+	el.ctx, el.cancelCtx = context.WithCancel(ctx)
 }
 
 // SetTimeout schedules a function to run after the specified delay.
@@ -139,9 +180,26 @@ func (el *EventLoop) Run() {
 	el.mu.Lock()
 	el.running = true
 	el.shouldStop = false
+	ctx := el.ctx
 	el.mu.Unlock()
 
+	// Start a goroutine to watch for context cancellation
+	go func() {
+		<-ctx.Done()
+		el.Stop()
+	}()
+
 	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			el.mu.Lock()
+			el.running = false
+			el.mu.Unlock()
+			return
+		default:
+		}
+
 		el.mu.Lock()
 
 		// Process all microtasks first
@@ -151,6 +209,15 @@ func (el *EventLoop) Run() {
 			el.mu.Unlock()
 
 			for _, fn := range microtasks {
+				// Check for context cancellation before each microtask
+				select {
+				case <-ctx.Done():
+					el.mu.Lock()
+					el.running = false
+					el.mu.Unlock()
+					return
+				default:
+				}
 				fn()
 			}
 
@@ -186,6 +253,16 @@ func (el *EventLoop) Run() {
 				el.mu.Unlock()
 
 				if !task.cancelled.Load() {
+					// Check for context cancellation before executing
+					select {
+					case <-ctx.Done():
+						el.mu.Lock()
+						el.running = false
+						el.mu.Unlock()
+						return
+					default:
+					}
+
 					task.fn()
 
 					// Reschedule if it's an interval timer
@@ -202,10 +279,13 @@ func (el *EventLoop) Run() {
 
 		// Wait for the next timer or a signal
 		if hasTimers {
-			// Wait with timeout
+			// Wait with timeout, but also check context
 			done := make(chan struct{})
 			go func() {
-				time.Sleep(waitDuration)
+				select {
+				case <-time.After(waitDuration):
+				case <-ctx.Done():
+				}
 				el.cond.Signal()
 				close(done)
 			}()
@@ -213,7 +293,11 @@ func (el *EventLoop) Run() {
 			el.mu.Unlock()
 			<-done
 		} else {
-			// Wait indefinitely for a signal
+			// Wait for a signal, but also check context
+			go func() {
+				<-ctx.Done()
+				el.cond.Signal()
+			}()
 			el.cond.Wait()
 			el.mu.Unlock()
 		}
@@ -266,8 +350,29 @@ func (el *EventLoop) RunOnce() bool {
 func (el *EventLoop) Stop() {
 	el.mu.Lock()
 	el.shouldStop = true
+	if el.cancelCtx != nil {
+		el.cancelCtx()
+	}
 	el.cond.Signal()
 	el.mu.Unlock()
+}
+
+// CancelAllTimers cancels all pending timers.
+func (el *EventLoop) CancelAllTimers() {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	
+	for el.timers.Len() > 0 {
+		task := heap.Pop(&el.timers).(*Task)
+		task.Cancel()
+	}
+}
+
+// ClearAllMicrotasks clears all pending microtasks.
+func (el *EventLoop) ClearAllMicrotasks() {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	el.microtasks = nil
 }
 
 // HasPendingWork returns true if there's still work to be done.

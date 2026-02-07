@@ -2,13 +2,17 @@
 package timers
 
 import (
+	_ "embed"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
+
+//go:embed promises.js
+var promisesJS string
 
 // Timers provides timer functionality (setTimeout, setInterval, etc.).
 type Timers struct {
@@ -99,6 +103,11 @@ func (t *Timers) Register(rt *runtime.Runtime) error {
 
 	// clearImmediate (same as clearTimeout)
 	if err := rt.SetGlobal("clearImmediate", clearTimeoutVal); err != nil {
+		return err
+	}
+
+	// Initialize timers/promises
+	if _, err := rt.RunScript(promisesJS, "timers/promises.js"); err != nil {
 		return err
 	}
 

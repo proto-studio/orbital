@@ -1,5 +1,5 @@
 // Main entry point - demonstrates node_modules resolution
-// Run with: ./gnode examples/nodemodules/main.js
+// Run with: ./orbital examples/nodemodules/main.js
 //
 // Directory structure:
 // examples/nodemodules/

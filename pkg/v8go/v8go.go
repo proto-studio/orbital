@@ -2,8 +2,8 @@
 package v8go
 
 /*
-#cgo CXXFLAGS: -fno-rtti -fPIC -std=c++20 -DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH -DV8_ENABLE_SANDBOX -I${SRCDIR}/../../v8/include
-#cgo LDFLAGS: -L${SRCDIR}/../../v8/lib -lv8_monolith -lpthread
+#cgo CXXFLAGS: -fno-rtti -fPIC -std=c++20 -DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH -DV8_ENABLE_SANDBOX -I${SRCDIR}/../../deps/v8/current/include
+#cgo LDFLAGS: -L${SRCDIR}/../../deps/v8/current/lib -lv8_monolith -lpthread
 
 #cgo darwin LDFLAGS: -lc++ -framework CoreFoundation
 #cgo linux LDFLAGS: -lstdc++ -lm -ldl -lrt

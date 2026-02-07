@@ -11,17 +11,17 @@ import (
 	"math"
 	"os"
 
-	"github.com/andrewcurioso/gnode/internal/nodejs/buffer"
-	"github.com/andrewcurioso/gnode/internal/nodejs/console"
-	"github.com/andrewcurioso/gnode/internal/nodejs/events"
-	"github.com/andrewcurioso/gnode/internal/nodejs/fs"
-	"github.com/andrewcurioso/gnode/internal/nodejs/module"
-	gnodeos "github.com/andrewcurioso/gnode/internal/nodejs/os"
-	"github.com/andrewcurioso/gnode/internal/nodejs/path"
-	"github.com/andrewcurioso/gnode/internal/nodejs/process"
-	"github.com/andrewcurioso/gnode/internal/nodejs/timers"
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/internal/nodejs/buffer"
+	"proto.zip/studio/orbital/internal/nodejs/console"
+	"proto.zip/studio/orbital/internal/nodejs/events"
+	"proto.zip/studio/orbital/internal/nodejs/fs"
+	"proto.zip/studio/orbital/internal/nodejs/module"
+	gnodeos "proto.zip/studio/orbital/internal/nodejs/os"
+	"proto.zip/studio/orbital/internal/nodejs/path"
+	"proto.zip/studio/orbital/internal/nodejs/process"
+	"proto.zip/studio/orbital/internal/nodejs/timers"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 func main() {
