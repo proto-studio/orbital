@@ -43,6 +43,19 @@ struct CallbackInfo {
     ValueWrapper* this_value;
 };
 
+struct ModuleWrapper {
+    Isolate* isolate;
+    Global<Module> module;
+    std::string name;
+};
+
+// Global module resolver callback ID for the current instantiation
+static thread_local int g_module_resolver_id = -1;
+static thread_local void* g_module_context = nullptr;
+
+// Module cache for resolved modules (maps specifier to ModuleWrapper*)
+static std::unordered_map<std::string, ModuleWrapper*> g_module_cache;
+
 // Helper to extract isolate from context wrapper
 static Isolate* getIsolate(void* context_ptr) {
     if (!context_ptr) return nullptr;
@@ -628,6 +641,36 @@ int v8go_object_delete(void* context_ptr, void* object_ptr, const char* key) {
     return result.FromMaybe(false) ? 1 : 0;
 }
 
+void* v8go_object_get_property_names(void* context_ptr, void* object_ptr) {
+    if (!context_ptr || !object_ptr) return nullptr;
+    
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
+    
+    Isolate* isolate = ctx_wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    
+    Local<Value> obj_value = obj_wrapper->value.Get(isolate);
+    if (!obj_value->IsObject()) return nullptr;
+    
+    Local<Object> object = obj_value.As<Object>();
+    
+    // Get own enumerable property names
+    MaybeLocal<Array> maybe_names = object->GetOwnPropertyNames(context);
+    if (maybe_names.IsEmpty()) return nullptr;
+    
+    Local<Array> names = maybe_names.ToLocalChecked();
+    
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, names);
+    
+    return wrapper;
+}
+
 int v8go_array_length(void* context_ptr, void* array_ptr) {
     if (!context_ptr || !array_ptr) return 0;
     
@@ -1097,6 +1140,309 @@ void* v8go_promise_result(void* context_ptr, void* promise_ptr) {
     wrapper->isolate = isolate;
     wrapper->value.Reset(isolate, result);
     return wrapper;
+}
+
+// ES Module resolver callback - called by V8 when it encounters an import
+static MaybeLocal<Module> moduleResolveCallback(
+    Local<Context> context,
+    Local<String> specifier,
+    Local<FixedArray> import_attributes,
+    Local<Module> referrer) {
+    
+    Isolate* isolate = context->GetIsolate();
+    
+    String::Utf8Value specifier_utf8(isolate, specifier);
+    const char* specifier_str = *specifier_utf8;
+    
+    // Get referrer name for resolution
+    std::string referrer_name;
+    for (auto& [key, wrapper] : g_module_cache) {
+        if (wrapper->isolate == isolate) {
+            Local<Module> cached = wrapper->module.Get(isolate);
+            if (cached->GetIdentityHash() == referrer->GetIdentityHash()) {
+                referrer_name = wrapper->name;
+                break;
+            }
+        }
+    }
+    
+    // Call Go to resolve and load the module
+    char* resolved_source = nullptr;
+    char* resolved_name = nullptr;
+    int result = goModuleResolve(g_module_resolver_id, 
+        const_cast<char*>(specifier_str), 
+        const_cast<char*>(referrer_name.c_str()), 
+        &resolved_source, &resolved_name);
+    
+    if (result != 0 || !resolved_source || !resolved_name) {
+        isolate->ThrowException(Exception::Error(
+            String::NewFromUtf8(isolate, 
+                (std::string("Cannot resolve module: ") + specifier_str).c_str()
+            ).ToLocalChecked()
+        ));
+        if (resolved_source) free(resolved_source);
+        if (resolved_name) free(resolved_name);
+        return MaybeLocal<Module>();
+    }
+    
+    std::string name_key(resolved_name);
+    
+    // Check if module is already in cache
+    auto it = g_module_cache.find(name_key);
+    if (it != g_module_cache.end()) {
+        free(resolved_source);
+        free(resolved_name);
+        return it->second->module.Get(isolate);
+    }
+    
+    // Compile the module
+    Local<String> source_str = String::NewFromUtf8(isolate, resolved_source).ToLocalChecked();
+    Local<String> name_str = String::NewFromUtf8(isolate, resolved_name).ToLocalChecked();
+    
+    ScriptOrigin origin(name_str,
+                        0,                      // line offset
+                        0,                      // column offset
+                        false,                  // is_shared_cross_origin
+                        -1,                     // script_id
+                        Local<Value>(),         // source_map_url
+                        false,                  // is_opaque
+                        false,                  // is_wasm
+                        true);                  // is_module
+    
+    ScriptCompiler::Source source(source_str, origin);
+    
+    TryCatch try_catch(isolate);
+    MaybeLocal<Module> maybe_module = ScriptCompiler::CompileModule(isolate, &source);
+    
+    free(resolved_source);
+    
+    if (maybe_module.IsEmpty()) {
+        if (try_catch.HasCaught()) {
+            try_catch.ReThrow();
+        }
+        free(resolved_name);
+        return MaybeLocal<Module>();
+    }
+    
+    Local<Module> module = maybe_module.ToLocalChecked();
+    
+    // Cache the module
+    ModuleWrapper* wrapper = new ModuleWrapper();
+    wrapper->isolate = isolate;
+    wrapper->module.Reset(isolate, module);
+    wrapper->name = name_key;
+    g_module_cache[name_key] = wrapper;
+    
+    free(resolved_name);
+    
+    // Recursively instantiate dependencies
+    Maybe<bool> instantiate_result = module->InstantiateModule(context, moduleResolveCallback);
+    if (instantiate_result.IsNothing() || !instantiate_result.FromJust()) {
+        return MaybeLocal<Module>();
+    }
+    
+    return module;
+}
+
+void* v8go_compile_module(void* context_ptr, const char* source, const char* name, char** error) {
+    if (!context_ptr || !source || !name) return nullptr;
+    
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = ctx_wrapper->isolate;
+    
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    
+    TryCatch try_catch(isolate);
+    
+    Local<String> source_str = String::NewFromUtf8(isolate, source).ToLocalChecked();
+    Local<String> name_str = String::NewFromUtf8(isolate, name).ToLocalChecked();
+    
+    ScriptOrigin origin(name_str,
+                        0,                      // line offset
+                        0,                      // column offset
+                        false,                  // is_shared_cross_origin
+                        -1,                     // script_id
+                        Local<Value>(),         // source_map_url
+                        false,                  // is_opaque
+                        false,                  // is_wasm
+                        true);                  // is_module
+    
+    ScriptCompiler::Source script_source(source_str, origin);
+    
+    MaybeLocal<Module> maybe_module = ScriptCompiler::CompileModule(isolate, &script_source);
+    
+    if (maybe_module.IsEmpty()) {
+        if (try_catch.HasCaught()) {
+            String::Utf8Value exception(isolate, try_catch.Exception());
+            String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
+            std::string err_msg;
+            if (*exception) err_msg = *exception;
+            if (*stack_trace) {
+                err_msg += "\n";
+                err_msg += *stack_trace;
+            }
+            *error = strdup(err_msg.c_str());
+        }
+        return nullptr;
+    }
+    
+    Local<Module> module = maybe_module.ToLocalChecked();
+    
+    ModuleWrapper* wrapper = new ModuleWrapper();
+    wrapper->isolate = isolate;
+    wrapper->module.Reset(isolate, module);
+    wrapper->name = name;
+    
+    // Cache it
+    g_module_cache[name] = wrapper;
+    
+    return wrapper;
+}
+
+int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id, char** error) {
+    if (!context_ptr || !module_ptr) return 0;
+    
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    
+    Isolate* isolate = ctx_wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    
+    TryCatch try_catch(isolate);
+    
+    // Set up the resolver callback context
+    g_module_resolver_id = resolver_id;
+    g_module_context = context_ptr;
+    
+    Local<Module> module = mod_wrapper->module.Get(isolate);
+    
+    Maybe<bool> result = module->InstantiateModule(context, moduleResolveCallback);
+    
+    // Clear the resolver context
+    g_module_resolver_id = -1;
+    g_module_context = nullptr;
+    
+    if (result.IsNothing() || !result.FromJust()) {
+        if (try_catch.HasCaught()) {
+            String::Utf8Value exception(isolate, try_catch.Exception());
+            *error = strdup(*exception ? *exception : "Module instantiation failed");
+        }
+        return 0;
+    }
+    
+    return 1;
+}
+
+void* v8go_module_evaluate(void* context_ptr, void* module_ptr, char** error) {
+    if (!context_ptr || !module_ptr) return nullptr;
+    
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    
+    Isolate* isolate = ctx_wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    
+    TryCatch try_catch(isolate);
+    
+    Local<Module> module = mod_wrapper->module.Get(isolate);
+    
+    MaybeLocal<Value> maybe_result = module->Evaluate(context);
+    
+    if (maybe_result.IsEmpty()) {
+        if (try_catch.HasCaught()) {
+            String::Utf8Value exception(isolate, try_catch.Exception());
+            String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
+            std::string err_msg;
+            if (*exception) err_msg = *exception;
+            if (*stack_trace) {
+                err_msg += "\n";
+                err_msg += *stack_trace;
+            }
+            *error = strdup(err_msg.c_str());
+        }
+        return nullptr;
+    }
+    
+    Local<Value> result = maybe_result.ToLocalChecked();
+    
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, result);
+    return wrapper;
+}
+
+int v8go_module_get_status(void* module_ptr) {
+    if (!module_ptr) return -1;
+    
+    ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    
+    Local<Module> module = wrapper->module.Get(isolate);
+    return static_cast<int>(module->GetStatus());
+}
+
+void* v8go_module_get_namespace(void* context_ptr, void* module_ptr) {
+    if (!context_ptr || !module_ptr) return nullptr;
+    
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    
+    Isolate* isolate = ctx_wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    
+    Local<Module> module = mod_wrapper->module.Get(isolate);
+    Local<Value> ns = module->GetModuleNamespace();
+    
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, ns);
+    return wrapper;
+}
+
+int v8go_module_get_requests_length(void* module_ptr) {
+    if (!module_ptr) return 0;
+    
+    ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    
+    Local<Module> module = wrapper->module.Get(isolate);
+    Local<FixedArray> requests = module->GetModuleRequests();
+    return requests->Length();
+}
+
+const char* v8go_module_get_request(void* module_ptr, int index) {
+    if (!module_ptr) return nullptr;
+    
+    ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    
+    Local<Module> module = wrapper->module.Get(isolate);
+    Local<FixedArray> requests = module->GetModuleRequests();
+    
+    if (index < 0 || index >= requests->Length()) return nullptr;
+    
+    Local<Data> data = requests->Get(isolate->GetCurrentContext(), index);
+    Local<ModuleRequest> request = data.As<ModuleRequest>();
+    Local<String> specifier = request->GetSpecifier();
+    
+    String::Utf8Value utf8(isolate, specifier);
+    return strdup(*utf8 ? *utf8 : "");
 }
 
 } // extern "C"

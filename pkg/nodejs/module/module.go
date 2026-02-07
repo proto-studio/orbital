@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/andrewcurioso/gnode/pkg/filesystem"
 	"github.com/andrewcurioso/gnode/pkg/runtime"
 	"github.com/andrewcurioso/gnode/pkg/v8go"
 )
@@ -112,11 +113,24 @@ func (m *Module) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return result
 }
 
-// resolveModulePath resolves a module request to a file path.
-func (m *Module) resolveModulePath(request, basePath string, fs interface {
+// fileExistsAndIsFile checks if a path exists and is a file (not directory)
+func fileExistsAndIsFile(path string, fs fsInterface) bool {
+	info, err := fs.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir
+}
+
+// fsInterface combines the filesystem methods needed for module resolution
+type fsInterface interface {
 	Exists(string) bool
 	ReadFile(string) ([]byte, error)
-}) string {
+	Stat(string) (*filesystem.FileInfo, error)
+}
+
+// resolveModulePath resolves a module request to a file path.
+func (m *Module) resolveModulePath(request, basePath string, fs fsInterface) string {
 	// Handle relative paths
 	if strings.HasPrefix(request, "./") || strings.HasPrefix(request, "../") {
 		return m.resolveAsFile(filepath.Join(basePath, request), fs)
@@ -155,21 +169,21 @@ func (m *Module) resolveModulePath(request, basePath string, fs interface {
 }
 
 // resolveAsFile tries to resolve a path as a file.
-func (m *Module) resolveAsFile(path string, fs interface{ Exists(string) bool }) string {
+func (m *Module) resolveAsFile(path string, fs fsInterface) string {
 	// Try exact path
-	if fs.Exists(path) {
+	if fileExistsAndIsFile(path, fs) {
 		return path
 	}
 
 	// Try with .js extension
 	jsPath := path + ".js"
-	if fs.Exists(jsPath) {
+	if fileExistsAndIsFile(jsPath, fs) {
 		return jsPath
 	}
 
 	// Try with .json extension
 	jsonPath := path + ".json"
-	if fs.Exists(jsonPath) {
+	if fileExistsAndIsFile(jsonPath, fs) {
 		return jsonPath
 	}
 
@@ -177,10 +191,7 @@ func (m *Module) resolveAsFile(path string, fs interface{ Exists(string) bool })
 }
 
 // resolveAsDirectory tries to resolve a path as a directory.
-func (m *Module) resolveAsDirectory(path string, fs interface {
-	Exists(string) bool
-	ReadFile(string) ([]byte, error)
-}) string {
+func (m *Module) resolveAsDirectory(path string, fs fsInterface) string {
 	// Try package.json
 	pkgPath := filepath.Join(path, "package.json")
 	if fs.Exists(pkgPath) {

@@ -3,8 +3,6 @@ package console
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -14,31 +12,62 @@ import (
 
 // Console provides console logging functionality.
 type Console struct {
-	stdout     io.Writer
-	stderr     io.Writer
+	writer     Writer
+	formatter  Formatter
 	timers     map[string]time.Time
 	counts     map[string]int
 	groupDepth int
 }
 
-// New creates a new Console module.
+// New creates a new Console module with default settings.
+// Colors are auto-detected based on terminal capabilities.
 func New() *Console {
 	return &Console{
-		stdout: os.Stdout,
-		stderr: os.Stderr,
-		timers: make(map[string]time.Time),
-		counts: make(map[string]int),
+		writer:    DefaultWriter(),
+		formatter: AutoColorFormatter(),
+		timers:    make(map[string]time.Time),
+		counts:    make(map[string]int),
 	}
 }
 
-// NewWithWriters creates a Console with custom writers.
-func NewWithWriters(stdout, stderr io.Writer) *Console {
+// NewWithWriter creates a Console with a custom writer.
+func NewWithWriter(w Writer) *Console {
 	return &Console{
-		stdout: stdout,
-		stderr: stderr,
-		timers: make(map[string]time.Time),
-		counts: make(map[string]int),
+		writer:    w,
+		formatter: AutoColorFormatter(),
+		timers:    make(map[string]time.Time),
+		counts:    make(map[string]int),
 	}
+}
+
+// NewWithWriterAndFormatter creates a Console with custom writer and formatter.
+func NewWithWriterAndFormatter(w Writer, f Formatter) *Console {
+	return &Console{
+		writer:    w,
+		formatter: f,
+		timers:    make(map[string]time.Time),
+		counts:    make(map[string]int),
+	}
+}
+
+// Writer returns the current writer.
+func (c *Console) Writer() Writer {
+	return c.writer
+}
+
+// Formatter returns the current formatter.
+func (c *Console) Formatter() Formatter {
+	return c.formatter
+}
+
+// SetWriter sets the console writer.
+func (c *Console) SetWriter(w Writer) {
+	c.writer = w
+}
+
+// SetFormatter sets the console formatter.
+func (c *Console) SetFormatter(f Formatter) {
+	c.formatter = f
 }
 
 // Name returns the module name.
@@ -58,7 +87,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// console.log
-	logFn, err := iso.NewFunctionTemplate(c.createLogFunc(c.stdout, ""))
+	logFn, err := iso.NewFunctionTemplate(c.createLogFunc("log"))
 	if err != nil {
 		return err
 	}
@@ -81,7 +110,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// console.warn
-	warnFn, err := iso.NewFunctionTemplate(c.createLogFunc(c.stderr, "Warning: "))
+	warnFn, err := iso.NewFunctionTemplate(c.createLogFunc("warn"))
 	if err != nil {
 		return err
 	}
@@ -94,7 +123,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// console.error
-	errorFn, err := iso.NewFunctionTemplate(c.createLogFunc(c.stderr, "Error: "))
+	errorFn, err := iso.NewFunctionTemplate(c.createLogFunc("error"))
 	if err != nil {
 		return err
 	}
@@ -273,41 +302,21 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// console.profile (no-op stub)
-	profileFn, err := iso.NewFunctionTemplate(c.profileFunc)
+	noopFn, err := iso.NewFunctionTemplate(c.noopFunc)
 	if err != nil {
 		return err
 	}
-	profileVal, err := profileFn.GetFunction(ctx)
+	noopVal, err := noopFn.GetFunction(ctx)
 	if err != nil {
 		return err
 	}
-	if err := consoleObj.Set("profile", profileVal); err != nil {
+	if err := consoleObj.Set("profile", noopVal); err != nil {
 		return err
 	}
-
-	// console.profileEnd (no-op stub)
-	profileEndFn, err := iso.NewFunctionTemplate(c.profileEndFunc)
-	if err != nil {
+	if err := consoleObj.Set("profileEnd", noopVal); err != nil {
 		return err
 	}
-	profileEndVal, err := profileEndFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := consoleObj.Set("profileEnd", profileEndVal); err != nil {
-		return err
-	}
-
-	// console.timeStamp (no-op stub)
-	timeStampFn, err := iso.NewFunctionTemplate(c.timeStampFunc)
-	if err != nil {
-		return err
-	}
-	timeStampVal, err := timeStampFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := consoleObj.Set("timeStamp", timeStampVal); err != nil {
+	if err := consoleObj.Set("timeStamp", noopVal); err != nil {
 		return err
 	}
 
@@ -315,18 +324,195 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	return rt.SetGlobal("console", consoleObj)
 }
 
-// createLogFunc creates a logging function with the given writer and prefix.
-func (c *Console) createLogFunc(w io.Writer, prefix string) v8go.FunctionCallback {
+// createLogFunc creates a logging function for the given level.
+func (c *Console) createLogFunc(level string) v8go.FunctionCallback {
 	return func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		args := info.Args()
 		parts := make([]string, len(args))
 		for i, arg := range args {
-			parts[i] = formatValue(arg)
+			parts[i] = c.formatValue(arg)
 		}
 		indent := strings.Repeat("  ", c.groupDepth)
-		fmt.Fprintln(w, indent+prefix+strings.Join(parts, " "))
+		message := indent + strings.Join(parts, " ")
+
+		switch level {
+		case "warn":
+			c.writer.Warn(message)
+		case "error":
+			c.writer.Error(message)
+		default:
+			c.writer.Log(message)
+		}
 		return nil
 	}
+}
+
+// formatValue formats a v8go.Value with type-based coloring.
+func (c *Console) formatValue(v *v8go.Value) string {
+	if v == nil {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsUndefined() {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsNull() {
+		return c.formatter.FormatValue("null", TypeNull)
+	}
+	if v.IsBoolean() {
+		return c.formatter.FormatValue(v.String(), TypeBoolean)
+	}
+	if v.IsNumber() {
+		return c.formatter.FormatValue(v.String(), TypeNumber)
+	}
+	if v.IsString() {
+		// For console.log, strings are printed without quotes and without color
+		// Only in inspect/dir mode do strings get quoted and colored
+		return v.String()
+	}
+	if v.IsFunction() {
+		return c.formatter.FormatValue("[Function]", TypeFunction)
+	}
+	if v.IsArray() {
+		return c.formatArray(v)
+	}
+	if v.IsObject() {
+		return c.formatObject(v)
+	}
+	return v.String()
+}
+
+// formatValueQuoted formats a value with quotes for strings (used in arrays/objects).
+func (c *Console) formatValueQuoted(v *v8go.Value) string {
+	return c.formatValueQuotedWithDepth(v, 2)
+}
+
+// formatValueQuotedWithDepth formats a value with depth control.
+func (c *Console) formatValueQuotedWithDepth(v *v8go.Value, depth int) string {
+	if v == nil {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsUndefined() {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsNull() {
+		return c.formatter.FormatValue("null", TypeNull)
+	}
+	if v.IsBoolean() {
+		return c.formatter.FormatValue(v.String(), TypeBoolean)
+	}
+	if v.IsNumber() {
+		return c.formatter.FormatValue(v.String(), TypeNumber)
+	}
+	if v.IsString() {
+		// In arrays/objects, strings are quoted and colored
+		quoted := fmt.Sprintf("'%s'", v.String())
+		return c.formatter.FormatValue(quoted, TypeString)
+	}
+	if v.IsFunction() {
+		return c.formatter.FormatValue("[Function]", TypeFunction)
+	}
+	if v.IsArray() {
+		return c.formatArrayWithDepth(v, depth-1)
+	}
+	if v.IsObject() {
+		return c.formatObjectWithDepth(v, depth-1)
+	}
+	return v.String()
+}
+
+// formatArray formats an array value with colored elements.
+func (c *Console) formatArray(v *v8go.Value) string {
+	return c.formatArrayWithDepth(v, 2)
+}
+
+// formatArrayWithDepth formats an array with depth limiting.
+func (c *Console) formatArrayWithDepth(v *v8go.Value, depth int) string {
+	if depth <= 0 {
+		return "[Array]"
+	}
+
+	length := v.ArrayLength()
+	if length == 0 {
+		return "[]"
+	}
+
+	parts := make([]string, length)
+	for i := 0; i < length; i++ {
+		elem, err := v.GetIndex(i)
+		if err != nil || elem == nil {
+			parts[i] = c.formatter.FormatValue("undefined", TypeUndefined)
+		} else {
+			parts[i] = c.formatValueQuotedWithDepth(elem, depth)
+		}
+	}
+	return "[ " + strings.Join(parts, ", ") + " ]"
+}
+
+// formatObject formats an object value.
+func (c *Console) formatObject(v *v8go.Value) string {
+	return c.formatObjectWithDepth(v, 2)
+}
+
+// formatObjectWithDepth formats an object with depth limiting.
+func (c *Console) formatObjectWithDepth(v *v8go.Value, depth int) string {
+	if depth <= 0 {
+		return "[Object]"
+	}
+
+	// Get property names
+	names, err := v.GetPropertyNames()
+	if err != nil || names == nil {
+		return "{}"
+	}
+
+	length := names.ArrayLength()
+	if length == 0 {
+		return "{}"
+	}
+
+	parts := make([]string, 0, length)
+	for i := 0; i < length; i++ {
+		keyVal, err := names.GetIndex(i)
+		if err != nil || keyVal == nil {
+			continue
+		}
+		key := keyVal.String()
+
+		val, err := v.Get(key)
+		if err != nil || val == nil {
+			continue
+		}
+
+		var valStr string
+		if val.IsUndefined() {
+			valStr = c.formatter.FormatValue("undefined", TypeUndefined)
+		} else if val.IsNull() {
+			valStr = c.formatter.FormatValue("null", TypeNull)
+		} else if val.IsBoolean() {
+			valStr = c.formatter.FormatValue(val.String(), TypeBoolean)
+		} else if val.IsNumber() {
+			valStr = c.formatter.FormatValue(val.String(), TypeNumber)
+		} else if val.IsString() {
+			quoted := fmt.Sprintf("'%s'", val.String())
+			valStr = c.formatter.FormatValue(quoted, TypeString)
+		} else if val.IsFunction() {
+			valStr = c.formatter.FormatValue("[Function]", TypeFunction)
+		} else if val.IsArray() {
+			valStr = c.formatArrayWithDepth(val, depth-1)
+		} else if val.IsObject() {
+			valStr = c.formatObjectWithDepth(val, depth-1)
+		} else {
+			valStr = val.String()
+		}
+
+		parts = append(parts, fmt.Sprintf("%s: %s", key, valStr))
+	}
+
+	if len(parts) == 0 {
+		return "{}"
+	}
+
+	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
 // assertFunc implements console.assert.
@@ -339,20 +525,19 @@ func (c *Console) assertFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	if !args[0].Boolean() {
 		parts := []string{"Assertion failed:"}
 		for i := 1; i < len(args); i++ {
-			parts = append(parts, formatValue(args[i]))
+			parts = append(parts, c.formatValue(args[i]))
 		}
 		if len(parts) == 1 {
 			parts = append(parts, "console.assert")
 		}
-		fmt.Fprintln(c.stderr, strings.Join(parts, " "))
+		c.writer.Error(strings.Join(parts, " "))
 	}
 	return nil
 }
 
 // clearFunc implements console.clear.
 func (c *Console) clearFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
-	// Send ANSI escape code to clear terminal
-	fmt.Fprint(c.stdout, "\033[2J\033[H")
+	c.writer.Clear()
 	return nil
 }
 
@@ -364,7 +549,7 @@ func (c *Console) countFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	c.counts[label]++
-	fmt.Fprintf(c.stdout, "%s: %d\n", label, c.counts[label])
+	c.writer.Log(fmt.Sprintf("%s: %s", label, c.formatter.FormatValue(c.counts[label], TypeNumber)))
 	return nil
 }
 
@@ -378,7 +563,7 @@ func (c *Console) countResetFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	if _, exists := c.counts[label]; exists {
 		delete(c.counts, label)
 	} else {
-		fmt.Fprintf(c.stderr, "Warning: Count for '%s' does not exist\n", label)
+		c.writer.Warn(fmt.Sprintf("Warning: Count for '%s' does not exist", label))
 	}
 	return nil
 }
@@ -391,7 +576,7 @@ func (c *Console) timeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	if _, exists := c.timers[label]; exists {
-		fmt.Fprintf(c.stderr, "Warning: Label '%s' already exists for console.time()\n", label)
+		c.writer.Warn(fmt.Sprintf("Warning: Label '%s' already exists for console.time()", label))
 		return nil
 	}
 
@@ -408,13 +593,13 @@ func (c *Console) timeEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	start, exists := c.timers[label]
 	if !exists {
-		fmt.Fprintf(c.stderr, "Warning: No such label '%s' for console.timeEnd()\n", label)
+		c.writer.Warn(fmt.Sprintf("Warning: No such label '%s' for console.timeEnd()", label))
 		return nil
 	}
 
 	elapsed := time.Since(start)
 	delete(c.timers, label)
-	fmt.Fprintf(c.stdout, "%s: %vms\n", label, elapsed.Milliseconds())
+	c.writer.Log(fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), TypeNumber)))
 	return nil
 }
 
@@ -428,16 +613,16 @@ func (c *Console) timeLogFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	start, exists := c.timers[label]
 	if !exists {
-		fmt.Fprintf(c.stderr, "Warning: No such label '%s' for console.timeLog()\n", label)
+		c.writer.Warn(fmt.Sprintf("Warning: No such label '%s' for console.timeLog()", label))
 		return nil
 	}
 
 	elapsed := time.Since(start)
-	parts := []string{fmt.Sprintf("%s: %vms", label, elapsed.Milliseconds())}
+	parts := []string{fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), TypeNumber))}
 	for i := 1; i < len(args); i++ {
-		parts = append(parts, formatValue(args[i]))
+		parts = append(parts, c.formatValue(args[i]))
 	}
-	fmt.Fprintln(c.stdout, strings.Join(parts, " "))
+	c.writer.Log(strings.Join(parts, " "))
 	return nil
 }
 
@@ -447,15 +632,14 @@ func (c *Console) traceFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	indent := strings.Repeat("  ", c.groupDepth)
 	parts := []string{"Trace:"}
 	for _, arg := range args {
-		parts = append(parts, formatValue(arg))
+		parts = append(parts, c.formatValue(arg))
 	}
-	fmt.Fprintln(c.stderr, indent+strings.Join(parts, " "))
+	c.writer.Error(indent + strings.Join(parts, " "))
 	// Note: In a full implementation, we'd capture the JS stack trace here
 	return nil
 }
 
 // tableFunc implements console.table.
-// This is a simplified implementation that formats tables in text.
 func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	args := info.Args()
 	if len(args) == 0 {
@@ -469,10 +653,10 @@ func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	if data.IsArray() {
 		length := data.ArrayLength()
 		if length == 0 {
-			fmt.Fprintln(c.stdout, indent+"┌─────────┬────────┐")
-			fmt.Fprintln(c.stdout, indent+"│ (index) │ Values │")
-			fmt.Fprintln(c.stdout, indent+"├─────────┼────────┤")
-			fmt.Fprintln(c.stdout, indent+"└─────────┴────────┘")
+			c.writer.Log(indent + "┌─────────┬────────┐")
+			c.writer.Log(indent + "│ (index) │ Values │")
+			c.writer.Log(indent + "├─────────┼────────┤")
+			c.writer.Log(indent + "└─────────┴────────┘")
 			return nil
 		}
 
@@ -484,40 +668,42 @@ func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		for i := 0; i < length; i++ {
 			elem, err := data.GetIndex(i)
 			if err != nil || elem == nil {
-				values[i] = "undefined"
+				values[i] = c.formatter.FormatValue("undefined", TypeUndefined)
 			} else {
-				values[i] = formatValue(elem)
+				values[i] = c.formatValueQuoted(elem)
 			}
 			idxStr := fmt.Sprintf("%d", i)
+			// Need to strip ANSI codes for width calculation
+			plainVal := stripAnsi(values[i])
 			if len(idxStr) > maxIdxWidth {
 				maxIdxWidth = len(idxStr)
 			}
-			if len(values[i]) > maxValWidth {
-				maxValWidth = len(values[i])
+			if len(plainVal) > maxValWidth {
+				maxValWidth = len(plainVal)
 			}
 		}
 
 		// Print table
-		fmt.Fprintf(c.stdout, "%s┌─%s─┬─%s─┐\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
-		fmt.Fprintf(c.stdout, "%s│ %s │ %s │\n", indent, padRight("(index)", maxIdxWidth), padRight("Values", maxValWidth))
-		fmt.Fprintf(c.stdout, "%s├─%s─┼─%s─┤\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
+		c.writer.Log(fmt.Sprintf("%s┌─%s─┬─%s─┐", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
+		c.writer.Log(fmt.Sprintf("%s│ %s │ %s │", indent, padRight("(index)", maxIdxWidth), padRight("Values", maxValWidth)))
+		c.writer.Log(fmt.Sprintf("%s├─%s─┼─%s─┤", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
 
 		for i, val := range values {
-			fmt.Fprintf(c.stdout, "%s│ %s │ %s │\n", indent, padRight(fmt.Sprintf("%d", i), maxIdxWidth), padRight(val, maxValWidth))
+			idxStr := c.formatter.FormatValue(i, TypeNumber)
+			plainIdx := stripAnsi(idxStr)
+			plainVal := stripAnsi(val)
+			// Pad based on plain text width
+			idxPadded := idxStr + strings.Repeat(" ", maxIdxWidth-len(plainIdx))
+			valPadded := val + strings.Repeat(" ", maxValWidth-len(plainVal))
+			c.writer.Log(fmt.Sprintf("%s│ %s │ %s │", indent, idxPadded, valPadded))
 		}
 
-		fmt.Fprintf(c.stdout, "%s└─%s─┴─%s─┘\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
+		c.writer.Log(fmt.Sprintf("%s└─%s─┴─%s─┘", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
 		return nil
 	}
 
 	// For objects, just use a formatted output
-	if data.IsObject() {
-		fmt.Fprintln(c.stdout, indent+formatValue(data))
-		return nil
-	}
-
-	// Fallback
-	fmt.Fprintln(c.stdout, indent+formatValue(data))
+	c.writer.Log(indent + c.formatValue(data))
 	return nil
 }
 
@@ -529,8 +715,7 @@ func (c *Console) dirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	indent := strings.Repeat("  ", c.groupDepth)
-	// For now, just format and print the object
-	fmt.Fprintln(c.stdout, indent+formatValueDeep(args[0], 2))
+	c.writer.Log(indent + c.formatValueDeep(args[0], 2))
 	return nil
 }
 
@@ -542,9 +727,9 @@ func (c *Console) groupFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	if len(args) > 0 {
 		parts := make([]string, len(args))
 		for i, arg := range args {
-			parts[i] = formatValue(arg)
+			parts[i] = c.formatValue(arg)
 		}
-		fmt.Fprintln(c.stdout, indent+strings.Join(parts, " "))
+		c.writer.Log(indent + strings.Join(parts, " "))
 	}
 
 	c.groupDepth++
@@ -559,22 +744,68 @@ func (c *Console) groupEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-// profileFunc implements console.profile (no-op).
-func (c *Console) profileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
-	// No-op in non-browser environment
+// noopFunc is a no-op stub for unimplemented console methods.
+func (c *Console) noopFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-// profileEndFunc implements console.profileEnd (no-op).
-func (c *Console) profileEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
-	// No-op in non-browser environment
-	return nil
+// formatValueDeep formats a value with depth control.
+func (c *Console) formatValueDeep(v *v8go.Value, depth int) string {
+	if v == nil {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsUndefined() {
+		return c.formatter.FormatValue("undefined", TypeUndefined)
+	}
+	if v.IsNull() {
+		return c.formatter.FormatValue("null", TypeNull)
+	}
+	if depth <= 0 {
+		if v.IsArray() {
+			return "[Array]"
+		}
+		if v.IsObject() {
+			return "[Object]"
+		}
+	}
+	if v.IsBoolean() {
+		return c.formatter.FormatValue(v.String(), TypeBoolean)
+	}
+	if v.IsNumber() {
+		return c.formatter.FormatValue(v.String(), TypeNumber)
+	}
+	if v.IsString() {
+		quoted := fmt.Sprintf("'%s'", v.String())
+		return c.formatter.FormatValue(quoted, TypeString)
+	}
+	if v.IsFunction() {
+		return c.formatter.FormatValue("[Function]", TypeFunction)
+	}
+	if v.IsArray() {
+		return c.formatArrayDeep(v, depth)
+	}
+	if v.IsObject() {
+		return c.formatObject(v)
+	}
+	return v.String()
 }
 
-// timeStampFunc implements console.timeStamp (no-op).
-func (c *Console) timeStampFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
-	// No-op in non-browser environment
-	return nil
+func (c *Console) formatArrayDeep(v *v8go.Value, depth int) string {
+	length := v.ArrayLength()
+	if length == 0 {
+		return "[]"
+	}
+
+	parts := make([]string, length)
+	for i := 0; i < length; i++ {
+		elem, err := v.GetIndex(i)
+		if err != nil || elem == nil {
+			parts[i] = c.formatter.FormatValue("undefined", TypeUndefined)
+		} else {
+			parts[i] = c.formatValueDeep(elem, depth-1)
+		}
+	}
+	return "[ " + strings.Join(parts, ", ") + " ]"
 }
 
 // padRight pads a string to the right with spaces.
@@ -585,99 +816,22 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
-// formatValueDeep formats a value with depth control.
-func formatValueDeep(v *v8go.Value, depth int) string {
-	if v == nil {
-		return "undefined"
-	}
-	if v.IsUndefined() {
-		return "undefined"
-	}
-	if v.IsNull() {
-		return "null"
-	}
-	if depth <= 0 {
-		if v.IsArray() {
-			return "[Array]"
+// stripAnsi removes ANSI escape codes from a string.
+func stripAnsi(s string) string {
+	var result strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\033' {
+			inEscape = true
+			continue
 		}
-		if v.IsObject() {
-			return "[Object]"
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
 		}
+		result.WriteRune(r)
 	}
-	if v.IsArray() {
-		return formatArrayDeep(v, depth)
-	}
-	if v.IsObject() && !v.IsFunction() {
-		return formatObjectDeep(v, depth)
-	}
-	return v.String()
-}
-
-func formatArrayDeep(v *v8go.Value, depth int) string {
-	length := v.ArrayLength()
-	if length == 0 {
-		return "[]"
-	}
-
-	parts := make([]string, length)
-	for i := 0; i < length; i++ {
-		elem, err := v.GetIndex(i)
-		if err != nil || elem == nil {
-			parts[i] = "undefined"
-		} else {
-			parts[i] = formatValueDeep(elem, depth-1)
-		}
-	}
-	return "[ " + strings.Join(parts, ", ") + " ]"
-}
-
-func formatObjectDeep(v *v8go.Value, depth int) string {
-	// Without GetPropertyNames, we just use the string representation
-	return v.String()
-}
-
-// formatValue converts a V8 value to a string representation.
-func formatValue(v *v8go.Value) string {
-	if v == nil {
-		return "undefined"
-	}
-	if v.IsUndefined() {
-		return "undefined"
-	}
-	if v.IsNull() {
-		return "null"
-	}
-	if v.IsArray() {
-		return formatArray(v)
-	}
-	if v.IsObject() && !v.IsFunction() {
-		return formatObject(v)
-	}
-	return v.String()
-}
-
-// formatArray formats an array value.
-func formatArray(v *v8go.Value) string {
-	length := v.ArrayLength()
-	if length == 0 {
-		return "[]"
-	}
-
-	parts := make([]string, length)
-	for i := 0; i < length; i++ {
-		elem, err := v.GetIndex(i)
-		if err != nil || elem == nil {
-			parts[i] = "undefined"
-		} else {
-			parts[i] = formatValue(elem)
-		}
-	}
-	return "[ " + strings.Join(parts, ", ") + " ]"
-}
-
-// formatObject formats an object value (basic implementation).
-func formatObject(v *v8go.Value) string {
-	// Basic object stringification
-	// A full implementation would enumerate properties
-	return v.String()
+	return result.String()
 }

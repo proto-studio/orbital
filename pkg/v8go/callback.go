@@ -11,6 +11,11 @@ import (
 	"unsafe"
 )
 
+// ModuleResolveCallback is called when V8 needs to resolve an import.
+// It takes the specifier (import path) and referrer (importing module path),
+// and returns the resolved module source code, resolved path, and any error.
+type ModuleResolveCallback func(specifier, referrer string) (source string, resolvedPath string, err error)
+
 // FunctionCallback is the signature for Go functions callable from JavaScript.
 type FunctionCallback func(info *FunctionCallbackInfo) *Value
 
@@ -60,6 +65,16 @@ var callbackRegistry = struct {
 	nextID:    1,
 }
 
+// moduleResolverRegistry stores module resolve callbacks indexed by a unique ID.
+var moduleResolverRegistry = struct {
+	sync.RWMutex
+	resolvers map[int]ModuleResolveCallback
+	nextID    int
+}{
+	resolvers: make(map[int]ModuleResolveCallback),
+	nextID:    1,
+}
+
 // registerCallback stores a callback and returns its ID.
 func registerCallback(cb FunctionCallback) int {
 	callbackRegistry.Lock()
@@ -82,6 +97,30 @@ func unregisterCallback(id int) {
 	callbackRegistry.Lock()
 	defer callbackRegistry.Unlock()
 	delete(callbackRegistry.callbacks, id)
+}
+
+// registerModuleResolver stores a module resolver and returns its ID.
+func registerModuleResolver(resolver ModuleResolveCallback) int {
+	moduleResolverRegistry.Lock()
+	defer moduleResolverRegistry.Unlock()
+	id := moduleResolverRegistry.nextID
+	moduleResolverRegistry.nextID++
+	moduleResolverRegistry.resolvers[id] = resolver
+	return id
+}
+
+// getModuleResolver retrieves a module resolver by ID.
+func getModuleResolver(id int) ModuleResolveCallback {
+	moduleResolverRegistry.RLock()
+	defer moduleResolverRegistry.RUnlock()
+	return moduleResolverRegistry.resolvers[id]
+}
+
+// unregisterModuleResolver removes a module resolver by ID.
+func unregisterModuleResolver(id int) {
+	moduleResolverRegistry.Lock()
+	defer moduleResolverRegistry.Unlock()
+	delete(moduleResolverRegistry.resolvers, id)
 }
 
 // FunctionTemplate represents a V8 FunctionTemplate for creating functions.
@@ -217,4 +256,25 @@ func goCallbackHandler(ctxPtr unsafe.Pointer, callbackID C.int, infoPtr unsafe.P
 		return nil
 	}
 	return result.ptr
+}
+
+//export goModuleResolve
+func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, nameOut **C.char) C.int {
+	resolver := getModuleResolver(int(resolverID))
+	if resolver == nil {
+		return C.int(-1)
+	}
+
+	specifierStr := C.GoString(specifier)
+	referrerStr := C.GoString(referrer)
+
+	source, resolvedPath, err := resolver(specifierStr, referrerStr)
+	if err != nil {
+		return C.int(-1)
+	}
+
+	*sourceOut = C.CString(source)
+	*nameOut = C.CString(resolvedPath)
+
+	return C.int(0)
 }

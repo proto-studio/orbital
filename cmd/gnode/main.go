@@ -2,18 +2,19 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/andrewcurioso/gnode/pkg/environment"
 	"github.com/andrewcurioso/gnode/pkg/filesystem"
 	"github.com/andrewcurioso/gnode/pkg/network"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/buffer"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/console"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/crypto"
+	"github.com/andrewcurioso/gnode/pkg/nodejs/esm"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/events"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/fs"
 	"github.com/andrewcurioso/gnode/pkg/nodejs/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/andrewcurioso/gnode/pkg/nodejs/util"
 	"github.com/andrewcurioso/gnode/pkg/runtime"
 	"github.com/andrewcurioso/gnode/pkg/system"
+	"github.com/chzyer/readline"
 	"golang.org/x/term"
 )
 
@@ -127,6 +129,9 @@ Examples:
   gnode                             Start REPL`)
 }
 
+// esmLoader is the global ESM module loader (initialized after runtime creation)
+var esmLoader *esm.ESM
+
 func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
 	
@@ -139,12 +144,16 @@ func createRuntime() (*runtime.Runtime, error) {
 	if sandboxMode {
 		cfg.SystemInfo = system.NewSandboxedSystemInfo(nil)
 		cfg.HTTPClient = network.NewNoOpHTTPClient()
+		cfg.Environment = environment.NewSandboxedEnvironmentWithDefaults()
 	}
 
 	rt, err := runtime.New(cfg)
 	if err != nil {
 		return nil, err
 	}
+
+	// Create ESM loader
+	esmLoader = esm.New()
 
 	// Register modules (order matters - module system must be last)
 	modules := []runtime.Module{
@@ -161,6 +170,7 @@ func createRuntime() (*runtime.Runtime, error) {
 		util.New(),
 		crypto.New(),
 		http.New(),
+		esmLoader,    // ES Module system
 		module.New(), // CommonJS module system - must be last
 	}
 
@@ -175,19 +185,43 @@ func createRuntime() (*runtime.Runtime, error) {
 }
 
 func runFile(filename string) error {
-	source, err := os.ReadFile(filename)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
-	}
-
 	// Get absolute path for __filename and __dirname
 	absPath, err := filepath.Abs(filename)
 	if err != nil {
 		absPath = filename
 	}
-	dirname := filepath.Dir(absPath)
 
+	// Check if this is an ES module (.mjs extension)
+	if strings.HasSuffix(filename, ".mjs") {
+		return runESModule(absPath)
+	}
+
+	source, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	dirname := filepath.Dir(absPath)
 	return runCodeWithPath(string(source), filename, absPath, dirname)
+}
+
+func runESModule(filename string) error {
+	rt, err := createRuntime()
+	if err != nil {
+		return err
+	}
+	defer rt.Dispose()
+
+	// Run the ES module
+	_, err = esmLoader.RunModuleFile(filename)
+	if err != nil {
+		return fmt.Errorf("module error: %w", err)
+	}
+
+	// Run any pending async operations
+	rt.EventLoop().Run()
+
+	return nil
 }
 
 func runStdin() error {
@@ -250,23 +284,64 @@ func repl() {
 	}
 	defer rt.Dispose()
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// Set up readline with history
+	historyFile := filepath.Join(os.TempDir(), ".gnode_history")
+	if home, err := os.UserHomeDir(); err == nil {
+		historyFile = filepath.Join(home, ".gnode_history")
+	}
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:            "> ",
+		HistoryFile:       historyFile,
+		HistoryLimit:      1000,
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+		HistorySearchFold: true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize readline: %v\n", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
+
 	multiline := false
 	var buffer strings.Builder
 
 	for {
 		if multiline {
-			fmt.Print("... ")
+			rl.SetPrompt("... ")
 		} else {
-			fmt.Print("> ")
+			rl.SetPrompt("> ")
 		}
 
-		if !scanner.Scan() {
-			fmt.Println()
-			break
+		line, err := rl.Readline()
+		if err != nil {
+			if err == readline.ErrInterrupt {
+				if multiline {
+					// Cancel multiline input
+					buffer.Reset()
+					multiline = false
+					fmt.Println()
+					continue
+				}
+				// Double Ctrl+C to exit
+				fmt.Println("(To exit, press Ctrl+C again or type .exit)")
+				line2, err2 := rl.Readline()
+				if err2 == readline.ErrInterrupt {
+					return
+				}
+				if err2 == nil {
+					line = line2
+				} else {
+					continue
+				}
+			} else if err == io.EOF {
+				fmt.Println()
+				return
+			} else {
+				continue
+			}
 		}
-
-		line := scanner.Text()
 
 		// Handle REPL commands
 		if !multiline && strings.HasPrefix(line, ".") {
@@ -275,13 +350,38 @@ func repl() {
 				return
 			case ".help":
 				fmt.Println("REPL Commands:")
-				fmt.Println("  .exit    Exit the REPL")
-				fmt.Println("  .help    Show this help")
-				fmt.Println("  .clear   Clear the current input")
+				fmt.Println("  .exit      Exit the REPL")
+				fmt.Println("  .help      Show this help")
+				fmt.Println("  .clear     Clear the current input")
+				fmt.Println("  .history   Show command history")
+				fmt.Println()
+				fmt.Println("Keyboard Shortcuts:")
+				fmt.Println("  Up/Down    Navigate history")
+				fmt.Println("  Left/Right Move cursor")
+				fmt.Println("  Home/End   Jump to start/end of line")
+				fmt.Println("  Ctrl+A/E   Jump to start/end of line")
+				fmt.Println("  Ctrl+W     Delete word backward")
+				fmt.Println("  Ctrl+U     Delete to start of line")
+				fmt.Println("  Ctrl+K     Delete to end of line")
+				fmt.Println("  Ctrl+L     Clear screen")
+				fmt.Println("  Ctrl+R     Search history")
+				fmt.Println("  Ctrl+C     Cancel current input")
+				fmt.Println("  Ctrl+D     Exit (on empty line)")
 				continue
 			case ".clear":
 				buffer.Reset()
 				multiline = false
+				continue
+			case ".history":
+				// Read and display history
+				if data, err := os.ReadFile(historyFile); err == nil {
+					lines := strings.Split(string(data), "\n")
+					for i, l := range lines {
+						if l != "" {
+							fmt.Printf("%4d  %s\n", i+1, l)
+						}
+					}
+				}
 				continue
 			}
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/andrewcurioso/gnode/pkg/environment"
 	"github.com/andrewcurioso/gnode/pkg/filesystem"
 	"github.com/andrewcurioso/gnode/pkg/network"
 	"github.com/andrewcurioso/gnode/pkg/system"
@@ -13,14 +14,16 @@ import (
 
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
-	isolate    *v8go.Isolate
-	context    *v8go.Context
-	eventLoop  *EventLoop
-	modules    map[string]Module
-	filesystem filesystem.Filesystem
-	systemInfo system.SystemInfo
-	httpClient network.HTTPClient
-	mu         sync.Mutex
+	isolate       *v8go.Isolate
+	context       *v8go.Context
+	eventLoop     *EventLoop
+	modules       map[string]Module
+	nativeModules map[string]*v8go.Value // User-registered native modules
+	filesystem    filesystem.Filesystem
+	systemInfo    system.SystemInfo
+	httpClient    network.HTTPClient
+	environment   environment.Environment
+	mu            sync.Mutex
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -46,6 +49,9 @@ type Config struct {
 	// HTTPClient is the HTTP client for outbound requests.
 	// If nil, a real HTTP client with no restrictions is used.
 	HTTPClient network.HTTPClient
+	// Environment is the environment variable provider.
+	// If nil, real system environment variables are used.
+	Environment environment.Environment
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -56,6 +62,7 @@ func DefaultConfig() *Config {
 		Filesystem:    nil, // Will default to unrestricted local filesystem
 		SystemInfo:    nil, // Will default to real system info
 		HTTPClient:    nil, // Will default to real HTTP client
+		Environment:   nil, // Will default to real environment
 	}
 }
 
@@ -94,14 +101,22 @@ func New(cfg *Config) (*Runtime, error) {
 		httpClient = network.NewRealHTTPClient()
 	}
 
+	// Set up environment
+	env := cfg.Environment
+	if env == nil {
+		env = environment.NewRealEnvironment()
+	}
+
 	rt := &Runtime{
-		isolate:    iso,
-		context:    ctx,
-		eventLoop:  NewEventLoop(),
-		modules:    make(map[string]Module),
-		filesystem: fs,
-		systemInfo: sysInfo,
-		httpClient: httpClient,
+		isolate:       iso,
+		context:       ctx,
+		eventLoop:     NewEventLoop(),
+		modules:       make(map[string]Module),
+		nativeModules: make(map[string]*v8go.Value),
+		filesystem:    fs,
+		systemInfo:    sysInfo,
+		httpClient:    httpClient,
+		environment:   env,
 	}
 
 	return rt, nil
@@ -120,6 +135,11 @@ func (rt *Runtime) SystemInfo() system.SystemInfo {
 // HTTPClient returns the HTTP client for this runtime.
 func (rt *Runtime) HTTPClient() network.HTTPClient {
 	return rt.httpClient
+}
+
+// Environment returns the environment variable provider for this runtime.
+func (rt *Runtime) Environment() environment.Environment {
+	return rt.environment
 }
 
 // Isolate returns the underlying V8 isolate.
@@ -153,6 +173,49 @@ func (rt *Runtime) RegisterModule(mod Module) error {
 
 	rt.modules[name] = mod
 	return nil
+}
+
+// RegisterNativeModule registers a user-defined native module that can be
+// required from JavaScript using require('moduleName') or imported via ESM.
+// The value should be an object containing the module's exports.
+func (rt *Runtime) RegisterNativeModule(name string, value *v8go.Value) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if _, exists := rt.nativeModules[name]; exists {
+		return fmt.Errorf("native module %q already registered", name)
+	}
+
+	rt.nativeModules[name] = value
+
+	// Also set it as a global with __native_module_ prefix for the module loader
+	global, err := rt.context.Global()
+	if err != nil {
+		return err
+	}
+
+	return global.Set("__native_module_"+name, value)
+}
+
+// GetNativeModule retrieves a registered native module by name.
+func (rt *Runtime) GetNativeModule(name string) (*v8go.Value, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	val, exists := rt.nativeModules[name]
+	return val, exists
+}
+
+// NativeModuleNames returns a list of all registered native module names.
+func (rt *Runtime) NativeModuleNames() []string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	names := make([]string, 0, len(rt.nativeModules))
+	for name := range rt.nativeModules {
+		names = append(names, name)
+	}
+	return names
 }
 
 // SetGlobal sets a global variable in the runtime context.

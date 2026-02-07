@@ -96,6 +96,19 @@ func (v *Value) Delete(key string) bool {
 	return C.v8go_object_delete(v.ctx.ptr, v.ptr, cKey) != 0
 }
 
+// GetPropertyNames returns an array of the object's own enumerable property names.
+func (v *Value) GetPropertyNames() (*Value, error) {
+	if v.ptr == nil || v.ctx == nil || v.ctx.ptr == nil {
+		return nil, ErrDisposed
+	}
+
+	ptr := C.v8go_object_get_property_names(v.ctx.ptr, v.ptr)
+	if ptr == nil {
+		return nil, nil
+	}
+	return &Value{ptr: ptr, ctx: v.ctx}, nil
+}
+
 // IsObject returns true if the value is an object.
 func (v *Value) IsObject() bool {
 	if v.ptr == nil {

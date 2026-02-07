@@ -233,20 +233,16 @@ func (p *Process) createEnv(ctx *v8go.Context) (*v8go.Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range os.Environ() {
-		for i := 0; i < len(e); i++ {
-			if e[i] == '=' {
-				key := e[:i]
-				value := e[i+1:]
-				val, err := ctx.NewString(value)
-				if err != nil {
-					return nil, err
-				}
-				if err := env.Set(key, val); err != nil {
-					return nil, err
-				}
-				break
-			}
+
+	// Use the runtime's environment interface
+	envProvider := p.rt.Environment()
+	for key, value := range envProvider.All() {
+		val, err := ctx.NewString(value)
+		if err != nil {
+			return nil, err
+		}
+		if err := env.Set(key, val); err != nil {
+			return nil, err
 		}
 	}
 	return env, nil
