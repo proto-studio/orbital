@@ -2,9 +2,9 @@
 package os
 
 import (
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/system"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/system"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 // OS provides operating system functionality.

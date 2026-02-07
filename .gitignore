@@ -1,9 +1,16 @@
-# V8 build artifacts
+# V8 build cache (large, not committed)
 v8-build/
-v8/
+
+# deps/v8/current symlink (platform-specific, regenerated)
+deps/v8/current
+
+# Build artifacts
+build/
+coverage.out
+coverage.html
 
 # Go binaries
-/gnode
+/orbital
 *.exe
 *.test
 *.out

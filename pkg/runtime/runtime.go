@@ -2,28 +2,39 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
-	"github.com/andrewcurioso/gnode/pkg/environment"
-	"github.com/andrewcurioso/gnode/pkg/filesystem"
-	"github.com/andrewcurioso/gnode/pkg/network"
-	"github.com/andrewcurioso/gnode/pkg/system"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/dns"
+	"proto.zip/studio/orbital/pkg/environment"
+	"proto.zip/studio/orbital/pkg/filesystem"
+	"proto.zip/studio/orbital/pkg/network"
+	"proto.zip/studio/orbital/pkg/process"
+	"proto.zip/studio/orbital/pkg/system"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
-	isolate       *v8go.Isolate
-	context       *v8go.Context
-	eventLoop     *EventLoop
-	modules       map[string]Module
-	nativeModules map[string]*v8go.Value // User-registered native modules
-	filesystem    filesystem.Filesystem
-	systemInfo    system.SystemInfo
-	httpClient    network.HTTPClient
-	environment   environment.Environment
-	mu            sync.Mutex
+	isolate           *v8go.Isolate
+	context           *v8go.Context
+	eventLoop         *EventLoop
+	modules           map[string]Module
+	nativeModules     map[string]*v8go.Value // User-registered native modules
+	filesystem        filesystem.Filesystem
+	systemInfo        system.SystemInfo
+	httpClient        network.HTTPClient
+	environment       environment.Environment
+	dnsResolver       dns.Resolver
+	socketFactory     network.SocketFactory
+	processSpawner    process.ProcessSpawner
+	documentRoot      string
+	resourceTracker   *ResourceTracker
+	execController    *ExecutionController
+	disposed          bool
+	mu                sync.Mutex
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -52,17 +63,34 @@ type Config struct {
 	// Environment is the environment variable provider.
 	// If nil, real system environment variables are used.
 	Environment environment.Environment
+	// DNSResolver is the DNS resolver for network lookups.
+	// If nil, the system's DNS resolver is used.
+	DNSResolver dns.Resolver
+	// SocketFactory creates TCP/UDP sockets.
+	// If nil, real sockets with no restrictions are used.
+	SocketFactory network.SocketFactory
+	// ProcessSpawner spawns child processes.
+	// If nil, real process spawning with no restrictions is used.
+	ProcessSpawner process.ProcessSpawner
+	// DocumentRoot is the root directory for sandboxing.
+	// When set, paths like process.cwd() are relative to this root.
+	DocumentRoot string
+	// Timeout is the maximum execution time. 0 means no timeout.
+	Timeout time.Duration
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
 func DefaultConfig() *Config {
 	return &Config{
-		EnableConsole: true,
-		EnableTimers:  true,
-		Filesystem:    nil, // Will default to unrestricted local filesystem
-		SystemInfo:    nil, // Will default to real system info
-		HTTPClient:    nil, // Will default to real HTTP client
-		Environment:   nil, // Will default to real environment
+		EnableConsole:  true,
+		EnableTimers:   true,
+		Filesystem:     nil, // Will default to unrestricted local filesystem
+		SystemInfo:     nil, // Will default to real system info
+		HTTPClient:     nil, // Will default to real HTTP client
+		Environment:    nil, // Will default to real environment
+		DNSResolver:    nil, // Will default to system DNS resolver
+		SocketFactory:  nil, // Will default to real sockets
+		ProcessSpawner: nil, // Will default to real process spawning
 	}
 }
 
@@ -107,17 +135,57 @@ func New(cfg *Config) (*Runtime, error) {
 		env = environment.NewRealEnvironment()
 	}
 
-	rt := &Runtime{
-		isolate:       iso,
-		context:       ctx,
-		eventLoop:     NewEventLoop(),
-		modules:       make(map[string]Module),
-		nativeModules: make(map[string]*v8go.Value),
-		filesystem:    fs,
-		systemInfo:    sysInfo,
-		httpClient:    httpClient,
-		environment:   env,
+	// Set up DNS resolver
+	dnsResolver := cfg.DNSResolver
+	if dnsResolver == nil {
+		dnsResolver = dns.NewRealResolver()
 	}
+
+	// Set up socket factory
+	socketFactory := cfg.SocketFactory
+	if socketFactory == nil {
+		socketFactory = network.NewRealSocketFactory()
+	}
+
+	// Set up process spawner
+	processSpawner := cfg.ProcessSpawner
+	if processSpawner == nil {
+		processSpawner = process.NewRealProcessSpawner()
+	}
+
+	// Create resource tracker
+	resourceTracker := NewResourceTracker()
+
+	// Create execution controller with timeout
+	execController := NewExecutionController(cfg.Timeout)
+
+	// Create event loop with execution context
+	eventLoop := NewEventLoopWithContext(execController.Context())
+
+	rt := &Runtime{
+		isolate:         iso,
+		context:         ctx,
+		eventLoop:       eventLoop,
+		modules:         make(map[string]Module),
+		nativeModules:   make(map[string]*v8go.Value),
+		filesystem:      fs,
+		systemInfo:      sysInfo,
+		httpClient:      httpClient,
+		environment:     env,
+		dnsResolver:     dnsResolver,
+		socketFactory:   socketFactory,
+		processSpawner:  processSpawner,
+		documentRoot:    cfg.DocumentRoot,
+		resourceTracker: resourceTracker,
+		execController:  execController,
+	}
+
+	// Set up kill callback to stop the event loop and cancel all tasks
+	execController.OnKill(func() {
+		rt.eventLoop.CancelAllTimers()
+		rt.eventLoop.ClearAllMicrotasks()
+		rt.eventLoop.Stop()
+	})
 
 	return rt, nil
 }
@@ -135,6 +203,26 @@ func (rt *Runtime) SystemInfo() system.SystemInfo {
 // HTTPClient returns the HTTP client for this runtime.
 func (rt *Runtime) HTTPClient() network.HTTPClient {
 	return rt.httpClient
+}
+
+// DNSResolver returns the DNS resolver for this runtime.
+func (rt *Runtime) DNSResolver() dns.Resolver {
+	return rt.dnsResolver
+}
+
+// SocketFactory returns the socket factory for this runtime.
+func (rt *Runtime) SocketFactory() network.SocketFactory {
+	return rt.socketFactory
+}
+
+// ProcessSpawner returns the process spawner for this runtime.
+func (rt *Runtime) ProcessSpawner() process.ProcessSpawner {
+	return rt.processSpawner
+}
+
+// DocumentRoot returns the document root for path sandboxing.
+func (rt *Runtime) DocumentRoot() string {
+	return rt.documentRoot
 }
 
 // Environment returns the environment variable provider for this runtime.
@@ -254,12 +342,73 @@ func (rt *Runtime) Run(source, origin string) (*v8go.Value, error) {
 	return result, nil
 }
 
+// Kill immediately stops execution with the given reason.
+// This will stop the event loop and trigger resource cleanup.
+func (rt *Runtime) Kill(reason string) {
+	rt.execController.Kill(reason)
+}
+
+// IsKilled returns true if Kill has been called.
+func (rt *Runtime) IsKilled() bool {
+	return rt.execController.IsKilled()
+}
+
+// KillReason returns the reason for killing, if killed.
+func (rt *Runtime) KillReason() string {
+	return rt.execController.KillReason()
+}
+
+// IsDone returns true if execution should stop (killed or timed out).
+func (rt *Runtime) IsDone() bool {
+	return rt.execController.IsDone()
+}
+
+// ExecutionContext returns the execution context for cancellation checks.
+func (rt *Runtime) ExecutionContext() context.Context {
+	return rt.execController.Context()
+}
+
+// ResourceTracker returns the resource tracker for this runtime.
+func (rt *Runtime) ResourceTracker() *ResourceTracker {
+	return rt.resourceTracker
+}
+
+// TrackResource adds a resource (file, socket, etc.) to be tracked for cleanup.
+// Returns a resource ID that can be used with UntrackResource.
+func (rt *Runtime) TrackResource(resource CloseableResource) uint64 {
+	return rt.resourceTracker.Track(resource)
+}
+
+// UntrackResource removes a resource from tracking.
+// Call this when a resource is closed normally.
+func (rt *Runtime) UntrackResource(id uint64) {
+	rt.resourceTracker.Untrack(id)
+}
+
 // Dispose releases all resources associated with the runtime.
+// This stops the event loop, closes all tracked resources, and disposes the V8 isolate.
 func (rt *Runtime) Dispose() {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	if rt.disposed {
+		rt.mu.Unlock()
+		return
+	}
+	rt.disposed = true
+	rt.mu.Unlock()
 
+	// Kill execution if not already done
+	if !rt.execController.IsKilled() {
+		rt.execController.Kill("disposed")
+	}
+
+	// Stop the event loop
 	rt.eventLoop.Stop()
+
+	// Close all tracked resources (files, sockets, etc.)
+	rt.resourceTracker.CloseAll()
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 
 	if rt.context != nil {
 		rt.context.Dispose()
@@ -270,4 +419,9 @@ func (rt *Runtime) Dispose() {
 		rt.isolate.Dispose()
 		rt.isolate = nil
 	}
+}
+
+// CloseableResource is any resource that can be closed.
+type CloseableResource interface {
+	Close() error
 }

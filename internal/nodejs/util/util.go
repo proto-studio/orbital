@@ -4,7 +4,7 @@ package util
 import (
 	_ "embed"
 
-	"github.com/andrewcurioso/gnode/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 //go:embed util.js

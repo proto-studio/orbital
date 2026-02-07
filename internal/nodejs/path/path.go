@@ -6,8 +6,8 @@ import (
 	goruntime "runtime"
 	"strings"
 
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
 
 // Path provides path manipulation functionality.

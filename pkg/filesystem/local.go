@@ -45,9 +45,21 @@ func (l *LocalFilesystem) resolvePath(p string) (string, error) {
 	// Resolve the path relative to the document root
 	var resolvedPath string
 	if filepath.IsAbs(p) {
-		// Treat absolute paths as relative to document root
-		resolvedPath = filepath.Join(absRoot, p)
+		// Clean the absolute path first
+		cleanPath := filepath.Clean(p)
+		
+		// Check if this absolute path is already within the sandbox
+		if strings.HasPrefix(cleanPath+string(filepath.Separator), absRoot+string(filepath.Separator)) ||
+			cleanPath == absRoot {
+			// Path is already within sandbox, use it directly
+			resolvedPath = cleanPath
+		} else {
+			// Absolute path outside sandbox - treat as relative to sandbox root
+			// (strip leading slash and join with root)
+			resolvedPath = filepath.Join(absRoot, cleanPath)
+		}
 	} else {
+		// Relative path - join with sandbox root
 		resolvedPath = filepath.Join(absRoot, p)
 	}
 
@@ -226,6 +238,7 @@ type localFile struct {
 	*os.File
 }
 
+// Stat returns file information for the open file.
 func (f *localFile) Stat() (*FileInfo, error) {
 	info, err := f.File.Stat()
 	if err != nil {

@@ -4,11 +4,14 @@ package stream
 import (
 	_ "embed"
 
-	"github.com/andrewcurioso/gnode/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 //go:embed stream.js
 var streamJS string
+
+//go:embed promises.js
+var promisesJS string
 
 // Stream provides stream functionality.
 type Stream struct{}
@@ -33,6 +36,14 @@ func (s *Stream) Register(rt *runtime.Runtime) error {
 			globalThis.Stream = streamModule.Stream;
 		})();
 	`
-	_, err := rt.RunScript(setupCode, "stream_setup.js")
-	return err
+	if _, err := rt.RunScript(setupCode, "stream_setup.js"); err != nil {
+		return err
+	}
+
+	// Initialize stream/promises
+	if _, err := rt.RunScript(promisesJS, "stream/promises.js"); err != nil {
+		return err
+	}
+
+	return nil
 }

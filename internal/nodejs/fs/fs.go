@@ -2,12 +2,16 @@
 package fs
 
 import (
+	_ "embed"
 	"io/fs"
 
-	"github.com/andrewcurioso/gnode/pkg/filesystem"
-	"github.com/andrewcurioso/gnode/pkg/runtime"
-	"github.com/andrewcurioso/gnode/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/filesystem"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8go"
 )
+
+//go:embed promises.js
+var promisesJS string
 
 // FS provides file system functionality.
 type FS struct {
@@ -215,7 +219,16 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// Set fs as global module
-	return rt.SetGlobal("__fs_module", fsObj)
+	if err := rt.SetGlobal("__fs_module", fsObj); err != nil {
+		return err
+	}
+
+	// Initialize fs/promises
+	if _, err := rt.RunScript(promisesJS, "fs/promises.js"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // readFileSyncFunc implements fs.readFileSync

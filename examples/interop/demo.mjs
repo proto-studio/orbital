@@ -1,5 +1,5 @@
 // Complete interop demonstration
-// Run with: ./gnode examples/interop/demo.mjs
+// Run with: ./orbital examples/interop/demo.mjs
 
 console.log('=== Module Interop Demo ===\n');
 

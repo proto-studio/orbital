@@ -102,18 +102,22 @@ func DefaultWriter() *StandardWriter {
 	return NewStandardWriter(os.Stdout, os.Stderr)
 }
 
+// Log writes a message to stdout.
 func (w *StandardWriter) Log(message string) {
 	fmt.Fprintln(w.stdout, message)
 }
 
+// Warn writes a warning message to stderr.
 func (w *StandardWriter) Warn(message string) {
 	fmt.Fprintln(w.stderr, message)
 }
 
+// Error writes an error message to stderr.
 func (w *StandardWriter) Error(message string) {
 	fmt.Fprintln(w.stderr, message)
 }
 
+// Clear sends ANSI escape codes to clear the terminal screen.
 func (w *StandardWriter) Clear() {
 	fmt.Fprint(w.stdout, "\033[2J\033[H")
 }
@@ -135,18 +139,22 @@ func NewBufferedWriter() *BufferedWriter {
 	}
 }
 
+// Log appends a log message to the buffer.
 func (w *BufferedWriter) Log(message string) {
 	w.LogMessages = append(w.LogMessages, message)
 }
 
+// Warn appends a warning message to the buffer.
 func (w *BufferedWriter) Warn(message string) {
 	w.WarnMessages = append(w.WarnMessages, message)
 }
 
+// Error appends an error message to the buffer.
 func (w *BufferedWriter) Error(message string) {
 	w.ErrorMessages = append(w.ErrorMessages, message)
 }
 
+// Clear increments the clear counter.
 func (w *BufferedWriter) Clear() {
 	w.ClearCount++
 }
@@ -162,14 +170,22 @@ func (w *BufferedWriter) Reset() {
 // NoOpWriter discards all output (useful for sandboxing).
 type NoOpWriter struct{}
 
+// NewNoOpWriter creates a new NoOpWriter that discards all output.
 func NewNoOpWriter() *NoOpWriter {
 	return &NoOpWriter{}
 }
 
-func (w *NoOpWriter) Log(message string)   {}
-func (w *NoOpWriter) Warn(message string)  {}
+// Log discards the message.
+func (w *NoOpWriter) Log(message string) {}
+
+// Warn discards the message.
+func (w *NoOpWriter) Warn(message string) {}
+
+// Error discards the message.
 func (w *NoOpWriter) Error(message string) {}
-func (w *NoOpWriter) Clear()               {}
+
+// Clear is a no-op.
+func (w *NoOpWriter) Clear() {}
 
 // ColorFormatter formats values with ANSI colors like Node.js.
 type ColorFormatter struct {
@@ -195,10 +211,12 @@ func AutoColorFormatter() *ColorFormatter {
 	return NewColorFormatter(colors)
 }
 
+// ColorEnabled returns whether ANSI colors are enabled.
 func (f *ColorFormatter) ColorEnabled() bool {
 	return f.colors
 }
 
+// FormatValue formats a value with optional ANSI color codes based on its type.
 func (f *ColorFormatter) FormatValue(value interface{}, valueType ValueType) string {
 	str := fmt.Sprintf("%v", value)
 
@@ -249,14 +267,17 @@ func (f *ColorFormatter) SetMaxLength(length int) {
 // PlainFormatter formats values without any colors.
 type PlainFormatter struct{}
 
+// NewPlainFormatter creates a new PlainFormatter with no color support.
 func NewPlainFormatter() *PlainFormatter {
 	return &PlainFormatter{}
 }
 
+// ColorEnabled always returns false.
 func (f *PlainFormatter) ColorEnabled() bool {
 	return false
 }
 
+// FormatValue formats a value without any color codes.
 func (f *PlainFormatter) FormatValue(value interface{}, valueType ValueType) string {
 	return fmt.Sprintf("%v", value)
 }
