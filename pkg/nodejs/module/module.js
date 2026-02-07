@@ -18,6 +18,15 @@
 		'http': () => __http_module,
 	};
 
+	// Check if a native module is registered (via Runtime.RegisterNativeModule)
+	function getNativeModule(name) {
+		const globalKey = '__native_module_' + name;
+		if (typeof globalThis[globalKey] !== 'undefined') {
+			return globalThis[globalKey];
+		}
+		return null;
+	}
+
 	// Current module stack for nested requires
 	const moduleStack = [];
 
@@ -50,19 +59,32 @@
 			return request;
 		}
 
+		// Check for native Go module
+		const nativeModule = getNativeModule(request);
+		if (nativeModule !== null) {
+			return request; // Return the name as the "resolved" path for native modules
+		}
+
 		// Get the directory of the parent module
 		let basePath = process.cwd();
-		if (parent && parent.filename && parent.filename !== '.') {
+		
+		// First check if parent has a valid filename
+		if (parent && parent.filename && parent.filename !== '.' && parent.filename !== process.cwd()) {
 			// Check if filename ends with .js or .json (it's a file)
-			// Otherwise treat it as a directory
-			if (parent.filename.endsWith('.js') || parent.filename.endsWith('.json')) {
+			if (parent.filename.endsWith('.js') || parent.filename.endsWith('.json') || parent.filename.endsWith('.mjs')) {
 				const lastSlash = parent.filename.lastIndexOf('/');
 				if (lastSlash >= 0) {
 					basePath = parent.filename.substring(0, lastSlash);
 				}
 			} else {
-				// It's likely a directory path (for main module)
+				// It's likely a directory path
 				basePath = parent.filename;
+			}
+		} else if (globalThis.__filename && globalThis.__filename !== '.') {
+			// Fall back to global __filename (set by main script execution)
+			const lastSlash = globalThis.__filename.lastIndexOf('/');
+			if (lastSlash >= 0) {
+				basePath = globalThis.__filename.substring(0, lastSlash);
 			}
 		}
 
@@ -76,6 +98,12 @@
 			// Check for built-in module
 			if (builtinModules[request]) {
 				return builtinModules[request]();
+			}
+
+			// Check for native Go module
+			const nativeModule = getNativeModule(request);
+			if (nativeModule !== null) {
+				return nativeModule;
 			}
 
 			// Resolve the full path
@@ -115,6 +143,14 @@
 					mod.exports = JSON.parse(source);
 					mod.loaded = true;
 					return mod.exports;
+				}
+
+				// Block ES Modules from being required
+				if (resolved.endsWith('.mjs')) {
+					throw new Error(
+						'require() of ES Module ' + resolved + ' not supported.\n' +
+						'Instead use dynamic import(): const mod = await import("' + request + '")'
+					);
 				}
 
 				// Wrap in function to provide module scope

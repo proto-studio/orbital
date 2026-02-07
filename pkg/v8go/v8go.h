@@ -54,6 +54,7 @@ void* v8go_object_get(void* context, void* object, const char* key);
 void* v8go_object_get_idx(void* context, void* object, int idx);
 int v8go_object_has(void* context, void* object, const char* key);
 int v8go_object_delete(void* context, void* object, const char* key);
+void* v8go_object_get_property_names(void* context, void* object);
 
 // Array operations  
 int v8go_array_length(void* context, void* array);
@@ -91,6 +92,15 @@ void* v8go_promise_result(void* context, void* promise);
 void* v8go_throw_exception(void* context, const char* message);
 void* v8go_throw_type_error(void* context, const char* message);
 void* v8go_throw_range_error(void* context, const char* message);
+
+// ES Module operations
+void* v8go_compile_module(void* context, const char* source, const char* name, char** error);
+int v8go_module_instantiate(void* context, void* module, int resolver_id, char** error);
+void* v8go_module_evaluate(void* context, void* module, char** error);
+int v8go_module_get_status(void* module);
+void* v8go_module_get_namespace(void* context, void* module);
+int v8go_module_get_requests_length(void* module);
+const char* v8go_module_get_request(void* module, int index);
 
 #ifdef __cplusplus
 }
