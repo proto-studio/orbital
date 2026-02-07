@@ -14,10 +14,11 @@ import (
 
 // Console provides console logging functionality.
 type Console struct {
-	stdout io.Writer
-	stderr io.Writer
-	timers map[string]time.Time
-	counts map[string]int
+	stdout     io.Writer
+	stderr     io.Writer
+	timers     map[string]time.Time
+	counts     map[string]int
+	groupDepth int
 }
 
 // New creates a new Console module.
@@ -209,6 +210,107 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// console.table
+	tableFn, err := iso.NewFunctionTemplate(c.tableFunc)
+	if err != nil {
+		return err
+	}
+	tableVal, err := tableFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("table", tableVal); err != nil {
+		return err
+	}
+
+	// console.dir
+	dirFn, err := iso.NewFunctionTemplate(c.dirFunc)
+	if err != nil {
+		return err
+	}
+	dirVal, err := dirFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("dir", dirVal); err != nil {
+		return err
+	}
+
+	// console.dirxml (alias for log in non-browser)
+	if err := consoleObj.Set("dirxml", logVal); err != nil {
+		return err
+	}
+
+	// console.group
+	groupFn, err := iso.NewFunctionTemplate(c.groupFunc)
+	if err != nil {
+		return err
+	}
+	groupVal, err := groupFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("group", groupVal); err != nil {
+		return err
+	}
+
+	// console.groupCollapsed (same as group in terminal)
+	if err := consoleObj.Set("groupCollapsed", groupVal); err != nil {
+		return err
+	}
+
+	// console.groupEnd
+	groupEndFn, err := iso.NewFunctionTemplate(c.groupEndFunc)
+	if err != nil {
+		return err
+	}
+	groupEndVal, err := groupEndFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("groupEnd", groupEndVal); err != nil {
+		return err
+	}
+
+	// console.profile (no-op stub)
+	profileFn, err := iso.NewFunctionTemplate(c.profileFunc)
+	if err != nil {
+		return err
+	}
+	profileVal, err := profileFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("profile", profileVal); err != nil {
+		return err
+	}
+
+	// console.profileEnd (no-op stub)
+	profileEndFn, err := iso.NewFunctionTemplate(c.profileEndFunc)
+	if err != nil {
+		return err
+	}
+	profileEndVal, err := profileEndFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("profileEnd", profileEndVal); err != nil {
+		return err
+	}
+
+	// console.timeStamp (no-op stub)
+	timeStampFn, err := iso.NewFunctionTemplate(c.timeStampFunc)
+	if err != nil {
+		return err
+	}
+	timeStampVal, err := timeStampFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := consoleObj.Set("timeStamp", timeStampVal); err != nil {
+		return err
+	}
+
 	// Set console as global
 	return rt.SetGlobal("console", consoleObj)
 }
@@ -221,7 +323,8 @@ func (c *Console) createLogFunc(w io.Writer, prefix string) v8go.FunctionCallbac
 		for i, arg := range args {
 			parts[i] = formatValue(arg)
 		}
-		fmt.Fprintln(w, prefix+strings.Join(parts, " "))
+		indent := strings.Repeat("  ", c.groupDepth)
+		fmt.Fprintln(w, indent+prefix+strings.Join(parts, " "))
 		return nil
 	}
 }
@@ -341,13 +444,196 @@ func (c *Console) timeLogFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 // traceFunc implements console.trace.
 func (c *Console) traceFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	args := info.Args()
+	indent := strings.Repeat("  ", c.groupDepth)
 	parts := []string{"Trace:"}
 	for _, arg := range args {
 		parts = append(parts, formatValue(arg))
 	}
-	fmt.Fprintln(c.stderr, strings.Join(parts, " "))
+	fmt.Fprintln(c.stderr, indent+strings.Join(parts, " "))
 	// Note: In a full implementation, we'd capture the JS stack trace here
 	return nil
+}
+
+// tableFunc implements console.table.
+// This is a simplified implementation that formats tables in text.
+func (c *Console) tableFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	args := info.Args()
+	if len(args) == 0 {
+		return nil
+	}
+
+	data := args[0]
+	indent := strings.Repeat("  ", c.groupDepth)
+
+	// Handle arrays of primitives
+	if data.IsArray() {
+		length := data.ArrayLength()
+		if length == 0 {
+			fmt.Fprintln(c.stdout, indent+"┌─────────┬────────┐")
+			fmt.Fprintln(c.stdout, indent+"│ (index) │ Values │")
+			fmt.Fprintln(c.stdout, indent+"├─────────┼────────┤")
+			fmt.Fprintln(c.stdout, indent+"└─────────┴────────┘")
+			return nil
+		}
+
+		// Collect values and determine max widths
+		values := make([]string, length)
+		maxIdxWidth := 7 // "(index)"
+		maxValWidth := 6 // "Values"
+
+		for i := 0; i < length; i++ {
+			elem, err := data.GetIndex(i)
+			if err != nil || elem == nil {
+				values[i] = "undefined"
+			} else {
+				values[i] = formatValue(elem)
+			}
+			idxStr := fmt.Sprintf("%d", i)
+			if len(idxStr) > maxIdxWidth {
+				maxIdxWidth = len(idxStr)
+			}
+			if len(values[i]) > maxValWidth {
+				maxValWidth = len(values[i])
+			}
+		}
+
+		// Print table
+		fmt.Fprintf(c.stdout, "%s┌─%s─┬─%s─┐\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
+		fmt.Fprintf(c.stdout, "%s│ %s │ %s │\n", indent, padRight("(index)", maxIdxWidth), padRight("Values", maxValWidth))
+		fmt.Fprintf(c.stdout, "%s├─%s─┼─%s─┤\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
+
+		for i, val := range values {
+			fmt.Fprintf(c.stdout, "%s│ %s │ %s │\n", indent, padRight(fmt.Sprintf("%d", i), maxIdxWidth), padRight(val, maxValWidth))
+		}
+
+		fmt.Fprintf(c.stdout, "%s└─%s─┴─%s─┘\n", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth))
+		return nil
+	}
+
+	// For objects, just use a formatted output
+	if data.IsObject() {
+		fmt.Fprintln(c.stdout, indent+formatValue(data))
+		return nil
+	}
+
+	// Fallback
+	fmt.Fprintln(c.stdout, indent+formatValue(data))
+	return nil
+}
+
+// dirFunc implements console.dir.
+func (c *Console) dirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	args := info.Args()
+	if len(args) == 0 {
+		return nil
+	}
+
+	indent := strings.Repeat("  ", c.groupDepth)
+	// For now, just format and print the object
+	fmt.Fprintln(c.stdout, indent+formatValueDeep(args[0], 2))
+	return nil
+}
+
+// groupFunc implements console.group.
+func (c *Console) groupFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	args := info.Args()
+	indent := strings.Repeat("  ", c.groupDepth)
+
+	if len(args) > 0 {
+		parts := make([]string, len(args))
+		for i, arg := range args {
+			parts[i] = formatValue(arg)
+		}
+		fmt.Fprintln(c.stdout, indent+strings.Join(parts, " "))
+	}
+
+	c.groupDepth++
+	return nil
+}
+
+// groupEndFunc implements console.groupEnd.
+func (c *Console) groupEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	if c.groupDepth > 0 {
+		c.groupDepth--
+	}
+	return nil
+}
+
+// profileFunc implements console.profile (no-op).
+func (c *Console) profileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	// No-op in non-browser environment
+	return nil
+}
+
+// profileEndFunc implements console.profileEnd (no-op).
+func (c *Console) profileEndFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	// No-op in non-browser environment
+	return nil
+}
+
+// timeStampFunc implements console.timeStamp (no-op).
+func (c *Console) timeStampFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	// No-op in non-browser environment
+	return nil
+}
+
+// padRight pads a string to the right with spaces.
+func padRight(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+// formatValueDeep formats a value with depth control.
+func formatValueDeep(v *v8go.Value, depth int) string {
+	if v == nil {
+		return "undefined"
+	}
+	if v.IsUndefined() {
+		return "undefined"
+	}
+	if v.IsNull() {
+		return "null"
+	}
+	if depth <= 0 {
+		if v.IsArray() {
+			return "[Array]"
+		}
+		if v.IsObject() {
+			return "[Object]"
+		}
+	}
+	if v.IsArray() {
+		return formatArrayDeep(v, depth)
+	}
+	if v.IsObject() && !v.IsFunction() {
+		return formatObjectDeep(v, depth)
+	}
+	return v.String()
+}
+
+func formatArrayDeep(v *v8go.Value, depth int) string {
+	length := v.ArrayLength()
+	if length == 0 {
+		return "[]"
+	}
+
+	parts := make([]string, length)
+	for i := 0; i < length; i++ {
+		elem, err := v.GetIndex(i)
+		if err != nil || elem == nil {
+			parts[i] = "undefined"
+		} else {
+			parts[i] = formatValueDeep(elem, depth-1)
+		}
+	}
+	return "[ " + strings.Join(parts, ", ") + " ]"
+}
+
+func formatObjectDeep(v *v8go.Value, depth int) string {
+	// Without GetPropertyNames, we just use the string representation
+	return v.String()
 }
 
 // formatValue converts a V8 value to a string representation.

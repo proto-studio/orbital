@@ -1,0 +1,17 @@
+{
+    "name": "commonjs-demo",
+    "version": "1.0.0",
+    "description": "CommonJS module system demonstration",
+    "features": [
+        "require",
+        "module.exports",
+        "exports",
+        "JSON loading",
+        "nested requires",
+        "module caching"
+    ],
+    "settings": {
+        "debug": true,
+        "maxRetries": 3
+    }
+}

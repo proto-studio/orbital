@@ -2,10 +2,9 @@
 package fs
 
 import (
-	"io"
-	"os"
-	"path/filepath"
+	"io/fs"
 
+	"github.com/andrewcurioso/gnode/pkg/filesystem"
 	"github.com/andrewcurioso/gnode/pkg/runtime"
 	"github.com/andrewcurioso/gnode/pkg/v8go"
 )
@@ -23,6 +22,11 @@ func New() *FS {
 // Name returns the module name.
 func (f *FS) Name() string {
 	return "fs"
+}
+
+// fs returns the filesystem from the runtime.
+func (f *FS) fs() filesystem.Filesystem {
+	return f.rt.Filesystem()
 }
 
 // Register sets up the fs module.
@@ -236,9 +240,8 @@ func (f *FS) readFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		}
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := f.fs().ReadFile(path)
 	if err != nil {
-		// In a real implementation, we'd throw an error
 		return nil
 	}
 
@@ -247,7 +250,7 @@ func (f *FS) readFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return val
 	}
 
-	// Return as string for now (Buffer not implemented yet)
+	// Return as string for now
 	val, _ := ctx.NewString(string(data))
 	return val
 }
@@ -262,7 +265,7 @@ func (f *FS) writeFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	path := args[0].String()
 	data := args[1].String()
 
-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+	if err := f.fs().WriteFile(path, []byte(data), 0644); err != nil {
 		return nil
 	}
 
@@ -277,12 +280,10 @@ func (f *FS) existsSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return ctx.False()
 	}
 
-	path := args[0].String()
-	_, err := os.Stat(path)
-	if err != nil {
-		return ctx.False()
+	if f.fs().Exists(args[0].String()) {
+		return ctx.True()
 	}
-	return ctx.True()
+	return ctx.False()
 }
 
 // mkdirSyncFunc implements fs.mkdirSync
@@ -303,9 +304,9 @@ func (f *FS) mkdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	var err error
 	if recursive {
-		err = os.MkdirAll(path, 0755)
+		err = f.fs().MkdirAll(path, 0755)
 	} else {
-		err = os.Mkdir(path, 0755)
+		err = f.fs().Mkdir(path, 0755)
 	}
 
 	if err != nil {
@@ -333,9 +334,9 @@ func (f *FS) rmdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	var err error
 	if recursive {
-		err = os.RemoveAll(path)
+		err = f.fs().RemoveAll(path)
 	} else {
-		err = os.Remove(path)
+		err = f.fs().Remove(path)
 	}
 
 	if err != nil {
@@ -352,8 +353,7 @@ func (f *FS) unlinkSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	path := args[0].String()
-	if err := os.Remove(path); err != nil {
+	if err := f.fs().Remove(args[0].String()); err != nil {
 		return nil
 	}
 
@@ -368,15 +368,14 @@ func (f *FS) readdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	path := args[0].String()
-	entries, err := os.ReadDir(path)
+	entries, err := f.fs().ReadDir(args[0].String())
 	if err != nil {
 		return nil
 	}
 
 	arr, _ := ctx.NewArray(len(entries))
 	for i, entry := range entries {
-		name, _ := ctx.NewString(entry.Name())
+		name, _ := ctx.NewString(entry.Name)
 		arr.SetIndex(i, name)
 	}
 
@@ -391,8 +390,7 @@ func (f *FS) statSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	path := args[0].String()
-	stat, err := os.Stat(path)
+	stat, err := f.fs().Stat(args[0].String())
 	if err != nil {
 		return nil
 	}
@@ -400,23 +398,19 @@ func (f *FS) statSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return f.createStatObject(ctx, stat)
 }
 
-// createStatObject creates a stat object from os.FileInfo
-func (f *FS) createStatObject(ctx *v8go.Context, stat os.FileInfo) *v8go.Value {
+// createStatObject creates a stat object from FileInfo
+func (f *FS) createStatObject(ctx *v8go.Context, stat *filesystem.FileInfo) *v8go.Value {
 	obj, _ := ctx.NewObject()
 
 	// Basic properties
-	obj.Set("size", ctx.NewNumber(float64(stat.Size())))
-	obj.Set("mtime", ctx.NewNumber(float64(stat.ModTime().UnixMilli())))
-	obj.Set("atime", ctx.NewNumber(float64(stat.ModTime().UnixMilli()))) // Same as mtime on most systems
-	obj.Set("ctime", ctx.NewNumber(float64(stat.ModTime().UnixMilli()))) // Same as mtime
+	obj.Set("size", ctx.NewNumber(float64(stat.Size)))
+	obj.Set("mtime", ctx.NewNumber(float64(stat.ModTime.UnixMilli())))
+	obj.Set("atime", ctx.NewNumber(float64(stat.ModTime.UnixMilli())))
+	obj.Set("ctime", ctx.NewNumber(float64(stat.ModTime.UnixMilli())))
+	obj.Set("mode", ctx.NewInteger(int64(stat.Mode)))
 
-	mode := stat.Mode()
-	obj.Set("mode", ctx.NewInteger(int64(mode)))
-
-	// Note: These would need to be function templates in a full implementation
-	// For now, we store the mode info so scripts can check manually
-	isDir := ctx.NewBoolean(mode.IsDir())
-	isFile := ctx.NewBoolean(mode.IsRegular())
+	isDir := ctx.NewBoolean(stat.IsDir)
+	isFile := ctx.NewBoolean(!stat.IsDir)
 	obj.Set("_isDirectory", isDir)
 	obj.Set("_isFile", isFile)
 
@@ -430,10 +424,7 @@ func (f *FS) renameSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	oldPath := args[0].String()
-	newPath := args[1].String()
-
-	if err := os.Rename(oldPath, newPath); err != nil {
+	if err := f.fs().Rename(args[0].String(), args[1].String()); err != nil {
 		return nil
 	}
 
@@ -447,22 +438,7 @@ func (f *FS) copyFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	src := args[0].String()
-	dst := args[1].String()
-
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return nil
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return nil
-	}
-	defer dstFile.Close()
-
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
+	if err := f.fs().Copy(args[0].String(), args[1].String()); err != nil {
 		return nil
 	}
 
@@ -476,23 +452,12 @@ func (f *FS) appendFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		return nil
 	}
 
-	path := args[0].String()
-	data := args[1].String()
-
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil
-	}
-	defer file.Close()
-
-	if _, err := file.WriteString(data); err != nil {
+	if err := f.fs().AppendFile(args[0].String(), []byte(args[1].String())); err != nil {
 		return nil
 	}
 
 	return nil
 }
-
-// Async functions
 
 // readFileFunc implements fs.readFile (async)
 func (f *FS) readFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
@@ -524,13 +489,14 @@ func (f *FS) readFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	ctx := info.Context()
+	fsys := f.fs()
 
 	// Execute async
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		data, err := os.ReadFile(path)
+		data, err := fsys.ReadFile(path)
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -567,13 +533,14 @@ func (f *FS) writeFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	ctx := info.Context()
+	fsys := f.fs()
 
 	// Execute async
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		err := os.WriteFile(path, []byte(data), 0644)
+		err := fsys.WriteFile(path, []byte(data), fs.FileMode(0644))
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -586,13 +553,4 @@ func (f *FS) writeFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}()
 
 	return nil
-}
-
-// Helper for path module
-func (f *FS) resolvePath(p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, p)
 }
