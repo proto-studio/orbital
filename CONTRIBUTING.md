@@ -6,10 +6,9 @@ This guide covers building from source, compiling V8, cross-platform builds, and
 
 - Go 1.24+
 - Git
-- Python 3
-- C++ compiler (Xcode on macOS, `build-essential` on Linux)
-- ~10 GB disk space (only if building V8 from source)
-- Docker (optional — for building Linux V8 and CGO link from macOS)
+- Python 3 (used to build V8 and to pre-compile the C++ glue)
+- For building V8 from source: Xcode on macOS; on Linux, Chromium's bundled clang is used (host needs `build-essential` + `ninja-build`). ~10 GB disk space.
+- For only *using* the prebuilt libraries: just a C toolchain for CGO (`clang`/`gcc`). No C++ compiler needed — the bridge ships pre-compiled.
 
 ## Project structure
 
@@ -20,16 +19,18 @@ gnode/
 │   ├── darwin-x64/
 │   ├── linux-arm64/
 │   └── linux-x64/
-│       ├── lib/libv8_monolith.a
-│       └── include/          # V8 public headers
+│       ├── lib/libv8_monolith_0.a # V8 engine (split into <100MB parts on Linux)
+│       ├── lib/libv8_monolith_1.a
+│       ├── lib/libv8_libcxx.a     # Chromium libc++ + libc++abi
+│       ├── lib/libv8go_glue.a     # Pre-compiled Go↔V8 C++ bridge
+│       └── include/               # V8 public headers
 ├── pkg/
-│   ├── v8/                   # CGO bindings (v8go.go, v8go.cc)
+│   ├── v8/                   # CGO bindings (v8go.go, v8go.h)
+│   │   └── csrc/v8go.cc       # C++ bridge, pre-compiled into libv8go_glue.a
 │   └── runtime/              # JS runtime, event loop, sandbox interfaces
 ├── internal/nodejs/          # Node.js standard library modules
 ├── cmd/orbital/              # CLI entry point
 ├── examples/                 # Usage examples
-├── docker/
-│   └── Dockerfile.builder    # Linux build environment
 └── v8-build/                 # V8 source checkout (gitignored, local only)
 ```
 
@@ -45,76 +46,52 @@ make build-native
 make test
 ```
 
-If V8 is missing for your platform, build it first (see below) or run the GitHub Actions "Build V8" workflow.
+If V8 is missing for your platform, build it first (see below).
 
 ## Building Orbital
 
+Builds are **native only** — you build Orbital for the platform you're on.
+Multi-platform binaries and refreshed V8 libraries are produced by CI on native
+runners (see [CI](#ci)); there is no local cross-compilation path.
+
 ```bash
-# Host platform
-make build-native          # macOS/Linux native
-make build                 # Same, with explicit TARGET_OS/TARGET_ARCH
-
-# Linux targets
-make build-linux-arm64     # Native on Linux; Docker CGO link from macOS
-make build-linux-amd64
-
-# macOS targets
-make build-darwin-arm64
-make build-darwin-amd64
-
-# Optimized binary
-make release TARGET_OS=linux TARGET_ARCH=arm64
+make build-native          # Build for host platform
+make build                 # Same (honors TARGET_OS/TARGET_ARCH when they match host)
+make release               # Optimized (stripped) binary for host
 
 # List available V8 builds
 make v8-list
 ```
 
-Output binaries go to `build/`:
-
-- `build/orbital` — host platform
-- `build/orbital-linux-arm64` — Linux ARM64
-- `build/orbital-linux-x64` — Linux x86_64
+Output binary goes to `build/orbital`.
 
 ## Building V8
 
 V8 takes 30–60+ minutes on first build. Artifacts land in `deps/v8/<os>-<arch>/`.
 
 ```bash
-# Check out the latest stable V8 and build every platform reachable from
-# this host (macOS: darwin native + linux via Docker; Linux: linux native).
+# Check out the latest stable V8 and build it for THIS platform.
 # Updates an existing checkout to the latest stable version.
 make v8-latest
 
-# Current machine
+# Current machine, pinned version
 make v8-native
 
-# Specific platform (on matching host or with cross-toolchain)
+# Specific platform (only builds reliably on a matching host)
 make v8-linux-arm64
 make v8-linux-x64
 make v8-darwin-arm64
 make v8-darwin-x64
-
-# Both Linux arches via Docker (recommended from macOS)
-make docker-build-linux
 ```
 
 `make v8-latest` resolves the V8 version bundled with the current stable Chrome
 release via `scripts/latest-v8-version.sh` (which queries chromiumdash), then
-builds all platforms with that version. To pin a specific version instead, pass
-`V8_VERSION` explicitly, e.g. `make v8-all-platforms V8_VERSION=13.1.201.1`.
+builds it for the host platform. To pin a specific version instead, pass
+`V8_VERSION` explicitly, e.g. `make v8-native V8_VERSION=13.1.201.1`.
 
-### Docker V8 builds
-
-`make docker-build-linux` builds V8 for `linux-arm64` and `linux-x64` using native-arch containers. This avoids fragile cross-compilation of V8 itself.
-
-```bash
-make docker-build-linux
-
-# Tune parallelism (default 4; higher values can OOM in Docker Desktop)
-make docker-build-linux DOCKER_NUM_JOBS=2
-```
-
-The builder image (`docker/Dockerfile.builder`) includes clang-19, ninja, Go, and Linux build deps.
+Cross-arch and cross-OS V8 builds are intentionally **not** supported locally —
+they were fragile and slow. The `update-v8.yml` workflow builds each platform on
+its own native GitHub runner instead.
 
 ### V8 build cache
 
@@ -134,37 +111,63 @@ On recent macOS, Command Line Tools may ship an SDK requiring Clang 19+. The Mak
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make build-native
 ```
 
-## Cross-compilation model
+## Build model
 
 | Step | Where it runs |
 |------|---------------|
-| V8 compile | Native platform (or Docker per arch) |
-| Go compile + CGO link | Target platform toolchain |
+| V8 compile (`libv8_monolith.a`) | Per target platform (native, or Linux cross-compiled on x64 in CI) |
+| libc++ archive (`libv8_libcxx.a`) | Alongside the V8 build (Chromium libc++ + libc++abi) |
+| C++ glue compile (`libv8go_glue.a`) | Alongside the V8 build, with V8's own clang + libc++ |
+| Go compile + CGO link | Native platform (this host, or a native CI runner) |
 
-From **Linux**, `make build-linux-arm64` is fully native — no Docker.
+The C++ bridge is **pre-compiled** during the V8 build, not by CGO. V8 uses
+Chromium's custom libc++ (the `std::__Cr::` inline namespace), which is
+ABI-incompatible with the system `libstdc++` that a stock `g++` links. If CGO
+compiled `v8go.cc` with `g++`, its `std::` symbols would not match V8's and
+linking would fail (`undefined reference to v8::platform::NewDefaultPlatform(...,
+std::__Cr::unique_ptr<...>)`). Instead `scripts/build-glue.py` reuses V8's exact
+compile command (from `compile_commands.json`) to build `pkg/v8/csrc/v8go.cc`
+into `libv8go_glue.a`, guaranteeing an identical ABI. Consumers then link the
+prebuilt archives with a plain C toolchain — no C++ compiler, no V8 headers.
 
-From **macOS**, Go cross-compiles but CGO needs a Linux linker. `make build-linux-*` runs only the final link inside Docker, reusing the prebuilt `deps/v8/linux-*/libv8_monolith.a`.
+Because the glue lives in `pkg/v8/csrc/` (a subdirectory), the Go tool does not
+hand it to CGO. If you change `v8go.cc`, rebuild the glue with `make v8-<platform>`
+(or `scripts/build-v8.sh`) so `deps/v8/<platform>/lib/libv8go_glue.a` is refreshed.
+
+V8 15.x's `libv8_monolith.a` is ~126MB — over GitHub's 100MB per-file limit — so
+on Linux it is split by `scripts/split-archive.py` into `libv8_monolith_0.a` /
+`libv8_monolith_1.a` (~55MB each). libc++ ships as a separate `libv8_libcxx.a`.
+**Git LFS is intentionally not used**: `go get` and the Go module proxy do not run
+the LFS smudge filter, so LFS pointers would break anyone importing the package.
+The archives are therefore committed as plain files that must each stay under
+100MB — the build prints their sizes and fails if any exceeds ~95MB. On Linux all
+archives are linked inside `-Wl,--start-group ... --end-group` so ld resolves the
+cross-references between the split parts, the monolith, and libc++/libc++abi.
+
+`split-archive.py` works at the ar byte level (not `ar x`, which would clobber
+the monolith's many duplicate member basenames) and preserves the GNU long-name
+table in each part; per-part symbol indexes are regenerated with `ranlib`. If V8
+grows past ~180MB, bump `--parts` (and the `libv8_monolith_N` entries in
+`pkg/v8/v8go.go`).
 
 ## Makefile reference
 
 ```bash
 make help                  # All targets
 
-# Build
+# Build (native / current platform)
 make build-native
-make build-linux-arm64
-make build-linux-amd64
-make build-all
+make build
 make release
 
 # V8
+make v8-latest             # Latest stable V8 for this platform
 make v8-native
 make v8-linux-arm64
 make v8-linux-x64
-make v8-all-linux
+make v8-darwin-arm64
+make v8-darwin-x64
 make v8-list
-make docker-build-linux
-make docker-build-orbital TARGET_ARCH=arm64   # CGO link only (non-Linux hosts)
 
 # Quality
 make test
@@ -188,7 +191,6 @@ make clean-all
 | `TARGET_ARCH` | `arm64` or `x64` | Host arch |
 | `V8_VERSION` | V8 version to build | `13.1.201.1` |
 | `NUM_JOBS` | Parallel ninja jobs | CPU count |
-| `DOCKER_NUM_JOBS` | Jobs inside Docker | `4` |
 | `BINARY_NAME` | Output binary name | `orbital` |
 
 ## Testing
@@ -212,8 +214,17 @@ Tests run against the native platform V8 build. They exclude `v8-build/` and `ex
 
 ## CI
 
+No Docker, no emulation. Linux libraries are cross-compiled on x64 runners
+(Chromium clang + a Debian sysroot targets arm64), while macOS builds run on
+matching runners. Unit tests always run on a **native** runner per architecture,
+so the prebuilt libraries are validated on real hardware before a PR is opened.
+
+- `.github/workflows/update-v8.yml` — Detects a newer stable V8, rebuilds the
+  prebuilt libraries (`libv8_monolith.a` + `libv8go_glue.a`), runs the tests on a
+  native runner per arch, then opens a PR that refreshes `deps/v8/` and bumps the
+  pinned version.
 - `.github/workflows/build-v8.yml` — Build V8 for all platforms (manual dispatch)
-- `.github/workflows/tests.yml` — Run tests on Linux (expects `deps/v8/linux-x64/`)
+- `.github/workflows/tests.yml` — Run tests on Linux against the committed `deps/v8/`
 
 ## License
 

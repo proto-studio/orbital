@@ -29,24 +29,20 @@ deps/v8/
 
 ## Building V8
 
-To build V8 for your platform:
+Builds are native — build V8 for the platform you're on:
 
 ```bash
 make v8-native
 ```
 
-To build for a specific platform (cross-compilation):
+Or fetch and build the latest stable V8 for this platform:
 
 ```bash
-make v8 TARGET_OS=linux TARGET_ARCH=arm64
-make v8 TARGET_OS=linux TARGET_ARCH=x64
+make v8-latest
 ```
 
-To build for all Linux platforms:
-
-```bash
-make v8-all-linux
-```
+Libraries for other platforms are produced by CI on native runners (see
+`.github/workflows/update-v8.yml`), not built locally.
 
 ## Note on File Sizes
 

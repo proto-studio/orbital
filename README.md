@@ -15,7 +15,11 @@ On a standard glibc-based Linux or macOS system, no extra setup is needed beyond
 Orbital uses CGO. You need:
 
 - Go 1.24+
-- A C++ compiler (`clang++` on macOS, `g++` on Linux)
+- A C toolchain for CGO (`clang` on macOS, `gcc` on Linux)
+
+You do **not** need a C++ compiler or the V8 headers: the C++ bridge is shipped
+pre-compiled (see [Linking model](#linking-model)), so CGO only compiles a small
+pure-C shim and links the prebuilt archives.
 
 The package ships with pre-built V8 libraries (currently V8 <!-- V8_VERSION -->13.1.201.1<!-- /V8_VERSION -->) for the following platforms:
 
@@ -26,7 +30,12 @@ The package ships with pre-built V8 libraries (currently V8 <!-- V8_VERSION -->1
 | Linux ARM64 | `deps/v8/linux-arm64/` |
 | Linux x86_64 | `deps/v8/linux-x64/` |
 
-V8 is linked **statically** from `libv8_monolith.a`, so you only need the shipped `deps/v8/*/lib/` and `deps/v8/*/include/` files plus a C++ toolchain to compile the small CGO bridge in `pkg/v8`.
+Each platform directory ships static archives that are linked **statically**:
+the V8 engine (`libv8_monolith.a`, split into `libv8_monolith_0.a` /
+`libv8_monolith_1.a` on Linux — see [Linking model](#linking-model)),
+`libv8_libcxx.a` (Chromium's libc++/libc++abi), and `libv8go_glue.a` (the
+pre-compiled Go↔V8 C++ bridge). You only need the shipped `deps/v8/*/lib/` files
+and a C toolchain for CGO.
 
 ## Quick start
 
@@ -105,11 +114,27 @@ Register the Node.js modules you need with `runtime.RegisterModule()`. The CLI r
 
 When you `go build` an app that imports `pkg/v8`:
 
-1. CGO compiles `pkg/v8/v8go.cc` against V8 headers
-2. The linker pulls in `deps/v8/current/lib/libv8_monolith.a` (static)
+1. CGO compiles only the pure-C boundary (`pkg/v8/v8go.h`) with your C compiler
+2. The linker pulls in the prebuilt static archives (`libv8go_glue.a`, the `libv8_monolith*` V8 archives, and `libv8_libcxx.a`) from `deps/v8/<os>-<arch>/lib/`
 3. Standard system libraries are linked dynamically on Linux
 
-Consumers do **not** manually pass `-lv8_monolith` — the `#cgo` directives in `pkg/v8` handle that. They **do** need the correct platform directory selected via the `deps/v8/current` symlink (created automatically by `make check-v8`).
+Consumers do **not** compile any C++ and do **not** manually pass `-l` flags —
+the `#cgo` directives in `pkg/v8` select the correct `deps/v8/<os>-<arch>`
+directory automatically via Go's `GOOS`/`GOARCH` build constraints.
+
+The C++ bridge (`pkg/v8/csrc/v8go.cc`) is **not** compiled by CGO. V8 is built
+with Chromium's custom libc++ (the `std::__Cr::` inline namespace), which is
+ABI-incompatible with the system `libstdc++` a stock `g++` would use. The bridge
+is therefore pre-compiled per platform into `libv8go_glue.a` with V8's own
+toolchain (see `scripts/build-glue.py`) so its `std::` symbols match
+`libv8_monolith.a`. This keeps the V8 sandbox enabled while letting consumers
+link with a plain C toolchain.
+
+V8 15.x's monolith is ~126MB, over GitHub's 100MB per-file limit, so on Linux it
+is split into `libv8_monolith_0.a` / `libv8_monolith_1.a` and linked back together
+inside `-Wl,--start-group`. Chromium's libc++ ships as a separate `libv8_libcxx.a`.
+Git LFS is intentionally avoided because `go get` / the module proxy do not
+resolve LFS pointers, so the archives are committed as plain files under 100MB.
 
 ## Sandboxing
 
@@ -170,11 +195,11 @@ Not yet implemented: `worker_threads`, `cluster`, full stream piping, async iter
 
 Pre-built V8 libraries ship for macOS (ARM64/x86_64) and Linux (ARM64/x86_64) — see the table under [Requirements](#building-or-importing-the-library).
 
-On Linux, build natively with `make build` or `make build-linux-arm64`. From macOS, `make build-linux-arm64` uses Docker only for the CGO link step against the prebuilt `.a`.
+Build for your current platform with `make build` (or `make build-native`). Multi-platform binaries and refreshed V8 libraries are produced by CI on native runners per platform.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for building V8 from source, Docker workflows, cross-compilation, testing, and development setup.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building V8 from source, testing, and development setup.
 
 ## License
 

@@ -1,0 +1,190 @@
+name: Build V8
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated: linux-x64,linux-arm64,darwin-x64,darwin-arm64 or "all")'
+        required: true
+        default: 'all'
+
+jobs:
+  # Determine which platforms to build
+  setup:
+    name: Setup Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      v8_version: ${{ steps.v8.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Read pinned V8 version
+        id: v8
+        run: |
+          version="$(grep -E '^V8_VERSION :=' Makefile | sed -E 's/^V8_VERSION := *//')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          INPUT="${{ github.event.inputs.platforms }}"
+          if [ "$INPUT" = "all" ]; then
+            PLATFORMS='["linux-x64","linux-arm64","darwin-x64","darwin-arm64"]'
+          else
+            # Convert comma-separated to JSON array
+            PLATFORMS=$(echo "$INPUT" | sed 's/,/","/g' | sed 's/^/["/' | sed 's/$/"]/')
+          fi
+          echo "matrix={\"platform\":$PLATFORMS}" >> $GITHUB_OUTPUT
+          echo "Building platforms: $PLATFORMS"
+
+  # Fetch V8 source once; all platform builds share this cache.
+  fetch-v8:
+    name: Fetch V8 source
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Cache V8 source (shared across platforms)
+        uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ needs.setup.outputs.v8_version }}
+          restore-keys: |
+            v8-src-
+
+      - name: Install fetch dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 curl
+
+      - name: Fetch V8 source
+        run: make v8-fetch V8_VERSION="${{ needs.setup.outputs.v8_version }}" NUM_JOBS=4
+
+  # Build V8 for each platform. Linux builds run on x64 and cross-compile
+  # (arm64 via Chromium clang + Debian sysroot); macOS builds run natively.
+  build:
+    name: Build V8 (${{ matrix.platform }})
+    needs: [setup, fetch-v8]
+    runs-on: >-
+      ${{ matrix.platform == 'darwin-x64' && 'macos-13'
+       || matrix.platform == 'darwin-arm64' && 'macos-14'
+       || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Extract OS and Arch
+        id: platform
+        run: |
+          PLATFORM="${{ matrix.platform }}"
+          OS="${PLATFORM%-*}"
+          ARCH="${PLATFORM#*-}"
+          echo "os=$OS" >> $GITHUB_OUTPUT
+          echo "arch=$ARCH" >> $GITHUB_OUTPUT
+          echo "Building for OS=$OS ARCH=$ARCH"
+
+      - name: Restore shared V8 source
+        uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ needs.setup.outputs.v8_version }}
+          restore-keys: |
+            v8-src-
+
+      - name: Cache V8 build output (${{ matrix.platform }})
+        uses: actions/cache@v4
+        with:
+          path: v8-build/v8/out.gn/${{ matrix.platform }}
+          key: v8-out-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}
+          restore-keys: |
+            v8-out-${{ matrix.platform }}-
+
+      - name: Install V8 build toolchain (Linux)
+        if: steps.platform.outputs.os == 'linux'
+        run: bash scripts/ci-install-linux-toolchain.sh
+
+      - name: Install dependencies (macOS)
+        if: steps.platform.outputs.os == 'darwin'
+        run: |
+          # Xcode command line tools should already be available
+          xcode-select --print-path
+
+      - name: Build V8
+        run: |
+          make v8-${{ matrix.platform }} V8_VERSION="${{ needs.setup.outputs.v8_version }}"
+        timeout-minutes: 150
+        env:
+          NUM_JOBS: 4
+
+      - name: Upload V8 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: v8-${{ matrix.platform }}
+          path: deps/v8/${{ matrix.platform }}/
+          retention-days: 1
+
+  # Commit all built artifacts
+  commit:
+    name: Commit V8 Artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      - name: Copy artifacts to deps/v8
+        run: |
+          # Copy each platform's artifacts
+          for dir in artifacts/v8-*/; do
+            platform=$(basename "$dir" | sed 's/^v8-//')
+            echo "Copying $platform artifacts..."
+            mkdir -p "deps/v8/$platform"
+            cp -r "$dir"/* "deps/v8/$platform/"
+          done
+          
+          # List what we have
+          echo "V8 builds in deps/v8/:"
+          ls -la deps/v8/
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add all V8 artifacts
+          git add deps/v8/
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            # Get list of platforms that were built
+            PLATFORMS=$(ls artifacts/ | sed 's/v8-//g' | tr '\n' ', ' | sed 's/,$//')
+            git commit -m "Update V8 artifacts for: $PLATFORMS"
+            git push
+            echo "V8 artifacts committed and pushed"
+          fi

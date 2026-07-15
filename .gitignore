@@ -1,9 +1,6 @@
 # V8 build cache (large, not committed)
 v8-build/
 
-# deps/v8/current symlink (platform-specific, regenerated)
-deps/v8/current
-
 # Build artifacts
 build/
 coverage.out

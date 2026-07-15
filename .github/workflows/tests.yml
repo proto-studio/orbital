@@ -1,0 +1,47 @@
+name: Tests
+
+# Without this, GitHub titles each push run after the commit message, which is
+# misleading (e.g. a "V8 update" commit makes the Tests run look like a build).
+run-name: Tests · ${{ github.ref_name }}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Verify V8 libraries exist
+        run: |
+          # The monolith ships split into <100MB parts (see scripts/split-archive.py),
+          # alongside the pre-compiled glue and libc++. Use the glue as the sentinel.
+          if [ ! -f "deps/v8/linux-x64/lib/libv8go_glue.a" ] || \
+             [ ! -f "deps/v8/linux-x64/lib/libv8_monolith_0.a" ]; then
+            echo "Error: prebuilt V8 libraries not found for linux-x64."
+            echo "Run the 'Update V8' workflow or merge its PR so deps/v8 is refreshed."
+            exit 1
+          fi
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Run tests
+        run: make test
+
+      - name: Run coverage
+        run: make coverage

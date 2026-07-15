@@ -2,11 +2,27 @@
 package v8
 
 /*
-#cgo CXXFLAGS: -fno-rtti -fPIC -std=c++20 -DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH -DV8_ENABLE_SANDBOX -I${SRCDIR}/../../deps/v8/current/include
-#cgo LDFLAGS: -L${SRCDIR}/../../deps/v8/current/lib -lv8_monolith -lpthread
+// The C++ implementation (pkg/v8/csrc/v8go.cc) is NOT compiled by cgo. V8 is
+// built with Chromium's custom libc++ (the std::__Cr:: inline namespace), which
+// is ABI-incompatible with the system libstdc++ that cgo's g++ would use. It is
+// instead pre-compiled per platform into libv8go_glue.a (see scripts/build-glue.py)
+// with V8's own toolchain, so the std:: symbols match libv8_monolith.a. cgo here
+// only compiles the pure-C boundary (v8go.h) and links the prebuilt archives.
+//
+// Per-platform library paths are selected via GOOS/GOARCH build constraints.
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../deps/v8/linux-x64/lib
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../deps/v8/linux-arm64/lib
+#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../deps/v8/darwin-x64/lib
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../deps/v8/darwin-arm64/lib
 
-#cgo darwin LDFLAGS: -framework CoreFoundation
-#cgo linux LDFLAGS: -lm -ldl -lrt -latomic
+// Link the glue, V8 monolith, and Chromium libc++. To stay under GitHub's 100MB
+// per-file limit (Git LFS is unusable: go get does not smudge LFS pointers), the
+// ~126MB Linux monolith is split into libv8_monolith_0.a / _1.a. All archives are
+// wrapped in --start-group so ld resolves the cross-references between the split
+// parts, the monolith, and libc++/libc++abi regardless of order. macOS ships a
+// single monolith and ld64 rescans archives automatically, so no group is needed.
+#cgo linux LDFLAGS: -Wl,--start-group -lv8go_glue -lv8_monolith_0 -lv8_monolith_1 -lv8_libcxx -Wl,--end-group -lm -ldl -lrt -latomic -lpthread
+#cgo darwin LDFLAGS: -lv8go_glue -lv8_monolith -lv8_libcxx -framework CoreFoundation -lpthread
 
 #include <stdlib.h>
 #include "v8go.h"
