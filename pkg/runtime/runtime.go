@@ -7,29 +7,23 @@ import (
 	"sync"
 	"time"
 
-	"proto.zip/studio/orbital/pkg/dns"
-	"proto.zip/studio/orbital/pkg/environment"
-	"proto.zip/studio/orbital/pkg/filesystem"
-	"proto.zip/studio/orbital/pkg/network"
-	"proto.zip/studio/orbital/pkg/process"
-	"proto.zip/studio/orbital/pkg/system"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
-	isolate           *v8go.Isolate
-	context           *v8go.Context
+	isolate           *v8.Isolate
+	context           *v8.Context
 	eventLoop         *EventLoop
 	modules           map[string]Module
-	nativeModules     map[string]*v8go.Value // User-registered native modules
-	filesystem        filesystem.Filesystem
-	systemInfo        system.SystemInfo
-	httpClient        network.HTTPClient
-	environment       environment.Environment
-	dnsResolver       dns.Resolver
-	socketFactory     network.SocketFactory
-	processSpawner    process.ProcessSpawner
+	nativeModules     map[string]*v8.Value // User-registered native modules
+	filesystem        Filesystem
+	systemInfo        SystemInfo
+	httpClient        HTTPClient
+	environment       Environment
+	dnsResolver       Resolver
+	socketFactory     SocketFactory
+	processSpawner    ProcessSpawner
 	documentRoot      string
 	resourceTracker   *ResourceTracker
 	execController    *ExecutionController
@@ -53,25 +47,25 @@ type Config struct {
 	EnableTimers bool
 	// Filesystem is the filesystem implementation to use.
 	// If nil, a local filesystem with no restrictions is used.
-	Filesystem filesystem.Filesystem
+	Filesystem Filesystem
 	// SystemInfo is the system information provider.
 	// If nil, real system information is used.
-	SystemInfo system.SystemInfo
+	SystemInfo SystemInfo
 	// HTTPClient is the HTTP client for outbound requests.
 	// If nil, a real HTTP client with no restrictions is used.
-	HTTPClient network.HTTPClient
+	HTTPClient HTTPClient
 	// Environment is the environment variable provider.
 	// If nil, real system environment variables are used.
-	Environment environment.Environment
+	Environment Environment
 	// DNSResolver is the DNS resolver for network lookups.
 	// If nil, the system's DNS resolver is used.
-	DNSResolver dns.Resolver
+	DNSResolver Resolver
 	// SocketFactory creates TCP/UDP sockets.
 	// If nil, real sockets with no restrictions are used.
-	SocketFactory network.SocketFactory
+	SocketFactory SocketFactory
 	// ProcessSpawner spawns child processes.
 	// If nil, real process spawning with no restrictions is used.
-	ProcessSpawner process.ProcessSpawner
+	ProcessSpawner ProcessSpawner
 	// DocumentRoot is the root directory for sandboxing.
 	// When set, paths like process.cwd() are relative to this root.
 	DocumentRoot string
@@ -100,7 +94,7 @@ func New(cfg *Config) (*Runtime, error) {
 		cfg = DefaultConfig()
 	}
 
-	iso, err := v8go.NewIsolate()
+	iso, err := v8.NewIsolate()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
@@ -114,43 +108,43 @@ func New(cfg *Config) (*Runtime, error) {
 	// Set up filesystem
 	fs := cfg.Filesystem
 	if fs == nil {
-		fs = filesystem.NewLocalFilesystem("")
+		fs = NewLocalFilesystem("")
 	}
 
 	// Set up system info
 	sysInfo := cfg.SystemInfo
 	if sysInfo == nil {
-		sysInfo = system.NewRealSystemInfo()
+		sysInfo = NewRealSystemInfo()
 	}
 
 	// Set up HTTP client
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = network.NewRealHTTPClient()
+		httpClient = NewRealHTTPClient()
 	}
 
 	// Set up environment
 	env := cfg.Environment
 	if env == nil {
-		env = environment.NewRealEnvironment()
+		env = NewRealEnvironment()
 	}
 
 	// Set up DNS resolver
 	dnsResolver := cfg.DNSResolver
 	if dnsResolver == nil {
-		dnsResolver = dns.NewRealResolver()
+		dnsResolver = NewRealResolver()
 	}
 
 	// Set up socket factory
 	socketFactory := cfg.SocketFactory
 	if socketFactory == nil {
-		socketFactory = network.NewRealSocketFactory()
+		socketFactory = NewRealSocketFactory()
 	}
 
 	// Set up process spawner
 	processSpawner := cfg.ProcessSpawner
 	if processSpawner == nil {
-		processSpawner = process.NewRealProcessSpawner()
+		processSpawner = NewRealProcessSpawner()
 	}
 
 	// Create resource tracker
@@ -167,7 +161,7 @@ func New(cfg *Config) (*Runtime, error) {
 		context:         ctx,
 		eventLoop:       eventLoop,
 		modules:         make(map[string]Module),
-		nativeModules:   make(map[string]*v8go.Value),
+		nativeModules:   make(map[string]*v8.Value),
 		filesystem:      fs,
 		systemInfo:      sysInfo,
 		httpClient:      httpClient,
@@ -191,32 +185,32 @@ func New(cfg *Config) (*Runtime, error) {
 }
 
 // Filesystem returns the filesystem implementation for this runtime.
-func (rt *Runtime) Filesystem() filesystem.Filesystem {
+func (rt *Runtime) Filesystem() Filesystem {
 	return rt.filesystem
 }
 
 // SystemInfo returns the system information provider for this runtime.
-func (rt *Runtime) SystemInfo() system.SystemInfo {
+func (rt *Runtime) SystemInfo() SystemInfo {
 	return rt.systemInfo
 }
 
 // HTTPClient returns the HTTP client for this runtime.
-func (rt *Runtime) HTTPClient() network.HTTPClient {
+func (rt *Runtime) HTTPClient() HTTPClient {
 	return rt.httpClient
 }
 
 // DNSResolver returns the DNS resolver for this runtime.
-func (rt *Runtime) DNSResolver() dns.Resolver {
+func (rt *Runtime) DNSResolver() Resolver {
 	return rt.dnsResolver
 }
 
 // SocketFactory returns the socket factory for this runtime.
-func (rt *Runtime) SocketFactory() network.SocketFactory {
+func (rt *Runtime) SocketFactory() SocketFactory {
 	return rt.socketFactory
 }
 
 // ProcessSpawner returns the process spawner for this runtime.
-func (rt *Runtime) ProcessSpawner() process.ProcessSpawner {
+func (rt *Runtime) ProcessSpawner() ProcessSpawner {
 	return rt.processSpawner
 }
 
@@ -226,17 +220,17 @@ func (rt *Runtime) DocumentRoot() string {
 }
 
 // Environment returns the environment variable provider for this runtime.
-func (rt *Runtime) Environment() environment.Environment {
+func (rt *Runtime) Environment() Environment {
 	return rt.environment
 }
 
 // Isolate returns the underlying V8 isolate.
-func (rt *Runtime) Isolate() *v8go.Isolate {
+func (rt *Runtime) Isolate() *v8.Isolate {
 	return rt.isolate
 }
 
 // Context returns the underlying V8 context.
-func (rt *Runtime) Context() *v8go.Context {
+func (rt *Runtime) Context() *v8.Context {
 	return rt.context
 }
 
@@ -266,7 +260,7 @@ func (rt *Runtime) RegisterModule(mod Module) error {
 // RegisterNativeModule registers a user-defined native module that can be
 // required from JavaScript using require('moduleName') or imported via ESM.
 // The value should be an object containing the module's exports.
-func (rt *Runtime) RegisterNativeModule(name string, value *v8go.Value) error {
+func (rt *Runtime) RegisterNativeModule(name string, value *v8.Value) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -286,7 +280,7 @@ func (rt *Runtime) RegisterNativeModule(name string, value *v8go.Value) error {
 }
 
 // GetNativeModule retrieves a registered native module by name.
-func (rt *Runtime) GetNativeModule(name string) (*v8go.Value, bool) {
+func (rt *Runtime) GetNativeModule(name string) (*v8.Value, bool) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -307,7 +301,7 @@ func (rt *Runtime) NativeModuleNames() []string {
 }
 
 // SetGlobal sets a global variable in the runtime context.
-func (rt *Runtime) SetGlobal(name string, value *v8go.Value) error {
+func (rt *Runtime) SetGlobal(name string, value *v8.Value) error {
 	global, err := rt.context.Global()
 	if err != nil {
 		return err
@@ -316,7 +310,7 @@ func (rt *Runtime) SetGlobal(name string, value *v8go.Value) error {
 }
 
 // GetGlobal gets a global variable from the runtime context.
-func (rt *Runtime) GetGlobal(name string) (*v8go.Value, error) {
+func (rt *Runtime) GetGlobal(name string) (*v8.Value, error) {
 	global, err := rt.context.Global()
 	if err != nil {
 		return nil, err
@@ -325,12 +319,12 @@ func (rt *Runtime) GetGlobal(name string) (*v8go.Value, error) {
 }
 
 // RunScript executes JavaScript code.
-func (rt *Runtime) RunScript(source, origin string) (*v8go.Value, error) {
+func (rt *Runtime) RunScript(source, origin string) (*v8.Value, error) {
 	return rt.context.RunScript(source, origin)
 }
 
 // Run executes JavaScript code and runs the event loop until completion.
-func (rt *Runtime) Run(source, origin string) (*v8go.Value, error) {
+func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
 	result, err := rt.RunScript(source, origin)
 	if err != nil {
 		return nil, err

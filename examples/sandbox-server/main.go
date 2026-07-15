@@ -45,14 +45,7 @@ import (
 	"proto.zip/studio/orbital/internal/nodejs/timers"
 	"proto.zip/studio/orbital/internal/nodejs/url"
 	"proto.zip/studio/orbital/internal/nodejs/util"
-	pkgconsole "proto.zip/studio/orbital/pkg/console"
-	pkgdns "proto.zip/studio/orbital/pkg/dns"
-	"proto.zip/studio/orbital/pkg/environment"
-	"proto.zip/studio/orbital/pkg/filesystem"
-	"proto.zip/studio/orbital/pkg/network"
-	pkgprocess "proto.zip/studio/orbital/pkg/process"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/system"
 )
 
 var requestCounter uint64
@@ -241,19 +234,19 @@ func executeInSandbox(code string, sandboxDir string, requestID uint64, timeout 
 	cfg := runtime.DefaultConfig()
 	
 	// Filesystem sandboxed to the unique directory
-	cfg.Filesystem = filesystem.NewLocalFilesystem(sandboxDir)
+	cfg.Filesystem = runtime.NewLocalFilesystem(sandboxDir)
 	cfg.DocumentRoot = sandboxDir
 	
 	// Set execution timeout
 	cfg.Timeout = timeout
 	
 	// Full sandbox mode
-	cfg.SystemInfo = system.NewSandboxedSystemInfo(nil)
-	cfg.HTTPClient = network.NewNoOpHTTPClient()
-	cfg.Environment = environment.NewSandboxedEnvironmentWithDefaults()
-	cfg.DNSResolver = pkgdns.NewSandboxedResolver()
-	cfg.SocketFactory = network.NewNoOpSocketFactory()
-	cfg.ProcessSpawner = pkgprocess.NewNoOpProcessSpawner()
+	cfg.SystemInfo = runtime.NewSandboxedSystemInfo(nil)
+	cfg.HTTPClient = runtime.NewNoOpHTTPClient()
+	cfg.Environment = runtime.NewSandboxedEnvironmentWithDefaults()
+	cfg.DNSResolver = runtime.NewSandboxedResolver()
+	cfg.SocketFactory = runtime.NewNoOpSocketFactory()
+	cfg.ProcessSpawner = runtime.NewNoOpProcessSpawner()
 
 	// Create runtime
 	rt, err := runtime.New(cfg)
@@ -286,7 +279,7 @@ func executeInSandbox(code string, sandboxDir string, requestID uint64, timeout 
 	// Register modules with custom console that writes to our buffer
 	modules := []runtime.Module{
 		abort.New(),
-		console.NewWithWriter(pkgconsole.NewStandardWriter(&outputBuf, &outputBuf)),
+		console.NewWithWriter(runtime.NewStandardWriter(&outputBuf, &outputBuf)),
 		timers.New(),
 		events.New(),
 		process.New(),

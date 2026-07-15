@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed dns.js
@@ -175,8 +175,8 @@ func (d *DNS) createContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
-// lookupFunc implements dns.lookup
-func (d *DNS) lookupFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// lookupFunc implements runtime.lookup
+func (d *DNS) lookupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -199,8 +199,8 @@ func (d *DNS) lookupFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-// resolveFunc implements dns.resolve
-func (d *DNS) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolveFunc implements runtime.resolve
+func (d *DNS) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -218,7 +218,7 @@ func (d *DNS) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	lookupCtx, cancel := d.createContext()
 	defer cancel()
 
-	var result *v8go.Value
+	var result *v8.Value
 
 	switch rrtype {
 	case "A":
@@ -298,8 +298,8 @@ func (d *DNS) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return result
 }
 
-// resolve4Func implements dns.resolve4
-func (d *DNS) resolve4Func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolve4Func implements runtime.resolve4
+func (d *DNS) resolve4Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -325,8 +325,8 @@ func (d *DNS) resolve4Func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// resolve6Func implements dns.resolve6
-func (d *DNS) resolve6Func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolve6Func implements runtime.resolve6
+func (d *DNS) resolve6Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -352,8 +352,8 @@ func (d *DNS) resolve6Func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// resolveMxFunc implements dns.resolveMx
-func (d *DNS) resolveMxFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolveMxFunc implements runtime.resolveMx
+func (d *DNS) resolveMxFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -382,8 +382,8 @@ func (d *DNS) resolveMxFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// resolveTxtFunc implements dns.resolveTxt
-func (d *DNS) resolveTxtFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolveTxtFunc implements runtime.resolveTxt
+func (d *DNS) resolveTxtFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -411,8 +411,8 @@ func (d *DNS) resolveTxtFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// resolveNsFunc implements dns.resolveNs
-func (d *DNS) resolveNsFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolveNsFunc implements runtime.resolveNs
+func (d *DNS) resolveNsFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -438,8 +438,8 @@ func (d *DNS) resolveNsFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// resolveCnameFunc implements dns.resolveCname
-func (d *DNS) resolveCnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// resolveCnameFunc implements runtime.resolveCname
+func (d *DNS) resolveCnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -463,8 +463,8 @@ func (d *DNS) resolveCnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-// reverseFunc implements dns.reverse
-func (d *DNS) reverseFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// reverseFunc implements runtime.reverse
+func (d *DNS) reverseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil

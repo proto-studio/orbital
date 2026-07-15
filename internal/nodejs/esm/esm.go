@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // ESM provides ES Module functionality.
@@ -17,7 +17,7 @@ type ESM struct {
 	rt *runtime.Runtime
 }
 
-// New creates a new ESM module system.
+// New creates a new ESM module runtime.
 func New() *ESM {
 	return &ESM{}
 }
@@ -27,14 +27,14 @@ func (e *ESM) Name() string {
 	return "esm"
 }
 
-// Register sets up the ES Module system.
+// Register sets up the ES Module runtime.
 func (e *ESM) Register(rt *runtime.Runtime) error {
 	e.rt = rt
 	return nil
 }
 
 // RunModule compiles and runs an ES module from source.
-func (e *ESM) RunModule(source, filename string) (*v8go.Value, error) {
+func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if e.rt == nil {
 		return nil, errors.New("esm: runtime not initialized")
 	}
@@ -66,7 +66,7 @@ func (e *ESM) RunModule(source, filename string) (*v8go.Value, error) {
 }
 
 // RunModuleFile loads and runs an ES module from a file.
-func (e *ESM) RunModuleFile(filename string) (*v8go.Value, error) {
+func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 	fs := e.rt.Filesystem()
 
 	// Normalize to absolute path
@@ -85,7 +85,7 @@ func (e *ESM) RunModuleFile(filename string) (*v8go.Value, error) {
 }
 
 // GetModuleNamespace returns the namespace object of a module after evaluation.
-func (e *ESM) GetModuleNamespace(source, filename string) (*v8go.Value, error) {
+func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 	ctx := e.rt.Context()
 
 	mod, err := ctx.CompileModule(source, filename)

@@ -11,9 +11,9 @@ import (
 	"encoding/hex"
 	"hash"
 
-	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
 	"github.com/google/uuid"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // Crypto provides cryptographic functionality.
@@ -44,7 +44,7 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"randomBytes":     c.randomBytesFunc,
 		"randomUUID":      c.randomUUIDFunc,
 		"randomInt":       c.randomIntFunc,
@@ -205,7 +205,7 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (c *Crypto) randomBytesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) randomBytesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -244,14 +244,14 @@ func (c *Crypto) randomBytesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return bufVal
 }
 
-func (c *Crypto) randomUUIDFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) randomUUIDFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	id := uuid.New().String()
 	val, _ := ctx.NewString(id)
 	return val
 }
 
-func (c *Crypto) randomIntFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) randomIntFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -274,31 +274,31 @@ func (c *Crypto) randomIntFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	rangeSize := max - min
 	var randomBytes [8]byte
 	rand.Read(randomBytes[:])
-	
+
 	// Convert to uint64 and scale to range
 	var n uint64
 	for i := 0; i < 8; i++ {
 		n = (n << 8) | uint64(randomBytes[i])
 	}
-	
+
 	result := min + int64(n%uint64(rangeSize))
 	return ctx.NewNumber(float64(result))
 }
 
-func (c *Crypto) createHashFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) createHashFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// This is replaced by JS wrapper, but kept for reference
 	return nil
 }
 
-func (c *Crypto) createHmacFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) createHmacFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// This is replaced by JS wrapper, but kept for reference
 	return nil
 }
 
-func (c *Crypto) getHashesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) getHashesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	hashes := []string{"md5", "sha1", "sha256", "sha384", "sha512"}
-	
+
 	arr, _ := ctx.NewArray(len(hashes))
 	for i, h := range hashes {
 		val, _ := ctx.NewString(h)
@@ -307,7 +307,7 @@ func (c *Crypto) getHashesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-func (c *Crypto) hashDigestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -336,12 +336,12 @@ func (c *Crypto) hashDigestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	h.Write([]byte(data))
 	result := hex.EncodeToString(h.Sum(nil))
-	
+
 	val, _ := ctx.NewString(result)
 	return val
 }
 
-func (c *Crypto) hmacDigestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) hmacDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -372,12 +372,12 @@ func (c *Crypto) hmacDigestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	mac := hmac.New(h, []byte(key))
 	mac.Write([]byte(data))
 	result := hex.EncodeToString(mac.Sum(nil))
-	
+
 	val, _ := ctx.NewString(result)
 	return val
 }
 
-func (c *Crypto) timingSafeEqualFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *Crypto) timingSafeEqualFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 

@@ -6,9 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"proto.zip/studio/orbital/pkg/filesystem"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed module.js
@@ -17,13 +16,13 @@ var moduleJS string
 // Module provides CommonJS module functionality.
 type Module struct {
 	rt    *runtime.Runtime
-	cache map[string]*v8go.Value // Module cache
+	cache map[string]*v8.Value // Module cache
 }
 
-// New creates a new Module system.
+// New creates a new Module runtime.
 func New() *Module {
 	return &Module{
-		cache: make(map[string]*v8go.Value),
+		cache: make(map[string]*v8.Value),
 	}
 }
 
@@ -32,7 +31,7 @@ func (m *Module) Name() string {
 	return "module"
 }
 
-// Register sets up the CommonJS module system.
+// Register sets up the CommonJS module runtime.
 func (m *Module) Register(rt *runtime.Runtime) error {
 	m.rt = rt
 	iso := rt.Isolate()
@@ -69,8 +68,8 @@ func (m *Module) Register(rt *runtime.Runtime) error {
 	return err
 }
 
-// requireFileFunc reads a module file from the filesystem.
-func (m *Module) requireFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// requireFileFunc reads a module file from the runtime.
+func (m *Module) requireFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -92,7 +91,7 @@ func (m *Module) requireFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // resolveFunc resolves a module path.
-func (m *Module) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (m *Module) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -126,7 +125,7 @@ func fileExistsAndIsFile(path string, fs fsInterface) bool {
 type fsInterface interface {
 	Exists(string) bool
 	ReadFile(string) ([]byte, error)
-	Stat(string) (*filesystem.FileInfo, error)
+	Stat(string) (*runtime.FileInfo, error)
 }
 
 // resolveModulePath resolves a module request to a file path.

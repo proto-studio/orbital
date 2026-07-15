@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"proto.zip/studio/orbital/pkg/network"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // HTTP provides HTTP functionality.
@@ -42,7 +41,7 @@ func (h *HTTP) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"request": h.requestFunc,
 		"get":     h.getFunc,
 	}
@@ -414,14 +413,14 @@ func (h *HTTP) Register(rt *runtime.Runtime) error {
 			requestListener = options;
 			options = {};
 		}
-		console.warn('http.createServer is not fully implemented in sandbox mode');
+		runtime.warn('http.createServer is not fully implemented in sandbox mode');
 		return {
 			listen: function(port, host, callback) {
 				if (typeof host === 'function') {
 					callback = host;
 					host = 'localhost';
 				}
-				console.warn('Server.listen called but servers are not supported');
+				runtime.warn('Server.listen called but servers are not supported');
 				if (callback) setImmediate(callback);
 				return this;
 			},
@@ -457,18 +456,18 @@ func (h *HTTP) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (h *HTTP) requestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP) requestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// This is overridden by JS wrapper
 	return nil
 }
 
-func (h *HTTP) getFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP) getFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// This is overridden by JS wrapper
 	return nil
 }
 
 // doRequestFunc performs the actual HTTP request using the runtime's HTTPClient.
-func (h *HTTP) doRequestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -483,11 +482,11 @@ func (h *HTTP) doRequestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 	// Parse options
 	var opts struct {
-		Method  string              `json:"method"`
-		URL     string              `json:"url"`
-		Headers map[string]string   `json:"headers"`
-		Body    string              `json:"body"`
-		Timeout int                 `json:"timeout"`
+		Method  string            `json:"method"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
+		Body    string            `json:"body"`
+		Timeout int               `json:"timeout"`
 	}
 
 	if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
@@ -504,7 +503,7 @@ func (h *HTTP) doRequestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		headers[k] = []string{v}
 	}
 
-	req := &network.Request{
+	req := &runtime.Request{
 		Method:  opts.Method,
 		URL:     opts.URL,
 		Headers: headers,
@@ -558,7 +557,7 @@ func (h *HTTP) doRequestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (h *HTTP) createMethodsArray(ctx *v8go.Context) *v8go.Value {
+func (h *HTTP) createMethodsArray(ctx *v8.Context) *v8.Value {
 	methods := []string{
 		"ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE", "GET", "HEAD",
 		"LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL",
@@ -575,7 +574,7 @@ func (h *HTTP) createMethodsArray(ctx *v8go.Context) *v8go.Value {
 	return arr
 }
 
-func (h *HTTP) createStatusCodesObject(ctx *v8go.Context) *v8go.Value {
+func (h *HTTP) createStatusCodesObject(ctx *v8.Context) *v8.Value {
 	codes := map[int]string{
 		100: "Continue",
 		101: "Switching Protocols",

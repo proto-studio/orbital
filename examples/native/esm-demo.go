@@ -20,7 +20,7 @@ import (
 	"proto.zip/studio/orbital/internal/nodejs/process"
 	"proto.zip/studio/orbital/internal/nodejs/timers"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 func main() {
@@ -65,25 +65,25 @@ func main() {
 	// Run ES module code that imports the native module
 	script := `
 		// This is ES Module code
-		console.log('=== Native Go Modules with ESM ===\\n');
+		runtime.log('=== Native Go Modules with ESM ===\\n');
 
 		// Import native Go module
 		import database from 'database';
 
-		console.log('Connecting to database...');
+		runtime.log('Connecting to database...');
 		const result = database.connect('localhost:5432');
-		console.log('Connection result:', result);
+		runtime.log('Connection result:', result);
 
-		console.log('');
-		console.log('Querying users table...');
+		runtime.log('');
+		runtime.log('Querying users table...');
 		const users = database.query('SELECT * FROM users');
-		console.log('Users:', JSON.stringify(users, null, 2));
+		runtime.log('Users:', JSON.stringify(users, null, 2));
 
-		console.log('');
-		console.log('Database version:', database.version);
-		console.log('Supported drivers:', database.drivers);
+		runtime.log('');
+		runtime.log('Database version:', database.version);
+		runtime.log('Supported drivers:', database.drivers);
 
-		console.log('\\n=== ESM Native Module Demo Complete ===');
+		runtime.log('\\n=== ESM Native Module Demo Complete ===');
 	`
 
 	_, err = esmLoader.RunModule(script, "esm-demo.mjs")
@@ -104,7 +104,7 @@ func registerDatabaseModule(rt *runtime.Runtime) error {
 	}
 
 	// Add connect function
-	connectFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	connectFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		connectionString := "localhost"
 		if len(info.Args()) > 0 {
@@ -124,7 +124,7 @@ func registerDatabaseModule(rt *runtime.Runtime) error {
 	moduleObj.Set("connect", connectVal)
 
 	// Add query function
-	queryFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	queryFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 
 		// Return simulated query results

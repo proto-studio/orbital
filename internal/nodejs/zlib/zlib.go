@@ -11,7 +11,7 @@ import (
 	"io"
 
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed zlib.js
@@ -136,7 +136,7 @@ func (z *Zlib) Register(rt *runtime.Runtime) error {
 }
 
 // Helper to get bytes from value (string or base64)
-func getBytes(val *v8go.Value) []byte {
+func getBytes(val *v8.Value) []byte {
 	str := val.String()
 	// Try base64 decode first
 	if decoded, err := base64.StdEncoding.DecodeString(str); err == nil {
@@ -146,14 +146,14 @@ func getBytes(val *v8go.Value) []byte {
 }
 
 // Helper to return bytes as base64 string
-func returnBytes(ctx *v8go.Context, data []byte) *v8go.Value {
+func returnBytes(ctx *v8.Context, data []byte) *v8.Value {
 	encoded := base64.StdEncoding.EncodeToString(data)
 	val, _ := ctx.NewString(encoded)
 	return val
 }
 
 // gzipSyncFunc compresses data using gzip
-func (z *Zlib) gzipSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) gzipSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -174,7 +174,7 @@ func (z *Zlib) gzipSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // gunzipSyncFunc decompresses gzip data
-func (z *Zlib) gunzipSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) gunzipSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -197,7 +197,7 @@ func (z *Zlib) gunzipSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // deflateSyncFunc compresses data using deflate (zlib format)
-func (z *Zlib) deflateSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) deflateSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -218,7 +218,7 @@ func (z *Zlib) deflateSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // inflateSyncFunc decompresses deflate data (zlib format)
-func (z *Zlib) inflateSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) inflateSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -241,7 +241,7 @@ func (z *Zlib) inflateSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // deflateRawSyncFunc compresses data using raw deflate (no header)
-func (z *Zlib) deflateRawSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) deflateRawSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -265,7 +265,7 @@ func (z *Zlib) deflateRawSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // inflateRawSyncFunc decompresses raw deflate data (no header)
-func (z *Zlib) inflateRawSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (z *Zlib) inflateRawSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil

@@ -8,9 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"proto.zip/studio/orbital/pkg/network"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed tls.js
@@ -19,7 +18,7 @@ var tlsJS string
 // TLS provides TLS/SSL functionality.
 type TLS struct {
 	rt       *runtime.Runtime
-	sockets  map[int64]network.TCPSocket
+	sockets  map[int64]runtime.TCPSocket
 	socketID int64
 	mu       sync.Mutex
 }
@@ -27,7 +26,7 @@ type TLS struct {
 // New creates a new TLS module.
 func New() *TLS {
 	return &TLS{
-		sockets: make(map[int64]network.TCPSocket),
+		sockets: make(map[int64]runtime.TCPSocket),
 	}
 }
 
@@ -49,7 +48,7 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"createTLSSocket":    t.createTLSSocketFunc,
 		"connect":            t.connectFunc,
 		"write":              t.writeFunc,
@@ -86,7 +85,7 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (t *TLS) createTLSSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) createTLSSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -114,7 +113,7 @@ func (t *TLS) createTLSSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.NewNumber(float64(id))
 }
 
-func (t *TLS) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 5 {
 		return nil
@@ -153,7 +152,7 @@ func (t *TLS) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (t *TLS) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -190,7 +189,7 @@ func (t *TLS) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (t *TLS) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -235,7 +234,7 @@ func (t *TLS) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (t *TLS) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -257,14 +256,14 @@ func (t *TLS) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (t *TLS) getPeerCertificateFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) getPeerCertificateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	// Return empty object - would need actual cert parsing
 	obj, _ := ctx.NewObject()
 	return obj
 }
 
-func (t *TLS) getCipherFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) getCipherFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	obj, _ := ctx.NewObject()
 	nameStr, _ := ctx.NewString("TLS_AES_256_GCM_SHA384")
@@ -275,19 +274,19 @@ func (t *TLS) getCipherFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (t *TLS) getProtocolFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *TLS) getProtocolFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	val, _ := ctx.NewString("TLSv1.3")
 	return val
 }
 
-func (t *TLS) callCallback(callback *v8go.Value, errMsg string, result *v8go.Value) {
+func (t *TLS) callCallback(callback *v8.Value, errMsg string, result *v8.Value) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := t.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {

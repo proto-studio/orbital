@@ -3,7 +3,6 @@ package process
 import (
 	"testing"
 
-	"proto.zip/studio/orbital/pkg/environment"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
@@ -22,7 +21,7 @@ func setupRuntime(t *testing.T) *runtime.Runtime {
 	return rt
 }
 
-func setupRuntimeWithEnv(t *testing.T, env environment.Environment) *runtime.Runtime {
+func setupRuntimeWithEnv(t *testing.T, env runtime.Environment) *runtime.Runtime {
 	cfg := &runtime.Config{
 		Environment: env,
 	}
@@ -146,7 +145,7 @@ func TestProcess_Env(t *testing.T) {
 }
 
 func TestProcess_Env_Sandboxed(t *testing.T) {
-	env := environment.NewSandboxedEnvironment(map[string]string{
+	env := runtime.NewSandboxedEnvironment(map[string]string{
 		"TEST_VAR": "test_value",
 	})
 

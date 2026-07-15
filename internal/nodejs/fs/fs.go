@@ -5,9 +5,8 @@ import (
 	_ "embed"
 	"io/fs"
 
-	"proto.zip/studio/orbital/pkg/filesystem"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed promises.js
@@ -29,7 +28,7 @@ func (f *FS) Name() string {
 }
 
 // fs returns the filesystem from the runtime.
-func (f *FS) fs() filesystem.Filesystem {
+func (f *FS) fs() runtime.Filesystem {
 	return f.rt.Filesystem()
 }
 
@@ -232,7 +231,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 }
 
 // readFileSyncFunc implements fs.readFileSync
-func (f *FS) readFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -269,7 +268,7 @@ func (f *FS) readFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // writeFileSyncFunc implements fs.writeFileSync
-func (f *FS) writeFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -286,7 +285,7 @@ func (f *FS) writeFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // existsSyncFunc implements fs.existsSync
-func (f *FS) existsSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) existsSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -300,7 +299,7 @@ func (f *FS) existsSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // mkdirSyncFunc implements fs.mkdirSync
-func (f *FS) mkdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -330,7 +329,7 @@ func (f *FS) mkdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // rmdirSyncFunc implements fs.rmdirSync
-func (f *FS) rmdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -360,7 +359,7 @@ func (f *FS) rmdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // unlinkSyncFunc implements fs.unlinkSync
-func (f *FS) unlinkSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) unlinkSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -374,7 +373,7 @@ func (f *FS) unlinkSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // readdirSyncFunc implements fs.readdirSync
-func (f *FS) readdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -396,7 +395,7 @@ func (f *FS) readdirSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // statSyncFunc implements fs.statSync
-func (f *FS) statSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -412,7 +411,7 @@ func (f *FS) statSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // createStatObject creates a stat object from FileInfo
-func (f *FS) createStatObject(ctx *v8go.Context, stat *filesystem.FileInfo) *v8go.Value {
+func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value {
 	obj, _ := ctx.NewObject()
 
 	// Basic properties
@@ -431,7 +430,7 @@ func (f *FS) createStatObject(ctx *v8go.Context, stat *filesystem.FileInfo) *v8g
 }
 
 // renameSyncFunc implements fs.renameSync
-func (f *FS) renameSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) renameSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -445,7 +444,7 @@ func (f *FS) renameSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // copyFileSyncFunc implements fs.copyFileSync
-func (f *FS) copyFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -459,7 +458,7 @@ func (f *FS) copyFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // appendFileSyncFunc implements fs.appendFileSync
-func (f *FS) appendFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) appendFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -473,14 +472,14 @@ func (f *FS) appendFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // readFileFunc implements fs.readFile (async)
-func (f *FS) readFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
 	}
 
 	path := args[0].String()
-	var callback *v8go.Value
+	var callback *v8.Value
 	encoding := ""
 
 	// Handle (path, callback) or (path, options, callback)
@@ -516,7 +515,7 @@ func (f *FS) readFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 				errVal, _ := ctx.NewString(err.Error())
 				callback.Call(nil, errVal, ctx.Null())
 			} else {
-				var dataVal *v8go.Value
+				var dataVal *v8.Value
 				if encoding == "utf8" || encoding == "utf-8" {
 					dataVal, _ = ctx.NewString(string(data))
 				} else {
@@ -531,7 +530,7 @@ func (f *FS) readFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // writeFileFunc implements fs.writeFile (async)
-func (f *FS) writeFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil

@@ -6,9 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"proto.zip/studio/orbital/pkg/network"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed dgram.js
@@ -17,7 +16,7 @@ var dgramJS string
 // Dgram provides UDP socket functionality.
 type Dgram struct {
 	rt       *runtime.Runtime
-	sockets  map[int64]network.UDPSocket
+	sockets  map[int64]runtime.UDPSocket
 	socketID int64
 	mu       sync.Mutex
 }
@@ -25,7 +24,7 @@ type Dgram struct {
 // New creates a new Dgram module.
 func New() *Dgram {
 	return &Dgram{
-		sockets: make(map[int64]network.UDPSocket),
+		sockets: make(map[int64]runtime.UDPSocket),
 	}
 }
 
@@ -47,7 +46,7 @@ func (d *Dgram) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"createSocket":          d.createSocketFunc,
 		"bind":                  d.bindFunc,
 		"send":                  d.sendFunc,
@@ -97,7 +96,7 @@ func (d *Dgram) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (d *Dgram) createSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) createSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -115,7 +114,7 @@ func (d *Dgram) createSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.NewNumber(float64(id))
 }
 
-func (d *Dgram) bindFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
 		return nil
@@ -153,7 +152,7 @@ func (d *Dgram) bindFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) sendFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 5 {
 		return nil
@@ -192,7 +191,7 @@ func (d *Dgram) sendFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) receiveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) receiveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -248,7 +247,7 @@ func (d *Dgram) receiveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -270,7 +269,7 @@ func (d *Dgram) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) addressFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) addressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -302,7 +301,7 @@ func (d *Dgram) addressFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (d *Dgram) setBroadcastFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) setBroadcastFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -322,7 +321,7 @@ func (d *Dgram) setBroadcastFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) setMulticastTTLFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) setMulticastTTLFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -342,7 +341,7 @@ func (d *Dgram) setMulticastTTLFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 	return nil
 }
 
-func (d *Dgram) addMembershipFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) addMembershipFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -363,7 +362,7 @@ func (d *Dgram) addMembershipFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) dropMembershipFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) dropMembershipFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -384,7 +383,7 @@ func (d *Dgram) dropMembershipFunc(info *v8go.FunctionCallbackInfo) *v8go.Value 
 	return nil
 }
 
-func (d *Dgram) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
 		return nil
@@ -401,7 +400,7 @@ func (d *Dgram) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) refFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) refFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -420,7 +419,7 @@ func (d *Dgram) refFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) unrefFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) unrefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -439,27 +438,27 @@ func (d *Dgram) unrefFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (d *Dgram) noopFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) noopFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-func (d *Dgram) noopNumberFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) noopNumberFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	return ctx.NewNumber(65536)
 }
 
-func (d *Dgram) noopNullFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (d *Dgram) noopNullFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	return ctx.Null()
 }
 
-func (d *Dgram) callCallback(callback *v8go.Value, errMsg string) {
+func (d *Dgram) callCallback(callback *v8.Value, errMsg string) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := d.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
@@ -469,13 +468,13 @@ func (d *Dgram) callCallback(callback *v8go.Value, errMsg string) {
 	callback.Call(ctx.Undefined(), errVal)
 }
 
-func (d *Dgram) callCallbackWithBytes(callback *v8go.Value, errMsg string, bytes int) {
+func (d *Dgram) callCallbackWithBytes(callback *v8.Value, errMsg string, bytes int) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := d.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
@@ -485,13 +484,13 @@ func (d *Dgram) callCallbackWithBytes(callback *v8go.Value, errMsg string, bytes
 	callback.Call(ctx.Undefined(), errVal, ctx.NewNumber(float64(bytes)))
 }
 
-func (d *Dgram) callReceiveCallback(callback *v8go.Value, errMsg string, msg *v8go.Value, rinfo *v8go.Value) {
+func (d *Dgram) callReceiveCallback(callback *v8.Value, errMsg string, msg *v8.Value, rinfo *v8.Value) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := d.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
