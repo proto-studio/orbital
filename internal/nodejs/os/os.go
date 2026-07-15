@@ -3,14 +3,13 @@ package os
 
 import (
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/system"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // OS provides operating system functionality.
 type OS struct {
 	rt   *runtime.Runtime
-	info system.SystemInfo
+	info runtime.SystemInfo
 }
 
 // New creates a new OS module.
@@ -38,7 +37,7 @@ func (o *OS) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register all functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"hostname":          o.hostnameFunc,
 		"platform":          o.platformFunc,
 		"arch":              o.archFunc,
@@ -142,42 +141,42 @@ func (o *OS) Register(rt *runtime.Runtime) error {
 	return rt.SetGlobal("__os_module", osObj)
 }
 
-func (o *OS) hostnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) hostnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Hostname())
 	return val
 }
 
-func (o *OS) platformFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) platformFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Platform())
 	return val
 }
 
-func (o *OS) archFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) archFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Arch())
 	return val
 }
 
-func (o *OS) releaseFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) releaseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Release())
 	return val
 }
 
-func (o *OS) typeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) typeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Type())
 	return val
 }
 
-func (o *OS) versionFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) versionFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Version())
 	return val
 }
 
-func (o *OS) machineFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) machineFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Machine())
 	return val
 }
 
-func (o *OS) cpusFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) cpusFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	cpus := o.info.CPUs()
 
@@ -202,25 +201,25 @@ func (o *OS) cpusFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-func (o *OS) totalmemFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) totalmemFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return info.Context().NewNumber(float64(o.info.TotalMem()))
 }
 
-func (o *OS) freememFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) freememFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return info.Context().NewNumber(float64(o.info.FreeMem()))
 }
 
-func (o *OS) homedirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) homedirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.HomeDir())
 	return val
 }
 
-func (o *OS) tmpdirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) tmpdirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.TmpDir())
 	return val
 }
 
-func (o *OS) userInfoFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) userInfoFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	userInfo, err := o.info.UserInfo()
 	if err != nil {
@@ -243,7 +242,7 @@ func (o *OS) userInfoFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (o *OS) networkInterfacesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) networkInterfacesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	ifaces := o.info.NetworkInterfaces()
 
@@ -273,11 +272,11 @@ func (o *OS) networkInterfacesFunc(info *v8go.FunctionCallbackInfo) *v8go.Value 
 	return obj
 }
 
-func (o *OS) uptimeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) uptimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return info.Context().NewNumber(o.info.Uptime())
 }
 
-func (o *OS) loadavgFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) loadavgFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	load := o.info.LoadAvg()
 	arr, _ := ctx.NewArray(3)
@@ -287,7 +286,7 @@ func (o *OS) loadavgFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-func (o *OS) endiannessFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (o *OS) endiannessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	val, _ := info.Context().NewString(o.info.Endianness())
 	return val
 }

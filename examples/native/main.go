@@ -21,7 +21,7 @@ import (
 	"proto.zip/studio/orbital/internal/nodejs/process"
 	"proto.zip/studio/orbital/internal/nodejs/timers"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 func main() {
@@ -67,27 +67,27 @@ func main() {
 
 	// Run JavaScript that uses our native modules
 	script := `
-		console.log('=== Native Go Module Demo ===\n');
+		runtime.log('=== Native Go Module Demo ===\n');
 
 		// Using the hello module
 		const hello = require('hello');
-		console.log('hello.greet("World"):', hello.greet('World'));
-		console.log('hello.version:', hello.version);
-		console.log('hello.config:', JSON.stringify(hello.config));
+		runtime.log('hello.greet("World"):', hello.greet('World'));
+		runtime.log('hello.version:', hello.version);
+		runtime.log('hello.config:', JSON.stringify(hello.config));
 
-		console.log('');
+		runtime.log('');
 
 		// Using the mathext module
 		const mathext = require('mathext');
-		console.log('mathext.factorial(5):', mathext.factorial(5));
-		console.log('mathext.fibonacci(10):', mathext.fibonacci(10));
-		console.log('mathext.isPrime(17):', mathext.isPrime(17));
-		console.log('mathext.isPrime(18):', mathext.isPrime(18));
-		console.log('mathext.gcd(48, 18):', mathext.gcd(48, 18));
-		console.log('mathext.PI:', mathext.PI);
-		console.log('mathext.E:', mathext.E);
+		runtime.log('mathext.factorial(5):', mathext.factorial(5));
+		runtime.log('mathext.fibonacci(10):', mathext.fibonacci(10));
+		runtime.log('mathext.isPrime(17):', mathext.isPrime(17));
+		runtime.log('mathext.isPrime(18):', mathext.isPrime(18));
+		runtime.log('mathext.gcd(48, 18):', mathext.gcd(48, 18));
+		runtime.log('mathext.PI:', mathext.PI);
+		runtime.log('mathext.E:', mathext.E);
 
-		console.log('\n=== Demo Complete ===');
+		runtime.log('\n=== Demo Complete ===');
 	`
 
 	_, err = rt.Run(script, "demo.js")
@@ -109,7 +109,7 @@ func registerHelloModule(rt *runtime.Runtime) error {
 	}
 
 	// Add a "greet" function
-	greetFn, err := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	greetFn, err := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		name := "stranger"
 		if len(info.Args()) > 0 {
@@ -164,7 +164,7 @@ func registerMathExtModule(rt *runtime.Runtime) error {
 	}
 
 	// Add factorial function
-	factorialFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	factorialFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		if len(info.Args()) == 0 {
 			return ctx.NewNumber(1)
@@ -177,7 +177,7 @@ func registerMathExtModule(rt *runtime.Runtime) error {
 	moduleObj.Set("factorial", factorialVal)
 
 	// Add fibonacci function
-	fibFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	fibFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		if len(info.Args()) == 0 {
 			return ctx.NewNumber(0)
@@ -190,7 +190,7 @@ func registerMathExtModule(rt *runtime.Runtime) error {
 	moduleObj.Set("fibonacci", fibVal)
 
 	// Add isPrime function
-	isPrimeFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	isPrimeFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		if len(info.Args()) == 0 {
 			return ctx.NewBoolean(false)
@@ -203,7 +203,7 @@ func registerMathExtModule(rt *runtime.Runtime) error {
 	moduleObj.Set("isPrime", isPrimeVal)
 
 	// Add gcd function (greatest common divisor)
-	gcdFn, _ := iso.NewFunctionTemplate(func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	gcdFn, _ := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
 		ctx := info.Context()
 		if len(info.Args()) < 2 {
 			return ctx.NewNumber(0)

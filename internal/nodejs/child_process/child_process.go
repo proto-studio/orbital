@@ -10,9 +10,8 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"proto.zip/studio/orbital/pkg/process"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed child_process.js
@@ -20,15 +19,15 @@ var childProcessJS string
 
 // ChildProcess provides child process spawning.
 type ChildProcess struct {
-	rt         *runtime.Runtime
-	processes  map[int64]*childProc
-	processID  int64
-	mu         sync.Mutex
+	rt        *runtime.Runtime
+	processes map[int64]*childProc
+	processID int64
+	mu        sync.Mutex
 }
 
 // childProc wraps a spawned process with its stdio streams.
 type childProc struct {
-	proc   process.ChildProcess
+	proc   runtime.ChildProcess
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
@@ -59,7 +58,7 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"spawn":        c.spawnFunc,
 		"exec":         c.execFunc,
 		"execFile":     c.execFileFunc,
@@ -100,7 +99,7 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-// spawnOptions contains options for spawning a child process.
+// spawnOptions contains options for spawning a child runtime.
 type spawnOptions struct {
 	Cwd      string   `json:"cwd"`
 	Env      []string `json:"env"`
@@ -109,7 +108,7 @@ type spawnOptions struct {
 }
 
 // spawnFunc handles spawn() calls from JavaScript.
-func (c *ChildProcess) spawnFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 4 {
@@ -140,7 +139,7 @@ func (c *ChildProcess) spawnFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	var opts spawnOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd:      opts.Cwd,
 		Env:      opts.Env,
 		Shell:    opts.Shell,
@@ -193,7 +192,7 @@ type execOptions struct {
 }
 
 // execFunc handles exec() calls from JavaScript.
-func (c *ChildProcess) execFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) execFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -206,7 +205,7 @@ func (c *ChildProcess) execFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd: opts.Cwd,
 		Env: opts.Env,
 	}
@@ -221,7 +220,7 @@ func (c *ChildProcess) execFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
-			var errVal *v8go.Value
+			var errVal *v8.Value
 			if err != nil {
 				errVal, _ = ctx.NewString(err.Error())
 			} else {
@@ -239,7 +238,7 @@ func (c *ChildProcess) execFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // execFileFunc handles execFile() calls from JavaScript.
-func (c *ChildProcess) execFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) execFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
 		return nil
@@ -268,7 +267,7 @@ func (c *ChildProcess) execFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd: opts.Cwd,
 		Env: opts.Env,
 	}
@@ -283,7 +282,7 @@ func (c *ChildProcess) execFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
-			var errVal *v8go.Value
+			var errVal *v8.Value
 			if err != nil {
 				errVal, _ = ctx.NewString(err.Error())
 			} else {
@@ -301,7 +300,7 @@ func (c *ChildProcess) execFileFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 }
 
 // execSyncFunc handles execSync() calls from JavaScript.
-func (c *ChildProcess) execSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) execSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
@@ -314,7 +313,7 @@ func (c *ChildProcess) execSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd: opts.Cwd,
 		Env: opts.Env,
 	}
@@ -337,7 +336,7 @@ func (c *ChildProcess) execSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value
 }
 
 // execFileSyncFunc handles execFileSync() calls from JavaScript.
-func (c *ChildProcess) execFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) execFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 3 {
@@ -365,7 +364,7 @@ func (c *ChildProcess) execFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.V
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd: opts.Cwd,
 		Env: opts.Env,
 	}
@@ -388,7 +387,7 @@ func (c *ChildProcess) execFileSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.V
 }
 
 // spawnSyncFunc handles spawnSync() calls from JavaScript.
-func (c *ChildProcess) spawnSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 3 {
@@ -416,7 +415,7 @@ func (c *ChildProcess) spawnSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Valu
 	var opts spawnOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
-	spawnOpts := &process.SpawnOptions{
+	spawnOpts := &runtime.SpawnOptions{
 		Cwd:   opts.Cwd,
 		Env:   opts.Env,
 		Shell: opts.Shell,
@@ -454,8 +453,8 @@ func (c *ChildProcess) spawnSyncFunc(info *v8go.FunctionCallbackInfo) *v8go.Valu
 	return result
 }
 
-// killFunc handles kill() calls from JavaScript to send signals to a process.
-func (c *ChildProcess) killFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+// killFunc handles kill() calls from JavaScript to send signals to a runtime.
+func (c *ChildProcess) killFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
@@ -481,7 +480,7 @@ func (c *ChildProcess) killFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // waitFunc handles wait() calls from JavaScript to wait for process exit.
-func (c *ChildProcess) waitFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -511,7 +510,7 @@ func (c *ChildProcess) waitFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
-			var errVal *v8go.Value
+			var errVal *v8.Value
 			if err != nil {
 				errVal, _ = ctx.NewString(err.Error())
 			} else {
@@ -531,7 +530,7 @@ func (c *ChildProcess) waitFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // readFunc handles read() calls from JavaScript to read from stdout/stderr.
-func (c *ChildProcess) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -584,7 +583,7 @@ func (c *ChildProcess) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // writeFunc handles write() calls from JavaScript to write to stdin.
-func (c *ChildProcess) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -628,7 +627,7 @@ func (c *ChildProcess) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // closeStdinFunc handles closeStdin() calls from JavaScript.
-func (c *ChildProcess) closeStdinFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) closeStdinFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -648,13 +647,13 @@ func (c *ChildProcess) closeStdinFunc(info *v8go.FunctionCallbackInfo) *v8go.Val
 }
 
 // refFunc handles ref() calls from JavaScript (no-op for now).
-func (c *ChildProcess) refFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) refFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// No-op for now
 	return nil
 }
 
 // unrefFunc handles unref() calls from JavaScript (no-op for now).
-func (c *ChildProcess) unrefFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (c *ChildProcess) unrefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// No-op for now
 	return nil
 }

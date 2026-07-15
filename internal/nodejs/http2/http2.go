@@ -11,9 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
 	"golang.org/x/net/http2"
+	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed http2.js
@@ -21,12 +21,12 @@ var http2JS string
 
 // HTTP2 provides HTTP/2 functionality.
 type HTTP2 struct {
-	rt        *runtime.Runtime
-	clients   map[int64]*http2Client
-	servers   map[int64]*http2Server
-	clientID  int64
-	serverID  int64
-	mu        sync.Mutex
+	rt       *runtime.Runtime
+	clients  map[int64]*http2Client
+	servers  map[int64]*http2Server
+	clientID int64
+	serverID int64
+	mu       sync.Mutex
 }
 
 type http2Client struct {
@@ -66,7 +66,7 @@ func (h *HTTP2) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
+	funcs := map[string]v8.FunctionCallback{
 		"connect":        h.connectFunc,
 		"request":        h.requestFunc,
 		"closeStream":    h.closeStreamFunc,
@@ -104,7 +104,7 @@ func (h *HTTP2) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (h *HTTP2) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 3 {
@@ -150,7 +150,7 @@ func (h *HTTP2) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.NewNumber(float64(id))
 }
 
-func (h *HTTP2) requestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) requestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
 		return nil
@@ -260,27 +260,27 @@ func (h *HTTP2) requestFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (h *HTTP2) closeStreamFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) closeStreamFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// Simplified - would close HTTP/2 stream
 	return nil
 }
 
-func (h *HTTP2) writeStreamFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) writeStreamFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// Simplified - would write to HTTP/2 stream
 	return nil
 }
 
-func (h *HTTP2) endStreamFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) endStreamFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// Simplified - would end HTTP/2 stream
 	return nil
 }
 
-func (h *HTTP2) goawayFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) goawayFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// Simplified - would send GOAWAY frame
 	return nil
 }
 
-func (h *HTTP2) destroySessionFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) destroySessionFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -300,28 +300,28 @@ func (h *HTTP2) destroySessionFunc(info *v8go.FunctionCallbackInfo) *v8go.Value 
 	return nil
 }
 
-func (h *HTTP2) createServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) createServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	// HTTP/2 server creation is complex - return placeholder
 	// Real implementation would create a proper HTTP/2 server
 	return ctx.NewNumber(0)
 }
 
-func (h *HTTP2) closeServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) closeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-func (h *HTTP2) respondFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (h *HTTP2) respondFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-func (h *HTTP2) callCallback(callback *v8go.Value, errMsg string) {
+func (h *HTTP2) callCallback(callback *v8.Value, errMsg string) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := h.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
@@ -331,13 +331,13 @@ func (h *HTTP2) callCallback(callback *v8go.Value, errMsg string) {
 	callback.Call(ctx.Undefined(), errVal)
 }
 
-func (h *HTTP2) callRequestCallback(callback *v8go.Value, errMsg string, headers string, data string, finished bool) {
+func (h *HTTP2) callRequestCallback(callback *v8.Value, errMsg string, headers string, data string, finished bool) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := h.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {

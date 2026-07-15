@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chzyer/readline"
+	"golang.org/x/term"
 	"proto.zip/studio/orbital/internal/nodejs/abort"
 	"proto.zip/studio/orbital/internal/nodejs/assert"
 	"proto.zip/studio/orbital/internal/nodejs/buffer"
@@ -47,15 +49,7 @@ import (
 	"proto.zip/studio/orbital/internal/nodejs/webcrypto"
 	"proto.zip/studio/orbital/internal/nodejs/webstream"
 	"proto.zip/studio/orbital/internal/nodejs/zlib"
-	pkgdns "proto.zip/studio/orbital/pkg/dns"
-	"proto.zip/studio/orbital/pkg/environment"
-	"proto.zip/studio/orbital/pkg/filesystem"
-	"proto.zip/studio/orbital/pkg/network"
-	pkgprocess "proto.zip/studio/orbital/pkg/process"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/system"
-	"github.com/chzyer/readline"
-	"golang.org/x/term"
 )
 
 // Version info
@@ -71,9 +65,9 @@ var inputType string // "module" or "commonjs"
 var executionTimeout time.Duration
 
 // Network permissions (Deno-style)
-var allowNet bool              // --allow-net with no value
-var allowNetHosts []string     // --allow-net=host:port,...
-var denyNetHosts []string      // --deny-net=host:port,...
+var allowNet bool          // --allow-net with no value
+var allowNetHosts []string // --allow-net=host:port,...
+var denyNetHosts []string  // --deny-net=host:port,...
 
 func main() {
 	args := os.Args[1:]
@@ -85,23 +79,23 @@ func main() {
 	var forceInteractive bool
 	var scriptFile string
 	var scriptArgs []string
-	
+
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		
+
 		// Once we have a script file, remaining args are script args
 		if scriptFile != "" {
 			scriptArgs = append(scriptArgs, arg)
 			continue
 		}
-		
+
 		// Handle --flag=value style
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
 			parts := strings.SplitN(arg, "=", 2)
 			arg = parts[0]
 			args = append(args[:i+1], append([]string{parts[1]}, args[i+1:]...)...)
 		}
-		
+
 		switch arg {
 		case "-e", "--eval":
 			if i+1 >= len(args) {
@@ -209,7 +203,7 @@ func main() {
 		}
 	}
 
-	// Set process.argv for scripts
+	// Set runtime.argv for scripts
 	setProcessArgv(scriptFile, scriptArgs)
 
 	// Execute based on what was provided
@@ -274,7 +268,7 @@ func main() {
 	repl()
 }
 
-// setProcessArgv sets up process.argv values
+// setProcessArgv sets up runtime.argv values
 var processArgv []string
 
 func setProcessArgv(scriptFile string, scriptArgs []string) {
@@ -286,21 +280,21 @@ func setProcessArgv(scriptFile string, scriptArgs []string) {
 }
 
 // buildNetworkPolicy creates a NetworkPolicy from CLI flags (Deno-style).
-func buildNetworkPolicy() (network.NetworkPolicy, error) {
+func buildNetworkPolicy() (runtime.NetworkPolicy, error) {
 	// Check for --deny-net with no hosts (deny all)
 	for _, h := range denyNetHosts {
 		if h == "*" {
-			return network.NewDenyAllPolicy(), nil
+			return runtime.NewDenyAllPolicy(), nil
 		}
 	}
 
 	// If --allow-net with no hosts specified (allow all), but may have deny rules
 	if allowNet && len(allowNetHosts) == 0 && len(denyNetHosts) == 0 {
-		return network.NewAllowAllPolicy(), nil
+		return runtime.NewAllowAllPolicy(), nil
 	}
 
 	// Build a rule-based policy
-	policy := network.NewRuleBasedPolicy()
+	policy := runtime.NewRuleBasedPolicy()
 
 	// Deny rules take precedence - add them first
 	for _, hostSpec := range denyNetHosts {
@@ -309,10 +303,10 @@ func buildNetworkPolicy() (network.NetworkPolicy, error) {
 		if port != "" {
 			ports = []string{port}
 		}
-		policy.AddRule(&network.NetworkRule{
-			Action:      network.ActionDeny,
-			Protocol:    network.ProtocolAny,
-			Direction:   network.DirectionAny,
+		policy.AddRule(&runtime.NetworkRule{
+			Action:      runtime.ActionDeny,
+			Protocol:    runtime.ProtocolAny,
+			Direction:   runtime.DirectionAny,
 			Ports:       ports,
 			Hosts:       []string{host},
 			Description: fmt.Sprintf("deny %s", hostSpec),
@@ -322,7 +316,7 @@ func buildNetworkPolicy() (network.NetworkPolicy, error) {
 	// Add allow rules
 	if allowNet {
 		// --allow-net without specific hosts means allow all (after deny rules)
-		policy.DefaultAction = network.ActionAllow
+		policy.DefaultAction = runtime.ActionAllow
 	} else if len(allowNetHosts) > 0 {
 		// Allow only specific hosts
 		for _, hostSpec := range allowNetHosts {
@@ -331,17 +325,17 @@ func buildNetworkPolicy() (network.NetworkPolicy, error) {
 			if port != "" {
 				ports = []string{port}
 			}
-			policy.AddRule(&network.NetworkRule{
-				Action:      network.ActionAllow,
-				Protocol:    network.ProtocolAny,
-				Direction:   network.DirectionAny,
+			policy.AddRule(&runtime.NetworkRule{
+				Action:      runtime.ActionAllow,
+				Protocol:    runtime.ProtocolAny,
+				Direction:   runtime.DirectionAny,
 				Ports:       ports,
 				Hosts:       []string{host},
 				Description: fmt.Sprintf("allow %s", hostSpec),
 			})
 		}
 		// Default is deny if specific hosts are listed
-		policy.DefaultAction = network.ActionDeny
+		policy.DefaultAction = runtime.ActionDeny
 	}
 
 	return policy, nil
@@ -389,7 +383,7 @@ Sandbox Options:
   --root <dir>            Sandbox filesystem to this directory
   -s, --sandbox           Full sandbox mode (fake system info, no network)
   --timeout <duration>    Execution timeout (e.g., 30s, 5m)
-  --title <title>         Set process.title
+  --title <title>         Set runtime.title
   --no-warnings           Silence warnings
 
 Network Permissions (Deno-style):
@@ -403,7 +397,7 @@ Network Permissions (Deno-style):
 
 Examples:
   orbital script.js                   Run a JavaScript file
-  orbital -e "console.log(1+1)"       Evaluate code
+  orbital -e "runtime.log(1+1)"       Evaluate code
   orbital -p "1+1"                    Evaluate and print: 2
   orbital -c script.js                Check syntax only
   orbital -i script.js                Run script then start REPL
@@ -411,7 +405,7 @@ Examples:
   orbital --root ./sandbox script.js  Run with sandboxed filesystem
   orbital -s --root ./sandbox app.js  Full sandbox (fs + system info)
   orbital --timeout 30s script.js     Kill after 30 seconds
-  echo "console.log(1)" | orbital     Read from stdin
+  echo "runtime.log(1)" | orbital     Read from stdin
   orbital                             Start REPL
 
 Network Permission Examples (Deno-compatible):
@@ -433,10 +427,10 @@ var esmLoader *esm.ESM
 
 func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
-	
+
 	// Set up filesystem with optional sandboxing
 	if documentRoot != "" {
-		cfg.Filesystem = filesystem.NewLocalFilesystem(documentRoot)
+		cfg.Filesystem = runtime.NewLocalFilesystem(documentRoot)
 		cfg.DocumentRoot = documentRoot
 	}
 
@@ -447,12 +441,12 @@ func createRuntime() (*runtime.Runtime, error) {
 
 	// Set up system info sandboxing
 	if sandboxMode {
-		cfg.SystemInfo = system.NewSandboxedSystemInfo(nil)
-		cfg.HTTPClient = network.NewNoOpHTTPClient()
-		cfg.Environment = environment.NewSandboxedEnvironmentWithDefaults()
-		cfg.DNSResolver = pkgdns.NewSandboxedResolver()
-		cfg.SocketFactory = network.NewNoOpSocketFactory()
-		cfg.ProcessSpawner = pkgprocess.NewNoOpProcessSpawner()
+		cfg.SystemInfo = runtime.NewSandboxedSystemInfo(nil)
+		cfg.HTTPClient = runtime.NewNoOpHTTPClient()
+		cfg.Environment = runtime.NewSandboxedEnvironmentWithDefaults()
+		cfg.DNSResolver = runtime.NewSandboxedResolver()
+		cfg.SocketFactory = runtime.NewNoOpSocketFactory()
+		cfg.ProcessSpawner = runtime.NewNoOpProcessSpawner()
 	}
 
 	// Set up network policy (Deno-style --allow-net / --deny-net)
@@ -464,20 +458,20 @@ func createRuntime() (*runtime.Runtime, error) {
 
 		// Apply policy to socket factory
 		if cfg.SocketFactory == nil {
-			cfg.SocketFactory = network.NewRealSocketFactory()
+			cfg.SocketFactory = runtime.NewRealSocketFactory()
 		}
 		// Only wrap if not already a NoOp factory (sandbox mode takes precedence)
-		if _, isNoOp := cfg.SocketFactory.(*network.NoOpSocketFactory); !isNoOp {
-			cfg.SocketFactory = network.NewFilteredSocketFactory(cfg.SocketFactory, policy)
+		if _, isNoOp := cfg.SocketFactory.(*runtime.NoOpSocketFactory); !isNoOp {
+			cfg.SocketFactory = runtime.NewFilteredSocketFactory(cfg.SocketFactory, policy)
 		}
 
 		// Apply policy to HTTP client
 		if cfg.HTTPClient == nil {
-			cfg.HTTPClient = network.NewRealHTTPClient()
+			cfg.HTTPClient = runtime.NewRealHTTPClient()
 		}
 		// Only wrap if not already a NoOp client
-		if _, isNoOp := cfg.HTTPClient.(*network.NoOpHTTPClient); !isNoOp {
-			cfg.HTTPClient = network.NewFilteredHTTPClient(cfg.HTTPClient, policy)
+		if _, isNoOp := cfg.HTTPClient.(*runtime.NoOpHTTPClient); !isNoOp {
+			cfg.HTTPClient = runtime.NewFilteredHTTPClient(cfg.HTTPClient, policy)
 		}
 	}
 
@@ -500,18 +494,18 @@ func createRuntime() (*runtime.Runtime, error) {
 		path.New(),
 		buffer.New(),
 		stream.New(),
-		webstream.New(),  // Web Streams API
+		webstream.New(), // Web Streams API
 		url.New(),
 		orbitalos.New(),
 		util.New(),
 		crypto.New(),
-		webcrypto.New(),  // Web Crypto API (must come after crypto)
-		net.New(),        // TCP/IPC sockets
-		dgram.New(),      // UDP sockets
-		tls.New(),        // TLS/SSL (must come after net)
+		webcrypto.New(), // Web Crypto API (must come after crypto)
+		net.New(),       // TCP/IPC sockets
+		dgram.New(),     // UDP sockets
+		tls.New(),       // TLS/SSL (must come after net)
 		http.New(),
-		https.New(),      // Must come after http
-		http2.New(),      // HTTP/2 (must come after tls)
+		https.New(), // Must come after http
+		http2.New(), // HTTP/2 (must come after tls)
 		string_decoder.New(),
 		querystring.New(),
 		assert.New(),
@@ -558,7 +552,7 @@ func runFile(filename string) error {
 	// If document root is set, make paths relative to it
 	jsFilename := absPath
 	jsDirname := filepath.Dir(absPath)
-	
+
 	if documentRoot != "" {
 		absRoot, err := filepath.Abs(documentRoot)
 		if err == nil {
@@ -730,13 +724,13 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 	}
 	defer rt.Dispose()
 
-	// Set process.title if specified
+	// Set runtime.title if specified
 	if processTitle != "" {
-		titleCode := fmt.Sprintf("process.title = %q;", processTitle)
+		titleCode := fmt.Sprintf("runtime.title = %q;", processTitle)
 		if _, err := rt.RunScript(titleCode, "[title]"); err != nil {
 			// Non-fatal
 			if !silenceWarnings {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set process.title: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to set runtime.title: %v\n", err)
 			}
 		}
 	}

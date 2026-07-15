@@ -4,14 +4,13 @@ import (
 	"testing"
 
 	"proto.zip/studio/orbital/internal/nodejs/buffer"
-	"proto.zip/studio/orbital/pkg/filesystem"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 func setupRuntime(t *testing.T) *runtime.Runtime {
 	// Use memory filesystem for testing
 	cfg := &runtime.Config{
-		Filesystem: filesystem.NewMemoryFilesystem(),
+		Filesystem: runtime.NewMemoryFilesystem(),
 	}
 
 	rt, err := runtime.New(cfg)

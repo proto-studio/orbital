@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	pkgconsole "proto.zip/studio/orbital/pkg/console"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
@@ -15,7 +14,7 @@ func setupRuntime(t *testing.T, stdout, stderr *bytes.Buffer) *runtime.Runtime {
 	}
 
 	// Create console module with custom writer
-	writer := pkgconsole.NewStandardWriter(stdout, stderr)
+	writer := runtime.NewStandardWriter(stdout, stderr)
 	consoleMod := NewWithWriter(writer)
 	if err := consoleMod.Register(rt); err != nil {
 		rt.Dispose()

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed promises.js
@@ -16,15 +16,15 @@ var promisesJS string
 
 // Timers provides timer functionality (setTimeout, setInterval, etc.).
 type Timers struct {
-	rt        *runtime.Runtime
-	nextID    uint64
-	timers    sync.Map // map[uint64]*timerHandle
+	rt     *runtime.Runtime
+	nextID uint64
+	timers sync.Map // map[uint64]*timerHandle
 }
 
 type timerHandle struct {
 	id        uint64
 	task      *runtime.Task
-	callback  *v8go.Value
+	callback  *v8.Value
 	cancelled bool
 }
 
@@ -115,7 +115,7 @@ func (t *Timers) Register(rt *runtime.Runtime) error {
 }
 
 // setTimeoutFunc implements setTimeout.
-func (t *Timers) setTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *Timers) setTimeoutFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -135,7 +135,7 @@ func (t *Timers) setTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	// Collect additional arguments to pass to callback
-	var callArgs []*v8go.Value
+	var callArgs []*v8.Value
 	if len(args) > 2 {
 		callArgs = args[2:]
 	}
@@ -163,7 +163,7 @@ func (t *Timers) setTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // clearTimeoutFunc implements clearTimeout/clearInterval/clearImmediate.
-func (t *Timers) clearTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *Timers) clearTimeoutFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -183,7 +183,7 @@ func (t *Timers) clearTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // setIntervalFunc implements setInterval.
-func (t *Timers) setIntervalFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *Timers) setIntervalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -203,7 +203,7 @@ func (t *Timers) setIntervalFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	// Collect additional arguments to pass to callback
-	var callArgs []*v8go.Value
+	var callArgs []*v8.Value
 	if len(args) > 2 {
 		callArgs = args[2:]
 	}
@@ -229,7 +229,7 @@ func (t *Timers) setIntervalFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 }
 
 // setImmediateFunc implements setImmediate.
-func (t *Timers) setImmediateFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (t *Timers) setImmediateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -241,7 +241,7 @@ func (t *Timers) setImmediateFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	// Collect additional arguments to pass to callback
-	var callArgs []*v8go.Value
+	var callArgs []*v8.Value
 	if len(args) > 1 {
 		callArgs = args[1:]
 	}

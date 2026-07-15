@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // Path provides path manipulation functionality.
@@ -191,7 +191,7 @@ func (p *Path) Register(rt *runtime.Runtime) error {
 	return rt.SetGlobal("__path_module", pathObj)
 }
 
-func (p *Path) basenameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) basenameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -214,7 +214,7 @@ func (p *Path) basenameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) dirnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) dirnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -228,7 +228,7 @@ func (p *Path) dirnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) extnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) extnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -242,7 +242,7 @@ func (p *Path) extnameFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) joinFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) joinFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -256,7 +256,7 @@ func (p *Path) joinFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 
@@ -284,7 +284,7 @@ func (p *Path) resolveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) normalizeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) normalizeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -298,7 +298,7 @@ func (p *Path) normalizeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) isAbsoluteFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) isAbsoluteFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -312,7 +312,7 @@ func (p *Path) isAbsoluteFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.False()
 }
 
-func (p *Path) relativeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) relativeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
@@ -333,7 +333,7 @@ func (p *Path) relativeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Path) parseFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) parseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -383,7 +383,7 @@ func (p *Path) parseFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (p *Path) formatFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Path) formatFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 || !args[0].IsObject() {

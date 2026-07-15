@@ -10,7 +10,7 @@ import (
 	"time"
 
 	goruntime "proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 // Process provides the process global object.
@@ -44,13 +44,13 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.version
+	// runtime.version
 	version, _ := ctx.NewString("v20.0.0") // Emulated Node version
 	if err := processObj.Set("version", version); err != nil {
 		return err
 	}
 
-	// process.versions
+	// runtime.versions
 	versions, _ := ctx.NewObject()
 	nodeVer, _ := ctx.NewString("20.0.0")
 	v8Ver, _ := ctx.NewString("12.9.202.13")
@@ -62,31 +62,31 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.platform
+	// runtime.platform
 	platform, _ := ctx.NewString(runtime.GOOS)
 	if err := processObj.Set("platform", platform); err != nil {
 		return err
 	}
 
-	// process.arch
+	// runtime.arch
 	arch, _ := ctx.NewString(goArchToNode(runtime.GOARCH))
 	if err := processObj.Set("arch", arch); err != nil {
 		return err
 	}
 
-	// process.pid
+	// runtime.pid
 	pid := ctx.NewInteger(int64(os.Getpid()))
 	if err := processObj.Set("pid", pid); err != nil {
 		return err
 	}
 
-	// process.ppid
+	// runtime.ppid
 	ppid := ctx.NewInteger(int64(os.Getppid()))
 	if err := processObj.Set("ppid", ppid); err != nil {
 		return err
 	}
 
-	// process.argv
+	// runtime.argv
 	argv, err := p.createArgv(ctx)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.env
+	// runtime.env
 	env, err := p.createEnv(ctx)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.cwd()
+	// runtime.cwd()
 	cwdFn, err := iso.NewFunctionTemplate(p.cwdFunc)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.chdir()
+	// runtime.chdir()
 	chdirFn, err := iso.NewFunctionTemplate(p.chdirFunc)
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.exit()
+	// runtime.exit()
 	exitFn, err := iso.NewFunctionTemplate(p.exitFunc)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.hrtime()
+	// runtime.hrtime()
 	hrtimeFn, err := iso.NewFunctionTemplate(p.hrtimeFunc)
 	if err != nil {
 		return err
@@ -156,7 +156,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.hrtime.bigint()
+	// runtime.hrtime.bigint()
 	hrtimeBigintFn, err := iso.NewFunctionTemplate(p.hrtimeBigintFunc)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.uptime()
+	// runtime.uptime()
 	uptimeFn, err := iso.NewFunctionTemplate(p.uptimeFunc)
 	if err != nil {
 		return err
@@ -182,7 +182,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.memoryUsage()
+	// runtime.memoryUsage()
 	memoryUsageFn, err := iso.NewFunctionTemplate(p.memoryUsageFunc)
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// process.nextTick()
+	// runtime.nextTick()
 	nextTickFn, err := iso.NewFunctionTemplate(p.nextTickFunc)
 	if err != nil {
 		return err
@@ -212,7 +212,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	return rt.SetGlobal("process", processObj)
 }
 
-func (p *Process) createArgv(ctx *v8go.Context) (*v8go.Value, error) {
+func (p *Process) createArgv(ctx *v8.Context) (*v8.Value, error) {
 	args := os.Args
 	argv, err := ctx.NewArray(len(args))
 	if err != nil {
@@ -230,7 +230,7 @@ func (p *Process) createArgv(ctx *v8go.Context) (*v8go.Value, error) {
 	return argv, nil
 }
 
-func (p *Process) createEnv(ctx *v8go.Context) (*v8go.Value, error) {
+func (p *Process) createEnv(ctx *v8.Context) (*v8.Value, error) {
 	env, err := ctx.NewObject()
 	if err != nil {
 		return nil, err
@@ -250,7 +250,7 @@ func (p *Process) createEnv(ctx *v8go.Context) (*v8go.Value, error) {
 	return env, nil
 }
 
-func (p *Process) cwdFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) cwdFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil
@@ -280,7 +280,7 @@ func (p *Process) cwdFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return val
 }
 
-func (p *Process) chdirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) chdirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -293,7 +293,7 @@ func (p *Process) chdirFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (p *Process) exitFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) exitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	code := 0
 	args := info.Args()
 	if len(args) >= 1 {
@@ -305,7 +305,7 @@ func (p *Process) exitFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (p *Process) hrtimeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) hrtimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	now := time.Now().UnixNano()
 	args := info.Args()
@@ -331,7 +331,7 @@ func (p *Process) hrtimeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return arr
 }
 
-func (p *Process) hrtimeBigintFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) hrtimeBigintFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	// Return as a string since we don't have BigInt support yet
 	now := time.Now().UnixNano()
@@ -339,12 +339,12 @@ func (p *Process) hrtimeBigintFunc(info *v8go.FunctionCallbackInfo) *v8go.Value 
 	return val
 }
 
-func (p *Process) uptimeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) uptimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	uptime := time.Since(p.startTime).Seconds()
 	return info.Context().NewNumber(uptime)
 }
 
-func (p *Process) memoryUsageFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) memoryUsageFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -358,14 +358,14 @@ func (p *Process) memoryUsageFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (p *Process) nextTickFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (p *Process) nextTickFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 || !args[0].IsFunction() {
 		return nil
 	}
 
 	callback := args[0]
-	var callArgs []*v8go.Value
+	var callArgs []*v8.Value
 	if len(args) > 1 {
 		callArgs = args[1:]
 	}

@@ -6,9 +6,8 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"proto.zip/studio/orbital/pkg/network"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed fetch.js
@@ -57,7 +56,7 @@ func (f *Fetch) Register(rt *runtime.Runtime) error {
 }
 
 // fetchFunc implements the internal __http_fetch function
-func (f *Fetch) fetchFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 5 {
 		return nil
@@ -89,7 +88,7 @@ func (f *Fetch) fetchFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	}
 
 	// Create request
-	req := &network.Request{
+	req := &runtime.Request{
 		Method:  method,
 		URL:     url,
 		Headers: reqHeaders,

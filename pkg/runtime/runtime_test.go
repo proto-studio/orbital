@@ -3,8 +3,6 @@ package runtime
 import (
 	"testing"
 	"time"
-
-	"proto.zip/studio/orbital/pkg/filesystem"
 )
 
 func TestRuntime_New(t *testing.T) {
@@ -114,7 +112,7 @@ func TestRuntime_WithConfig(t *testing.T) {
 	cfg := &Config{
 		EnableConsole: true,
 		EnableTimers:  true,
-		Filesystem:    filesystem.NewMemoryFilesystem(),
+		Filesystem:    NewMemoryFilesystem(),
 		DocumentRoot:  "/sandbox",
 		Timeout:       5 * time.Second,
 	}

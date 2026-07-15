@@ -28,6 +28,14 @@ UNAME_M := $(shell uname -m)
 # Host platform
 ifeq ($(UNAME_S),Darwin)
 	HOST_OS := darwin
+	# Prefer Xcode's SDK over Command Line Tools. CLT on macOS 26 ships a
+	# libc++ that requires Clang 19+ builtins (__builtin_ctzg/__builtin_clzg);
+	# Xcode 16's clang cannot compile against that SDK. Override with
+	# DEVELOPER_DIR=... or SDKROOT=... if needed.
+	DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
+	export DEVELOPER_DIR
+	SDKROOT ?= $(shell DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun --sdk macosx --show-sdk-path 2>/dev/null)
+	export SDKROOT
 else ifeq ($(UNAME_S),Linux)
 	HOST_OS := linux
 else
@@ -111,12 +119,20 @@ build-all: build-linux-amd64 build-linux-arm64
 .PHONY: build-linux-amd64
 build-linux-amd64:
 	@echo "Building for Linux x86_64..."
-	$(MAKE) build TARGET_OS=linux TARGET_ARCH=x64
+	@if [ "$(HOST_OS)" = "linux" ]; then \
+		$(MAKE) build TARGET_OS=linux TARGET_ARCH=x64 BINARY_NAME=orbital-linux-x64; \
+	else \
+		$(MAKE) docker-build-orbital TARGET_ARCH=x64; \
+	fi
 
 .PHONY: build-linux-arm64
 build-linux-arm64:
 	@echo "Building for Linux ARM64..."
-	$(MAKE) build TARGET_OS=linux TARGET_ARCH=arm64
+	@if [ "$(HOST_OS)" = "linux" ]; then \
+		$(MAKE) build TARGET_OS=linux TARGET_ARCH=arm64 BINARY_NAME=orbital-linux-arm64; \
+	else \
+		$(MAKE) docker-build-orbital TARGET_ARCH=arm64; \
+	fi
 
 .PHONY: build-darwin-arm64
 build-darwin-arm64:
@@ -142,6 +158,33 @@ v8: v8-linux-x64 v8-linux-arm64 v8-darwin-x64 v8-darwin-arm64
 v8-native:
 	$(MAKE) v8-platform TARGET_OS=$(HOST_OS) TARGET_ARCH=$(HOST_ARCH)
 
+# Check out the latest stable V8 and build it for every supported platform.
+# Resolves the V8 version bundled with the current stable Chrome release, then
+# runs v8-all-platforms with that version (which also updates an existing
+# checkout via `git checkout` + `gclient sync` in v8-fetch).
+.PHONY: v8-latest
+v8-latest:
+	@ver=$$(scripts/latest-v8-version.sh) && \
+	echo ">>> Building all platforms for V8 $$ver" && \
+	$(MAKE) v8-all-platforms V8_VERSION=$$ver
+
+# Build V8 for every platform reachable from this host:
+#   - macOS host: darwin arm64/x64 natively + linux arm64/x64 via Docker.
+#   - Linux host: linux arm64/x64 natively (darwin cannot be built on Linux).
+.PHONY: v8-all-platforms
+v8-all-platforms:
+ifeq ($(HOST_OS),darwin)
+	$(MAKE) v8-darwin-arm64 V8_VERSION=$(V8_VERSION)
+	$(MAKE) v8-darwin-x64 V8_VERSION=$(V8_VERSION)
+	$(MAKE) docker-build-linux V8_VERSION=$(V8_VERSION)
+else ifeq ($(HOST_OS),linux)
+	$(MAKE) v8-linux-arm64 V8_VERSION=$(V8_VERSION)
+	$(MAKE) v8-linux-x64 V8_VERSION=$(V8_VERSION)
+else
+	@echo "Unsupported host OS '$(HOST_OS)' for all-platform V8 build."; exit 1
+endif
+	@echo "V8 $(V8_VERSION) built for all reachable platforms. Run 'make v8-list'."
+
 # Platform-specific V8 builds
 .PHONY: v8-linux-x64
 v8-linux-x64:
@@ -150,6 +193,11 @@ v8-linux-x64:
 .PHONY: v8-linux-arm64
 v8-linux-arm64:
 	$(MAKE) v8-platform TARGET_OS=linux TARGET_ARCH=arm64
+
+# Build V8 for both Linux architectures (used by docker-build-linux)
+.PHONY: v8-all-linux
+v8-all-linux: v8-linux-x64 v8-linux-arm64
+	@echo "V8 $(V8_VERSION) built for linux-x64 and linux-arm64"
 
 .PHONY: v8-darwin-x64
 v8-darwin-x64:
@@ -220,6 +268,10 @@ v8-build: v8-fetch
 	elif [ "$(TARGET_OS)" = "linux" ]; then \
 		echo 'is_clang=true' >> "$$V8_OUT_DIR/args.gn"; \
 		echo 'use_sysroot=false' >> "$$V8_OUT_DIR/args.gn"; \
+		echo 'clang_base_path="/usr/lib/llvm-19"' >> "$$V8_OUT_DIR/args.gn"; \
+		echo 'clang_use_chrome_plugins=false' >> "$$V8_OUT_DIR/args.gn"; \
+		echo 'clang_version="19"' >> "$$V8_OUT_DIR/args.gn"; \
+		echo 'use_lld=true' >> "$$V8_OUT_DIR/args.gn"; \
 	fi && \
 	if [ "$(HOST_OS)" != "$(TARGET_OS)" ] || [ "$(HOST_ARCH)" != "$(V8_ARCH)" ]; then \
 		echo 'target_os="$(TARGET_OS)"' >> "$$V8_OUT_DIR/args.gn"; \
@@ -276,7 +328,8 @@ v8-list:
 
 .PHONY: test
 test: check-v8-native
-	$(GO) test $(GOFLAGS) ./...
+	# Exclude v8-build (chromium checkout) and examples (multi-main demo pkgs).
+	$(GO) test $(GOFLAGS) ./pkg/... ./internal/... ./cmd/...
 
 .PHONY: coverage
 coverage: check-v8-native
@@ -369,11 +422,58 @@ uninstall:
 # Docker Targets (for cross-compilation)
 # ============================================================================
 
+# Cap parallelism inside Docker; full host nproc OOMs Desktop VM during -O3.
+DOCKER_NUM_JOBS ?= 4
+
+# Shared v8-build/ volume keeps CIPD clients per-CPU; wipe before each arch switch.
+define docker-clean-cipd
+	rm -rf \
+		$(V8_BUILD_DIR)/.cipd \
+		$(DEPOT_TOOLS_DIR)/.cipd_bin \
+		$(DEPOT_TOOLS_DIR)/.cipd_client \
+		$(DEPOT_TOOLS_DIR)/.cipd_client_cache \
+		$(DEPOT_TOOLS_DIR)/.versions
+endef
+
+define docker-run-v8
+	docker run --rm --platform $(1) -v $(CURDIR):/workspace \
+		orbital-builder:$(2) bash -lc '\
+			rm -rf "$$HOME/.cache/vpython-root"* "$$HOME/.vpython_cipd_cache" "$$HOME/.cipd"; \
+			make $(3) V8_VERSION=$(V8_VERSION) NUM_JOBS=$(DOCKER_NUM_JOBS)'
+endef
+
 .PHONY: docker-build-linux
 docker-build-linux:
-	@echo "Building V8 for Linux using Docker..."
-	docker build -t orbital-builder -f docker/Dockerfile.builder .
-	docker run --rm -v $(CURDIR):/workspace orbital-builder make v8-all-linux
+	@echo "Building V8 for Linux using Docker (native arch per target)..."
+	@# Cross-compiling V8 across CPU arches (arm64 host → x64) is fragile;
+	@# build each Linux arch inside a matching Docker platform instead.
+	docker build --platform linux/arm64 -t orbital-builder:arm64 -f docker/Dockerfile.builder .
+	docker build --platform linux/amd64 -t orbital-builder:amd64 -f docker/Dockerfile.builder .
+	@echo ">>> V8 linux-arm64 (native arm64 container)..."
+	$(docker-clean-cipd)
+	$(call docker-run-v8,linux/arm64,arm64,v8-linux-arm64)
+	@echo ">>> V8 linux-x64 (native amd64 container; qemu on Apple Silicon)..."
+	$(docker-clean-cipd)
+	$(call docker-run-v8,linux/amd64,amd64,v8-linux-x64)
+	@echo "V8 Linux builds complete. Run 'make v8-list' to verify."
+
+# Final Orbital binary for Linux. On a Linux host, use `make build` instead —
+# this target is only for non-Linux hosts (CGO link needs a Linux toolchain).
+# Prebuilt deps/v8/linux-*/libv8_monolith.a is reused; V8 is not rebuilt.
+.PHONY: docker-build-orbital
+docker-build-orbital:
+	@if [ "$(TARGET_ARCH)" = "arm64" ]; then \
+		platform=linux/arm64; tag=arm64; \
+	else \
+		platform=linux/amd64; tag=amd64; \
+	fi; \
+	echo ">>> Orbital linux-$(TARGET_ARCH) via Docker ($$platform)..."; \
+	docker build --platform $$platform -t orbital-builder:$$tag -f docker/Dockerfile.builder .; \
+	docker run --rm --platform $$platform -v $(CURDIR):/workspace \
+		-e HOME=/tmp \
+		orbital-builder:$$tag \
+		make build TARGET_OS=linux TARGET_ARCH=$(TARGET_ARCH) \
+			BINARY_NAME=orbital-linux-$(TARGET_ARCH)
 
 # ============================================================================
 # Help
@@ -391,12 +491,14 @@ help:
 	@echo "  build-native     Build for host platform"
 	@echo "  release          Build optimized binary"
 	@echo "  build-all        Build for all supported platforms"
-	@echo "  build-linux-amd64  Build for Linux x86_64"
-	@echo "  build-linux-arm64  Build for Linux ARM64"
+	@echo "  build-linux-amd64  Build for Linux x86_64 (Docker CGO link if not on Linux)"
+	@echo "  build-linux-arm64  Build for Linux ARM64 (Docker CGO link if not on Linux)"
 	@echo "  build-darwin-arm64 Build for macOS ARM64"
 	@echo "  build-darwin-amd64 Build for macOS x86_64"
 	@echo ""
 	@echo "V8 targets:"
+	@echo "  v8-latest        Check out latest stable V8 and build all platforms"
+	@echo "  v8-all-platforms Build V8 for all platforms reachable from this host"
 	@echo "  v8               Build V8 for all platforms"
 	@echo "  v8-native        Build V8 for host platform"
 	@echo "  v8-linux-x64     Build V8 for Linux x86_64"
@@ -433,7 +535,8 @@ help:
 	@echo "  uninstall        Remove binary from GOPATH/bin"
 	@echo ""
 	@echo "Docker targets:"
-	@echo "  docker-build-linux  Build V8 for Linux using Docker"
+	@echo "  docker-build-linux    Build V8 for Linux using Docker"
+	@echo "  docker-build-orbital  Link Orbital for TARGET_ARCH via Docker (non-Linux hosts)"
 	@echo ""
 	@echo "Current configuration:"
 	@echo "  Host:    $(HOST_OS)/$(HOST_ARCH)"
@@ -442,7 +545,8 @@ help:
 	@echo "  Jobs:    $(NUM_JOBS)"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make v8-latest              # Check out latest stable V8, build all platforms"
 	@echo "  make v8-native              # Build V8 for your machine"
-	@echo "  make v8                     # Build V8 for all platforms"
-	@echo "  make v8-linux-arm64         # Build V8 for Linux ARM64"
+	@echo "  make docker-build-linux     # Build V8 for linux-arm64 + linux-x64"
+	@echo "  make build-linux-arm64      # Orbital Linux ARM64 (native on Linux)"
 	@echo "  make build-native           # Build Orbital for your machine"

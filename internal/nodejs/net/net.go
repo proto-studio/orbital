@@ -10,9 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"proto.zip/studio/orbital/pkg/network"
 	"proto.zip/studio/orbital/pkg/runtime"
-	"proto.zip/studio/orbital/pkg/v8go"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed net.js
@@ -21,8 +20,8 @@ var netJS string
 // Net provides TCP/IPC networking.
 type Net struct {
 	rt       *runtime.Runtime
-	sockets  map[int64]network.TCPSocket
-	servers  map[int64]network.TCPServer
+	sockets  map[int64]runtime.TCPSocket
+	servers  map[int64]runtime.TCPServer
 	socketID int64
 	serverID int64
 	mu       sync.Mutex
@@ -31,8 +30,8 @@ type Net struct {
 // New creates a new Net module.
 func New() *Net {
 	return &Net{
-		sockets: make(map[int64]network.TCPSocket),
-		servers: make(map[int64]network.TCPServer),
+		sockets: make(map[int64]runtime.TCPSocket),
+		servers: make(map[int64]runtime.TCPServer),
 	}
 }
 
@@ -54,26 +53,26 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 	}
 
 	// Register functions
-	funcs := map[string]v8go.FunctionCallback{
-		"createSocket":       n.createSocketFunc,
-		"connect":            n.connectFunc,
-		"write":              n.writeFunc,
-		"read":               n.readFunc,
-		"close":              n.closeFunc,
-		"setTimeout":         n.setTimeoutFunc,
-		"setKeepAlive":       n.setKeepAliveFunc,
-		"setNoDelay":         n.setNoDelayFunc,
-		"getAddressInfo":     n.getAddressInfoFunc,
-		"ref":                n.refFunc,
-		"unref":              n.unrefFunc,
-		"createServer":       n.createServerFunc,
-		"listen":             n.listenFunc,
-		"accept":             n.acceptFunc,
-		"closeServer":        n.closeServerFunc,
-		"closeSocket":        n.closeSocketFunc,
-		"getServerAddress":   n.getServerAddressFunc,
-		"refServer":          n.refServerFunc,
-		"unrefServer":        n.unrefServerFunc,
+	funcs := map[string]v8.FunctionCallback{
+		"createSocket":     n.createSocketFunc,
+		"connect":          n.connectFunc,
+		"write":            n.writeFunc,
+		"read":             n.readFunc,
+		"close":            n.closeFunc,
+		"setTimeout":       n.setTimeoutFunc,
+		"setKeepAlive":     n.setKeepAliveFunc,
+		"setNoDelay":       n.setNoDelayFunc,
+		"getAddressInfo":   n.getAddressInfoFunc,
+		"ref":              n.refFunc,
+		"unref":            n.unrefFunc,
+		"createServer":     n.createServerFunc,
+		"listen":           n.listenFunc,
+		"accept":           n.acceptFunc,
+		"closeServer":      n.closeServerFunc,
+		"closeSocket":      n.closeSocketFunc,
+		"getServerAddress": n.getServerAddressFunc,
+		"refServer":        n.refServerFunc,
+		"unrefServer":      n.unrefServerFunc,
 	}
 
 	for name, fn := range funcs {
@@ -101,7 +100,7 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-func (n *Net) createSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) createSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 
 	n.mu.Lock()
@@ -113,7 +112,7 @@ func (n *Net) createSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.NewNumber(float64(id))
 }
 
-func (n *Net) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
 		return nil
@@ -151,7 +150,7 @@ func (n *Net) connectFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
 		return nil
@@ -188,7 +187,7 @@ func (n *Net) writeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -235,7 +234,7 @@ func (n *Net) readFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -257,12 +256,12 @@ func (n *Net) closeFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) setTimeoutFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) setTimeoutFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// Simplified - would need proper timeout handling
 	return nil
 }
 
-func (n *Net) setKeepAliveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) setKeepAliveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -282,7 +281,7 @@ func (n *Net) setKeepAliveFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) setNoDelayFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) setNoDelayFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -302,7 +301,7 @@ func (n *Net) setNoDelayFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) getAddressInfoFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) getAddressInfoFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -346,7 +345,7 @@ func (n *Net) getAddressInfoFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return obj
 }
 
-func (n *Net) refFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) refFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -365,7 +364,7 @@ func (n *Net) refFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) unrefFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) unrefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -384,7 +383,7 @@ func (n *Net) unrefFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) createServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) createServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 
 	n.mu.Lock()
@@ -396,7 +395,7 @@ func (n *Net) createServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return ctx.NewNumber(float64(id))
 }
 
-func (n *Net) listenFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) listenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 5 {
 		return nil
@@ -435,7 +434,7 @@ func (n *Net) listenFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) acceptFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -504,7 +503,7 @@ func (n *Net) acceptFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) closeServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) closeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -526,11 +525,11 @@ func (n *Net) closeServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) closeSocketFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) closeSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return n.closeFunc(info)
 }
 
-func (n *Net) getServerAddressFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) getServerAddressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
@@ -564,7 +563,7 @@ func (n *Net) getServerAddressFunc(info *v8go.FunctionCallbackInfo) *v8go.Value 
 	return obj
 }
 
-func (n *Net) refServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) refServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -583,7 +582,7 @@ func (n *Net) refServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) unrefServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
+func (n *Net) unrefServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
@@ -602,13 +601,13 @@ func (n *Net) unrefServerFunc(info *v8go.FunctionCallbackInfo) *v8go.Value {
 	return nil
 }
 
-func (n *Net) callCallback(callback *v8go.Value, errMsg string, result *v8go.Value) {
+func (n *Net) callCallback(callback *v8.Value, errMsg string, result *v8.Value) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := n.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
@@ -622,20 +621,20 @@ func (n *Net) callCallback(callback *v8go.Value, errMsg string, result *v8go.Val
 	callback.Call(ctx.Undefined(), errVal, result)
 }
 
-func (n *Net) callCallbackWithArgs(callback *v8go.Value, errMsg string, args ...*v8go.Value) {
+func (n *Net) callCallbackWithArgs(callback *v8.Value, errMsg string, args ...*v8.Value) {
 	if callback == nil || !callback.IsFunction() {
 		return
 	}
 
 	ctx := n.rt.Context()
-	var errVal *v8go.Value
+	var errVal *v8.Value
 	if errMsg != "" {
 		errVal, _ = ctx.NewString(errMsg)
 	} else {
 		errVal = ctx.Null()
 	}
 
-	allArgs := make([]*v8go.Value, 0, len(args)+1)
+	allArgs := make([]*v8.Value, 0, len(args)+1)
 	allArgs = append(allArgs, errVal)
 	allArgs = append(allArgs, args...)
 
