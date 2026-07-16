@@ -3,10 +3,11 @@
 ## V8 JavaScript Engine
 
 V8 static libraries are **not committed** to this repository. They are built by
-CI on native runners, packaged into `dist/v8-<goos>-<goarch>.tar.zst`, and
+CI on native runners, packaged into `dist/v8-<goos>-<goarch>.tar.gz`, and
 published as checksum-verified GitHub Release assets. Consumers (and this repo's
 own tests) fetch them on demand via `go generate` into a project-local `.v8/`
-directory — see `cmd/v8setup` and the top-level `README.md`.
+directory — see `cmd/v8setup` and the top-level `README.md`. The tarballs use
+gzip so the fetch tool depends only on the Go standard library.
 
 ### Local builds
 
@@ -24,7 +25,7 @@ Build V8 for the platform you're on and package it:
 
 ```bash
 make v8-native            # build for the current host
-make package-v8           # -> dist/v8-<goos>-<goarch>.tar.zst (+ .sha256)
+make package-v8           # -> dist/v8-<goos>-<goarch>.tar.gz (+ .sha256)
 make v8-setup-local       # install that asset into .v8/ + generate the link file
 ```
 

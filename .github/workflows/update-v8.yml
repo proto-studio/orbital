@@ -2,7 +2,7 @@ name: Update V8
 
 # Rebuilds the prebuilt V8 libraries and opens a PR that publishes them as Release
 # assets. The libraries are NOT committed: each target is packaged into
-# dist/v8-<goos>-<goarch>.tar.zst, uploaded as an Actions artifact, and pinned (by
+# dist/v8-<goos>-<goarch>.tar.gz, uploaded as an Actions artifact, and pinned (by
 # run id + sha256) in internal/v8dist/manifest.json.
 #
 # Two entry points feed the SAME build->manifest->validate->ready chain:
@@ -144,7 +144,7 @@ jobs:
 
             This PR is a **draft** while the per-target libraries build. When the
             build finishes, `internal/v8dist/manifest.json` is committed (pinning
-            the build run id + sha256 of each `v8-<target>.tar.zst`), the `validate`
+            the build run id + sha256 of each `v8-<target>.tar.gz`), the `validate`
             job tests the exact artifacts on native runners, and the PR is marked
             ready. On merge, `release.yml` promotes those artifacts to a Release.
 
@@ -238,7 +238,7 @@ jobs:
         run: make v8-fetch V8_VERSION="${{ needs.setup.outputs.v8_version }}" NUM_JOBS=4
 
   # ---------------------------------------------------------------------------
-  # Build + package each target into dist/v8-<goos>-<goarch>.tar.zst, upload it.
+  # Build + package each target into dist/v8-<goos>-<goarch>.tar.gz, upload it.
   # ---------------------------------------------------------------------------
   build:
     name: Build V8 (${{ matrix.platform }})
@@ -307,8 +307,8 @@ jobs:
         with:
           name: v8-${{ matrix.platform }}
           path: |
-            dist/v8-${{ matrix.platform }}.tar.zst
-            dist/v8-${{ matrix.platform }}.tar.zst.sha256
+            dist/v8-${{ matrix.platform }}.tar.gz
+            dist/v8-${{ matrix.platform }}.tar.gz.sha256
           retention-days: 90
           if-no-files-found: error
 
@@ -331,9 +331,6 @@ jobs:
           ref: ${{ needs.setup.outputs.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install zstd (for local sha verification tooling)
-        run: sudo apt-get update && sudo apt-get install -y zstd
-
       - name: Download packaged artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -354,7 +351,7 @@ jobs:
       - name: Verify checksums
         run: |
           cd dist
-          for f in *.tar.zst.sha256; do
+          for f in *.tar.gz.sha256; do
             echo "Checking ${f%.sha256} ..."
             shasum -a 256 -c "$f"
           done
@@ -423,7 +420,7 @@ jobs:
 
       - name: Install build dependencies (Linux)
         if: startsWith(matrix.platform, 'linux-')
-        run: sudo apt-get update && sudo apt-get install -y build-essential zstd
+        run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: Install V8 runtime from this run's artifacts + generate link file
         env:
@@ -435,6 +432,23 @@ jobs:
 
       - name: Run coverage
         run: make coverage
+
+      # Compile every Go example so a consumer-facing break (bad link flags, API
+      # drift) fails the build on each platform, not just the unit tests.
+      - name: Build in-repo Go examples
+        run: bash scripts/build-examples.sh
+
+      # The standalone consumer module (its own go.mod, replace -> repo root) runs
+      # the full `go generate` -> build flow exactly as an external consumer would,
+      # fetching THIS run's artifacts rather than a published Release.
+      - name: Build standalone example module (hellov8)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: examples/hellov8
+        run: |
+          go run proto.zip/studio/orbital/cmd/v8setup \
+            -source actions -run-id "${GITHUB_RUN_ID}" -link-out . -link-pkg main
+          CGO_ENABLED=1 go build -o /dev/null .
 
   # ---------------------------------------------------------------------------
   # Mark the PR ready once every target validated. If any build/validate job

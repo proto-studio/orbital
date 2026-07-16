@@ -18,9 +18,12 @@ func LinkFileName(goos, goarch string) string {
 func ldflags(goos, libPath string) string {
 	switch goos {
 	case "darwin":
-		// ld64 rescans archives, so no --start-group is needed.
+		// ld64 rescans archives, so no --start-group is needed. V8's
+		// partition_alloc queries the process's code-signing entitlements to
+		// decide whether it may map JIT pages, pulling in Security framework
+		// symbols (Sec* / SecTask*) alongside CoreFoundation.
 		return fmt.Sprintf("-L%s -lv8go_glue -lv8_monolith -lv8_libcxx "+
-			"-framework CoreFoundation -lpthread", libPath)
+			"-framework CoreFoundation -framework Security -lpthread", libPath)
 	default: // linux and other ELF platforms
 		// Wrap the archives in a group so ld resolves the cross-references
 		// between the glue, the monolith, and Chromium's libc++/libc++abi.

@@ -2,6 +2,7 @@ package v8dist
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/klauspost/compress/zstd"
 )
 
 // sha256File returns the lowercase hex sha256 of the file at path.
@@ -27,16 +26,18 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractTarZst unpacks a .tar.zst archive into destDir. Paths are sanitized to
-// stay within destDir (no absolute paths, no "..").
-func extractTarZst(archivePath, destDir string) error {
+// extractTarGz unpacks a .tar.gz archive into destDir. Paths are sanitized to
+// stay within destDir (no absolute paths, no ".."). Gzip is used (over zstd) so
+// the extractor depends only on the Go standard library — no third-party module
+// is pulled into a consumer's build when they `go run` the setup tool.
+func extractTarGz(archivePath, destDir string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	zr, err := zstd.NewReader(f)
+	zr, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}

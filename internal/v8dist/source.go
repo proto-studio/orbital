@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Source fetches the raw .tar.zst artifact for a target into dstPath.
+// Source fetches the raw .tar.gz artifact for a target into dstPath.
 type Source interface {
 	// Fetch writes the artifact for t to dstPath. Implementations should return
 	// a *NoReleaseError / *DownloadError with the target populated on failure.
@@ -68,9 +68,9 @@ type ActionsSource struct {
 }
 
 // artifactName is the upload-artifact name CI uses: the filename without the
-// .tar.zst suffix (e.g. "v8-linux-amd64").
+// .tar.gz suffix (e.g. "v8-linux-amd64").
 func artifactName(t Target) string {
-	return strings.TrimSuffix(t.Filename, ".tar.zst")
+	return strings.TrimSuffix(t.Filename, ".tar.gz")
 }
 
 func (s *ActionsSource) Describe(t Target) string {

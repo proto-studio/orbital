@@ -109,7 +109,7 @@ jobs:
         run: |
           cp internal/v8dist/manifest.json dist/manifest.json
           gh release create "$TAG" \
-            dist/v8-*.tar.zst dist/v8-*.tar.zst.sha256 dist/manifest.json \
+            dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
             --target "${GITHUB_SHA}" \
             --title "$TAG (V8 $V8)" \
             --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64).

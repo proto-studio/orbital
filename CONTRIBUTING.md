@@ -7,7 +7,7 @@ This guide covers building from source, compiling V8, cross-platform builds, and
 - Go 1.24+
 - Git
 - Python 3 (used to build V8, pre-compile the C++ glue, and assemble the manifest)
-- For building V8 from source: Xcode on macOS; on Linux, Chromium's bundled clang is used (host needs `build-essential` + `ninja-build` + `zstd`). ~10 GB disk space.
+- For building V8 from source: Xcode on macOS; on Linux, Chromium's bundled clang is used (host needs `build-essential` + `ninja-build`). ~10 GB disk space.
 - For only *using* the prebuilt libraries: just a C toolchain for CGO (`clang`/`gcc`). No C++ compiler needed — the bridge ships pre-compiled.
 
 ## Project structure
@@ -27,13 +27,13 @@ gnode/
 ├── cmd/orbital/              # CLI entry point
 ├── examples/                 # Usage examples
 ├── deps/v8/                  # Built V8 output per platform (gitignored)
-├── dist/                     # Packaged v8-<goos>-<goarch>.tar.zst assets (gitignored)
+├── dist/                     # Packaged v8-<goos>-<goarch>.tar.gz assets (gitignored)
 ├── .v8/                      # Fetched runtime for local builds (gitignored)
 └── v8-build/                 # V8 source checkout (gitignored, local only)
 ```
 
 The V8 static libraries are **not committed**. They are packaged into
-`dist/v8-<goos>-<goarch>.tar.zst`, published as GitHub Release assets, and fetched
+`dist/v8-<goos>-<goarch>.tar.gz`, published as GitHub Release assets, and fetched
 into `.v8/` by `cmd/v8setup`. The full V8 source tree in `v8-build/` is only for
 maintainers rebuilding V8.
 
@@ -77,7 +77,7 @@ Output binary goes to `build/orbital`.
 
 V8 takes 30–60+ minutes on first build. Build output lands in
 `deps/v8/<os>-<arch>/lib/`, and each build also packages a release asset into
-`dist/v8-<goos>-<goarch>.tar.zst` (+ `.sha256`).
+`dist/v8-<goos>-<goarch>.tar.gz` (+ `.sha256`).
 
 ```bash
 # Check out the latest stable V8 and build it for THIS platform.
@@ -131,7 +131,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make build-native
 | V8 compile (`libv8_monolith.a`) | Per target platform (native, or Linux cross-compiled on x64 in CI) |
 | libc++ archive (`libv8_libcxx.a`) | Alongside the V8 build (Chromium libc++ + libc++abi) |
 | C++ glue compile (`libv8go_glue.a`) | Alongside the V8 build, with V8's own clang + libc++ |
-| Package `v8-<goos>-<goarch>.tar.zst` + sha256 | Alongside the V8 build (into `dist/`) |
+| Package `v8-<goos>-<goarch>.tar.gz` + sha256 | Alongside the V8 build (into `dist/`) |
 | Publish Release asset | CI (`release.yml` on merge) |
 | Fetch into `.v8/` + write cgo link file | Consumer/CI via `cmd/v8setup` (`go generate`) |
 | Go compile + CGO link | Native platform (this host, or a native CI runner) |
@@ -153,7 +153,7 @@ hand it to CGO. If you change `v8go.cc`, rebuild the glue with `make v8-<platfor
 ### Distribution: Release assets, not committed binaries
 
 The three archives (`libv8_monolith.a`, `libv8_libcxx.a`, `libv8go_glue.a`) are
-packaged into a single `dist/v8-<goos>-<goarch>.tar.zst` and published as a GitHub
+packaged into a single `dist/v8-<goos>-<goarch>.tar.gz` and published as a GitHub
 Release asset. `pkg/v8` carries **no** `-L`/`-l` flags; instead `cmd/v8setup`
 downloads the version-pinned, checksum-verified asset into
 `.v8/<version>/<goos>-<goarch>/` and writes a build-tagged
@@ -259,7 +259,7 @@ against the exact packaged artifacts — never a rebuild.
     uploads fresh artifacts, and re-pins the manifest on the same PR. Opening the
     PR is skipped when the branch already exists, so pushed fixes are never reset.
 
-  Each build packages every target into `v8-<target>.tar.zst`, uploads them as
+  Each build packages every target into `v8-<target>.tar.gz`, uploads them as
   Actions artifacts, commits `internal/v8dist/manifest.json` (pinning **this run's**
   id + sha256), then `validate` installs those exact artifacts into `.v8/` (the
   `go generate` flow) and runs `make test`/`make coverage` on a native runner per

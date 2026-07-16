@@ -2,6 +2,7 @@ package v8dist
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -9,11 +10,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/klauspost/compress/zstd"
 )
 
-// makeArtifact writes a v8-<target>.tar.zst containing lib/<the three archives>
+// makeArtifact writes a v8-<target>.tar.gz containing lib/<the three archives>
 // into dir and returns its path and sha256.
 func makeArtifact(t *testing.T, dir, filename string) (string, string) {
 	t.Helper()
@@ -22,10 +21,7 @@ func makeArtifact(t *testing.T, dir, filename string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	zw, err := zstd.NewWriter(f)
-	if err != nil {
-		t.Fatal(err)
-	}
+	zw := gzip.NewWriter(f)
 	tw := tar.NewWriter(zw)
 	for _, name := range []string{LibMonolith, LibGlue, LibCxx} {
 		body := []byte("dummy " + name)
@@ -60,7 +56,7 @@ func makeArtifact(t *testing.T, dir, filename string) (string, string) {
 
 func TestInstallWithManifest(t *testing.T) {
 	goos, goarch := runtime.GOOS, runtime.GOARCH
-	filename := "v8-" + goos + "-" + goarch + ".tar.zst"
+	filename := "v8-" + goos + "-" + goarch + ".tar.gz"
 
 	srcDir := t.TempDir()
 	_, sum := makeArtifact(t, srcDir, filename)
@@ -138,7 +134,7 @@ func TestInstallWithManifest(t *testing.T) {
 
 func TestChecksumMismatch(t *testing.T) {
 	goos, goarch := runtime.GOOS, runtime.GOARCH
-	filename := "v8-" + goos + "-" + goarch + ".tar.zst"
+	filename := "v8-" + goos + "-" + goarch + ".tar.gz"
 	srcDir := t.TempDir()
 	makeArtifact(t, srcDir, filename)
 

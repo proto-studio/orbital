@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble internal/v8dist/manifest.json from packaged artifacts + run metadata.
 
-Reads every ``v8-<goos>-<goarch>.tar.zst.sha256`` in the dist directory, extracts
+Reads every ``v8-<goos>-<goarch>.tar.gz.sha256`` in the dist directory, extracts
 the checksum, and writes a manifest pinning the V8 version, module version, source
 commit/run id, and per-target {filename, sha256}. Consumers embed this manifest to
 download the exact, checksum-verified Release asset for their platform.
@@ -21,9 +21,9 @@ ORDER = [
 
 
 def parse_target(sha_filename):
-    """v8-linux-amd64.tar.zst.sha256 -> ("linux", "amd64", "v8-linux-amd64.tar.zst")."""
-    base = sha_filename[: -len(".sha256")]  # v8-<goos>-<goarch>.tar.zst
-    stem = base[len("v8-"): -len(".tar.zst")]  # <goos>-<goarch>
+    """v8-linux-amd64.tar.gz.sha256 -> ("linux", "amd64", "v8-linux-amd64.tar.gz")."""
+    base = sha_filename[: -len(".sha256")]  # v8-<goos>-<goarch>.tar.gz
+    stem = base[len("v8-"): -len(".tar.gz")]  # <goos>-<goarch>
     parts = stem.split("-")
     if len(parts) != 2:
         return None
@@ -49,7 +49,7 @@ def main():
 
     found = {}
     for name in os.listdir(args.dist_dir):
-        if not name.endswith(".tar.zst.sha256"):
+        if not name.endswith(".tar.gz.sha256"):
             continue
         parsed = parse_target(name)
         if not parsed:
@@ -64,7 +64,7 @@ def main():
         }
 
     if not found:
-        sys.exit(f"ERROR: no v8-*.tar.zst.sha256 files found in {args.dist_dir}")
+        sys.exit(f"ERROR: no v8-*.tar.gz.sha256 files found in {args.dist_dir}")
 
     ordered_keys = [k for k in ORDER if k in found]
     ordered_keys += [k for k in sorted(found) if k not in ORDER]

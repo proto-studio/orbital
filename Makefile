@@ -9,7 +9,7 @@ BINARY_NAME := orbital
 BUILD_DIR := build
 V8_BUILD_DIR := v8-build
 V8_OUTPUT_DIR := deps/v8
-# Packaged release artifacts (v8-<goos>-<goarch>.tar.zst + .sha256) land here.
+# Packaged release artifacts (v8-<goos>-<goarch>.tar.gz + .sha256) land here.
 DIST_DIR := dist
 V8_VERSION := 15.1.206.8
 GO := go
@@ -216,7 +216,7 @@ v8-fetch: v8-deps
 # cannot read thin archives, so on darwin we repack their underlying .o files.
 #
 # The three archives (libv8_monolith.a, libv8_libcxx.a, libv8go_glue.a) are NOT
-# committed to Git. They are packaged into $(DIST_DIR)/v8-<goos>-<goarch>.tar.zst
+# committed to Git. They are packaged into $(DIST_DIR)/v8-<goos>-<goarch>.tar.gz
 # (+ .sha256) and published as GitHub Release assets; consumers fetch them via
 # `go generate` (see cmd/v8setup). GitHub Releases allow multi-GB assets, so the
 # old 100MB-per-file split is gone — we ship a single monolith again.
@@ -300,9 +300,10 @@ v8-build: v8-fetch
 	@echo ">>> V8 built and packaged successfully for $(TARGET_OS)/$(TARGET_ARCH)"
 
 # Package a built platform's libraries into a checksum-verified release asset:
-#   $(DIST_DIR)/v8-<goos>-<goarch>.tar.zst  (+ .sha256)
+#   $(DIST_DIR)/v8-<goos>-<goarch>.tar.gz  (+ .sha256)
 # The archive contains only the lib/ directory (consumers never compile V8's
 # headers — pkg/v8 uses its own v8go.h). This is what CI uploads and publishes.
+# gzip (not zstd) keeps the consumer-side extractor pure Go stdlib.
 .PHONY: package-v8
 package-v8:
 	@if [ ! -f "$(V8_PLATFORM_DIR)/lib/libv8_monolith.a" ]; then \
@@ -310,9 +311,9 @@ package-v8:
 		exit 1; \
 	fi
 	@mkdir -p $(DIST_DIR)
-	@asset="v8-$(GOOS)-$(GOARCH).tar.zst"; \
+	@asset="v8-$(GOOS)-$(GOARCH).tar.gz"; \
 	echo ">>> Packaging $(DIST_DIR)/$$asset"; \
-	tar -C "$(V8_PLATFORM_DIR)" --zstd -cf "$(DIST_DIR)/$$asset" lib; \
+	tar -C "$(V8_PLATFORM_DIR)" -czf "$(DIST_DIR)/$$asset" lib; \
 	( cd $(DIST_DIR) && shasum -a 256 "$$asset" > "$$asset.sha256" ); \
 	echo ">>> Wrote $(DIST_DIR)/$$asset ($$(du -h "$(DIST_DIR)/$$asset" | cut -f1))"; \
 	cat "$(DIST_DIR)/$$asset.sha256"
@@ -505,7 +506,7 @@ help:
 	@echo "  v8-linux-amd64   Build V8 for Linux x86_64"
 	@echo "  v8-linux-arm64   Build V8 for Linux ARM64"
 	@echo "  v8-darwin-arm64  Build V8 for macOS ARM64 (Apple Silicon)"
-	@echo "  package-v8       Package a built platform into dist/v8-<goos>-<goarch>.tar.zst"
+	@echo "  package-v8       Package a built platform into dist/v8-<goos>-<goarch>.tar.gz"
 	@echo "  v8-manifest      Assemble internal/v8dist/manifest.json from dist/ checksums"
 	@echo "  v8-fetch         Fetch V8 source only"
 	@echo "  v8-deps          Install depot_tools"
