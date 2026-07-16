@@ -1,6 +1,13 @@
-// V8 Go bindings C++ implementation
+// V8 Go bindings C++ implementation.
+//
+// This file is pre-compiled into a per-platform static library (libv8go_glue.a)
+// using V8's own Chromium clang + libc++, so its C++ ABI (the std::__Cr::
+// namespace, pointer compression and sandbox layouts) matches libv8_monolith.a.
+// It deliberately lives in this csrc/ subdirectory so the go tool / cgo does NOT
+// compile it against the system libstdc++ (which would produce mismatched
+// std:: symbols). See the Makefile `v8-build` target and scripts/build-glue.py.
 #include "v8go.h"
-#include "_cgo_export.h"
+#include "v8go_exports.h"
 
 #include <v8.h>
 #include <libplatform/libplatform.h>
@@ -113,6 +120,7 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
     if (!isolate_ptr) return nullptr;
     
     Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -144,6 +152,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = wrapper->isolate;
     
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = wrapper->context.Get(isolate);
@@ -199,6 +208,7 @@ void* v8go_context_global(void* context_ptr) {
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = wrapper->isolate;
     
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = wrapper->context.Get(isolate);
@@ -221,6 +231,7 @@ char* v8go_value_to_string(void* context_ptr, void* value_ptr) {
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -239,6 +250,7 @@ int v8go_value_is_undefined(void* value_ptr) {
     if (!value_ptr) return 1;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsUndefined() ? 1 : 0;
@@ -248,6 +260,7 @@ int v8go_value_is_null(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsNull() ? 1 : 0;
@@ -257,6 +270,7 @@ int v8go_value_is_boolean(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsBoolean() ? 1 : 0;
@@ -266,6 +280,7 @@ int v8go_value_is_number(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsNumber() ? 1 : 0;
@@ -275,6 +290,7 @@ int v8go_value_is_string(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsString() ? 1 : 0;
@@ -284,6 +300,7 @@ int v8go_value_is_object(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsObject() ? 1 : 0;
@@ -293,6 +310,7 @@ int v8go_value_is_array(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsArray() ? 1 : 0;
@@ -302,6 +320,7 @@ int v8go_value_is_function(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->IsFunction() ? 1 : 0;
@@ -311,6 +330,7 @@ int v8go_value_to_boolean(void* value_ptr) {
     if (!value_ptr) return 0;
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     return wrapper->value.Get(isolate)->BooleanValue(isolate) ? 1 : 0;
@@ -323,6 +343,7 @@ double v8go_value_to_number(void* context_ptr, void* value_ptr) {
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -342,6 +363,7 @@ long v8go_value_to_integer(void* context_ptr, void* value_ptr) {
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -359,6 +381,7 @@ void* v8go_undefined(void* context_ptr) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -372,6 +395,7 @@ void* v8go_null(void* context_ptr) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -385,6 +409,7 @@ void* v8go_true(void* context_ptr) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -398,6 +423,7 @@ void* v8go_false(void* context_ptr) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -411,6 +437,7 @@ void* v8go_new_boolean(void* context_ptr, int value) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -424,6 +451,7 @@ void* v8go_new_number(void* context_ptr, double value) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -437,6 +465,7 @@ void* v8go_new_integer(void* context_ptr, long value) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -450,6 +479,7 @@ void* v8go_new_string(void* context_ptr, const char* value, int length) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -466,6 +496,7 @@ void* v8go_new_object(void* context_ptr) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx->context.Get(isolate);
@@ -483,6 +514,7 @@ void* v8go_new_array(void* context_ptr, int length) {
     if (!context_ptr) return nullptr;
     ContextWrapper* ctx = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx->context.Get(isolate);
@@ -505,6 +537,7 @@ int v8go_object_set(void* context_ptr, void* object_ptr, const char* key, void* 
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -529,6 +562,7 @@ int v8go_object_set_idx(void* context_ptr, void* object_ptr, int idx, void* valu
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -551,6 +585,7 @@ void* v8go_object_get(void* context_ptr, void* object_ptr, const char* key) {
     ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -578,6 +613,7 @@ void* v8go_object_get_idx(void* context_ptr, void* object_ptr, int idx) {
     ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -604,6 +640,7 @@ int v8go_object_has(void* context_ptr, void* object_ptr, const char* key) {
     ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -626,6 +663,7 @@ int v8go_object_delete(void* context_ptr, void* object_ptr, const char* key) {
     ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -648,6 +686,7 @@ void* v8go_object_get_property_names(void* context_ptr, void* object_ptr) {
     ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -676,6 +715,7 @@ int v8go_array_length(void* context_ptr, void* array_ptr) {
     
     ValueWrapper* arr_wrapper = static_cast<ValueWrapper*>(array_ptr);
     Isolate* isolate = arr_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -691,7 +731,11 @@ static void functionCallback(const FunctionCallbackInfo<Value>& info) {
     HandleScope handle_scope(isolate);
     
     Local<External> data = info.Data().As<External>();
+#if V8_MAJOR_VERSION >= 15
+    int callback_id = static_cast<int>(reinterpret_cast<intptr_t>(data->Value(kExternalPointerTypeTagDefault)));
+#else
     int callback_id = static_cast<int>(reinterpret_cast<intptr_t>(data->Value()));
+#endif
     
     // Create callback info
     CallbackInfo* cb_info = new CallbackInfo();
@@ -719,10 +763,15 @@ void* v8go_function_template_new_with_id(void* isolate_ptr, int callback_id) {
     if (!isolate_ptr) return nullptr;
     
     Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
+#if V8_MAJOR_VERSION >= 15
+    Local<External> data = External::New(isolate, reinterpret_cast<void*>(static_cast<intptr_t>(callback_id)), kExternalPointerTypeTagDefault);
+#else
     Local<External> data = External::New(isolate, reinterpret_cast<void*>(static_cast<intptr_t>(callback_id)));
+#endif
     Local<FunctionTemplate> tmpl = FunctionTemplate::New(isolate, functionCallback, data);
     
     FunctionTemplateWrapper* wrapper = new FunctionTemplateWrapper();
@@ -740,6 +789,7 @@ void* v8go_function_template_get_function(void* context_ptr, void* function_temp
     FunctionTemplateWrapper* tmpl_wrapper = static_cast<FunctionTemplateWrapper*>(function_template_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -760,6 +810,7 @@ void* v8go_object_template_new(void* isolate_ptr) {
     if (!isolate_ptr) return nullptr;
     
     Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -779,6 +830,7 @@ void v8go_object_template_set_function(void* object_template_ptr, const char* ke
     FunctionTemplateWrapper* func_wrapper = static_cast<FunctionTemplateWrapper*>(function_template_ptr);
     
     Isolate* isolate = obj_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -796,6 +848,7 @@ void* v8go_object_template_new_instance(void* context_ptr, void* object_template
     ObjectTemplateWrapper* tmpl_wrapper = static_cast<ObjectTemplateWrapper*>(object_template_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -859,6 +912,7 @@ void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, 
     ValueWrapper* func_wrapper = static_cast<ValueWrapper*>(function_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -915,6 +969,7 @@ void* v8go_json_parse(void* context_ptr, const char* json, char** error) {
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -946,6 +1001,7 @@ char* v8go_json_stringify(void* context_ptr, void* value_ptr, char** error) {
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -974,6 +1030,7 @@ void* v8go_throw_exception(void* context_ptr, const char* message) {
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -992,6 +1049,7 @@ void* v8go_throw_type_error(void* context_ptr, const char* message) {
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1010,6 +1068,7 @@ void* v8go_throw_range_error(void* context_ptr, const char* message) {
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1029,6 +1088,7 @@ void* v8go_promise_resolver_new(void* context_ptr) {
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1050,6 +1110,7 @@ void* v8go_promise_resolver_get_promise(void* context_ptr, void* resolver_ptr) {
     ValueWrapper* res_wrapper = static_cast<ValueWrapper*>(resolver_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1071,6 +1132,7 @@ int v8go_promise_resolver_resolve(void* context_ptr, void* resolver_ptr, void* v
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1092,6 +1154,7 @@ int v8go_promise_resolver_reject(void* context_ptr, void* resolver_ptr, void* va
     ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1110,6 +1173,7 @@ int v8go_promise_state(void* promise_ptr) {
     
     ValueWrapper* wrapper = static_cast<ValueWrapper*>(promise_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1127,6 +1191,7 @@ void* v8go_promise_result(void* context_ptr, void* promise_ptr) {
     ValueWrapper* prom_wrapper = static_cast<ValueWrapper*>(promise_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1149,7 +1214,11 @@ static MaybeLocal<Module> moduleResolveCallback(
     Local<FixedArray> import_attributes,
     Local<Module> referrer) {
     
+#if V8_MAJOR_VERSION >= 15
+    Isolate* isolate = Isolate::GetCurrent();
+#else
     Isolate* isolate = context->GetIsolate();
+#endif
     
     String::Utf8Value specifier_utf8(isolate, specifier);
     const char* specifier_str = *specifier_utf8;
@@ -1250,6 +1319,7 @@ void* v8go_compile_module(void* context_ptr, const char* source, const char* nam
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = ctx_wrapper->isolate;
     
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1309,6 +1379,7 @@ int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id
     ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1346,6 +1417,7 @@ void* v8go_module_evaluate(void* context_ptr, void* module_ptr, char** error) {
     ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     Local<Context> context = ctx_wrapper->context.Get(isolate);
@@ -1385,6 +1457,7 @@ int v8go_module_get_status(void* module_ptr) {
     
     ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1399,6 +1472,7 @@ void* v8go_module_get_namespace(void* context_ptr, void* module_ptr) {
     ModuleWrapper* mod_wrapper = static_cast<ModuleWrapper*>(module_ptr);
     
     Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1416,6 +1490,7 @@ int v8go_module_get_requests_length(void* module_ptr) {
     
     ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1429,6 +1504,7 @@ const char* v8go_module_get_request(void* module_ptr, int index) {
     
     ModuleWrapper* wrapper = static_cast<ModuleWrapper*>(module_ptr);
     Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
     
@@ -1437,7 +1513,11 @@ const char* v8go_module_get_request(void* module_ptr, int index) {
     
     if (index < 0 || index >= requests->Length()) return nullptr;
     
+#if V8_MAJOR_VERSION >= 15
+    Local<Data> data = requests->Get(index);
+#else
     Local<Data> data = requests->Get(isolate->GetCurrentContext(), index);
+#endif
     Local<ModuleRequest> request = data.As<ModuleRequest>();
     Local<String> specifier = request->GetSpecifier();
     

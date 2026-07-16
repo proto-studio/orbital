@@ -1,8 +1,17 @@
 # V8 build cache (large, not committed)
 v8-build/
 
-# deps/v8/current symlink (platform-specific, regenerated)
-deps/v8/current
+# Transient V8 build output (packaged into dist/, never committed)
+deps/v8/
+
+# V8 runtime libraries fetched by `go generate` (see cmd/v8setup)
+.v8/
+
+# Generated per-target cgo link files written by `go generate`
+**/zz_generated_v8link_*.go
+
+# V8 release-asset packaging output (tarballs + checksums)
+dist/
 
 # Build artifacts
 build/
@@ -11,6 +20,8 @@ coverage.html
 
 # Go binaries
 /orbital
+/main
+/sandbox-server
 *.exe
 *.test
 *.out
