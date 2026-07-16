@@ -14,6 +14,9 @@ set -e
 # Configuration
 # ============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 V8_VERSION="${V8_VERSION:-13.1.201.1}"
 BUILD_DIR="${BUILD_DIR:-$(pwd)/v8-build}"
 OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-$(pwd)/deps/v8}"
@@ -36,7 +39,7 @@ print_usage() {
     echo "Options:"
     echo "  -v VERSION    V8 version (default: $V8_VERSION)"
     echo "  -t OS         Target OS: linux, darwin (default: current OS)"
-    echo "  -a ARCH       Target arch: x64, arm64 (default: current arch)"
+    echo "  -a ARCH       Target arch: amd64, arm64 (default: current arch)"
     echo "  -j JOBS       Number of parallel jobs (default: $NUM_JOBS)"
     echo "  -d            Debug build (default: release)"
     echo "  -f            Fetch only, don't build"
@@ -45,7 +48,7 @@ print_usage() {
     echo "Examples:"
     echo "  $0                           # Build for current platform"
     echo "  $0 -t linux -a arm64         # Cross-compile for Linux ARM64"
-    echo "  $0 -t linux -a x64           # Cross-compile for Linux x86_64"
+    echo "  $0 -t linux -a amd64         # Cross-compile for Linux x86_64"
     echo "  $0 -v 12.9.202.13            # Build specific V8 version"
 }
 
@@ -69,8 +72,9 @@ done
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 HOST_ARCH="$(uname -m)"
 
+# Use Go's GOARCH naming (amd64/arm64) for directories/artifacts.
 case "$HOST_ARCH" in
-    x86_64) HOST_ARCH="x64" ;;
+    x86_64) HOST_ARCH="amd64" ;;
     arm64|aarch64) HOST_ARCH="arm64" ;;
 esac
 
@@ -78,8 +82,11 @@ esac
 TARGET_OS="${TARGET_OS:-$HOST_OS}"
 TARGET_ARCH="${TARGET_ARCH:-$HOST_ARCH}"
 
-# V8 arch naming
-V8_ARCH="$TARGET_ARCH"
+# V8's own GN target_cpu uses "x64" (not "amd64"); map for GN args only.
+case "$TARGET_ARCH" in
+    amd64) V8_ARCH="x64" ;;
+    *) V8_ARCH="$TARGET_ARCH" ;;
+esac
 
 # Output directory for this platform
 OUTPUT_DIR="${OUTPUT_BASE_DIR}/${TARGET_OS}-${TARGET_ARCH}"
@@ -181,7 +188,14 @@ v8_target_cpu="${V8_ARCH}"
 is_component_build=false
 v8_monolithic=true
 v8_use_external_startup_data=false
-use_custom_libcxx=false
+# Chromium's bundled, hardened libc++: modern C++20 (std::bit_cast,
+# <source_location>) and required for the V8 sandbox (use_safe_libcxx).
+use_custom_libcxx=true
+v8_enable_sandbox=true
+# Chromium's rustc is often x86_64-only; ARM hosts hit Exec format error.
+# Temporal (JS Temporal API) is what pulls Rust into V8 — disable both.
+enable_rust=false
+v8_enable_temporal_support=false
 v8_enable_i18n_support=false
 treat_warnings_as_errors=false
 symbol_level=0
@@ -200,9 +214,10 @@ GNARGS
 elif [ "$TARGET_OS" = "linux" ]; then
     cat >> "$BUILD_OUT_DIR/args.gn" << GNARGS
 
-# Linux settings
-is_clang=true
-use_sysroot=false
+# Linux: Chromium bundled clang (system clang is too old for V8 15.x). It is an
+# x86_64 binary that cross-compiles arm64, so use the Chromium Debian sysroot.
+clang_use_chrome_plugins=false
+use_sysroot=true
 GNARGS
 fi
 
@@ -213,23 +228,32 @@ if [ "$TARGET_OS" != "$HOST_OS" ] || [ "$TARGET_ARCH" != "$HOST_ARCH" ]; then
 # Cross-compilation settings
 target_os="${TARGET_OS}"
 GNARGS
+fi
 
-    # ARM64 cross-compilation on Linux
-    if [ "$HOST_OS" = "linux" ] && [ "$TARGET_ARCH" = "arm64" ] && [ "$HOST_ARCH" = "x64" ]; then
-        cat >> "$BUILD_OUT_DIR/args.gn" << GNARGS
+# Install the Debian sysroot for the target arch (Linux only).
+if [ "$TARGET_OS" = "linux" ]; then
+    if [ "$V8_ARCH" = "arm64" ]; then sysarch=arm64; else sysarch=amd64; fi
+    echo ">>> Installing Debian sysroot ($sysarch)..."
+    python3 build/linux/sysroot_scripts/install-sysroot.py --arch="$sysarch"
 
-# ARM64 cross-compilation
-use_sysroot=false
-GNARGS
-    fi
+    # Strip Chromium's experimental CREL relocation flag. Chromium adds
+    # -Wa,--crel,--allow-experimental-crel whenever LLD is used, but CREL is only
+    # understood by LLD / binutils >= 2.44. Stock GNU ld (bfd 2.42, on CI runners
+    # and most consumer machines) reports "unknown architecture" for such objects.
+    # We keep use_lld=true (Chromium's archives lack the symbol index GNU ld needs,
+    # so host-tool links require LLD) and only drop the CREL flag, giving standard
+    # RELA relocations that any consumer's GNU ld can link.
+    echo ">>> Disabling experimental CREL relocations..."
+    sed -i '/-Wa,--crel,--allow-experimental-crel/d' build/config/compiler/BUILD.gn
 fi
 
 echo "GN Args:"
 cat "$BUILD_OUT_DIR/args.gn"
 echo ""
 
-# Generate build files
-gn gen "$BUILD_OUT_DIR"
+# Generate build files (compile_commands.json is used to pre-compile the glue
+# with V8's exact flags/ABI, see below).
+gn gen "$BUILD_OUT_DIR" --export-compile-commands
 
 # ============================================================================
 # Step 4: Build V8
@@ -239,6 +263,49 @@ echo ""
 echo ">>> Step 4: Building V8 (this may take a while)..."
 ninja -C "$BUILD_OUT_DIR" v8_monolith -j "$NUM_JOBS"
 
+# use_custom_libcxx=true makes V8 reference Chromium's hardened libc++ (the
+# std::__Cr:: namespace). The monolith is a static_library, so GN never compiles
+# its link-time deps; libc++ only gets built for the x64 host snapshot toolchain
+# (under <toolchain>/obj/...), not the target arch. Explicitly build the target
+# libc++/libc++abi so they land under the default toolchain's obj/, then ship them
+# as their own libv8_libcxx.a (NOT merged into the monolith: that would push the
+# monolith past GitHub's 100MB per-file limit, and Git LFS is unusable because
+# `go get` does not smudge LFS pointers). libc++ and libc++abi are mutually
+# recursive, so combining them into one archive lets ld resolve their cross-refs
+# internally. Linux uses GNU ar (MRI scripts); macOS uses libtool -static.
+echo ">>> Building target libc++/libc++abi..."
+ninja -C "$BUILD_OUT_DIR" -j "$NUM_JOBS" \
+    obj/buildtools/third_party/libc++/libc++.a \
+    obj/buildtools/third_party/libc++abi/libc++abi.a
+LIBCXX_ARCHIVES="$(find "$BUILD_OUT_DIR/obj" -name 'libc++*.a' 2>/dev/null)"
+if [ -z "$LIBCXX_ARCHIVES" ]; then
+    echo "ERROR: use_custom_libcxx=true but no target libc++.a found under $BUILD_OUT_DIR/obj;" >&2
+    echo "       the glue/monolith would ship with undefined std::__Cr:: symbols." >&2
+    exit 1
+fi
+echo ">>> Combining Chromium libc++ + libc++abi into libv8_libcxx.a:"
+echo "$LIBCXX_ARCHIVES"
+if [ "$TARGET_OS" = "darwin" ]; then
+    # Chromium's libc++.a/libc++abi.a are LLVM thin archives, which macOS cctools
+    # libtool cannot read ("not an object file"); repack their .o files instead.
+    LIBCXX_OBJS="$(find "$BUILD_OUT_DIR/obj/buildtools/third_party/libc++" "$BUILD_OUT_DIR/obj/buildtools/third_party/libc++abi" -name '*.o' 2>/dev/null)"
+    if [ -z "$LIBCXX_OBJS" ]; then
+        echo "ERROR: no libc++/libc++abi object files found under $BUILD_OUT_DIR/obj" >&2
+        exit 1
+    fi
+    libtool -static -o "$BUILD_OUT_DIR/obj/libv8_libcxx.a" $LIBCXX_OBJS
+else
+    {
+        echo "create $BUILD_OUT_DIR/obj/libv8_libcxx.a"
+        for a in $LIBCXX_ARCHIVES; do echo "addlib $a"; done
+        echo "save"
+        echo "end"
+    } | ar -M
+    ranlib "$BUILD_OUT_DIR/obj/libv8_libcxx.a"
+fi
+MONOLITH="$BUILD_OUT_DIR/obj/libv8_monolith.a"
+LIBCXX="$BUILD_OUT_DIR/obj/libv8_libcxx.a"
+
 # ============================================================================
 # Step 5: Copy Output Files
 # ============================================================================
@@ -246,25 +313,37 @@ ninja -C "$BUILD_OUT_DIR" v8_monolith -j "$NUM_JOBS"
 echo ""
 echo ">>> Step 5: Copying build artifacts..."
 
-# Copy static library
-cp "$BUILD_OUT_DIR/obj/libv8_monolith.a" "$OUTPUT_DIR/lib/"
+# Ship a single monolith (GitHub Releases allow multi-GB assets, so the old
+# 100MB-per-file split is no longer needed) plus the separate Chromium libc++.
+cp "$MONOLITH" "$OUTPUT_DIR/lib/libv8_monolith.a"
+cp "$LIBCXX" "$OUTPUT_DIR/lib/libv8_libcxx.a"
 
-# Copy headers
-echo "Copying V8 headers..."
-cp -R include/* "$OUTPUT_DIR/include/"
+# Pre-compile the cgo C++ glue with V8's own toolchain/libc++ ABI so its std::
+# symbols match libv8_monolith.a. Consumers then link libv8go_glue.a with plain
+# gcc (no clang, no libc++ headers, no C++ compilation on their side). V8's
+# headers are only needed here (for the glue); consumers use pkg/v8's own v8go.h.
+echo "Pre-compiling cgo C++ glue with V8's libc++ ABI..."
+python3 "$REPO_ROOT/scripts/build-glue.py" \
+    --out-dir "$(pwd)/$BUILD_OUT_DIR" \
+    --src "$REPO_ROOT/pkg/v8/csrc/v8go.cc" \
+    --include "$REPO_ROOT/pkg/v8" \
+    --include "$(pwd)/include" \
+    --output "$OUTPUT_DIR/lib/libv8go_glue.a"
 
-# Create pkg-config file
-cat > "$OUTPUT_DIR/v8.pc" << EOF
-prefix=$OUTPUT_DIR
-libdir=\${prefix}/lib
-includedir=\${prefix}/include
+# ============================================================================
+# Step 6: Package release asset
+# ============================================================================
 
-Name: V8
-Description: V8 JavaScript Engine
-Version: $V8_VERSION
-Libs: -L\${libdir} -lv8_monolith
-Cflags: -I\${includedir}
-EOF
+echo ""
+echo ">>> Step 6: Packaging release asset..."
+
+# GOARCH naming for the asset (build dirs already use amd64/arm64).
+GOARCH="$TARGET_ARCH"
+DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
+mkdir -p "$DIST_DIR"
+ASSET="v8-${TARGET_OS}-${GOARCH}.tar.zst"
+tar -C "$OUTPUT_DIR" --zstd -cf "$DIST_DIR/$ASSET" lib
+( cd "$DIST_DIR" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
 
 # ============================================================================
 # Done
@@ -272,12 +351,9 @@ EOF
 
 echo ""
 echo "=== Build Complete ==="
-echo "V8 static library: $OUTPUT_DIR/lib/libv8_monolith.a"
-echo "V8 headers:        $OUTPUT_DIR/include/"
-echo "pkg-config file:   $OUTPUT_DIR/v8.pc"
+echo "V8 libraries:      $OUTPUT_DIR/lib/ (libv8_monolith.a, libv8_libcxx.a, libv8go_glue.a)"
+echo "Release asset:     $DIST_DIR/$ASSET"
 echo ""
-echo "Library size:"
-ls -lh "$OUTPUT_DIR/lib/libv8_monolith.a"
+ls -lh "$OUTPUT_DIR/lib/"*.a
 echo ""
-echo "To build Orbital for this platform:"
-echo "  make build TARGET_OS=$TARGET_OS TARGET_ARCH=$TARGET_ARCH"
+cat "$DIST_DIR/$ASSET.sha256"

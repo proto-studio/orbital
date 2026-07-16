@@ -1,55 +1,51 @@
 # Dependencies
 
-This directory contains pre-compiled dependencies for Orbital.
-
 ## V8 JavaScript Engine
 
-The `v8/` subdirectory contains compiled V8 static libraries for each supported platform:
+V8 static libraries are **not committed** to this repository. They are built by
+CI on native runners, packaged into `dist/v8-<goos>-<goarch>.tar.zst`, and
+published as checksum-verified GitHub Release assets. Consumers (and this repo's
+own tests) fetch them on demand via `go generate` into a project-local `.v8/`
+directory — see `cmd/v8setup` and the top-level `README.md`.
+
+### Local builds
+
+`deps/v8/` is only a **transient build-output directory** (gitignored). When you
+build V8 locally it is populated per platform, then packaged into `dist/`:
 
 ```
-deps/v8/
-├── current/              # Symlink to active platform (gitignored)
-├── darwin-arm64/         # macOS Apple Silicon (M1/M2/M3)
-│   ├── lib/
-│   │   └── libv8_monolith.a
-│   └── include/
-├── darwin-x64/           # macOS Intel
-│   ├── lib/
-│   │   └── libv8_monolith.a
-│   └── include/
-├── linux-arm64/          # Linux ARM64 (AWS Graviton, etc.)
-│   ├── lib/
-│   │   └── libv8_monolith.a
-│   └── include/
-└── linux-x64/            # Linux x86_64
-    ├── lib/
-    │   └── libv8_monolith.a
-    └── include/
+deps/v8/<goos>-<goarch>/lib/
+├── libv8_monolith.a     # V8 itself
+├── libv8_libcxx.a       # Chromium's hardened libc++/libc++abi
+└── libv8go_glue.a       # pre-compiled cgo C++ glue (V8's exact ABI)
 ```
 
-## Building V8
-
-To build V8 for your platform:
+Build V8 for the platform you're on and package it:
 
 ```bash
-make v8-native
+make v8-native            # build for the current host
+make package-v8           # -> dist/v8-<goos>-<goarch>.tar.zst (+ .sha256)
+make v8-setup-local       # install that asset into .v8/ + generate the link file
 ```
 
-To build for a specific platform (cross-compilation):
+Or fetch and build the latest stable V8:
 
 ```bash
-make v8 TARGET_OS=linux TARGET_ARCH=arm64
-make v8 TARGET_OS=linux TARGET_ARCH=x64
+make v8-latest
 ```
 
-To build for all Linux platforms:
+### Supported platforms
 
-```bash
-make v8-all-linux
-```
+| Platform | Target |
+|----------|--------|
+| macOS ARM64 (Apple Silicon) | `darwin/arm64` |
+| Linux ARM64 | `linux/arm64` |
+| Linux x86_64 | `linux/amd64` |
 
-## Note on File Sizes
+Intel macOS (`darwin/amd64`) is **not supported**: current V8 requires the
+macOS 15+ SDK, which ships only on Apple Silicon.
 
-V8 static libraries are large (~50-100MB each). They are committed to git to avoid requiring users to compile V8 themselves (which takes 30-60 minutes).
-
-The `v8-build/` directory (V8 source and build cache) is NOT committed and can be deleted after building.
+Libraries for platforms other than your host are produced by CI on native
+runners (see `.github/workflows/update-v8.yml`), not built locally. The
+`v8-build/` directory (V8 source + build cache) is not committed and can be
+deleted after building.

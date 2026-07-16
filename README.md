@@ -12,21 +12,32 @@ On a standard glibc-based Linux or macOS system, no extra setup is needed beyond
 
 ### Building or importing the library
 
-Orbital uses CGO. You need:
+Orbital uses CGO and links a prebuilt V8 static library. You need:
 
 - Go 1.24+
-- A C++ compiler (`clang++` on macOS, `g++` on Linux)
+- A C toolchain for CGO (`clang` on macOS, `gcc` on Linux)
 
-The package ships with pre-built V8 libraries (currently V8 <!-- V8_VERSION -->13.1.201.1<!-- /V8_VERSION -->) for the following platforms:
+You do **not** need a C++ compiler or the V8 headers: the C++ bridge is shipped
+pre-compiled (see [Linking model](#linking-model)), so CGO only compiles a small
+pure-C shim and links the prebuilt archives.
 
-| Platform | Directory |
-|----------|-----------|
-| macOS ARM64 (Apple Silicon) | `deps/v8/darwin-arm64/` |
-| macOS x86_64 (Intel) | `deps/v8/darwin-x64/` |
-| Linux ARM64 | `deps/v8/linux-arm64/` |
-| Linux x86_64 | `deps/v8/linux-x64/` |
+The V8 static libraries are **not committed to the repository**. They are
+published as checksum-verified GitHub Release assets (currently V8
+<!-- V8_VERSION -->13.1.201.1<!-- /V8_VERSION -->) and fetched on demand by
+`go generate` into a project-local `.v8/` directory. Prebuilt libraries are
+available for:
 
-V8 is linked **statically** from `libv8_monolith.a`, so you only need the shipped `deps/v8/*/lib/` and `deps/v8/*/include/` files plus a C++ toolchain to compile the small CGO bridge in `pkg/v8`.
+| Platform | Target |
+|----------|--------|
+| macOS ARM64 (Apple Silicon) | `darwin/arm64` |
+| Linux ARM64 | `linux/arm64` |
+| Linux x86_64 | `linux/amd64` |
+
+> Intel macOS (`darwin/amd64`) is not supported: current V8 requires the
+> macOS 15+ SDK, which ships only on Apple Silicon.
+
+See [Installing the V8 runtime](#installing-the-v8-runtime) for the one-time
+setup an embedding project needs.
 
 ## Quick start
 
@@ -82,13 +93,88 @@ func main() {
 }
 ```
 
-Build with CGO enabled on a machine that matches the target platform:
+Fetch the V8 runtime once, then build with CGO enabled:
 
 ```bash
+go generate ./...          # downloads V8 into .v8/ and writes the cgo link file
 CGO_ENABLED=1 go build -o myapp .
 ```
 
-See `examples/native/main.go` and `examples/sandbox-server/main.go` for fuller examples including native Go modules and sandboxing.
+See [Installing the V8 runtime](#installing-the-v8-runtime) for the one-time
+`go generate` wiring, and `examples/native/main.go` /
+`examples/sandbox-server/main.go` for fuller examples.
+
+## Installing the V8 runtime
+
+Because the V8 libraries live in the (clearable) Go module cache when you `go get`
+Orbital, they cannot be linked directly from there. Instead, a small setup tool
+(`cmd/v8setup`) downloads the version-pinned, checksum-verified libraries into a
+project-local `.v8/` directory and writes a per-target cgo file that carries the
+`-L`/`-l` link flags. Wire it into your project **once**:
+
+1. Add a tiny helper package that runs the setup tool via `go generate` and is
+   blank-imported by your `main` so its generated link flags are in the build:
+
+```go
+// internal/v8dist/v8dist.go
+//go:generate go run proto.zip/studio/orbital/cmd/v8setup -link-out .
+package v8dist
+```
+
+```go
+// main.go
+import _ "yourmodule/internal/v8dist"
+```
+
+2. Run `go generate ./...` before building. It fetches the libraries for your
+   `GOOS`/`GOARCH` into `.v8/<version>/<goos>-<goarch>/` and writes
+   `zz_generated_v8link_<goos>_<goarch>.go` into the helper package.
+
+3. Add `.v8/` and `**/zz_generated_v8link_*.go` to your `.gitignore` (the
+   libraries and link file are machine/target-specific and regenerated).
+
+`go build` does **not** run `go generate` automatically — run it yourself after
+`go get`, after bumping the Orbital version, or in CI before building.
+
+### Cross-compiling
+
+`go generate` respects `GOOS`/`GOARCH`, so you can install multiple targets side
+by side and cross-compile:
+
+```bash
+GOOS=linux GOARCH=arm64 go generate ./...
+GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -o myapp-linux-arm64 .
+```
+
+Each target gets its own `.v8/<version>/<goos>-<goarch>/` directory and its own
+build-tagged link file, so targets never collide.
+
+### Layout, caching, and clearing
+
+```
+.v8/
+  v1.4.2/                    # pinned module version
+    linux-amd64/lib/*.a
+    darwin-arm64/lib/*.a
+```
+
+- **Custom location:** set `V8_HOME=/path` to install into a shared OS user-data
+  directory instead of the project (the generated link file then uses an absolute
+  path; keep it gitignored).
+- **CI caching:** cache the `.v8/` directory keyed on the Orbital module version
+  to skip re-downloading on every run.
+- **Clearing:** delete `.v8/` (and re-run `go generate`) to force a fresh,
+  re-verified download.
+
+### If the link fails
+
+If `go build` reports `cannot find -lv8go_glue` or `undefined reference` errors,
+the V8 runtime hasn't been installed for that target. Run the exact command the
+tool prints, e.g.:
+
+```bash
+GOOS=linux GOARCH=arm64 go generate ./...
+```
 
 ## Packages
 
@@ -103,13 +189,30 @@ Register the Node.js modules you need with `runtime.RegisterModule()`. The CLI r
 
 ## Linking model
 
-When you `go build` an app that imports `pkg/v8`:
+After `go generate` has installed the runtime, when you `go build`:
 
-1. CGO compiles `pkg/v8/v8go.cc` against V8 headers
-2. The linker pulls in `deps/v8/current/lib/libv8_monolith.a` (static)
-3. Standard system libraries are linked dynamically on Linux
+1. CGO compiles only the pure-C boundary (`pkg/v8/v8go.h`) with your C compiler.
+   `pkg/v8` itself carries **no** `-L`/`-l` flags.
+2. The generated `zz_generated_v8link_<goos>_<goarch>.go` file in your helper
+   package supplies the `-L${SRCDIR}/…/.v8/<version>/<goos>-<goarch>/lib` path and
+   the `-l` flags. Because it is blank-imported into your build, its flags are
+   aggregated at the final link step, pulling in the static archives:
+   `libv8go_glue.a`, `libv8_monolith.a`, and `libv8_libcxx.a`.
+3. Standard system libraries are linked dynamically on Linux.
 
-Consumers do **not** manually pass `-lv8_monolith` — the `#cgo` directives in `pkg/v8` handle that. They **do** need the correct platform directory selected via the `deps/v8/current` symlink (created automatically by `make check-v8`).
+The C++ bridge (`pkg/v8/csrc/v8go.cc`) is **not** compiled by CGO. V8 is built
+with Chromium's custom libc++ (the `std::__Cr::` inline namespace), which is
+ABI-incompatible with the system `libstdc++` a stock `g++` would use. The bridge
+is therefore pre-compiled per platform into `libv8go_glue.a` with V8's own
+toolchain (see `scripts/build-glue.py`) so its `std::` symbols match
+`libv8_monolith.a`. This keeps the V8 sandbox enabled while letting consumers
+link with a plain C toolchain. Chromium's libc++ ships as a separate
+`libv8_libcxx.a`.
+
+Why not commit the archives? The Go module proxy / `go get` do not run Git LFS
+smudge, so LFS is unusable, and V8's monolith exceeds GitHub's 100MB per-file Git
+limit. GitHub **Releases**, by contrast, allow multi-GB assets — so the libraries
+are published there and fetched on demand, and the repository stays small.
 
 ## Sandboxing
 
@@ -168,13 +271,18 @@ Not yet implemented: `worker_threads`, `cluster`, full stream piping, async iter
 
 ## Platform support
 
-Pre-built V8 libraries ship for macOS (ARM64/x86_64) and Linux (ARM64/x86_64) — see the table under [Requirements](#building-or-importing-the-library).
+Prebuilt V8 libraries are published as Release assets for macOS (ARM64) and
+Linux (ARM64/x86_64) — see the table under
+[Requirements](#building-or-importing-the-library).
 
-On Linux, build natively with `make build` or `make build-linux-arm64`. From macOS, `make build-linux-arm64` uses Docker only for the CGO link step against the prebuilt `.a`.
+After `go generate`, build for your current platform with `make build` (or
+`make build-native`), or cross-compile with `GOOS`/`GOARCH` (see
+[Cross-compiling](#cross-compiling)). Refreshed V8 libraries are built by CI on
+native runners per platform and published to a new Release.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for building V8 from source, Docker workflows, cross-compilation, testing, and development setup.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building V8 from source, testing, and development setup.
 
 ## License
 

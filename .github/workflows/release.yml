@@ -1,0 +1,111 @@
+name: Release
+
+# On merge to main (when internal/v8dist/manifest.json changes), promote the
+# EXACT artifacts that update-v8's validate job already tested to a Release.
+# Never rebuilds: it re-downloads the artifacts from the build run id pinned in
+# the manifest, re-verifies their checksums, then tags + publishes. update-v8
+# re-pins source_run_id on every build (including developer-fix pushes), so the
+# merged manifest always names the MOST RECENT run — that is the run pulled here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - internal/v8dist/manifest.json
+
+permissions:
+  contents: write
+
+concurrency:
+  # Serialize per version so simultaneous merges cannot double-publish.
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read manifest
+        id: m
+        run: |
+          f=internal/v8dist/manifest.json
+          echo "tag=$(jq -r .module_version "$f")" >> "$GITHUB_OUTPUT"
+          echo "run_id=$(jq -r .source_run_id "$f")" >> "$GITHUB_OUTPUT"
+          echo "commit=$(jq -r .source_commit "$f")" >> "$GITHUB_OUTPUT"
+          echo "v8=$(jq -r .v8_version "$f")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify preconditions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.m.outputs.tag }}
+          RUN_ID: ${{ steps.m.outputs.run_id }}
+          SRC_COMMIT: ${{ steps.m.outputs.commit }}
+        run: |
+          set -e
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "ERROR: manifest has no source_run_id" >&2; exit 1
+          fi
+
+          # Tag must not already exist / be published (immutable releases).
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "ERROR: tag $TAG already exists" >&2; exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "ERROR: release $TAG already published" >&2; exit 1
+          fi
+
+          # Build run must belong to this repo and have succeeded on source_commit.
+          run_json="$(gh run view "$RUN_ID" --json conclusion,headSha,headRepository)"
+          echo "$run_json"
+          concl="$(echo "$run_json" | jq -r .conclusion)"
+          head_sha="$(echo "$run_json" | jq -r .headSha)"
+          repo="$(echo "$run_json" | jq -r '.headRepository.owner.login + "/" + .headRepository.name')"
+          if [ "$concl" != "success" ]; then
+            echo "ERROR: build run $RUN_ID did not succeed (conclusion=$concl)" >&2; exit 1
+          fi
+          if [ "$repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "ERROR: build run $RUN_ID belongs to $repo, not $GITHUB_REPOSITORY" >&2; exit 1
+          fi
+          if [ "$head_sha" != "$SRC_COMMIT" ]; then
+            echo "ERROR: build run head $head_sha != manifest source_commit $SRC_COMMIT" >&2; exit 1
+          fi
+
+      - name: Download artifacts from the build run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.m.outputs.run_id }}
+        run: |
+          mkdir -p dist
+          # One artifact per manifest target: v8-<goos>-<goarch>.
+          for name in $(jq -r '.targets[] | "v8-" + .goos + "-" + .goarch' internal/v8dist/manifest.json); do
+            echo "Downloading $name ..."
+            gh run download "$RUN_ID" -n "$name" -D dist
+          done
+          ls -la dist
+
+      - name: Verify checksums against manifest
+        run: |
+          jq -r '.targets[] | .sha256 + "  " + .filename' internal/v8dist/manifest.json > dist/manifest.sha256
+          echo "Expected:" && cat dist/manifest.sha256
+          ( cd dist && shasum -a 256 -c manifest.sha256 )
+
+      - name: Create and publish Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.m.outputs.tag }}
+          V8: ${{ steps.m.outputs.v8 }}
+        run: |
+          cp internal/v8dist/manifest.json dist/manifest.json
+          gh release create "$TAG" \
+            dist/v8-*.tar.zst dist/v8-*.tar.zst.sha256 dist/manifest.json \
+            --target "${GITHUB_SHA}" \
+            --title "$TAG (V8 $V8)" \
+            --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64).
+
+          Fetched automatically by \`go generate\` via cmd/v8setup; see README. These are
+          the exact artifacts validated on the merged PR (build run ${{ steps.m.outputs.run_id }})."
