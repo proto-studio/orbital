@@ -2,12 +2,18 @@
 package v8
 
 /*
-#cgo CXXFLAGS: -fno-rtti -fPIC -std=c++20 -DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH -DV8_ENABLE_SANDBOX -I${SRCDIR}/../../deps/v8/current/include
-#cgo LDFLAGS: -L${SRCDIR}/../../deps/v8/current/lib -lv8_monolith -lpthread
-
-#cgo darwin LDFLAGS: -framework CoreFoundation
-#cgo linux LDFLAGS: -lm -ldl -lrt -latomic
-
+// The C++ implementation (pkg/v8/csrc/v8go.cc) is NOT compiled by cgo. V8 is
+// built with Chromium's custom libc++ (the std::__Cr:: inline namespace), which
+// is ABI-incompatible with the system libstdc++ that cgo's g++ would use. It is
+// instead pre-compiled per platform into libv8go_glue.a with V8's own toolchain,
+// so the std:: symbols match libv8_monolith.a. cgo here only compiles the pure-C
+// boundary (v8go.h); it carries NO -L/-l flags.
+//
+// The V8 static libraries are NOT committed to this repository. They are fetched
+// on demand into a project-local .v8/ directory by `go generate` (see cmd/v8setup),
+// which also writes a per-target cgo file carrying the -L/-l LDFLAGS that link the
+// glue, the V8 monolith, and Chromium's libc++. Run `go generate ./...` before
+// `go build`. See README.md ("Installing the V8 runtime") for details.
 #include <stdlib.h>
 #include "v8go.h"
 */

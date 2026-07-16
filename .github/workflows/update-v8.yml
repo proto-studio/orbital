@@ -1,0 +1,375 @@
+name: Update V8
+
+# Rebuilds the prebuilt V8 libraries when a newer stable V8 is available and
+# opens a PR that publishes them as Release assets. The libraries are NOT
+# committed: each target is packaged into dist/v8-<goos>-<goarch>.tar.zst,
+# uploaded as an Actions artifact, and pinned (by run id + sha256) in
+# internal/v8dist/manifest.json.
+#
+# Flow (all in this one workflow): check -> open a DRAFT PR early (so the PR
+# exists no matter what happens next) -> fetch V8 source -> build every target ->
+# pin the manifest -> validate the exact artifacts on native runners -> mark the
+# PR ready. On merge, release.yml promotes those same artifacts to a Release.
+#
+# Build model: V8's Linux clang (Chromium's bundled toolchain) is an x86_64
+# binary that cross-compiles arm64, so ALL Linux libraries are built on x64
+# runners. macOS builds run natively on Apple Silicon. Intel macOS (darwin-amd64)
+# is intentionally unsupported: current V8 requires the macOS 15+ SDK, which is
+# only available on the arm64 macos-15 runners.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Module version bump level'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  # schedule:
+  #   - cron: '0 6 * * 1'   # weekly Monday 06:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Detect a newer stable V8 and compute the next module version.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check for new V8
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.detect.outputs.latest }}
+      current: ${{ steps.detect.outputs.current }}
+      changed: ${{ steps.detect.outputs.changed }}
+      module_version: ${{ steps.version.outputs.module_version }}
+      branch: ${{ steps.version.outputs.branch }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect latest stable V8
+        id: detect
+        run: |
+          latest="$(bash scripts/latest-v8-version.sh)"
+          current="$(grep -E '^V8_VERSION :=' Makefile | sed -E 's/^V8_VERSION := *//')"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$latest" != "$current" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "New V8 available: $current -> $latest"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on latest stable V8 ($current)."
+          fi
+
+      - name: Compute next module version
+        id: version
+        run: |
+          git fetch --tags --force
+          mv="$(bash scripts/next-module-version.sh "${{ github.event.inputs.bump || 'patch' }}")"
+          echo "module_version=$mv" >> "$GITHUB_OUTPUT"
+          echo "branch=automated/update-v8-${{ steps.detect.outputs.latest }}-$mv" >> "$GITHUB_OUTPUT"
+          echo "Next module version: $mv"
+
+  # ---------------------------------------------------------------------------
+  # Open a DRAFT PR early: bump V8 + module version, push branch, open PR.
+  # ---------------------------------------------------------------------------
+  open-draft-pr:
+    name: Open draft PR
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump pinned V8 + module version
+        env:
+          LATEST: ${{ needs.check.outputs.latest }}
+          MODULE_VERSION: ${{ needs.check.outputs.module_version }}
+        run: |
+          sed -i -E "s/^V8_VERSION := .*/V8_VERSION := ${LATEST}/" Makefile
+          sed -i -E "s/(V8_VERSION:-)[0-9][0-9.]*/\1${LATEST}/" scripts/build-v8.sh
+          sed -i -E "s|(<!-- V8_VERSION -->).*(<!-- /V8_VERSION -->)|\1${LATEST}\2|" README.md
+          sed -i -E "s/(const ModuleVersion = )\"v[0-9.]+\"/\1\"${MODULE_VERSION}\"/" internal/v8dist/version.go
+
+      - name: Create draft PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ needs.check.outputs.branch }}
+          draft: true
+          commit-message: "Update V8 to ${{ needs.check.outputs.latest }} (${{ needs.check.outputs.module_version }})"
+          title: "Update V8 to ${{ needs.check.outputs.latest }} (${{ needs.check.outputs.module_version }})"
+          body: |
+            Automated V8 update — building release assets.
+
+            - V8: `${{ needs.check.outputs.current }}` -> `${{ needs.check.outputs.latest }}`
+            - Module version: `${{ needs.check.outputs.module_version }}`
+
+            This PR is a **draft** while the per-target libraries build. When the
+            build finishes, `internal/v8dist/manifest.json` is committed (pinning
+            the build run id + sha256 of each `v8-<target>.tar.zst`), the `validate`
+            job tests the exact artifacts on native runners, and the PR is marked
+            ready. On merge, `release.yml` promotes those artifacts to a Release.
+          add-paths: |
+            Makefile
+            scripts/build-v8.sh
+            README.md
+            internal/v8dist/version.go
+
+  # ---------------------------------------------------------------------------
+  # Fetch V8 source once; all platform builds share this cache.
+  # ---------------------------------------------------------------------------
+  fetch-v8:
+    name: Fetch V8 source
+    needs: [check, open-draft-pr]
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.branch }}
+
+      # One rolling source cache, warm-started across versions. A new V8 version
+      # misses the exact key, but the `v8-src-` restore-key restores the most
+      # recent prior checkout (any version) — so a new version is NEVER a cold
+      # clone: v8-fetch does an incremental git fetch + checkout + gclient sync on
+      # top of it, and the result is saved under the new version's key. The old
+      # entry becomes redundant and ages out via GitHub's LRU. (Caches are
+      # immutable and an exact-key hit skips the post-run save, so the key must
+      # advance with the version to keep the saved cache fresh.)
+      - name: Cache V8 source (shared across platforms)
+        uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ needs.check.outputs.latest }}
+          restore-keys: |
+            v8-src-
+
+      - name: Install fetch dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 curl
+
+      - name: Fetch V8 source
+        run: make v8-fetch V8_VERSION="${{ needs.check.outputs.latest }}" NUM_JOBS=4
+
+  # ---------------------------------------------------------------------------
+  # Build + package each target into dist/v8-<goos>-<goarch>.tar.zst, upload it.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build V8 (${{ matrix.platform }})
+    needs: [check, open-draft-pr, fetch-v8]
+    if: needs.check.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runs-on: ubuntu-latest
+            v8arch: x64
+          - platform: linux-arm64
+            runs-on: ubuntu-latest        # cross-compiled from x64
+            v8arch: arm64
+          - platform: darwin-arm64
+            runs-on: macos-15              # arm64 + macOS 15 SDK (required by V8)
+            v8arch: arm64
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 150
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.branch }}
+
+      - name: Derive target
+        id: t
+        run: |
+          echo "os=${{ matrix.platform }}" | sed -E 's/-(amd64|arm64)$//' >> "$GITHUB_OUTPUT"
+
+      # Exact hit on the source cache that fetch-v8 saved this run (same version);
+      # the prefix restore-key is a fallback. The exact hit means this job never
+      # re-saves the (large) source cache.
+      - name: Restore shared V8 source
+        uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ needs.check.outputs.latest }}
+          restore-keys: |
+            v8-src-
+
+      - name: Cache V8 build output (${{ matrix.platform }})
+        uses: actions/cache@v4
+        with:
+          path: v8-build/v8/out.gn/${{ steps.t.outputs.os }}-${{ matrix.v8arch }}
+          key: v8-out-${{ matrix.platform }}-${{ needs.check.outputs.latest }}-${{ hashFiles('Makefile', 'scripts/build-v8.sh') }}
+          restore-keys: |
+            v8-out-${{ matrix.platform }}-${{ needs.check.outputs.latest }}-
+            v8-out-${{ matrix.platform }}-
+
+      - name: Install V8 build toolchain (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: bash scripts/ci-install-linux-toolchain.sh
+
+      - name: Build + package V8
+        run: make v8-${{ matrix.platform }} V8_VERSION="${LATEST}" NUM_JOBS=4
+        env:
+          LATEST: ${{ needs.check.outputs.latest }}
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: v8-${{ matrix.platform }}
+          path: |
+            dist/v8-${{ matrix.platform }}.tar.zst
+            dist/v8-${{ matrix.platform }}.tar.zst.sha256
+          retention-days: 90
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Assemble the manifest (run id + checksums + source commit) and commit it to
+  # the PR branch. Runs after every target build succeeds; the pinned sha256s are
+  # what the validate job (and consumers) verify downloads against.
+  # ---------------------------------------------------------------------------
+  manifest:
+    name: Pin artifacts in manifest
+    needs: [check, open-draft-pr, build]
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install zstd (for local sha verification tooling)
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
+      - name: Download packaged artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            --paginate --jq '.artifacts[].name | select(startswith("v8-"))')"
+          if [ -z "$names" ]; then
+            echo "ERROR: no v8-* artifacts found for run ${GITHUB_RUN_ID}" >&2
+            exit 1
+          fi
+          for name in $names; do
+            echo "Downloading $name ..."
+            gh run download "${GITHUB_RUN_ID}" -n "$name" -D dist
+          done
+          ls -la dist
+
+      - name: Verify checksums
+        run: |
+          cd dist
+          for f in *.tar.zst.sha256; do
+            echo "Checking ${f%.sha256} ..."
+            shasum -a 256 -c "$f"
+          done
+
+      - name: Assemble manifest
+        run: |
+          # SOURCE_COMMIT is the workflow's trigger SHA (== the build run's
+          # headSha), which release.yml re-verifies via `gh run view`.
+          make v8-manifest \
+            V8_VERSION="${{ needs.check.outputs.latest }}" \
+            MODULE_VERSION="${{ needs.check.outputs.module_version }}" \
+            SOURCE_COMMIT="${GITHUB_SHA}" \
+            SOURCE_RUN_ID="${GITHUB_RUN_ID}" \
+            OWNER="${GITHUB_REPOSITORY%/*}" \
+            REPO="${GITHUB_REPOSITORY#*/}"
+          echo "=== manifest ===" && cat internal/v8dist/manifest.json
+
+      - name: Commit manifest to PR branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add internal/v8dist/manifest.json
+          if git diff --staged --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "Pin V8 artifacts (run ${GITHUB_RUN_ID}) in manifest"
+            git push origin HEAD:"${{ needs.check.outputs.branch }}"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Validate the freshly built artifacts on NATIVE runners, exactly the way a
+  # consumer installs them: fetch this run's artifacts into .v8/ + generate the
+  # cgo link file (go generate flow), then run the unit tests. Runs after the
+  # manifest is pinned so the embedded sha256s match what this run produced.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate (${{ matrix.platform }})
+    needs: [check, manifest]
+    if: needs.check.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runs-on: ubuntu-latest
+          - platform: linux-arm64
+            runs-on: ubuntu-24.04-arm
+          - platform: darwin-arm64
+            runs-on: macos-15
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.branch }}   # includes the pinned manifest
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Install build dependencies (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y build-essential zstd
+
+      - name: Install V8 runtime from this run's artifacts + generate link file
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./cmd/v8setup -source actions -run-id "${GITHUB_RUN_ID}" -link-out pkg/v8 -link-pkg v8
+
+      - name: Run tests
+        run: make test
+
+      - name: Run coverage
+        run: make coverage
+
+  # ---------------------------------------------------------------------------
+  # Mark the PR ready once every target validated. If any build/validate job
+  # failed the PR simply stays a draft (it was already created up front).
+  # ---------------------------------------------------------------------------
+  ready:
+    name: Mark PR ready
+    needs: [check, validate]
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark PR ready for review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr ready "${{ needs.check.outputs.branch }}"
