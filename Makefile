@@ -11,7 +11,7 @@ V8_BUILD_DIR := v8-build
 V8_OUTPUT_DIR := deps/v8
 # Packaged release artifacts (v8-<goos>-<goarch>.tar.zst + .sha256) land here.
 DIST_DIR := dist
-V8_VERSION := 13.1.201.1
+V8_VERSION := 15.1.206.8
 GO := go
 GOFLAGS :=
 NUM_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
