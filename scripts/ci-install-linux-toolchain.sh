@@ -32,7 +32,6 @@ PKGS=(
   python3
   python3-pip
   xz-utils
-  zstd
   libglib2.0-dev
 )
 

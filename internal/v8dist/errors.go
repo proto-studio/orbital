@@ -83,7 +83,7 @@ func (e *ChecksumError) Error() string {
 	)
 }
 
-// ExtractError wraps a failure unpacking the .tar.zst artifact.
+// ExtractError wraps a failure unpacking the .tar.gz artifact.
 type ExtractError struct {
 	Filename string
 	GOOS     string

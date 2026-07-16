@@ -11,7 +11,7 @@ import (
 )
 
 // TestInstallFromSystemTar verifies that an archive produced by the system
-// `tar --zstd` (what the Makefile/CI produce) is installable by the pure-Go
+// `tar -czf` (what the Makefile/CI produce) is installable by the pure-Go
 // extractor consumers use. This guards the producer/consumer toolchain interop.
 func TestInstallFromSystemTar(t *testing.T) {
 	if _, err := exec.LookPath("tar"); err != nil {
@@ -19,7 +19,7 @@ func TestInstallFromSystemTar(t *testing.T) {
 	}
 
 	goos, goarch := runtime.GOOS, runtime.GOARCH
-	filename := "v8-" + goos + "-" + goarch + ".tar.zst"
+	filename := "v8-" + goos + "-" + goarch + ".tar.gz"
 
 	srcDir := t.TempDir()
 	libDir := filepath.Join(srcDir, "lib")
@@ -34,9 +34,9 @@ func TestInstallFromSystemTar(t *testing.T) {
 
 	assetDir := t.TempDir()
 	asset := filepath.Join(assetDir, filename)
-	cmd := exec.Command("tar", "-C", srcDir, "--zstd", "-cf", asset, "lib")
+	cmd := exec.Command("tar", "-C", srcDir, "-czf", asset, "lib")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("tar --zstd unavailable: %v\n%s", err, out)
+		t.Skipf("tar -czf unavailable: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(asset)

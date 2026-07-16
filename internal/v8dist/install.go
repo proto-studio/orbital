@@ -144,7 +144,7 @@ func download(m *Manifest, src Source, t Target, installRoot, installDir, libDir
 	opts.logf(">>> Verified sha256 %s", got)
 
 	stageDir := filepath.Join(tmpDir, "stage")
-	if err := extractTarZst(archivePath, stageDir); err != nil {
+	if err := extractTarGz(archivePath, stageDir); err != nil {
 		return &ExtractError{Filename: t.Filename, GOOS: t.GOOS, GOARCH: t.GOARCH, Err: err}
 	}
 

@@ -341,8 +341,9 @@ echo ">>> Step 6: Packaging release asset..."
 GOARCH="$TARGET_ARCH"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 mkdir -p "$DIST_DIR"
-ASSET="v8-${TARGET_OS}-${GOARCH}.tar.zst"
-tar -C "$OUTPUT_DIR" --zstd -cf "$DIST_DIR/$ASSET" lib
+# gzip (not zstd) so the consumer-side extractor stays pure Go stdlib.
+ASSET="v8-${TARGET_OS}-${GOARCH}.tar.gz"
+tar -C "$OUTPUT_DIR" -czf "$DIST_DIR/$ASSET" lib
 ( cd "$DIST_DIR" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
 
 # ============================================================================
