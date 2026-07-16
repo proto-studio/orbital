@@ -21,7 +21,7 @@ You do **not** need a C++ compiler or the V8 headers: the C++ bridge is shipped
 pre-compiled (see [Linking model](#linking-model)), so CGO only compiles a small
 pure-C shim and links the prebuilt archives.
 
-The package ships with pre-built V8 libraries (currently V8 <!-- V8_VERSION -->13.1.201.1<!-- /V8_VERSION -->) for the following platforms:
+The package ships with pre-built V8 libraries (currently V8 <!-- V8_VERSION -->15.1.206.8<!-- /V8_VERSION -->) for the following platforms:
 
 | Platform | Directory |
 |----------|-----------|
