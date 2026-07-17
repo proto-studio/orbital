@@ -290,6 +290,13 @@ jobs:
         if: startsWith(matrix.platform, 'linux-')
         run: bash scripts/ci-install-linux-toolchain.sh
 
+      # The shared v8-src cache can carry a stale out.gn (older caches were saved
+      # by a job that had already built). Drop it so V8's landmines gclient hook
+      # has nothing to clobber during the sync below. The real objects are
+      # restored from the dedicated v8-out cache AFTER the sync.
+      - name: Drop stale build dir carried in the source cache
+        run: rm -rf v8-build/v8/out.gn
+
       # Run git checkout + gclient sync (and its hooks, including V8's landmines
       # clobber hook) BEFORE the build-output cache is restored. out.gn/<target>
       # does not exist yet, so landmines has nothing to wipe. This is the fix for
