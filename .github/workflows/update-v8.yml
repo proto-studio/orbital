@@ -259,6 +259,10 @@ jobs:
             v8arch: arm64
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 150
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 5G
+      SCCACHE_IDLE_TIMEOUT: "0"
     steps:
       - name: Checkout branch
         uses: actions/checkout@v5
@@ -290,39 +294,45 @@ jobs:
         if: startsWith(matrix.platform, 'linux-')
         run: bash scripts/ci-install-linux-toolchain.sh
 
-      # The shared v8-src cache can carry a stale out.gn (older caches were saved
-      # by a job that had already built). Drop it so V8's landmines gclient hook
-      # has nothing to clobber during the sync below. The real objects are
-      # restored from the dedicated v8-out cache AFTER the sync.
-      - name: Drop stale build dir carried in the source cache
+      - name: Install sccache
+        run: bash scripts/ci-install-sccache.sh
+
+      # Content-addressed compile cache. Unlike caching out.gn, sccache keys each
+      # object by preprocessed source + compiler flags, so it is immune to the
+      # gclient-sync mtime churn and gn-gen reruns that force ninja to "recompile"
+      # everything. run_id in the key means we always save a fresh, growing cache;
+      # the prefix restore-key warm-starts from the most recent previous build.
+      - name: Restore sccache (${{ matrix.platform }})
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: v8-sccache-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}-${{ github.run_id }}
+          restore-keys: |
+            v8-sccache-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}-
+            v8-sccache-${{ matrix.platform }}-
+
+      # A stale out.gn baked into the source cache would make V8's landmines
+      # gclient hook clobber on sync. We build from a clean out.gn every run
+      # (sccache makes that cheap), so just remove it before syncing.
+      - name: Drop any build dir carried in the source cache
         run: rm -rf v8-build/v8/out.gn
 
-      # Run git checkout + gclient sync (and its hooks, including V8's landmines
-      # clobber hook) BEFORE the build-output cache is restored. out.gn/<target>
-      # does not exist yet, so landmines has nothing to wipe. This is the fix for
-      # the darwin full-rebuild: the old flow restored the objects first, then
-      # re-synced, and landmines deleted the restored out dir on every run.
-      - name: Fetch + sync V8 (runs hooks; no build dir yet to clobber)
+      - name: Fetch + sync V8 (runs hooks)
         run: make v8-fetch V8_VERSION="${V8_VERSION}" NUM_JOBS=4
         env:
           V8_VERSION: ${{ needs.setup.outputs.v8_version }}
 
-      # Restore objects AFTER the sync. gn gen + ninja never consult .landmines,
-      # so the stale one carried in the cache is harmless; ninja just rebuilds
-      # whatever the sync actually touched (incremental), not the whole tree.
-      - name: Restore V8 build output (${{ matrix.platform }})
-        uses: actions/cache@v4
-        with:
-          path: v8-build/v8/out.gn/${{ steps.t.outputs.os }}-${{ matrix.v8arch }}
-          key: v8-out-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}-${{ hashFiles('Makefile', 'scripts/build-v8.sh') }}
-          restore-keys: |
-            v8-out-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}-
-            v8-out-${{ matrix.platform }}-
+      - name: Reset sccache stats
+        run: sccache --zero-stats || true
 
-      - name: Build + package V8 (no re-fetch)
-        run: make v8-build V8_BUILD_PREREQ= TARGET_OS="${{ steps.t.outputs.os }}" TARGET_ARCH="${{ steps.t.outputs.arch }}" V8_VERSION="${V8_VERSION}" NUM_JOBS=4
+      - name: Build + package V8 (no re-fetch; sccache compile cache)
+        run: make v8-build V8_BUILD_PREREQ= CC_WRAPPER=sccache TARGET_OS="${{ steps.t.outputs.os }}" TARGET_ARCH="${{ steps.t.outputs.arch }}" V8_VERSION="${V8_VERSION}" NUM_JOBS=4
         env:
           V8_VERSION: ${{ needs.setup.outputs.v8_version }}
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v7

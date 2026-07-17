@@ -227,6 +227,14 @@ v8-fetch: v8-deps
 # `V8_BUILD_PREREQ=` to skip the now-redundant re-fetch/sync.
 V8_BUILD_PREREQ ?= v8-fetch
 
+# Optional compiler wrapper (e.g. sccache) injected as GN's cc_wrapper. Empty by
+# default so local builds need no extra tooling. CI sets CC_WRAPPER=sccache to
+# get a content-addressed compile cache: object reuse is keyed by preprocessed
+# source + flags, so it survives gclient-sync mtime churn and gn-gen reruns that
+# defeat plain out.gn caching. When set, precompiled headers are disabled because
+# sccache cannot cache PCH-based compiles.
+CC_WRAPPER ?=
+
 .PHONY: v8-build
 v8-build: v8-deps $(V8_BUILD_PREREQ)
 	@echo ">>> Building V8 for $(TARGET_OS)/$(TARGET_ARCH)..."
@@ -267,6 +275,10 @@ v8-build: v8-deps $(V8_BUILD_PREREQ)
 		python3 build/linux/sysroot_scripts/install-sysroot.py --arch=$$sysarch; \
 		echo ">>> Disabling experimental CREL relocations (stock GNU ld < 2.44 cannot link them)..."; \
 		sed -i '/-Wa,--crel,--allow-experimental-crel/d' build/config/compiler/BUILD.gn; \
+	fi && \
+	if [ -n "$(CC_WRAPPER)" ]; then \
+		echo 'cc_wrapper="$(CC_WRAPPER)"' >> "$$V8_OUT_DIR/args.gn"; \
+		echo 'enable_precompiled_headers=false' >> "$$V8_OUT_DIR/args.gn"; \
 	fi && \
 	echo "GN Args:" && cat "$$V8_OUT_DIR/args.gn" && \
 	gn gen "$$V8_OUT_DIR" --export-compile-commands && \
