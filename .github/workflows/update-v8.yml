@@ -36,8 +36,15 @@ on:
         default: patch
   push:
     branches: ['automated/update-v8-**']
-  # schedule:
-  #   - cron: '0 6 * * 1'   # weekly Monday 06:00 UTC
+  schedule:
+    # Every Monday at 04:00 America/New_York. GitHub cron is UTC-only and does
+    # not observe DST, so we list both offsets: 08:00 UTC = 04:00 EDT (Mar-Nov)
+    # and 09:00 UTC = 04:00 EST (Nov-Mar). Only one is 04:00 local on any given
+    # Monday; the other is 05:00, but `check` is create-only (skips when there's
+    # no newer V8 or the update branch already exists) so the extra tick is a
+    # cheap no-op rather than a duplicate PR.
+    - cron: '0 8 * * 1'   # 04:00 EDT (daylight saving)
+    - cron: '0 9 * * 1'   # 04:00 EST (standard time)
 
 permissions:
   contents: write
