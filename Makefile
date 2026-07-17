@@ -220,8 +220,15 @@ v8-fetch: v8-deps
 # (+ .sha256) and published as GitHub Release assets; consumers fetch them via
 # `go generate` (see cmd/v8setup). GitHub Releases allow multi-GB assets, so the
 # old 100MB-per-file split is gone — we ship a single monolith again.
+# Prerequisite for building. Defaults to v8-fetch so local `make v8-native` /
+# `v8-platform` check out + gclient sync before compiling. CI instead runs
+# `make v8-fetch` as its OWN step (before the build-output cache is restored, so
+# V8's landmines gclient hook has no out.gn dir to clobber), then builds with
+# `V8_BUILD_PREREQ=` to skip the now-redundant re-fetch/sync.
+V8_BUILD_PREREQ ?= v8-fetch
+
 .PHONY: v8-build
-v8-build: v8-fetch
+v8-build: v8-deps $(V8_BUILD_PREREQ)
 	@echo ">>> Building V8 for $(TARGET_OS)/$(TARGET_ARCH)..."
 	@mkdir -p $(V8_PLATFORM_DIR)/lib $(V8_PLATFORM_DIR)/include
 	@export PATH="$(CURDIR)/$(DEPOT_TOOLS_DIR):$$PATH"; \

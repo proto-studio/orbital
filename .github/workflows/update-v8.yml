@@ -268,7 +268,9 @@ jobs:
       - name: Derive target
         id: t
         run: |
-          echo "os=${{ matrix.platform }}" | sed -E 's/-(amd64|arm64)$//' >> "$GITHUB_OUTPUT"
+          platform="${{ matrix.platform }}"
+          echo "os=${platform%-*}" >> "$GITHUB_OUTPUT"
+          echo "arch=${platform##*-}" >> "$GITHUB_OUTPUT"
 
       # Exact hit on the source cache that fetch-v8 saved this run (same version);
       # the prefix restore-key is a fallback. The exact hit means this job never
@@ -284,7 +286,24 @@ jobs:
           restore-keys: |
             v8-src-
 
-      - name: Cache V8 build output (${{ matrix.platform }})
+      - name: Install V8 build toolchain (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: bash scripts/ci-install-linux-toolchain.sh
+
+      # Run git checkout + gclient sync (and its hooks, including V8's landmines
+      # clobber hook) BEFORE the build-output cache is restored. out.gn/<target>
+      # does not exist yet, so landmines has nothing to wipe. This is the fix for
+      # the darwin full-rebuild: the old flow restored the objects first, then
+      # re-synced, and landmines deleted the restored out dir on every run.
+      - name: Fetch + sync V8 (runs hooks; no build dir yet to clobber)
+        run: make v8-fetch V8_VERSION="${V8_VERSION}" NUM_JOBS=4
+        env:
+          V8_VERSION: ${{ needs.setup.outputs.v8_version }}
+
+      # Restore objects AFTER the sync. gn gen + ninja never consult .landmines,
+      # so the stale one carried in the cache is harmless; ninja just rebuilds
+      # whatever the sync actually touched (incremental), not the whole tree.
+      - name: Restore V8 build output (${{ matrix.platform }})
         uses: actions/cache@v4
         with:
           path: v8-build/v8/out.gn/${{ steps.t.outputs.os }}-${{ matrix.v8arch }}
@@ -293,12 +312,8 @@ jobs:
             v8-out-${{ matrix.platform }}-${{ needs.setup.outputs.v8_version }}-
             v8-out-${{ matrix.platform }}-
 
-      - name: Install V8 build toolchain (Linux)
-        if: startsWith(matrix.platform, 'linux-')
-        run: bash scripts/ci-install-linux-toolchain.sh
-
-      - name: Build + package V8
-        run: make v8-${{ matrix.platform }} V8_VERSION="${V8_VERSION}" NUM_JOBS=4
+      - name: Build + package V8 (no re-fetch)
+        run: make v8-build V8_BUILD_PREREQ= TARGET_OS="${{ steps.t.outputs.os }}" TARGET_ARCH="${{ steps.t.outputs.arch }}" V8_VERSION="${V8_VERSION}" NUM_JOBS=4
         env:
           V8_VERSION: ${{ needs.setup.outputs.v8_version }}
 
