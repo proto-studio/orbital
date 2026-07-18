@@ -1,8 +1,15 @@
 (function() {
 	'use strict';
 
-	// Module cache
-	const moduleCache = new Map();
+	// Module cache. Node exposes this as `require.cache` / `Module._cache`: a
+	// plain object keyed by a module's resolved filename. Using a real object
+	// (not a Map) is required for Node compatibility — libraries and test suites
+	// bust the cache with `delete require.cache[require.resolve(id)]` and probe it
+	// with `id in require.cache`, both of which are no-ops against a Map.
+	const moduleCache = Object.create(null);
+	function cacheHas(key) {
+		return Object.prototype.hasOwnProperty.call(moduleCache, key);
+	}
 
 	// Built-in modules registry
 	const builtinModules = {
@@ -17,6 +24,7 @@
 		'url': () => __url_module,
 		'os': () => __os_module,
 		'util': () => __util_module,
+		'util/types': () => __util_module.types,
 		'crypto': () => __crypto_module,
 		'crypto/webcrypto': () => __webcrypto_module,
 		'net': () => __net_module,
@@ -31,6 +39,7 @@
 		'querystring': () => __querystring_module,
 		'assert': () => __assert_module,
 		'assert/strict': () => __assert_strict_module,
+		'console': () => __console_module,
 		'zlib': () => __zlib_module,
 		'dns': () => __dns_module,
 		'dns/promises': () => __dns_promises_module,
@@ -40,11 +49,38 @@
 		'punycode': () => __punycode_module,
 		'sys': () => __sys_module,
 		'diagnostics_channel': () => __diagnostics_channel_module,
+		'async_hooks': () => __async_hooks_module,
+		'worker_threads': () => __worker_threads_module,
+		'tty': () => __tty_module,
 		'domain': () => __domain_module,
 		'repl': () => __repl_module,
 		'node:test': () => __test_module,
 		'child_process': () => __child_process_module,
+		'module': () => globalThis.Module,
+		'process': () => globalThis.process,
 	};
+
+	// Resolve a request to a builtin registry key, honoring the "node:" prefix.
+	// Node.js lets every core module be required with or without the prefix
+	// (e.g. require('fs') and require('node:fs')), while a few (like node:test)
+	// are conventionally prefixed. Return the matching registry key or null.
+	function builtinKey(request) {
+		if (Object.prototype.hasOwnProperty.call(builtinModules, request)) {
+			return request;
+		}
+		if (request.startsWith('node:')) {
+			const bare = request.slice(5);
+			if (Object.prototype.hasOwnProperty.call(builtinModules, bare)) {
+				return bare;
+			}
+		} else {
+			const prefixed = 'node:' + request;
+			if (Object.prototype.hasOwnProperty.call(builtinModules, prefixed)) {
+				return prefixed;
+			}
+		}
+		return null;
+	}
 
 	// Check if a native module is registered (via Runtime.RegisterNativeModule)
 	function getNativeModule(name) {
@@ -53,6 +89,17 @@
 			return globalThis[globalKey];
 		}
 		return null;
+	}
+
+	// Build a Node-compatible "module not found" error. Node uses the message
+	// form `Cannot find module '<request>'` and, crucially, sets
+	// err.code === 'MODULE_NOT_FOUND'; libraries branch on that code to treat a
+	// missing optional dependency as absent rather than fatal (yargs' config
+	// `extends`, optional-require patterns, resolve probes, etc.).
+	function moduleNotFoundError(request) {
+		const err = new Error("Cannot find module '" + request + "'");
+		err.code = 'MODULE_NOT_FOUND';
+		return err;
 	}
 
 	// Current module stack for nested requires
@@ -75,33 +122,45 @@
 		mod.require = createRequire(mod);
 		mod.require.main = globalThis.__mainModule || null;
 		mod.require.cache = moduleCache;
-		mod.require.resolve = (request) => resolveModule(request, mod);
+		mod.require.resolve = (request) => {
+			const resolved = resolveModule(request, mod);
+			// Node's require.resolve throws MODULE_NOT_FOUND for unresolvable
+			// requests rather than returning a falsy value.
+			if (!resolved) {
+				throw moduleNotFoundError(request);
+			}
+			return resolved;
+		};
 
 		return mod;
 	}
 
-	// Get directory from a filename
+	// Get the directory to resolve a module's requires from. This is always
+	// called with a *module filename* (a file, e.g. .../bin/_mocha or
+	// .../lib/index.js), so we strip the last path component. Extensionless
+	// executables (bin/_mocha, bin/tsc, …) must be handled too, so we do not
+	// gate on a known extension. The main module is initialized with cwd (a
+	// directory), which is preserved via the sentinel check below.
 	function getDirname(filename) {
 		if (!filename || filename === '.' || filename === process.cwd()) {
 			return process.cwd();
 		}
-		
-		// Check if filename ends with .js, .json, .mjs (it's a file)
-		if (filename.endsWith('.js') || filename.endsWith('.json') || filename.endsWith('.mjs')) {
-			const lastSlash = filename.lastIndexOf('/');
-			if (lastSlash >= 0) {
-				return filename.substring(0, lastSlash);
-			}
+
+		const lastSlash = filename.lastIndexOf('/');
+		if (lastSlash > 0) {
+			return filename.substring(0, lastSlash);
 		}
-		
-		// It's likely a directory path
-		return filename;
+		if (lastSlash === 0) {
+			return '/';
+		}
+		// No slash: a bare relative name; resolve from the current directory.
+		return process.cwd();
 	}
 
 	// Resolve module path
 	function resolveModule(request, parent) {
-		// Built-in module
-		if (builtinModules[request]) {
+		// Built-in module (with or without the "node:" prefix)
+		if (builtinKey(request)) {
 			return request;
 		}
 
@@ -140,9 +199,10 @@
 	// Create require function for a module
 	function createRequire(parentModule) {
 		return function require(request) {
-			// Check for built-in module
-			if (builtinModules[request]) {
-				return builtinModules[request]();
+			// Check for built-in module (with or without the "node:" prefix)
+			const key = builtinKey(request);
+			if (key) {
+				return builtinModules[key]();
 			}
 
 			// Check for native Go module
@@ -154,17 +214,17 @@
 			// Resolve the full path
 			const resolved = resolveModule(request, parentModule);
 			if (!resolved) {
-				throw new Error('Cannot find module: ' + request);
+				throw moduleNotFoundError(request);
 			}
 
 			// Check cache
-			if (moduleCache.has(resolved)) {
-				return moduleCache.get(resolved).exports;
+			if (cacheHas(resolved)) {
+				return moduleCache[resolved].exports;
 			}
 
 			// Load the module
 			const mod = createModule(resolved, resolved, parentModule);
-			moduleCache.set(resolved, mod);
+			moduleCache[resolved] = mod;
 
 			if (parentModule) {
 				parentModule.children.push(mod);
@@ -175,19 +235,34 @@
 
 			try {
 				// Read and compile the module
-				const source = __requireFile(resolved);
+				let source = __requireFile(resolved);
 				if (source === null || source === undefined) {
-					moduleCache.delete(resolved);
-					throw new Error('Cannot find module: ' + request);
+					delete moduleCache[resolved];
+					throw moduleNotFoundError(request);
 				}
 
 				const dirname = resolved.substring(0, resolved.lastIndexOf('/')) || '.';
+
+				// Strip a UTF-8 BOM if present (Node does this for all files).
+				if (source.charCodeAt(0) === 0xFEFF) {
+					source = source.slice(1);
+				}
 
 				// Handle JSON files
 				if (resolved.endsWith('.json')) {
 					mod.exports = JSON.parse(source);
 					mod.loaded = true;
 					return mod.exports;
+				}
+
+				// Strip a leading shebang line (e.g. "#!/usr/bin/env node") from
+				// JS modules before wrapping. Executables published to npm (mocha's
+				// bin/cli.js, .bin shims, etc.) are frequently require()'d, and the
+				// "#!" is not valid inside the module function wrapper. The newline
+				// is preserved so line numbers in stack traces stay correct.
+				if (source.charCodeAt(0) === 0x23 && source.charCodeAt(1) === 0x21) {
+					const nl = source.indexOf('\n');
+					source = nl === -1 ? '' : source.slice(nl);
 				}
 
 				// Block ES Modules from being required
@@ -198,10 +273,12 @@
 					);
 				}
 
-				// Wrap in function to provide module scope
+				// Wrap in function to provide module scope. The trailing
+				// sourceURL makes stack traces reference the real file path
+				// instead of an anonymous eval frame.
 				const wrapper = '(function(exports, require, module, __filename, __dirname) {' +
 					source +
-					'\n});';
+					'\n})\n//# sourceURL=' + resolved;
 
 				// Compile and run
 				const compiledWrapper = (0, eval)(wrapper);
@@ -217,7 +294,7 @@
 
 				mod.loaded = true;
 			} catch (e) {
-				moduleCache.delete(resolved);
+				delete moduleCache[resolved];
 				throw e;
 			} finally {
 				moduleStack.pop();
@@ -256,7 +333,30 @@
 			return mod.require;
 		},
 		isBuiltin: function(name) {
-			return builtinModules.hasOwnProperty(name);
+			return builtinKey(name) !== null;
+		},
+		// Register ESM loader customization hooks. The hooks themselves run in
+		// an isolated loader realm (see internal/nodejs/esm/hooks.go); this only
+		// forwards the specifier + parent url. `parentURL` may be a string/URL
+		// or an options object ({ parentURL, data }); `data`/`transferList` are
+		// accepted for API compatibility.
+		register: function(specifier, parentURL, options) {
+			let parent = parentURL;
+			if (parentURL !== null && typeof parentURL === 'object' && !(parentURL instanceof URL)) {
+				options = parentURL;
+				parent = options.parentURL;
+			}
+			if (parent instanceof URL) parent = parent.href;
+			if (typeof __esmRegister !== 'function') {
+				throw new Error('module.register is not supported in this context');
+			}
+			return __esmRegister(String(specifier), parent ? String(parent) : '');
 		}
 	};
+
+	// In Node, `require('module')` returns the Module constructor, which also
+	// exposes itself as `Module.Module`. Mirror that so both
+	// `const M = require('module')` and `const { Module } = require('module')`
+	// work.
+	globalThis.Module.Module = globalThis.Module;
 })();

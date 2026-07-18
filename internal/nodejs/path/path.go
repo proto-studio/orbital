@@ -294,6 +294,14 @@ func (p *Path) normalizeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	path := args[0].String()
 	result := filepath.Clean(path)
+	// Node's path.normalize preserves a trailing separator when the input had
+	// one and the normalized result is longer than the root (filepath.Clean
+	// always strips it). e.g. normalize('/tmp/') === '/tmp/', normalize('a/b/')
+	// === 'a/b/'. Libraries (yargs' `normalize` option, static file servers)
+	// depend on this to keep directory paths directory-shaped.
+	if strings.HasSuffix(path, "/") && !strings.HasSuffix(result, "/") {
+		result += "/"
+	}
 	val, _ := ctx.NewString(result)
 	return val
 }

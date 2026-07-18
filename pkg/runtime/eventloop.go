@@ -277,29 +277,48 @@ func (el *EventLoop) Run() {
 			}
 		}
 
-		// Wait for the next timer or a signal
+		// Wait for the next timer deadline or a wakeup signal. A new microtask,
+		// timer, or async I/O completion enqueued from another goroutine calls
+		// el.cond.Signal() to wake us. cond.Wait atomically releases el.mu while
+		// parked and reacquires it on wake, and every enqueue path holds el.mu up
+		// to its Signal, so wakeups raised just before we park are not lost.
 		if hasTimers {
-			// Wait with timeout, but also check context
-			done := make(chan struct{})
+			// Bound the wait by the next timer deadline. Use a stoppable timer plus
+			// a stop channel so an *early* wakeup (e.g. an inbound socket read/accept
+			// completing) returns immediately. The previous implementation blocked
+			// on the timer goroutine finishing (<-done), which forced every early
+			// wakeup to wait out the full timer duration and stalled all async I/O
+			// whenever a timer was pending.
+			timer := time.NewTimer(waitDuration)
+			stop := make(chan struct{})
 			go func() {
 				select {
-				case <-time.After(waitDuration):
+				case <-timer.C:
+					el.cond.Signal()
 				case <-ctx.Done():
+					el.cond.Signal()
+				case <-stop:
 				}
-				el.cond.Signal()
-				close(done)
 			}()
 			el.cond.Wait()
 			el.mu.Unlock()
-			<-done
+			close(stop)
+			timer.Stop()
 		} else {
-			// Wait for a signal, but also check context
+			// No timers pending: park until a signal (async I/O completion) or
+			// context cancellation. The stop channel lets the watcher goroutine exit
+			// promptly on wake instead of leaking until ctx is cancelled.
+			stop := make(chan struct{})
 			go func() {
-				<-ctx.Done()
-				el.cond.Signal()
+				select {
+				case <-ctx.Done():
+					el.cond.Signal()
+				case <-stop:
+				}
 			}()
 			el.cond.Wait()
 			el.mu.Unlock()
+			close(stop)
 		}
 	}
 }

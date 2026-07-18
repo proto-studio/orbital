@@ -22,7 +22,7 @@
       "goos": "darwin",
       "goarch": "arm64",
       "filename": "v8-darwin-arm64.tar.gz",
-      "sha256": "894c2ecabde545acdcc95621b3e27149904882ffe98f5cfce6b4bd118ed41445"
+      "sha256": "09a8411c6dbbd428d0ecef4f6fd3085b11631bc199beeb1dc824eefa6c692c70"
     }
   ]
 }

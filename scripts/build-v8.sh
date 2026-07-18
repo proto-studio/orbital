@@ -196,7 +196,18 @@ v8_enable_sandbox=true
 # Temporal (JS Temporal API) is what pulls Rust into V8 — disable both.
 enable_rust=false
 v8_enable_temporal_support=false
-v8_enable_i18n_support=false
+# ICU / i18n is required for the full Intl API *and* for RegExp Unicode property
+# escapes (/\p{...}/u). Real-world packages depend on the latter at parse time —
+# e.g. path-to-regexp@8 (Express 5's router) has `/^[$_\p{ID_Start}]$/u` at module
+# top level, which is a SyntaxError on a non-ICU V8 and cannot be shimmed in JS.
+# icu_use_data_file=false compiles ICU's data table directly into the monolith
+# (ICU_UTIL_DATA_STATIC) instead of loading an external icudtl.dat at runtime, so
+# the binary stays self-contained (the glue calls InitializeICUDefaultLocation("")
+# with no exe path, so a data *file* would never be found). Without this, i18n is
+# compiled in but ICU never initializes, leaving Intl undefined and /\p{...}/u a
+# SyntaxError.
+v8_enable_i18n_support=true
+icu_use_data_file=false
 treat_warnings_as_errors=false
 symbol_level=0
 v8_enable_webassembly=true

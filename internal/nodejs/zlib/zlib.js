@@ -343,6 +343,141 @@
     }
   };
 
+  // Streaming (de)compression classes. These are thin Transform adapters over
+  // the native Go codecs (internal._streamCreate/_streamWrite/_streamEnd): the
+  // bulk work streams through compress/gzip + compress/flate on a goroutine, and
+  // output chunks come back here to be pushed downstream. body-parser relies on
+  // zlib.createGunzip()/createInflate()/createUnzip() for request decompression.
+  const streamMod = global.__stream_module;
+  if (streamMod && streamMod.Transform && typeof internal._streamCreate === 'function') {
+    const Transform = streamMod.Transform;
+
+    class ZlibStream extends Transform {
+      constructor(format, options) {
+        super(options || {});
+        // Manage the readable side directly: the base Readable.push buffers even
+        // in flowing mode and never re-emits 'end', so drive 'data'/'end'
+        // ourselves. _zBuf holds output produced before a consumer starts
+        // flowing (Node buffers until a 'data' listener / resume()).
+        this._zBuf = [];
+        this._zFlowing = false;
+        this._zEnded = false;
+        this._zEndEmitted = false;
+        this._zDestroyed = false;
+        this._zFinalCb = null;
+        this._zId = internal._streamCreate(format, (err, chunk) => {
+          if (this._zDestroyed) return;
+          if (err) {
+            const e = new Error(err);
+            e.code = 'Z_DATA_ERROR';
+            this.emit('error', e);
+            return;
+          }
+          if (chunk === null || chunk === undefined) {
+            // Native codec finished: complete the writable side ('finish') and
+            // let the readable side flush any buffered output then emit 'end'.
+            this._zEnded = true;
+            if (this._zFinalCb) { const cb = this._zFinalCb; this._zFinalCb = null; cb(); }
+            this._zDrain();
+            return;
+          }
+          this._zBuf.push(Buffer.from(chunk, 'base64'));
+          this._zDrain();
+        });
+      }
+
+      _zDrain() {
+        if (!this._zFlowing) return;
+        while (this._zBuf.length > 0 && this._zFlowing) {
+          this.emit('data', this._zBuf.shift());
+        }
+        if (this._zEnded && this._zBuf.length === 0 && !this._zEndEmitted) {
+          this._zEndEmitted = true;
+          this.emit('end');
+        }
+      }
+
+      // Attaching a 'data' listener puts the readable side into flowing mode
+      // (raw-body reads via on('data')/on('end')). `on` is the EventEmitter
+      // primitive; overriding it covers on/once/addListener without recursion.
+      on(event, listener) {
+        super.on(event, listener);
+        if (event === 'data') this.resume();
+        return this;
+      }
+
+      resume() {
+        this._zFlowing = true;
+        this._zDrain();
+        return this;
+      }
+
+      pause() {
+        this._zFlowing = false;
+        return this;
+      }
+
+      _transform(chunk, encoding, callback) {
+        const buf = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8');
+        internal._streamWrite(this._zId, buf.toString('base64'));
+        callback();
+      }
+
+      // Override _final (not _flush) so we do NOT go through Transform's
+      // push(null) path; 'end' is emitted by _zDrain when the native codec
+      // signals completion. Signal the codec to flush and remember the callback
+      // that fires 'finish' on the writable side.
+      _final(callback) {
+        if (this._zEnded) { callback(); return; }
+        this._zFinalCb = callback;
+        internal._streamEnd(this._zId);
+      }
+
+      destroy(err) {
+        if (this._zDestroyed) return this;
+        this._zDestroyed = true;
+        this.destroyed = true;
+        try { internal._streamDestroy(this._zId); } catch (e) {}
+        if (err) this.emit('error', err);
+        this.emit('close');
+        return this;
+      }
+
+      close(cb) {
+        if (typeof cb === 'function') this.once('close', cb);
+        return this.destroy();
+      }
+    }
+
+    // Named subclasses so `stream instanceof zlib.Gunzip` etc. works (the
+    // `destroy` package's isZlibStream check depends on these constructors).
+    class Gzip extends ZlibStream { constructor(o) { super('gzip', o); } }
+    class Gunzip extends ZlibStream { constructor(o) { super('gunzip', o); } }
+    class Deflate extends ZlibStream { constructor(o) { super('deflate', o); } }
+    class Inflate extends ZlibStream { constructor(o) { super('inflate', o); } }
+    class DeflateRaw extends ZlibStream { constructor(o) { super('deflateraw', o); } }
+    class InflateRaw extends ZlibStream { constructor(o) { super('inflateraw', o); } }
+    class Unzip extends ZlibStream { constructor(o) { super('unzip', o); } }
+
+    zlib.Gzip = Gzip;
+    zlib.Gunzip = Gunzip;
+    zlib.Deflate = Deflate;
+    zlib.Inflate = Inflate;
+    zlib.DeflateRaw = DeflateRaw;
+    zlib.InflateRaw = InflateRaw;
+    zlib.Unzip = Unzip;
+
+    zlib.createGzip = function (options) { return new Gzip(options); };
+    zlib.createGunzip = function (options) { return new Gunzip(options); };
+    zlib.createDeflate = function (options) { return new Deflate(options); };
+    zlib.createInflate = function (options) { return new Inflate(options); };
+    zlib.createDeflateRaw = function (options) { return new DeflateRaw(options); };
+    zlib.createInflateRaw = function (options) { return new InflateRaw(options); };
+    zlib.createUnzip = function (options) { return new Unzip(options); };
+  }
+
   // Export
   global.__zlib_module = zlib;
 

@@ -83,6 +83,20 @@ func (c *Context) NewArray(length int) (*Value, error) {
 	return &Value{ptr: ptr, ctx: c}, nil
 }
 
+// Throw schedules a JavaScript Error with the given message to be thrown when
+// control returns to V8. It is intended for use inside a function callback:
+// call Throw and return its result (or nil) so the pending exception
+// propagates to JavaScript instead of returning a value.
+func (c *Context) Throw(message string) *Value {
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+	ptr := C.v8go_throw_exception(c.ptr, cMsg)
+	if ptr == nil {
+		return nil
+	}
+	return &Value{ptr: ptr, ctx: c}
+}
+
 // Global returns the global object for this context.
 func (c *Context) Global() (*Value, error) {
 	if c.ptr == nil {

@@ -3,6 +3,9 @@
 
 	// util.format - printf-like string formatting
 	function format(fmt, ...args) {
+		// Node returns '' for util.format() with no arguments (whereas
+		// util.format(undefined) inspects to 'undefined').
+		if (arguments.length === 0) return '';
 		if (typeof fmt !== 'string') {
 			return [fmt, ...args].map(v => inspect(v)).join(' ');
 		}
@@ -36,6 +39,8 @@
 
 	// util.formatWithOptions
 	function formatWithOptions(inspectOptions, fmt, ...args) {
+		// As with format(), no format arguments (only the options object) is ''.
+		if (arguments.length <= 1) return '';
 		if (typeof fmt !== 'string') {
 			return [fmt, ...args].map(v => inspect(v, inspectOptions)).join(' ');
 		}
@@ -523,6 +528,204 @@
 	const TextEncoder = globalThis.TextEncoder;
 	const TextDecoder = globalThis.TextDecoder;
 
+	// util.parseArgs - Node's CLI argument parser.
+	function parseArgsError(code, message) {
+		const err = new TypeError(message);
+		err.code = code;
+		return err;
+	}
+
+	function parseArgs(config) {
+		config = config || {};
+		const args = config.args !== undefined
+			? config.args
+			: (typeof process !== 'undefined' && process.argv
+				? process.argv.slice(2)
+				: []);
+		const options = config.options || {};
+		const strict = config.strict !== undefined ? config.strict : true;
+		const allowPositionals = config.allowPositionals !== undefined
+			? config.allowPositionals
+			: !strict;
+		const allowNegative = config.allowNegative || false;
+		const returnTokens = config.tokens || false;
+
+		// Map short flags to their long name for quick lookup.
+		const shortMap = {};
+		for (const name of Object.keys(options)) {
+			const opt = options[name];
+			if (opt && opt.short) shortMap[opt.short] = name;
+			if (opt && opt.type !== 'string' && opt.type !== 'boolean') {
+				throw parseArgsError(
+					'ERR_INVALID_ARG_TYPE',
+					`options.${name}.type must be "string" or "boolean"`
+				);
+			}
+		}
+
+		const result = { values: { __proto__: null }, positionals: [] };
+		const tokens = [];
+
+		function optionType(name) {
+			return options[name] && options[name].type === 'string'
+				? 'string'
+				: 'boolean';
+		}
+
+		function storeValue(name, value, inlineValue, rawToken, index) {
+			const opt = options[name];
+			const type = optionType(name);
+			let val = type === 'boolean' ? true : value;
+			if (returnTokens) {
+				tokens.push({
+					kind: 'option',
+					name,
+					rawName: rawToken,
+					index,
+					value: type === 'boolean' ? undefined : value,
+					inlineValue: type === 'boolean' ? undefined : inlineValue,
+				});
+			}
+			if (opt && opt.multiple) {
+				if (!result.values[name]) result.values[name] = [];
+				result.values[name].push(val);
+			} else {
+				result.values[name] = val;
+			}
+		}
+
+		let i = 0;
+		for (; i < args.length; i++) {
+			const arg = args[i];
+			if (arg === '--') {
+				if (returnTokens) tokens.push({ kind: 'option-terminator', index: i });
+				for (i++; i < args.length; i++) {
+					if (allowPositionals) result.positionals.push(args[i]);
+					else if (strict) {
+						throw parseArgsError(
+							'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL',
+							`Unexpected argument '${args[i]}'. This command does not accept positional arguments`
+						);
+					}
+					if (returnTokens) tokens.push({ kind: 'positional', index: i, value: args[i] });
+				}
+				break;
+			}
+
+			// Long option: --name or --name=value
+			if (arg.length > 2 && arg.startsWith('--')) {
+				let name = arg.slice(2);
+				let inlineValue;
+				let hasInline = false;
+				const eq = name.indexOf('=');
+				if (eq !== -1) {
+					inlineValue = name.slice(eq + 1);
+					name = name.slice(0, eq);
+					hasInline = true;
+				}
+				let negated = false;
+				if (allowNegative && name.startsWith('no-') && !(name in options)) {
+					const base = name.slice(3);
+					if (base in options && optionType(base) === 'boolean') {
+						name = base;
+						negated = true;
+					}
+				}
+				if (strict && !(name in options)) {
+					throw parseArgsError(
+						'ERR_PARSE_ARGS_UNKNOWN_OPTION',
+						`Unknown option '--${name}'`
+					);
+				}
+				const type = optionType(name);
+				if (type === 'boolean') {
+					if (hasInline && strict) {
+						throw parseArgsError(
+							'ERR_PARSE_ARGS_INVALID_OPTION_VALUE',
+							`Option '--${name}' is a boolean and does not take an argument`
+						);
+					}
+					storeValue(name, negated ? false : true, false, `--${arg.slice(2).split('=')[0]}`, i);
+				} else {
+					let value = inlineValue;
+					if (!hasInline) {
+						if (i + 1 < args.length) {
+							value = args[++i];
+						} else if (strict) {
+							throw parseArgsError(
+								'ERR_PARSE_ARGS_INVALID_OPTION_VALUE',
+								`Option '--${name}' argument is missing`
+							);
+						} else {
+							value = undefined;
+						}
+					}
+					storeValue(name, value, hasInline, `--${name}`, i);
+				}
+				continue;
+			}
+
+			// Short option(s): -a, -abc, -avalue, -a=value
+			if (arg.length > 1 && arg[0] === '-' && arg !== '-') {
+				const body = arg.slice(1);
+				for (let j = 0; j < body.length; j++) {
+					const short = body[j];
+					const name = shortMap[short] || short;
+					if (strict && !(name in options)) {
+						throw parseArgsError(
+							'ERR_PARSE_ARGS_UNKNOWN_OPTION',
+							`Unknown option '-${short}'`
+						);
+					}
+					const type = optionType(name);
+					if (type === 'string') {
+						// Remainder of this token (or next arg) is the value.
+						let rest = body.slice(j + 1);
+						if (rest.startsWith('=')) rest = rest.slice(1);
+						let value;
+						if (rest.length > 0) {
+							value = rest;
+						} else if (i + 1 < args.length) {
+							value = args[++i];
+						} else if (strict) {
+							throw parseArgsError(
+								'ERR_PARSE_ARGS_INVALID_OPTION_VALUE',
+								`Option '-${short}' argument is missing`
+							);
+						}
+						storeValue(name, value, rest.length > 0, `-${short}`, i);
+						break;
+					} else {
+						storeValue(name, true, false, `-${short}`, i);
+					}
+				}
+				continue;
+			}
+
+			// Positional
+			if (allowPositionals) {
+				result.positionals.push(arg);
+			} else if (strict) {
+				throw parseArgsError(
+					'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL',
+					`Unexpected argument '${arg}'. This command does not accept positional arguments`
+				);
+			}
+			if (returnTokens) tokens.push({ kind: 'positional', index: i, value: arg });
+		}
+
+		// Apply defaults for options not seen.
+		for (const name of Object.keys(options)) {
+			const opt = options[name];
+			if (opt && 'default' in opt && !(name in result.values)) {
+				result.values[name] = opt.default;
+			}
+		}
+
+		if (returnTokens) result.tokens = tokens;
+		return result;
+	}
+
 	return {
 		format,
 		formatWithOptions,
@@ -535,6 +738,7 @@
 		isDeepStrictEqual,
 		debuglog,
 		getSystemErrorName,
+		parseArgs,
 		TextEncoder,
 		TextDecoder
 	};

@@ -119,6 +119,68 @@ func (m *Module) Evaluate() (*Value, error) {
 	return &Value{ptr: ptr, ctx: m.ctx}, nil
 }
 
+// SetDynamicImportResolver installs the host callback for dynamic import()
+// expressions and registers a persistent resolver used to resolve their
+// specifiers. Unlike the per-instantiation resolver passed to Instantiate, this
+// one lives for the life of the isolate (import() can fire at any time), so it
+// is intentionally never unregistered.
+func (c *Context) SetDynamicImportResolver(resolver ModuleResolveCallback) {
+	if c.ptr == nil || c.iso == nil || c.iso.ptr == nil {
+		return
+	}
+	id := registerModuleResolver(resolver)
+	C.v8go_set_dynamic_import_resolver(c.ptr, C.int(id))
+}
+
+// PerformMicrotaskCheckpoint drains V8's microtask (promise reaction) queue.
+func (c *Context) PerformMicrotaskCheckpoint() {
+	if c.iso == nil || c.iso.ptr == nil {
+		return
+	}
+	C.v8go_perform_microtask_checkpoint(c.iso.ptr)
+}
+
+// PromiseState represents the settlement state of a JS Promise.
+type PromiseState int
+
+const (
+	// PromisePending indicates the promise has not settled.
+	PromisePending PromiseState = 0
+	// PromiseFulfilled indicates the promise resolved with a value.
+	PromiseFulfilled PromiseState = 1
+	// PromiseRejected indicates the promise rejected with a reason.
+	PromiseRejected PromiseState = 2
+)
+
+// IsPromise reports whether this value is a Promise.
+func (v *Value) IsPromise() bool {
+	if v == nil || v.ptr == nil {
+		return false
+	}
+	return C.v8go_promise_state(v.ptr) >= 0
+}
+
+// PromiseState returns the settlement state of a Promise value.
+func (v *Value) PromiseState() PromiseState {
+	if v == nil || v.ptr == nil {
+		return PromisePending
+	}
+	return PromiseState(C.v8go_promise_state(v.ptr))
+}
+
+// PromiseResult returns a settled Promise's value (fulfilled value or rejection
+// reason). Only meaningful once the promise is no longer pending.
+func (v *Value) PromiseResult() *Value {
+	if v == nil || v.ptr == nil || v.ctx == nil {
+		return nil
+	}
+	ptr := C.v8go_promise_result(v.ctx.ptr, v.ptr)
+	if ptr == nil {
+		return nil
+	}
+	return &Value{ptr: ptr, ctx: v.ctx}
+}
+
 // Status returns the current status of the module.
 func (m *Module) Status() ModuleStatus {
 	if m.ptr == nil {

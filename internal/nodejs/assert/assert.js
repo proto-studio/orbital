@@ -111,7 +111,11 @@
     if (expected === undefined) return true;
     
     if (expected instanceof RegExp) {
-      return expected.test(actual.message);
+      // Node matches the RegExp against the string representation of the error
+      // (e.g. "TypeError: option verify must be function"), not just its
+      // message, so patterns that include the error name resolve correctly.
+      const str = (actual instanceof Error) ? String(actual) : String(actual && actual.message !== undefined ? actual.message : actual);
+      return expected.test(str);
     }
     
     if (typeof expected === 'function') {

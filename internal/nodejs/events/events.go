@@ -41,15 +41,10 @@ func (e *Events) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
-	// Create events module object
-	eventsObj, err := ctx.NewObject()
-	if err != nil {
-		return err
-	}
-	if err := eventsObj.Set("EventEmitter", result); err != nil {
-		return err
-	}
-
-	// Set events module as global (for require('events') simulation)
-	return rt.SetGlobal("__events_module", eventsObj)
+	// The events module *is* the EventEmitter constructor (matching Node), so
+	// require('events') resolves to it directly. The class carries an
+	// `.EventEmitter` self-reference (set in events.js), so existing consumers
+	// that read `__events_module.EventEmitter` keep working, and libraries that
+	// do `class X extends require('events')` (e.g. undici) now work too.
+	return rt.SetGlobal("__events_module", result)
 }

@@ -38,6 +38,15 @@
 
     get connecting() { return this._connecting; }
     get destroyed() { return this._destroyed; }
+    // Public readable/writable flags. Node exposes these on the socket, and
+    // libraries depend on them: e.g. on-finished (used by body-parser via
+    // raw-body) treats a request as already finished when !req.socket.readable,
+    // which made express.json/urlencoded/etc. skip reading the body entirely and
+    // leave req.body undefined. Mirror the private stream state here.
+    get readable() { return this._readable; }
+    set readable(v) { this._readable = !!v; }
+    get writable() { return this._writable; }
+    set writable(v) { this._writable = !!v; }
     get localAddress() { return this._localAddress; }
     get localPort() { return this._localPort; }
     get remoteAddress() { return this._remoteAddress; }
@@ -397,18 +406,23 @@
 
       this._id = internal.createServer();
 
-      internal.listen(this._id, host, port, backlog, (err) => {
-        if (err) {
-          this.emit('error', new Error(err));
-          return;
-        }
+      // Bind synchronously (internal.listen returns null on success, or an error
+      // string). The bound address is valid immediately after this, so
+      // server.address() works synchronously — matching Node, where only the
+      // 'listening' event is asynchronous. supertest relies on reading
+      // server.address().port right after app.listen(0).
+      const err = internal.listen(this._id, host, port, backlog);
+      if (err) {
+        process.nextTick(() => this.emit('error', new Error(err)));
+        return this;
+      }
 
-        this._listening = true;
-        this.emit('listening');
+      this._listening = true;
 
-        // Start accepting connections
-        this._acceptConnections();
-      });
+      // Start accepting connections now; defer the 'listening' event to the next
+      // tick to preserve Node's asynchronous listen() contract.
+      this._acceptConnections();
+      process.nextTick(() => this.emit('listening'));
 
       return this;
     }

@@ -265,9 +265,10 @@ Orbital implements a growing subset of Node.js:
 
 - **Modules:** CommonJS (`require`) and ES Modules (`import`/`export`)
 - **Globals:** `console`, timers, `process`, `EventEmitter`, `Buffer`, `URL`, `TextEncoder`/`TextDecoder`, `atob`/`btoa`
-- **Built-ins:** `fs`, `path`, `stream`, `url`, `os`, `util`, `crypto`, `http`, and more
+- **Built-ins:** `fs`, `path`, `stream`, `url`, `os`, `util`, `crypto`, `http`, `worker_threads` (isolate-backed), `async_hooks`, and more
 
-Not yet implemented: `worker_threads`, `cluster`, full stream piping, async iterators.
+Not yet implemented: `cluster`, full stream piping, async iterators. `async_hooks`
+context does not yet cross native `await` boundaries (see `docs/async-context.md`).
 
 ## Platform support
 

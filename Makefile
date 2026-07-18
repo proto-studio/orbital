@@ -254,7 +254,8 @@ v8-build: v8-deps $(V8_BUILD_PREREQ)
 	echo 'v8_enable_sandbox=true' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'enable_rust=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_temporal_support=false' >> "$$V8_OUT_DIR/args.gn" && \
-	echo 'v8_enable_i18n_support=false' >> "$$V8_OUT_DIR/args.gn" && \
+	echo 'v8_enable_i18n_support=true' >> "$$V8_OUT_DIR/args.gn" && \
+	echo 'icu_use_data_file=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'treat_warnings_as_errors=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'symbol_level=0' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_webassembly=true' >> "$$V8_OUT_DIR/args.gn" && \
@@ -412,6 +413,24 @@ coverage: check-v8-link
 coverage-html: coverage
 	$(GO) tool cover -html=coverage.out
 
+# Directory holding the core-package regression suites.
+CORE_PKG_DIR := tests/core-packages
+
+# Run the core-package regression suites described by
+# $(CORE_PKG_DIR)/manifest.json against the freshly built native binary. The
+# runner clones each upstream project from GitHub (at a pinned ref), installs
+# and builds it with the host toolchain, then runs its own test suite with
+# Orbital (exposed to test commands as $$ORBITAL). Fails if any package fails.
+#
+# Options:
+#   PKG=<name>        run only the named manifest package
+#   CORE_PKG_ARGS=... extra flags passed through (e.g. --offline --skip-install)
+.PHONY: test-core-packages
+test-core-packages: build-native
+	python3 scripts/run-core-package-tests.py \
+		--binary "$(CURDIR)/$(BUILD_DIR)/$(BINARY_NAME)" \
+		$(if $(PKG),--package $(PKG),) $(CORE_PKG_ARGS)
+
 # ============================================================================
 # Run Targets
 # ============================================================================
@@ -531,9 +550,11 @@ help:
 	@echo "  v8-deps          Install depot_tools"
 	@echo ""
 	@echo "Test targets:"
-	@echo "  test             Run tests"
-	@echo "  coverage         Run tests with coverage summary"
-	@echo "  coverage-html    Run tests and open HTML coverage report"
+	@echo "  test               Run Go tests"
+	@echo "  test-core-packages Clone core npm packages (manifest.json) and run their"
+	@echo "                     suites on Orbital (PKG=<name> for one)"
+	@echo "  coverage           Run tests with coverage summary"
+	@echo "  coverage-html      Run tests and open HTML coverage report"
 	@echo ""
 	@echo "Run targets:"
 	@echo "  run              Build and run REPL"

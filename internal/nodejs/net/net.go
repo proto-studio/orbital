@@ -6,7 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net"
-	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -169,11 +169,19 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
+	// The JS side hands us a latin1 wire-string (buf.toString('binary')), where
+	// each character is a single byte value 0-255. args[1].String() decodes it
+	// through UTF-8, so bytes >= 0x80 arrive as multi-byte runes; latin1Bytes
+	// reverses that by taking the low byte of each rune to recover the exact
+	// wire bytes. Using []byte(data) here would re-UTF-8-encode them and corrupt
+	// any non-ASCII payload (and desync Content-Length).
+	wire := latin1Bytes(data)
+
 	n.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer n.rt.EventLoop().DonePendingWork()
 
-		_, err := socket.Write([]byte(data))
+		_, err := socket.Write(wire)
 
 		n.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -224,8 +232,14 @@ func (n *Net) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			} else if bytesRead == 0 {
 				n.callCallback(callback, "", ctx.Null())
 			} else {
-				// Return data as string (binary encoding)
-				dataStr, _ := ctx.NewString(string(buf[:bytesRead]))
+				// Deliver raw bytes as a latin1 (byte-per-codepoint) string so
+				// arbitrary binary survives the crossing into V8. Passing the raw
+				// bytes straight to NewString would run them through
+				// String::NewFromUtf8, collapsing/replacing any multi-byte UTF-8
+				// sequence (e.g. an HTTP body with non-ASCII characters would lose
+				// bytes, breaking Content-Length accounting). The JS side recovers
+				// the exact bytes with Buffer.from(data, 'binary').
+				dataStr, _ := ctx.NewString(latin1String(buf[:bytesRead]))
 				n.callCallback(callback, "", dataStr)
 			}
 		})
@@ -396,42 +410,40 @@ func (n *Net) createServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 }
 
 func (n *Net) listenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 5 {
-		return nil
+	if len(args) < 3 {
+		s, _ := ctx.NewString("invalid listen arguments")
+		return s
 	}
 
 	id := int64(args[0].Integer())
 	host := args[1].String()
 	port := int(args[2].Integer())
 	// backlog is args[3] - not used in our implementation
-	callback := args[4]
 
 	n.mu.Lock()
 	server, ok := n.servers[id]
 	n.mu.Unlock()
 
 	if !ok {
-		n.callCallback(callback, "Server not found", nil)
-		return nil
+		s, _ := ctx.NewString("Server not found")
+		return s
 	}
 
-	n.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer n.rt.EventLoop().DonePendingWork()
+	// Bind synchronously. net.Listen binds the socket and assigns the (possibly
+	// ephemeral) port immediately without blocking on connections, so the bound
+	// address is valid as soon as this returns. This matches Node, where
+	// server.address() is usable synchronously right after listen() and only the
+	// 'listening' event is deferred. Packages like supertest depend on this: they
+	// call app.listen(0) and then read server.address().port synchronously.
+	if err := server.Listen(context.Background(), host, port); err != nil {
+		s, _ := ctx.NewString(err.Error())
+		return s
+	}
 
-		err := server.Listen(context.Background(), host, port)
-
-		n.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
-				n.callCallback(callback, err.Error(), nil)
-			} else {
-				n.callCallback(callback, "", nil)
-			}
-		})
-	}()
-
-	return nil
+	// null == success
+	return ctx.Null()
 }
 
 func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -553,11 +565,15 @@ func (n *Net) getServerAddressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	obj, _ := ctx.NewObject()
 	if tcpAddr, ok := addr.(*net.TCPAddr); ok {
+		family := "IPv4"
+		if tcpAddr.IP.To4() == nil {
+			family = "IPv6"
+		}
 		addrStr, _ := ctx.NewString(tcpAddr.IP.String())
-		portStr, _ := ctx.NewString(strconv.Itoa(tcpAddr.Port))
+		familyStr, _ := ctx.NewString(family)
 		obj.Set("address", addrStr)
 		obj.Set("port", ctx.NewNumber(float64(tcpAddr.Port)))
-		obj.Set("family", portStr)
+		obj.Set("family", familyStr)
 	}
 
 	return obj
@@ -644,4 +660,29 @@ func (n *Net) callCallbackWithArgs(callback *v8.Value, errMsg string, args ...*v
 // formatPort converts an integer port to a string.
 func formatPort(port int) string {
 	return fmt.Sprintf("%d", port)
+}
+
+// latin1String maps each raw byte to the Unicode code point of the same value,
+// producing a valid UTF-8 Go string that survives the crossing into V8 without
+// the lossy replacement NewString would apply to invalid UTF-8. The JS side
+// recovers the exact bytes with Buffer.from(s, 'binary'/'latin1'). This is the
+// same byte-safe convention the fs and http layers use.
+func latin1String(b []byte) string {
+	var sb strings.Builder
+	sb.Grow(len(b) * 2)
+	for _, c := range b {
+		sb.WriteRune(rune(c))
+	}
+	return sb.String()
+}
+
+// latin1Bytes is the inverse of latin1String: it recovers the raw bytes from a
+// latin1 wire-string that arrived from V8 (decoded as UTF-8 runes) by taking the
+// low byte of each code point.
+func latin1Bytes(s string) []byte {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		out = append(out, byte(r))
+	}
+	return out
 }

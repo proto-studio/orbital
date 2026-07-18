@@ -132,12 +132,12 @@ type fsInterface interface {
 func (m *Module) resolveModulePath(request, basePath string, fs fsInterface) string {
 	// Handle relative paths
 	if strings.HasPrefix(request, "./") || strings.HasPrefix(request, "../") {
-		return m.resolveAsFile(filepath.Join(basePath, request), fs)
+		return m.resolveAsFileOrDirectory(filepath.Join(basePath, request), fs)
 	}
 
 	// Handle absolute paths
 	if strings.HasPrefix(request, "/") {
-		return m.resolveAsFile(request, fs)
+		return m.resolveAsFileOrDirectory(request, fs)
 	}
 
 	// Handle node_modules (simplified)
@@ -165,6 +165,17 @@ func (m *Module) resolveModulePath(request, basePath string, fs fsInterface) str
 	}
 
 	return ""
+}
+
+// resolveAsFileOrDirectory resolves a path first as a file, then, failing
+// that, as a directory (package.json "main" or an index file). This matches
+// Node's LOAD_AS_FILE followed by LOAD_AS_DIRECTORY behavior and is required
+// for relative/absolute requires that point at a folder (e.g. require('./parse')).
+func (m *Module) resolveAsFileOrDirectory(path string, fs fsInterface) string {
+	if resolved := m.resolveAsFile(path, fs); resolved != "" {
+		return resolved
+	}
+	return m.resolveAsDirectory(path, fs)
 }
 
 // resolveAsFile tries to resolve a path as a file.
@@ -200,7 +211,14 @@ func (m *Module) resolveAsDirectory(path string, fs fsInterface) string {
 			main := m.parsePackageMain(string(data))
 			if main != "" {
 				mainPath := filepath.Join(path, main)
+				// Node.js first tries to load "main" as a file, then, if
+				// that fails, as a directory (i.e. main/index.js). Packages
+				// such as relateurl set "main": "lib", pointing at a folder.
 				resolved := m.resolveAsFile(mainPath, fs)
+				if resolved != "" {
+					return resolved
+				}
+				resolved = m.resolveIndex(mainPath, fs)
 				if resolved != "" {
 					return resolved
 				}
@@ -208,15 +226,20 @@ func (m *Module) resolveAsDirectory(path string, fs fsInterface) string {
 		}
 	}
 
+	return m.resolveIndex(path, fs)
+}
+
+// resolveIndex tries to resolve a directory to its index file.
+func (m *Module) resolveIndex(path string, fs fsInterface) string {
 	// Try index.js
 	indexPath := filepath.Join(path, "index.js")
-	if fs.Exists(indexPath) {
+	if fileExistsAndIsFile(indexPath, fs) {
 		return indexPath
 	}
 
 	// Try index.json
 	indexJsonPath := filepath.Join(path, "index.json")
-	if fs.Exists(indexJsonPath) {
+	if fileExistsAndIsFile(indexJsonPath, fs) {
 		return indexJsonPath
 	}
 

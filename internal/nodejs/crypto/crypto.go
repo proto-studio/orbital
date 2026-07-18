@@ -10,6 +10,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
+	"sync"
 
 	"github.com/google/uuid"
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -19,11 +20,19 @@ import (
 // Crypto provides cryptographic functionality.
 type Crypto struct {
 	rt *runtime.Runtime
+
+	// keys is this runtime's KeyObject registry: JS KeyObject instances hold an
+	// opaque integer handle into this table rather than the key material itself.
+	// It is per-Crypto-instance (one per runtime), so separate sandboxes/workers
+	// never share key state. Guarded by keyMu; handles are monotonic.
+	keyMu  sync.Mutex
+	keys   map[int64]*keyEntry
+	keySeq int64
 }
 
 // New creates a new Crypto module.
 func New() *Crypto {
-	return &Crypto{}
+	return &Crypto{keys: make(map[int64]*keyEntry)}
 }
 
 // Name returns the module name.
@@ -52,6 +61,21 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"createHmac":      c.createHmacFunc,
 		"getHashes":       c.getHashesFunc,
 		"timingSafeEqual": c.timingSafeEqualFunc,
+		// KeyObject API (native Go; see keyobject.go). These low-level helpers
+		// take/return strings + integer handles and are wrapped by the JS
+		// KeyObject class installed in keyObjectJS below.
+		"_generateKeyPair":     c.generateKeyPairFunc,
+		"_createSecretKey":     c.createSecretKeyFunc,
+		"_createPrivateKeyJWK": c.createPrivateKeyJWKFunc,
+		"_createPublicKeyJWK":  c.createPublicKeyJWKFunc,
+		"_createKeyFromPEM":    c.createKeyFromPEMFunc,
+		"_createKeyFromDER":    c.createKeyFromDERFunc,
+		"_keyInfo":             c.keyInfoFunc,
+		"_keyExportJWK":        c.keyExportJWKFunc,
+		"_keyExportPEM":        c.keyExportPEMFunc,
+		"_keyExportDER":        c.keyExportDERFunc,
+		"_keyExportSecret":     c.keyExportSecretFunc,
+		"_keyEquals":           c.keyEqualsFunc,
 	}
 
 	for name, fn := range funcs {
@@ -86,10 +110,16 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		}
 
 		update(data, inputEncoding) {
+			// Normalize every chunk to a latin1 wire-string (one character per
+			// byte) so binary content survives the crossing into Go intact. String
+			// inputs are encoded with their declared encoding (default utf8, as in
+			// Node); Buffers/typed arrays are already bytes. Pushing raw strings or
+			// UTF-8 code points here would let the Go side re-encode bytes >= 0x80
+			// and corrupt the hash (e.g. utf8 etags over multibyte input).
 			if (typeof data === 'string') {
-				this._data.push(data);
+				this._data.push(Buffer.from(data, inputEncoding || 'utf8').toString('latin1'));
 			} else if (data instanceof Uint8Array || data instanceof Buffer) {
-				this._data.push(Array.from(data).map(b => String.fromCharCode(b)).join(''));
+				this._data.push(Buffer.from(data).toString('latin1'));
 			}
 			return this;
 		}
@@ -119,15 +149,19 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	class Hmac {
 		constructor(algorithm, key) {
 			this._algorithm = algorithm;
-			this._key = typeof key === 'string' ? key : Array.from(key).map(b => String.fromCharCode(b)).join('');
+			// Keep the key as a latin1 wire-string (byte-per-character) so the Go
+			// side can recover the exact key bytes.
+			this._key = typeof key === 'string'
+				? Buffer.from(key, 'utf8').toString('latin1')
+				: Buffer.from(key).toString('latin1');
 			this._data = [];
 		}
 
 		update(data, inputEncoding) {
 			if (typeof data === 'string') {
-				this._data.push(data);
+				this._data.push(Buffer.from(data, inputEncoding || 'utf8').toString('latin1'));
 			} else if (data instanceof Uint8Array || data instanceof Buffer) {
-				this._data.push(Array.from(data).map(b => String.fromCharCode(b)).join(''));
+				this._data.push(Buffer.from(data).toString('latin1'));
 			}
 			return this;
 		}
@@ -178,6 +212,12 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 `
 	_, err = rt.RunScript(jsSetup, "crypto_setup.js")
 	if err != nil {
+		return err
+	}
+
+	// Install the KeyObject class + generateKeyPair/createSecretKey/... wrappers
+	// on top of the native helpers registered above.
+	if _, err = rt.RunScript(keyObjectJS, "crypto_keyobject.js"); err != nil {
 		return err
 	}
 
@@ -334,7 +374,9 @@ func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	h.Write([]byte(data))
+	// data is a latin1 wire-string (one code point per byte); recover the exact
+	// bytes rather than re-encoding as UTF-8, which would corrupt any byte >= 0x80.
+	h.Write(latin1Bytes(data))
 	result := hex.EncodeToString(h.Sum(nil))
 
 	val, _ := ctx.NewString(result)
@@ -369,8 +411,9 @@ func (c *Crypto) hmacDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	mac := hmac.New(h, []byte(key))
-	mac.Write([]byte(data))
+	// key and data are latin1 wire-strings; decode to exact bytes.
+	mac := hmac.New(h, latin1Bytes(key))
+	mac.Write(latin1Bytes(data))
 	result := hex.EncodeToString(mac.Sum(nil))
 
 	val, _ := ctx.NewString(result)
@@ -429,4 +472,16 @@ func (c *Crypto) timingSafeEqualFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.True()
 	}
 	return ctx.False()
+}
+
+// latin1Bytes recovers raw bytes from a latin1 wire-string that arrived from V8
+// (decoded as UTF-8 runes) by taking the low byte of each code point. It is the
+// inverse of the JS-side Buffer.toString('latin1') convention used to carry
+// arbitrary bytes across the Go/JS boundary without UTF-8 mangling.
+func latin1Bytes(s string) []byte {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		out = append(out, byte(r))
+	}
+	return out
 }

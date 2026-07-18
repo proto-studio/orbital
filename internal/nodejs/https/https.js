@@ -25,15 +25,15 @@
           options.url = 'https://' + options.url;
         }
       }
-    }
-
-    if (options.protocol) {
+    } else {
+      // Options-object form (e.g. https.get({ hostname, path })): always pin the
+      // scheme to https and default the port to 443, regardless of whether a
+      // protocol was supplied. Otherwise http.request would build an
+      // "http://host:443" URL and the request would fail.
       options.protocol = 'https:';
-    }
-
-    // Default port for HTTPS
-    if (!options.port && !options.url) {
-      options.port = 443;
+      if (!options.port) {
+        options.port = 443;
+      }
     }
 
     return http.request(options, callback);

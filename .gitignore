@@ -39,3 +39,6 @@ Thumbs.db
 # Dependencies
 vendor/
 node_modules/
+
+# Cloned upstream repos for core-package tests (see tests/core-packages)
+tests/core-packages/.cache/

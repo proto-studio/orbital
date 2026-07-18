@@ -1,0 +1,111 @@
+{
+  "description": "Core npm packages that must keep working on the Orbital native runtime. Each entry is cloned from GitHub at a pinned ref, its dependencies are installed/built with the host toolchain, and its own test suite is executed with the Orbital binary (available to test commands as $ORBITAL).",
+  "packages": [
+    {
+      "name": "mjml",
+      "description": "MJML email markup compiler. Runs mjml-core's own unit tests (Mocha BDD + chai) on Orbital using the project's real installed Mocha (via support/mocha-run.js), not a shim.",
+      "repo": "https://github.com/mjmlio/mjml.git",
+      "ref": "v5.4.0",
+      "env": {
+        "CI": "true"
+      },
+      "install": [
+        "npm install --no-audit --no-fund --legacy-peer-deps --ignore-scripts",
+        "node_modules/.bin/babel packages/mjml-core/src --out-dir packages/mjml-core/lib --root-mode upward"
+      ],
+      "test": [
+        "cd packages/mjml-core && \"$ORBITAL\" \"$CORE_PKG_DIR/support/mocha-run.js\" tests/*.test.js"
+      ]
+    },
+    {
+      "name": "mocha",
+      "description": "The Mocha test framework, running its own unit specs (test/unit) on Orbital via support/mocha-self-run.js (real Mocha loaded from the repo + its test/setup.js bootstrap). Four specs are currently excluded and tracked as known Orbital gaps: runnable/timeout (sinon fake-timer driven hangs), mocha.spec.js (rewiremock-based Suite mocking), and throw.spec.js (process uncaughtException timing).",
+      "repo": "https://github.com/mochajs/mocha.git",
+      "ref": "v10.8.2",
+      "env": {
+        "CI": "true"
+      },
+      "install": [
+        "npm install --no-audit --no-fund --ignore-scripts"
+      ],
+      "test": [
+        "\"$ORBITAL\" \"$CORE_PKG_DIR/support/mocha-self-run.js\" test/unit/context.spec.js test/unit/duration.spec.js test/unit/errors.spec.js test/unit/globals.spec.js test/unit/grep.spec.js test/unit/hook-async.spec.js test/unit/hook-sync-nested.spec.js test/unit/hook-sync.spec.js test/unit/hook-timeout.spec.js test/unit/hook.spec.js test/unit/overspecified-async.spec.js test/unit/parse-query.spec.js test/unit/plugin-loader.spec.js test/unit/required-tokens.spec.js test/unit/root.spec.js test/unit/runner.spec.js test/unit/suite.spec.js test/unit/test.spec.js test/unit/utils.spec.js"
+      ]
+    },
+    {
+      "name": "typescript",
+      "description": "The TypeScript compiler (tsc). The repo ships its LKG (last-known-good) build in lib/, so no compile step is required: support/tsc-run.sh drives the real compiler on Orbital via lib/tsc.js (CLI --version, emit + run of the generated JS, TS2322 diagnostics) plus the programmatic API (transpileModule + createProgram + checker) via support/tsc-api.js.",
+      "repo": "https://github.com/microsoft/TypeScript.git",
+      "ref": "v5.9.3",
+      "install": [],
+      "test": [
+        "bash \"$CORE_PKG_DIR/support/tsc-run.sh\""
+      ]
+    },
+    {
+      "name": "axios",
+      "description": "The axios HTTP client. dist/ is not committed, so it is built from source with rollup (npm run build) to produce dist/node/axios.cjs, then support/axios-smoke.js exercises axios against the REAL network to validate Orbital's outbound HTTP/HTTPS client stack (TLS, DNS, redirects, JSON): HTTPS GET to example.com, a JSON HTTPS GET to api.github.com, a plain HTTP GET, a cross-scheme redirect (http->https), and a real 404. Requires outbound network access.",
+      "repo": "https://github.com/axios/axios.git",
+      "ref": "v1.18.1",
+      "install": [
+        "npm install --no-audit --no-fund",
+        "npm run build"
+      ],
+      "test": [
+        "\"$ORBITAL\" \"$CORE_PKG_DIR/support/axios-smoke.js\""
+      ]
+    },
+    {
+      "name": "yargs",
+      "description": "The yargs CLI-argument parser, running its OWN mocha test suite (the real test/*.cjs spec files, the same ones `npm test` runs, driven by actual Mocha via support/mocha-run.js + chai) on Orbital — no hand-written test drivers. yargs is authored in TypeScript and its published build/index.cjs is produced by rollup, which is broken on modern host toolchains (a rollup/@rollup/plugin-typescript vs TypeScript version drift, unrelated to Orbital); support/yargs-build.sh instead compiles the same sources to CommonJS with plain tsc and reconstructs the CJS bootstrap. support/yargs-suite.sh then runs the spec files against that build. Orbital passes 782 of yargs' ~801 tests; surfacing this suite drove four real Orbital fixes (util.format() with no args -> '', require.cache as a real object so delete/​in work, path.normalize preserving trailing slashes, and Node-shaped MODULE_NOT_FOUND errors with require.resolve throwing). The 18 skipped specs depend on things Orbital does not emulate (commandDir's get-caller-file stack position under Mocha, the '$0' executable name being 'node', host OS-locale/Node-version detection, util.inspect breakLength wrapping, and async process.exit timing) — none are yargs bugs.",
+      "repo": "https://github.com/yargs/yargs.git",
+      "ref": "v17.7.2",
+      "install": [
+        "npm install --no-audit --no-fund --ignore-scripts",
+        "bash \"$CORE_PKG_DIR/support/yargs-build.sh\""
+      ],
+      "test": [
+        "bash \"$CORE_PKG_DIR/support/yargs-suite.sh\""
+      ]
+    },
+    {
+      "name": "express",
+      "description": "The Express web framework (v5), running its OWN mocha test suite (the real test/*.js spec files, driven by actual Mocha via support/mocha-run.js + supertest) on Orbital — no hand-written test drivers. This exercises Orbital's HTTP server (http.createServer on the net TCP server) and client end-to-end through Express's routing, middleware, body parsers, and request/response helpers. Express 5's router (path-to-regexp@8) uses RegExp Unicode property escapes (/\\p{ID_Start}/u), which require V8 to be built with i18n/ICU support (v8_enable_i18n_support=true). Orbital passes 1,060 of Express's ~1,127 tests; support/express-suite.sh runs the spec files that pass 100% (61 files, 782 tests) and documents the excluded files — mostly a harness artifact where send's dotfile protection 404s because the checkout lives under .cache (res.sendFile/res.download/express.static), plus a few genuine edges (Go URL parsing of malformed escapes, IPv4-mapped IPv6 addresses, and one-offs in app.listen/app.options/app.use).",
+      "repo": "https://github.com/expressjs/express.git",
+      "ref": "v5.2.1",
+      "install": [
+        "npm install --no-audit --no-fund"
+      ],
+      "test": [
+        "bash \"$CORE_PKG_DIR/support/express-suite.sh\""
+      ]
+    },
+    {
+      "name": "react",
+      "description": "React 19 server-side rendering (react-dom/server). React's own suite is Jest-based and requires a from-source build (flow + rollup) that can't run on Orbital, so — like axios/yargs — this pins facebook/react at a release tag and installs the PUBLISHED prebuilt react/react-dom bundles (the exact CJS artifacts npm ships to production) into an isolated .ssr dir via support/react-ssr-setup.sh. support/react-ssr-smoke.js then drives react-dom/server on Orbital: renderToString and renderToStaticMarkup (with HTML-escaping checks) plus streaming renderToPipeableStream piped into a real http.createServer response and fetched back over the HTTP client. Components use React.createElement (no JSX build) and exercise function components, context, useId/useMemo, and keyed lists. This surfaced two runtime gaps (both fixed): a missing global queueMicrotask and TextEncoder.prototype.encodeInto.",
+      "repo": "https://github.com/facebook/react.git",
+      "ref": "v19.2.7",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "install": [
+        "bash \"$CORE_PKG_DIR/support/react-ssr-setup.sh\""
+      ],
+      "test": [
+        "cd .ssr && \"$ORBITAL\" \"$CORE_PKG_DIR/support/react-ssr-smoke.js\""
+      ]
+    },
+    {
+      "name": "jose",
+      "description": "The jose (panva) JSON Object Signing and Encryption library, exercising Orbital's cryptography. jose v6 is ESM-only and built entirely on the Web Crypto API (globalThis.crypto.subtle); adding it turned Orbital's WebCrypto from a JS stub (only HMAC + digest) into a native Go-backed SubtleCrypto (internal/nodejs/webcrypto/subtle.go using crypto/rsa, crypto/ecdsa, crypto/ecdh, crypto/ed25519, crypto/aes+GCM/CBC, RFC 3394 AES-KW and crypto/pbkdf2). jose's own tests are a bespoke multi-runtime harness that can't run on Orbital, so — like axios/react — this installs the PUBLISHED package (pinned to the checkout tag) into an isolated .smoke dir via support/jose-setup.sh and runs support/jose-smoke.mjs (45 checks) on Orbital: JWS (HS/RS/PS/ES256-512/EdDSA, compact+flattened+general), JWT (claims/exp/issuer), JWE content encryption (A128/192/256GCM, A128/192/256CBC-HS) with every key-management mode (dir, A128/192/256KW, A256GCMKW, RSA-OAEP/-256, ECDH-ES + ECDH-ES+A256KW over P-256 and X25519, PBES2-HS256/512), JWK import/export + RFC 7638 thumbprints, and tamper/wrong-key rejection. All outputs were verified byte-for-byte interoperable with Node.js jose in both directions. Surfaced and fixed runtime gaps: missing globals structuredClone and TextEncoder.encodeInto (added earlier for React), and a crypto NUL-truncation bug where hash inputs crossing the crypto module's C-string boundary were cut at the first zero byte (subtle.digest now routes through native Go over a base64 boundary).",
+      "repo": "https://github.com/panva/jose.git",
+      "ref": "v6.2.3",
+      "install": [
+        "bash \"$CORE_PKG_DIR/support/jose-setup.sh\""
+      ],
+      "test": [
+        "cd .smoke && \"$ORBITAL\" jose-smoke.mjs"
+      ]
+    }
+  ]
+}

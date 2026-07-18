@@ -2,13 +2,18 @@
 package console
 
 import (
+	_ "embed"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
+
+//go:embed console_module.js
+var consoleModuleJS string
 
 // Console provides console logging functionality.
 type Console struct {
@@ -321,19 +326,24 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// Set console as global
-	return rt.SetGlobal("console", consoleObj)
+	if err := rt.SetGlobal("console", consoleObj); err != nil {
+		return err
+	}
+
+	// Expose require('console') with a Console class (see console_module.js).
+	if _, err := rt.RunScript(consoleModuleJS, "console_module.js"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // createLogFunc creates a logging function for the given level.
 func (c *Console) createLogFunc(level string) v8.FunctionCallback {
 	return func(info *v8.FunctionCallbackInfo) *v8.Value {
 		args := info.Args()
-		parts := make([]string, len(args))
-		for i, arg := range args {
-			parts[i] = c.formatValue(arg)
-		}
 		indent := strings.Repeat("  ", c.groupDepth)
-		message := indent + strings.Join(parts, " ")
+		message := indent + c.formatLog(args)
 
 		switch level {
 		case "warn":
@@ -345,6 +355,120 @@ func (c *Console) createLogFunc(level string) v8.FunctionCallback {
 		}
 		return nil
 	}
+}
+
+// formatLog implements Node's util.format() semantics used by console.*: when
+// the first argument is a string containing printf-style specifiers
+// (%s %d %i %f %j %o %O %c %%), subsequent arguments are substituted in place;
+// any leftover arguments are appended space-separated. Without specifiers the
+// arguments are simply joined by spaces.
+func (c *Console) formatLog(args []*v8.Value) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	first := args[0]
+	if first != nil && first.IsString() {
+		f := first.String()
+		if strings.IndexByte(f, '%') >= 0 {
+			var b strings.Builder
+			argi := 1
+			for i := 0; i < len(f); i++ {
+				if f[i] != '%' || i+1 >= len(f) {
+					b.WriteByte(f[i])
+					continue
+				}
+				spec := f[i+1]
+				switch spec {
+				case 's':
+					if argi < len(args) {
+						b.WriteString(c.specString(args[argi]))
+						argi++
+					} else {
+						b.WriteString("%s")
+					}
+				case 'd', 'i':
+					if argi < len(args) {
+						b.WriteString(c.specInt(args[argi]))
+						argi++
+					} else {
+						b.WriteByte('%')
+						b.WriteByte(spec)
+					}
+				case 'f':
+					if argi < len(args) {
+						b.WriteString(c.specFloat(args[argi]))
+						argi++
+					} else {
+						b.WriteString("%f")
+					}
+				case 'j', 'o', 'O':
+					if argi < len(args) {
+						b.WriteString(c.formatValue(args[argi]))
+						argi++
+					} else {
+						b.WriteByte('%')
+						b.WriteByte(spec)
+					}
+				case 'c':
+					// CSS directive: consume an argument, emit nothing.
+					if argi < len(args) {
+						argi++
+					} else {
+						b.WriteString("%c")
+					}
+				case '%':
+					b.WriteByte('%')
+				default:
+					b.WriteByte('%')
+					b.WriteByte(spec)
+				}
+				i++ // consumed the specifier character
+			}
+			for ; argi < len(args); argi++ {
+				b.WriteByte(' ')
+				b.WriteString(c.formatValue(args[argi]))
+			}
+			return b.String()
+		}
+	}
+
+	parts := make([]string, len(args))
+	for i, arg := range args {
+		parts[i] = c.formatValue(arg)
+	}
+	return strings.Join(parts, " ")
+}
+
+// specString renders a value for %s: strings pass through unquoted, objects are
+// inspected, everything else uses its string form.
+func (c *Console) specString(v *v8.Value) string {
+	if v == nil || v.IsUndefined() {
+		return "undefined"
+	}
+	if v.IsString() {
+		return v.String()
+	}
+	if v.IsObject() && !v.IsFunction() {
+		return c.formatValue(v)
+	}
+	return v.String()
+}
+
+// specInt renders a value for %d / %i (integer, truncated toward zero).
+func (c *Console) specInt(v *v8.Value) string {
+	if v != nil && v.IsNumber() {
+		return strconv.FormatInt(int64(v.Number()), 10)
+	}
+	return "NaN"
+}
+
+// specFloat renders a value for %f.
+func (c *Console) specFloat(v *v8.Value) string {
+	if v != nil && v.IsNumber() {
+		return strconv.FormatFloat(v.Number(), 'g', -1, 64)
+	}
+	return "NaN"
 }
 
 // formatValue formats a v8.Value with type-based coloring.

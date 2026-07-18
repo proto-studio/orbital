@@ -1,20 +1,30 @@
 // Package esm implements ES Module loading.
+//
+// V8 resolves imports through a synchronous callback (resolveModule). Rather
+// than reimplement Node's resolution algorithm in Go, that callback delegates to
+// a JS loader (esm-loader.js) which runs in the fully-initialized runtime and
+// returns { url, source } for each requested specifier. See esm-loader.js.
 package esm
 
 import (
+	_ "embed"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
+//go:embed esm-loader.js
+var esmLoaderJS string
+
 // ESM provides ES Module functionality.
 type ESM struct {
-	rt *runtime.Runtime
+	rt          *runtime.Runtime
+	loaderReady bool
+	builtins    map[string]bool
+	loader      *loaderRealm
 }
 
 // New creates a new ESM module runtime.
@@ -33,59 +43,179 @@ func (e *ESM) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
+// ensureLoader lazily installs the JS loader. It can't run at Register time
+// because the CommonJS module system (which the loader uses via require) is
+// registered after ESM; by the time any module is actually loaded, everything
+// is available.
+func (e *ESM) ensureLoader() error {
+	if e.loaderReady {
+		return nil
+	}
+	ctx := e.rt.Context()
+	global, err := ctx.Global()
+	if err != nil {
+		return err
+	}
+	if existing, _ := global.Get("__esmFinishDynamicImport"); existing != nil && existing.IsFunction() {
+		e.loaderReady = true
+		return nil
+	}
+	if _, err := e.rt.RunScript(esmLoaderJS, "esm-loader.js"); err != nil {
+		return err
+	}
+	// Wire dynamic import() through the same JS resolver as static imports.
+	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
+		return e.resolveModule(specifier, referrer)
+	})
+	if err := e.installRegisterBridge(); err != nil {
+		return err
+	}
+	e.loaderReady = true
+	return nil
+}
+
+// installRegisterBridge exposes __esmRegister in the application realm so
+// node:module's register() can register loader hooks (which run in the isolated
+// loader realm; see hooks.go).
+func (e *ESM) installRegisterBridge() error {
+	ctx := e.rt.Context()
+	global, err := ctx.Global()
+	if err != nil {
+		return err
+	}
+	tmpl, err := e.rt.Isolate().NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+		c := info.Context()
+		specifier := argString(info, 0)
+		parentURL := argString(info, 1)
+		if specifier == "" {
+			return c.Throw("register(): specifier is required")
+		}
+		if err := e.registerHook(specifier, parentURL); err != nil {
+			return c.Throw(err.Error())
+		}
+		return c.Undefined()
+	})
+	if err != nil {
+		return err
+	}
+	fn, err := tmpl.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	return global.Set("__esmRegister", fn)
+}
+
 // RunModule compiles and runs an ES module from source.
 func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if e.rt == nil {
 		return nil, errors.New("esm: runtime not initialized")
 	}
+	if err := e.ensureLoader(); err != nil {
+		return nil, err
+	}
 
 	ctx := e.rt.Context()
 
-	// Compile the module
 	mod, err := ctx.CompileModule(source, filename)
 	if err != nil {
 		return nil, err
 	}
 
-	// Instantiate with our resolver
-	err = mod.Instantiate(e.resolveModule)
-	if err != nil {
+	if err := mod.Instantiate(e.resolveModule); err != nil {
 		return nil, err
 	}
 
-	// Evaluate the module
 	result, err := mod.Evaluate()
 	if err != nil {
 		return nil, err
 	}
 
-	// Run any pending async operations
+	// Run any pending async operations (timers, microtasks, top-level await).
 	e.rt.EventLoop().Run()
+
+	// A module always evaluates to a promise (top-level-await semantics): it
+	// fulfills once the module graph finishes evaluating and REJECTS if the
+	// module (or anything it imports) threw. V8 hands that promise back here with
+	// no Go-level error, so we must inspect it — otherwise a module that throws
+	// at import time fails silently. Drain the microtask queue once more, then
+	// surface a rejection (with its stack) or an unsettled top-level await.
+	if result != nil && result.IsPromise() {
+		ctx.PerformMicrotaskCheckpoint()
+		switch result.PromiseState() {
+		case v8.PromiseRejected:
+			return nil, rejectionError(result.PromiseResult())
+		case v8.PromisePending:
+			return nil, errors.New("Top-level await promise never resolved before the event loop drained")
+		}
+	}
 
 	return result, nil
 }
 
-// RunModuleFile loads and runs an ES module from a file.
-func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
-	fs := e.rt.Filesystem()
+// rejectionError converts a rejected module/promise reason (usually an Error
+// object) into a Go error, preferring the JS stack trace so the CLI prints the
+// same detail Node does for an uncaught module error.
+func rejectionError(reason *v8.Value) error {
+	if reason == nil {
+		return &v8.JSError{Message: "module evaluation rejected"}
+	}
+	if reason.IsObject() {
+		if st, _ := reason.Get("stack"); st != nil && !st.IsUndefined() {
+			if s := st.String(); s != "" {
+				return &v8.JSError{Message: s}
+			}
+		}
+	}
+	return &v8.JSError{Message: reason.String()}
+}
 
-	// Normalize to absolute path
+// RunModuleFile loads and runs an ES module from a file. The entry is put
+// through the same loader as any import so TypeScript stripping and CJS/ESM
+// classification apply uniformly.
+func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 	absPath := filename
 	if !filepath.IsAbs(filename) {
 		cwd, _ := os.Getwd()
 		absPath = filepath.Join(cwd, filename)
 	}
 
-	source, err := fs.ReadFile(absPath)
+	if err := e.ensureLoader(); err != nil {
+		return nil, err
+	}
+
+	source, url, err := e.resolveAndLoad(absPath, "")
 	if err != nil {
 		return nil, err
 	}
 
-	return e.RunModule(string(source), absPath)
+	return e.RunModule(source, url)
+}
+
+// Preload imports a module specifier (bare or path) before the entry runs,
+// implementing Node's --import. The module is resolved relative to the current
+// working directory and evaluated in the application realm; a module that calls
+// module.register thereby installs its hooks before the entry is loaded.
+func (e *ESM) Preload(specifier string) error {
+	if e.rt == nil {
+		return errors.New("esm: runtime not initialized")
+	}
+	if err := e.ensureLoader(); err != nil {
+		return err
+	}
+	source, url, err := e.resolveAndLoad(specifier, "")
+	if err != nil {
+		return err
+	}
+	_, err = e.RunModule(source, url)
+	return err
 }
 
 // GetModuleNamespace returns the namespace object of a module after evaluation.
 func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
+	if err := e.ensureLoader(); err != nil {
+		return nil, err
+	}
+
 	ctx := e.rt.Context()
 
 	mod, err := ctx.CompileModule(source, filename)
@@ -93,13 +223,11 @@ func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 		return nil, err
 	}
 
-	err = mod.Instantiate(e.resolveModule)
-	if err != nil {
+	if err := mod.Instantiate(e.resolveModule); err != nil {
 		return nil, err
 	}
 
-	_, err = mod.Evaluate()
-	if err != nil {
+	if _, err := mod.Evaluate(); err != nil {
 		return nil, err
 	}
 
@@ -108,273 +236,57 @@ func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 	return mod.GetNamespace()
 }
 
-// resolveModule is called by V8 when it encounters an import.
+// resolveModule is called by V8 (via the C bridge) for every import. It runs the
+// Go loader (default resolution + load + finalize, wrapped by any registered
+// hooks) and returns the module source + its stable url (V8 caches modules by
+// this url, so diamond imports share one instance).
 func (e *ESM) resolveModule(specifier, referrer string) (string, string, error) {
-	// Check for native Go modules first
-	if _, exists := e.rt.GetNativeModule(specifier); exists {
-		// Wrap native module as ESM
-		source := fmt.Sprintf(`
-const __native = globalThis.__native_module_%s;
-export default __native;
-// Re-export all properties as named exports
-if (__native && typeof __native === 'object') {
-	for (const key of Object.keys(__native)) {
-		if (key !== 'default') {
-			// Note: We can't dynamically create named exports in ESM
-			// Users should access via default import
-		}
-	}
-}
-`, specifier)
-		return source, "native:" + specifier, nil
-	}
-
-	fs := e.rt.Filesystem()
-
-	// Determine base path from referrer
-	basePath := filepath.Dir(referrer)
-	if basePath == "" || basePath == "." {
-		basePath, _ = os.Getwd()
-	}
-
-	// Resolve the module path
-	resolvedPath := e.resolveModulePath(specifier, basePath)
-	if resolvedPath == "" {
-		return "", "", errors.New("cannot resolve module: " + specifier)
-	}
-
-	// Read the module source
-	source, err := fs.ReadFile(resolvedPath)
-	if err != nil {
+	if err := e.ensureLoader(); err != nil {
 		return "", "", err
 	}
-
-	sourceStr := string(source)
-
-	// Handle CommonJS interop: wrap .js files that don't have ESM syntax
-	if strings.HasSuffix(resolvedPath, ".js") && !e.isESModule(sourceStr) {
-		sourceStr = e.wrapCommonJS(sourceStr, resolvedPath)
-	}
-
-	// Handle JSON files
-	if strings.HasSuffix(resolvedPath, ".json") {
-		sourceStr = "export default " + sourceStr + ";"
-	}
-
-	return sourceStr, resolvedPath, nil
+	return e.resolveAndLoad(specifier, referrer)
 }
 
-// isESModule checks if source code uses ES module syntax.
-func (e *ESM) isESModule(source string) bool {
-	// Simple heuristic: check for import/export statements
-	// This is a basic check - a real implementation would use proper parsing
-	lines := strings.Split(source, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Skip comments
-		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
-			continue
-		}
-		// Check for ESM syntax
-		if strings.HasPrefix(trimmed, "import ") ||
-			strings.HasPrefix(trimmed, "import{") ||
-			strings.HasPrefix(trimmed, "export ") ||
-			strings.HasPrefix(trimmed, "export{") ||
-			strings.HasPrefix(trimmed, "export default") {
-			return true
-		}
+// resolveAndLoad produces the compilable ESM source + stable url for a
+// specifier. When loader hooks are registered it runs them (in the isolated
+// loader realm) around the Go defaults; otherwise it takes the pure-Go default
+// path directly. See hooks.go.
+func (e *ESM) resolveAndLoad(specifier, referrer string) (source, url string, err error) {
+	if e.hooksActive() {
+		return e.resolveAndLoadHooked(specifier, referrer)
 	}
-	return false
+	return e.resolveAndLoadDefault(specifier, referrer)
 }
 
-// wrapCommonJS wraps CommonJS source code as an ES module.
-func (e *ESM) wrapCommonJS(source, filename string) string {
-	// Create a synthetic ESM that runs the CJS code and exports module.exports
-	// This mimics Node.js behavior where CJS module.exports becomes the default export
-	dirname := filepath.Dir(filename)
-
-	return fmt.Sprintf(`
-// Synthetic ESM wrapper for CommonJS module
-const __cjs_module = { exports: {} };
-const __cjs_exports = __cjs_module.exports;
-const __cjs_filename = %q;
-const __cjs_dirname = %q;
-
-// Use existing require if available, otherwise create a stub
-const __cjs_require = typeof require !== 'undefined' ? require : function(id) {
-	throw new Error('require is not available in this context: ' + id);
-};
-
-(function(exports, require, module, __filename, __dirname) {
-%s
-})(__cjs_exports, __cjs_require, __cjs_module, __cjs_filename, __cjs_dirname);
-
-// Export the CommonJS module.exports as default
-export default __cjs_module.exports;
-
-// Also export named exports if module.exports is an object
-const __cjs_result = __cjs_module.exports;
-if (__cjs_result && typeof __cjs_result === 'object' && !Array.isArray(__cjs_result)) {
-	for (const key of Object.keys(__cjs_result)) {
-		if (key !== 'default') {
-			// Create named exports dynamically (note: this won't work for static analysis)
-		}
+// awaitPromiseRT drives rt's microtask queue (and event loop, for hooks that do
+// real async work) until the given promise settles, then returns its value or a
+// JS error for a rejection. maxTicks bounds the spin so a never-settling promise
+// can't hang resolution — this is the guard against a runaway loader hook.
+func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, maxTicks int) (*v8.Value, error) {
+	if p == nil {
+		return nil, errors.New("esm: nil promise")
 	}
-}
-`, filename, dirname, source)
-}
-
-// resolveModulePath resolves a module specifier to a file path.
-func (e *ESM) resolveModulePath(specifier, basePath string) string {
-	// Handle relative paths
-	if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
-		return e.resolveAsFile(filepath.Join(basePath, specifier))
+	if !p.IsPromise() {
+		// A hook may return a plain value instead of a promise; pass it through.
+		return p, nil
 	}
-
-	// Handle absolute paths
-	if strings.HasPrefix(specifier, "/") {
-		return e.resolveAsFile(specifier)
-	}
-
-	// Handle bare specifiers (node_modules)
-	// Walk up directories looking for node_modules
-	dir := basePath
-	for {
-		nodeModulesPath := filepath.Join(dir, "node_modules", specifier)
-		resolved := e.resolveAsFile(nodeModulesPath)
-		if resolved != "" {
-			return resolved
-		}
-
-		// Try as directory with package.json or index
-		resolved = e.resolveAsDirectory(nodeModulesPath)
-		if resolved != "" {
-			return resolved
-		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	// Also try resolving from cwd for top-level modules
-	cwd, _ := os.Getwd()
-	nodeModulesPath := filepath.Join(cwd, "node_modules", specifier)
-	resolved := e.resolveAsFile(nodeModulesPath)
-	if resolved != "" {
-		return resolved
-	}
-	return e.resolveAsDirectory(nodeModulesPath)
-}
-
-// resolveAsFile tries to resolve a path as a file.
-func (e *ESM) resolveAsFile(path string) string {
-	fs := e.rt.Filesystem()
-
-	// Helper to check if path is a file (not directory)
-	isFile := func(p string) bool {
-		info, err := fs.Stat(p)
-		if err != nil {
-			return false
-		}
-		return !info.IsDir
-	}
-
-	// Try exact path
-	if isFile(path) {
-		return path
-	}
-
-	// Try with .js extension
-	jsPath := path + ".js"
-	if isFile(jsPath) {
-		return jsPath
-	}
-
-	// Try with .mjs extension (ES module specific)
-	mjsPath := path + ".mjs"
-	if isFile(mjsPath) {
-		return mjsPath
-	}
-
-	// Try with .json extension
-	jsonPath := path + ".json"
-	if isFile(jsonPath) {
-		return jsonPath
-	}
-
-	return ""
-}
-
-// resolveAsDirectory tries to resolve a path as a directory.
-func (e *ESM) resolveAsDirectory(path string) string {
-	fs := e.rt.Filesystem()
-
-	// Try package.json
-	pkgPath := filepath.Join(path, "package.json")
-	if fs.Exists(pkgPath) {
-		data, err := fs.ReadFile(pkgPath)
-		if err == nil {
-			// Check for "module" field first (ESM entry), then "main"
-			main := e.parsePackageField(string(data), "module")
-			if main == "" {
-				main = e.parsePackageField(string(data), "main")
+	ctx := rt.Context()
+	for i := 0; i < maxTicks; i++ {
+		switch p.PromiseState() {
+		case v8.PromiseFulfilled:
+			return p.PromiseResult(), nil
+		case v8.PromiseRejected:
+			reason := p.PromiseResult()
+			msg := "promise rejected"
+			if reason != nil {
+				msg = reason.String()
 			}
-			if main != "" {
-				mainPath := filepath.Join(path, main)
-				resolved := e.resolveAsFile(mainPath)
-				if resolved != "" {
-					return resolved
-				}
-			}
+			return nil, &v8.JSError{Message: msg}
+		}
+		ctx.PerformMicrotaskCheckpoint()
+		if p.PromiseState() == v8.PromisePending {
+			rt.EventLoop().RunOnce()
 		}
 	}
-
-	// Try index.mjs (ES module specific)
-	indexMjsPath := filepath.Join(path, "index.mjs")
-	if fs.Exists(indexMjsPath) {
-		return indexMjsPath
-	}
-
-	// Try index.js
-	indexPath := filepath.Join(path, "index.js")
-	if fs.Exists(indexPath) {
-		return indexPath
-	}
-
-	return ""
-}
-
-// parsePackageField extracts a field from package.json.
-func (e *ESM) parsePackageField(content, field string) string {
-	// Simple parsing - find "field": "value"
-	searchStr := `"` + field + `"`
-	idx := strings.Index(content, searchStr)
-	if idx == -1 {
-		return ""
-	}
-
-	rest := content[idx+len(searchStr):]
-	// Find the colon
-	colonIdx := strings.Index(rest, ":")
-	if colonIdx == -1 {
-		return ""
-	}
-
-	rest = strings.TrimSpace(rest[colonIdx+1:])
-	if len(rest) == 0 || rest[0] != '"' {
-		return ""
-	}
-
-	// Find closing quote
-	rest = rest[1:]
-	endIdx := strings.Index(rest, `"`)
-	if endIdx == -1 {
-		return ""
-	}
-
-	return rest[:endIdx]
+	return nil, errors.New("esm: hook promise did not settle")
 }

@@ -102,6 +102,15 @@ void* v8go_module_get_namespace(void* context, void* module);
 int v8go_module_get_requests_length(void* module);
 const char* v8go_module_get_request(void* module, int index);
 
+// Dynamic import: install the host callback + the persistent resolver id used to
+// resolve import() specifiers (which happen outside a module instantiation).
+// The resolver id is stored per-context; pass the context wrapper pointer.
+void v8go_set_dynamic_import_resolver(void* context, int resolver_id);
+
+// Drain V8's microtask queue (promise reactions). The default policy is kAuto,
+// but callers pumping the event loop can force a checkpoint explicitly.
+void v8go_perform_microtask_checkpoint(void* isolate);
+
 #ifdef __cplusplus
 }
 #endif

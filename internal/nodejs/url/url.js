@@ -133,6 +133,7 @@
 			this._pathname = parsed.pathname || '/';
 			this._search = parsed.search || '';
 			this._hash = parsed.hash || '';
+			this._slashes = !!parsed.slashes;
 			this._searchParams = new URLSearchParams(this._search);
 		}
 
@@ -152,9 +153,17 @@
 			let hostname = '';
 			let port = '';
 
+			// For "special" schemes (http, https, ws, wss, ftp, file) the WHATWG
+			// URL parser treats backslashes as forward slashes, so a backslash
+			// terminates the authority (e.g. http://google.com\@apple.com has host
+			// google.com, not apple.com). Other schemes keep backslashes literal.
+			const special = /^(https?|wss?|ftp|file):$/.test(protocol);
+			const authorityEnd = special ? /[/\\?#]/ : /[/?#]/;
+			const slashes = rest.startsWith('//');
+
 			if (rest.startsWith('//')) {
 				rest = rest.slice(2);
-				const pathStart = rest.search(/[/?#]/);
+				const pathStart = rest.search(authorityEnd);
 				const authority = pathStart === -1 ? rest : rest.slice(0, pathStart);
 				rest = pathStart === -1 ? '' : rest.slice(pathStart);
 
@@ -214,7 +223,7 @@
 				pathname = rest || '/';
 			}
 
-			return { protocol, username, password, hostname, port, pathname, search, hash };
+			return { protocol, username, password, hostname, port, pathname, search, hash, slashes };
 		}
 
 		static _resolveRelative(base, relative) {
@@ -379,10 +388,13 @@
 			// Try to parse as full URL
 			const url = new URL(urlString);
 			result.protocol = url.protocol;
-			result.slashes = true;
-			result.hostname = url.hostname || null;
+			result.slashes = url._slashes || null;
+			// When an authority ("//") was present the host is a string even if
+			// empty (e.g. file:///etc -> host ''); only fall back to null when the
+			// URL genuinely had no authority component.
+			result.hostname = url._slashes ? url.hostname : (url.hostname || null);
 			result.port = url.port || null;
-			result.host = url.host || null;
+			result.host = url._slashes ? url.host : (url.host || null);
 			result.pathname = url.pathname || null;
 			result.search = url.search || null;
 			result.hash = url.hash || null;
@@ -443,13 +455,19 @@
 				rest = rest.slice(result.protocol.length);
 			}
 
-			// Slashes
-			if (rest.startsWith('//') || (slashesDenoteHost && rest.startsWith('/'))) {
+			// Slashes. Node only treats a host as present after a literal "//"
+			// (protocol-relative when slashesDenoteHost is set, or after a slashed
+			// protocol). A single leading slash is always a path, never a host, so
+			// url.parse('/foo/bar', false, true).host must be null.
+			const hasDoubleSlash = rest.startsWith('//');
+			if (hasDoubleSlash && (slashesDenoteHost || result.protocol)) {
 				result.slashes = true;
-				rest = rest.replace(/^\/+/, '');
+				rest = rest.slice(2);
 
-				// Find pathname start
-				const pathStart = rest.search(/[/?#]/);
+				// Backslashes terminate the authority for special schemes just like
+				// they do in the WHATWG parser above; slashesDenoteHost implies an
+				// http-style URL, so treat backslashes as delimiters here too.
+				const pathStart = rest.search(/[/\\?#]/);
 				const hostPart = pathStart === -1 ? rest : rest.slice(0, pathStart);
 				rest = pathStart === -1 ? '' : rest.slice(pathStart);
 
@@ -474,6 +492,39 @@
 
 			result.pathname = rest || null;
 			result.path = (result.pathname || '') + (result.search || '');
+		}
+
+		// Mirror Node's legacy hostname validation: split the hostname on dots and
+		// stop at the first label containing a character invalid in a hostname
+		// (e.g. the "'" in "google.com'.bb.com"). The invalid remainder is moved
+		// onto the pathname, which is what prevents redirect allow-list bypasses.
+		if (result.hostname) {
+			const partPattern = /^[+a-z0-9A-Z_-]{0,63}$/;
+			const partStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/;
+			const parts = result.hostname.split('.');
+			const valid = [];
+			let leftover = '';
+			for (let i = 0; i < parts.length; i++) {
+				if (partPattern.test(parts[i])) {
+					valid.push(parts[i]);
+					continue;
+				}
+				const m = parts[i].match(partStart);
+				const good = m ? m[1] : '';
+				const bad = m ? m[2] : parts[i];
+				if (good) valid.push(good);
+				const remaining = parts.slice(i + 1);
+				leftover = bad + (remaining.length ? '.' + remaining.join('.') : '');
+				break;
+			}
+			if (leftover) {
+				result.hostname = valid.join('.') || null;
+				result.host = result.hostname
+					? (result.port ? result.hostname + ':' + result.port : result.hostname)
+					: null;
+				result.pathname = leftover + (result.pathname || '');
+				result.path = (result.pathname || '') + (result.search || '');
+			}
 		}
 
 		return result;

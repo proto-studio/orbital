@@ -2,7 +2,17 @@
 	class EventEmitter {
 		constructor() {
 			this._events = {};
-			this._maxListeners = 10;
+			this._maxListeners = undefined;
+		}
+
+		// Lazily initialize the listener store. Node does this in every method so
+		// that subclasses created via util.inherits() (which never call the
+		// EventEmitter constructor) still work — mocha's Suite is one such case.
+		_store() {
+			if (this._events === undefined || this._events === null) {
+				this._events = {};
+			}
+			return this._events;
 		}
 
 		on(event, listener) {
@@ -13,18 +23,24 @@
 			if (typeof listener !== 'function') {
 				throw new TypeError('The "listener" argument must be of type Function');
 			}
-			if (!this._events[event]) {
-				this._events[event] = [];
+			const events = this._store();
+			// Node emits a 'newListener' event before adding, which some libraries
+			// (including mocha) rely on.
+			if (events['newListener']) {
+				this.emit('newListener', event, listener);
 			}
-			this._events[event].push({ listener, once: false });
-			
-			// Check max listeners warning
-			if (this._events[event].length > this._maxListeners && this._maxListeners !== 0) {
+			if (!events[event]) {
+				events[event] = [];
+			}
+			events[event].push({ listener, once: false });
+
+			const max = this.getMaxListeners();
+			if (events[event].length > max && max !== 0) {
 				console.warn('MaxListenersExceededWarning: Possible EventEmitter memory leak detected. ' +
-					this._events[event].length + ' ' + event + ' listeners added. ' +
+					events[event].length + ' ' + event + ' listeners added. ' +
 					'Use emitter.setMaxListeners() to increase limit');
 			}
-			
+
 			return this;
 		}
 
@@ -32,10 +48,11 @@
 			if (typeof listener !== 'function') {
 				throw new TypeError('The "listener" argument must be of type Function');
 			}
-			if (!this._events[event]) {
-				this._events[event] = [];
+			const events = this._store();
+			if (!events[event]) {
+				events[event] = [];
 			}
-			this._events[event].push({ listener, once: true });
+			events[event].push({ listener, once: true });
 			return this;
 		}
 
@@ -44,12 +61,16 @@
 		}
 
 		removeListener(event, listener) {
-			if (!this._events[event]) {
+			const events = this._store();
+			if (!events[event]) {
 				return this;
 			}
-			const idx = this._events[event].findIndex(e => e.listener === listener);
+			const idx = events[event].findIndex(e => e.listener === listener);
 			if (idx !== -1) {
-				this._events[event].splice(idx, 1);
+				events[event].splice(idx, 1);
+				if (events['removeListener']) {
+					this.emit('removeListener', event, listener);
+				}
 			}
 			return this;
 		}
@@ -57,63 +78,69 @@
 		removeAllListeners(event) {
 			if (event === undefined) {
 				this._events = {};
-			} else {
+			} else if (this._events) {
 				delete this._events[event];
 			}
 			return this;
 		}
 
 		emit(event, ...args) {
-			if (!this._events[event]) {
+			const events = this._store();
+			if (!events[event] || events[event].length === 0) {
 				if (event === 'error') {
 					const err = args[0];
 					if (err instanceof Error) {
 						throw err;
 					}
-					throw new Error('Unhandled error event');
+					const e = new Error('Unhandled error event');
+					throw e;
 				}
 				return false;
 			}
 
-			const listeners = this._events[event].slice();
+			const listeners = events[event].slice();
 			for (const entry of listeners) {
-				entry.listener.apply(this, args);
 				if (entry.once) {
 					this.removeListener(event, entry.listener);
 				}
+				entry.listener.apply(this, args);
 			}
 			return true;
 		}
 
 		listeners(event) {
-			if (!this._events[event]) {
+			const events = this._store();
+			if (!events[event]) {
 				return [];
 			}
-			return this._events[event].map(e => e.listener);
+			return events[event].map(e => e.listener);
 		}
 
 		rawListeners(event) {
-			if (!this._events[event]) {
+			const events = this._store();
+			if (!events[event]) {
 				return [];
 			}
-			return this._events[event].slice();
+			return events[event].slice();
 		}
 
 		listenerCount(event) {
-			if (!this._events[event]) {
+			const events = this._store();
+			if (!events[event]) {
 				return 0;
 			}
-			return this._events[event].length;
+			return events[event].length;
 		}
 
 		prependListener(event, listener) {
 			if (typeof listener !== 'function') {
 				throw new TypeError('The "listener" argument must be of type Function');
 			}
-			if (!this._events[event]) {
-				this._events[event] = [];
+			const events = this._store();
+			if (!events[event]) {
+				events[event] = [];
 			}
-			this._events[event].unshift({ listener, once: false });
+			events[event].unshift({ listener, once: false });
 			return this;
 		}
 
@@ -121,18 +148,22 @@
 			if (typeof listener !== 'function') {
 				throw new TypeError('The "listener" argument must be of type Function');
 			}
-			if (!this._events[event]) {
-				this._events[event] = [];
+			const events = this._store();
+			if (!events[event]) {
+				events[event] = [];
 			}
-			this._events[event].unshift({ listener, once: true });
+			events[event].unshift({ listener, once: true });
 			return this;
 		}
 
 		eventNames() {
-			return Object.keys(this._events);
+			return Object.keys(this._store());
 		}
 
 		getMaxListeners() {
+			if (this._maxListeners === undefined || this._maxListeners === null) {
+				return EventEmitter.defaultMaxListeners;
+			}
 			return this._maxListeners;
 		}
 
@@ -144,14 +175,51 @@
 			return this;
 		}
 
-		static get defaultMaxListeners() {
-			return 10;
+		addEventListener(event, listener) {
+			return this.addListener(event, listener);
 		}
 
-		static set defaultMaxListeners(n) {
-			// No-op for now
+		removeEventListener(event, listener) {
+			return this.removeListener(event, listener);
 		}
+
 	}
+
+	EventEmitter.defaultMaxListeners = 10;
+
+	// In Node.js the events module *is* the EventEmitter constructor, with the
+	// class also exposed as a named property. This lets both usage styles work:
+	//   const EventEmitter = require('events');        // extend it as a class
+	//   const { EventEmitter } = require('events');    // destructure it
+	// Libraries such as undici rely on `class X extends require('node:events')`.
+	EventEmitter.EventEmitter = EventEmitter;
+
+	// Static helper: EventEmitter.once(emitter, name) -> Promise<any[]>
+	EventEmitter.once = function(emitter, name) {
+		return new Promise((resolve, reject) => {
+			function cleanup() {
+				if (typeof emitter.removeListener === 'function') {
+					emitter.removeListener(name, onEvent);
+					if (errorListener) {
+						emitter.removeListener('error', errorListener);
+					}
+				}
+			}
+			function onEvent(...args) {
+				cleanup();
+				resolve(args);
+			}
+			let errorListener = null;
+			if (name !== 'error') {
+				errorListener = function(err) {
+					cleanup();
+					reject(err);
+				};
+				emitter.once('error', errorListener);
+			}
+			emitter.once(name, onEvent);
+		});
+	};
 
 	return EventEmitter;
 })()

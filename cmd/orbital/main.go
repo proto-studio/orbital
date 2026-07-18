@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/term"
 	"proto.zip/studio/orbital/internal/nodejs/abort"
 	"proto.zip/studio/orbital/internal/nodejs/assert"
+	"proto.zip/studio/orbital/internal/nodejs/async_hooks"
 	"proto.zip/studio/orbital/internal/nodejs/buffer"
 	"proto.zip/studio/orbital/internal/nodejs/child_process"
 	"proto.zip/studio/orbital/internal/nodejs/console"
@@ -48,6 +50,8 @@ import (
 	"proto.zip/studio/orbital/internal/nodejs/util"
 	"proto.zip/studio/orbital/internal/nodejs/webcrypto"
 	"proto.zip/studio/orbital/internal/nodejs/webstream"
+	"proto.zip/studio/orbital/internal/nodejs/tty"
+	"proto.zip/studio/orbital/internal/nodejs/worker_threads"
 	"proto.zip/studio/orbital/internal/nodejs/zlib"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
@@ -61,7 +65,8 @@ var sandboxMode bool
 var processTitle string
 var silenceWarnings bool
 var requireModules []string
-var inputType string // "module" or "commonjs"
+var importModules []string // --import <module> (ESM-preloaded before the entry)
+var inputType string       // "module" or "commonjs"
 var executionTimeout time.Duration
 
 // Network permissions (Deno-style)
@@ -70,7 +75,18 @@ var allowNetHosts []string // --allow-net=host:port,...
 var denyNetHosts []string  // --deny-net=host:port,...
 
 func main() {
+	// Pin the main goroutine to the main OS thread so the primary V8 isolate is
+	// always entered from a single, stable native stack (V8 isolates are entered
+	// from one thread at a time). Go's GC runs normally; nothing here or in
+	// pkg/v8 disables or throttles it.
+	goruntime.LockOSThread()
+
 	args := os.Args[1:]
+
+	// NODE_OPTIONS: honor the subset that affects module preloading (--import,
+	// --require). These are injected before the user's args so the normal flag
+	// parser handles them, matching Node's "NODE_OPTIONS then argv" ordering.
+	args = append(nodeOptionArgs(), args...)
 
 	// Parse flags
 	var evalCode string
@@ -122,6 +138,13 @@ func main() {
 			}
 			i++
 			requireModules = append(requireModules, args[i])
+		case "--import":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "Error: --import requires a module path")
+				os.Exit(1)
+			}
+			i++
+			importModules = append(importModules, args[i])
 		case "--root":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --root requires a directory path")
@@ -374,7 +397,9 @@ Options (Node.js compatible):
   -p, --print <code>      Evaluate and print result
   -c, --check             Syntax check without executing
   -i, --interactive       Start REPL after script/stdin
-  -r, --require <module>  Preload module at startup (can be repeated)
+  -r, --require <module>  Preload CommonJS module at startup (can be repeated)
+  --import <module>       Preload ES module before the entry (can be repeated);
+                          use for ESM loader hooks (module.register)
   --input-type=<type>     Set input type for stdin: 'module' or 'commonjs'
   -h, --help              Show this help message
   -v, --version           Show version number
@@ -425,7 +450,48 @@ Environment Variables:
 // esmLoader is the global ESM module loader (initialized after runtime creation)
 var esmLoader *esm.ESM
 
+// nodeOptionArgs extracts the module-preloading flags Orbital supports from the
+// NODE_OPTIONS environment variable (--import / --require and their = forms),
+// returned as argv tokens. Other NODE_OPTIONS entries are ignored.
+func nodeOptionArgs() []string {
+	opts := strings.TrimSpace(os.Getenv("NODE_OPTIONS"))
+	if opts == "" {
+		return nil
+	}
+	fields := strings.Fields(opts)
+	var out []string
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		switch {
+		case f == "--import" || f == "--require" || f == "-r":
+			if i+1 < len(fields) {
+				out = append(out, f, fields[i+1])
+				i++
+			}
+		case strings.HasPrefix(f, "--import=") || strings.HasPrefix(f, "--require="):
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func createRuntime() (*runtime.Runtime, error) {
+	// Workers spawn their own fully-configured runtime via this same builder.
+	// Set the provider here (idempotent) so it is available before any Worker is
+	// constructed on the parent runtime.
+	worker_threads.RuntimeProvider = createRuntime
+
+	// The ESM loader realm (module.register / --import hooks) also uses a fully
+	// provisioned runtime. createRuntime reassigns the package-level esmLoader as
+	// it builds one, so save/restore it here to keep the application's loader as
+	// the process-wide entry loader.
+	esm.LoaderRuntimeProvider = func() (*runtime.Runtime, error) {
+		saved := esmLoader
+		lrt, err := createRuntime()
+		esmLoader = saved
+		return lrt, err
+	}
+
 	cfg := runtime.DefaultConfig()
 
 	// Set up filesystem with optional sandboxing
@@ -510,6 +576,9 @@ func createRuntime() (*runtime.Runtime, error) {
 		querystring.New(),
 		assert.New(),
 		zlib.New(),
+		tty.New(),            // Terminal helpers (must come after process)
+		async_hooks.New(),    // AsyncLocalStorage / AsyncResource (must come after timers/process)
+		worker_threads.New(), // Isolate-backed workers (must come after events)
 		dns.New(),
 		readlinemod.New(),
 		fetch.New(),               // Web Fetch API
@@ -573,8 +642,13 @@ func runFile(filename string) error {
 		}
 	}
 
-	// Check if this is an ES module (.mjs extension)
-	if strings.HasSuffix(filename, ".mjs") {
+	// Route ES module and TypeScript entries through the ESM loader. .mjs/.mts
+	// are always ESM; .ts/.cts entries also go through the loader so registered
+	// hooks (e.g. ts-blank-space via --import) can strip types.
+	if strings.HasSuffix(filename, ".mjs") ||
+		strings.HasSuffix(filename, ".mts") ||
+		strings.HasSuffix(filename, ".ts") ||
+		strings.HasSuffix(filename, ".cts") {
 		return runESModule(absPath)
 	}
 
@@ -605,15 +679,24 @@ func runESModule(filename string) error {
 	}
 	defer rt.Dispose()
 
-	// Run the ES module
+	// Preload --import modules (e.g. loader-hook registrars) before the entry.
+	for _, mod := range importModules {
+		if err := esmLoader.Preload(mod); err != nil {
+			return fmt.Errorf("--import %s: %w", mod, err)
+		}
+	}
+
+	// Run the ES module. RunModuleFile surfaces top-level throws (including a
+	// module that rejects during evaluation) as an error with the JS stack.
 	_, err = esmLoader.RunModuleFile(absPath)
 	if err != nil {
-		return fmt.Errorf("module error: %w", err)
+		return err
 	}
 
 	// Run any pending async operations
 	rt.EventLoop().Run()
 
+	finalizeExit(rt)
 	return nil
 }
 
@@ -710,7 +793,30 @@ func runESModuleSource(source, origin string) error {
 	}
 
 	rt.EventLoop().Run()
+	finalizeExit(rt)
 	return nil
+}
+
+// finalizeExit emits the process 'exit' event (so handlers such as the
+// node:test summary run) and, if the script set a non-zero process.exitCode,
+// exits the process with that code. This mirrors Node's behavior where a
+// program's exit status reflects process.exitCode.
+func finalizeExit(rt *runtime.Runtime) {
+	codeVal, err := rt.RunScript(`(function () {
+		try {
+			if (typeof process !== 'undefined' && typeof process.emit === 'function') {
+				process.emit('exit', process.exitCode || 0);
+			}
+		} catch (e) {}
+		return (typeof process !== 'undefined' && process.exitCode) ? Number(process.exitCode) : 0;
+	})();`, "[exit]")
+	if err != nil || codeVal == nil {
+		return
+	}
+	if code := int(codeVal.Integer()); code != 0 {
+		rt.Dispose()
+		os.Exit(code)
+	}
 }
 
 func runCode(source, origin string) error {
@@ -758,6 +864,14 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 		}
 	}
 
+	// Preload --import modules (ESM; e.g. loader-hook registrars) before the
+	// script runs, so their hooks apply to modules the script imports.
+	for _, mod := range importModules {
+		if err := esmLoader.Preload(mod); err != nil {
+			return fmt.Errorf("--import %s: %w", mod, err)
+		}
+	}
+
 	result, err := rt.Run(source, origin)
 	if err != nil {
 		return fmt.Errorf("script error: %w", err)
@@ -768,6 +882,7 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 		_ = result
 	}
 
+	finalizeExit(rt)
 	return nil
 }
 

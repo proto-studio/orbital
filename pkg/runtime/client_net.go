@@ -28,6 +28,12 @@ type Request struct {
 	Headers map[string][]string
 	Body    []byte
 	Timeout time.Duration
+	// NoFollowRedirects, when true, makes the client return 3xx responses
+	// directly instead of following the Location header. Node's low-level
+	// http.request/http.ClientRequest never follows redirects (callers such as
+	// superagent/axios implement that themselves), so the http module sets this;
+	// fetch leaves it false to keep Node's redirect-following fetch semantics.
+	NoFollowRedirects bool
 }
 
 // Response represents an HTTP response.
@@ -87,18 +93,43 @@ func (c *RealHTTPClient) Do(ctx context.Context, req *Request) (*Response, error
 	}
 
 	for key, values := range req.Headers {
+		// Go ignores a "Host" entry in the header map; the Host header on the
+		// wire is taken from httpReq.Host (defaulting to the URL authority). Node
+		// clients let callers override Host explicitly (superagent/supertest set
+		// it to test req.host/hostname handling), so mirror that by copying it
+		// onto httpReq.Host instead of dropping it into the header map.
+		if strings.EqualFold(key, "host") {
+			if len(values) > 0 {
+				httpReq.Host = values[0]
+			}
+			continue
+		}
 		for _, value := range values {
 			httpReq.Header.Add(key, value)
 		}
 	}
 
-	// Use request-specific timeout if provided
+	// Use request-specific timeout and/or redirect policy if needed. Both are
+	// per-http.Client settings, so build a lightweight client that reuses the
+	// shared Transport (keeping connection pooling) when either differs from the
+	// default.
 	client := c.client
-	if req.Timeout > 0 {
-		client = &http.Client{
-			Timeout:   req.Timeout,
+	if req.Timeout > 0 || req.NoFollowRedirects {
+		custom := &http.Client{
+			Timeout:   c.client.Timeout,
 			Transport: c.client.Transport,
 		}
+		if req.Timeout > 0 {
+			custom.Timeout = req.Timeout
+		}
+		if req.NoFollowRedirects {
+			// Return the 3xx response as-is instead of following it, matching
+			// Node's http.request semantics.
+			custom.CheckRedirect = func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+		}
+		client = custom
 	}
 
 	resp, err := client.Do(httpReq)

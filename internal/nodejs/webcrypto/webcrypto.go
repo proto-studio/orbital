@@ -25,6 +25,12 @@ func (w *WebCrypto) Name() string {
 
 // Register sets up the webcrypto module.
 func (w *WebCrypto) Register(rt *runtime.Runtime) error {
+	// Register the native Go-backed SubtleCrypto primitives first; webcrypto.js
+	// delegates the actual cryptography to them via __webcrypto_native.
+	if err := registerNative(rt); err != nil {
+		return err
+	}
+
 	// Initialize webcrypto (must come after crypto module)
 	if _, err := rt.RunScript(webcryptoJS, "webcrypto.js"); err != nil {
 		return err

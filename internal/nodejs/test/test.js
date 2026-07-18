@@ -18,6 +18,29 @@
   const contextStack = [];
   let testIdCounter = 0;
 
+  // Top-level tests/suites are defined synchronously but run asynchronously.
+  // To keep the context stack (and therefore test names and pass/fail counts)
+  // correct, we serialize top-level runs through a promise chain. Calls made
+  // while a test/suite is already running are treated as nested subtests and
+  // executed inline so they nest correctly.
+  let isRunning = false;
+  let scheduleChain = Promise.resolve();
+
+  function schedule(runner) {
+    if (isRunning) {
+      return runner();
+    }
+    const result = scheduleChain.then(() => {
+      isRunning = true;
+      return runner();
+    });
+    scheduleChain = result.then(
+      () => { isRunning = false; },
+      () => { isRunning = false; }
+    );
+    return result;
+  }
+
   /**
    * TestContext class - Context passed to test functions.
    */
@@ -161,9 +184,17 @@
   }
 
   /**
-   * Main test function.
+   * Main test function. Schedules the test to run (serialized at the top
+   * level, inline when nested).
    */
-  async function test(name, options, fn) {
+  function test(name, options, fn) {
+    return schedule(() => runTest(name, options, fn));
+  }
+
+  /**
+   * Execute a single test.
+   */
+  async function runTest(name, options, fn) {
     // Handle overloads
     if (typeof options === 'function') {
       fn = options;
@@ -178,16 +209,20 @@
 
     options = options || {};
 
+    // Compute the full display name from ancestor suites/tests before this
+    // test's own context is pushed onto the stack (so it isn't duplicated).
+    const displayName = formatTestName(name);
+
     // Check for skip/todo
     if (options.skip) {
       skipped++;
-      console.log(`ok ${passed + failed + skipped + todos} - ${formatTestName(name)} # SKIP${typeof options.skip === 'string' ? ' ' + options.skip : ''}`);
+      console.log(`ok ${passed + failed + skipped + todos} - ${displayName} # SKIP${typeof options.skip === 'string' ? ' ' + options.skip : ''}`);
       return;
     }
 
     if (options.todo) {
       todos++;
-      console.log(`not ok ${passed + failed + skipped + todos} - ${formatTestName(name)} # TODO${typeof options.todo === 'string' ? ' ' + options.todo : ''}`);
+      console.log(`not ok ${passed + failed + skipped + todos} - ${displayName} # TODO${typeof options.todo === 'string' ? ' ' + options.todo : ''}`);
       return;
     }
 
@@ -216,15 +251,15 @@
 
       passed++;
       const duration = Date.now() - startTime;
-      console.log(`ok ${passed + failed + skipped + todos} - ${formatTestName(name)} (${duration}ms)`);
+      console.log(`ok ${passed + failed + skipped + todos} - ${displayName} (${duration}ms)`);
 
     } catch (err) {
       if (err instanceof SkipError) {
         skipped++;
-        console.log(`ok ${passed + failed + skipped + todos} - ${formatTestName(name)} # SKIP ${err.message}`);
+        console.log(`ok ${passed + failed + skipped + todos} - ${displayName} # SKIP ${err.message}`);
       } else {
         failed++;
-        console.log(`not ok ${passed + failed + skipped + todos} - ${formatTestName(name)}`);
+        console.log(`not ok ${passed + failed + skipped + todos} - ${displayName}`);
         console.log(`  ---`);
         console.log(`  error: ${err.message}`);
         if (err.stack) {
@@ -246,9 +281,16 @@
   }
 
   /**
-   * Describe a test suite (alias for test with subtests).
+   * Describe a test suite. Scheduled like test().
    */
-  async function describe(name, options, fn) {
+  function describe(name, options, fn) {
+    return schedule(() => runDescribe(name, options, fn));
+  }
+
+  /**
+   * Execute a test suite (with subtests).
+   */
+  async function runDescribe(name, options, fn) {
     if (typeof options === 'function') {
       fn = options;
       options = {};
@@ -389,6 +431,11 @@
    */
   function printSummary() {
     const total = passed + failed + skipped + todos;
+    // Stay silent when no tests were defined so ordinary scripts that merely
+    // load node:test (directly or transitively) don't emit a spurious summary.
+    if (total === 0) {
+      return;
+    }
     console.log('');
     console.log(`1..${total}`);
     console.log(`# tests ${total}`);
@@ -396,24 +443,33 @@
     console.log(`# fail ${failed}`);
     console.log(`# skip ${skipped}`);
     console.log(`# todo ${todos}`);
+
+    // Match Node's behavior: a run with any failing tests exits non-zero so
+    // CI and scripts can detect breakage.
+    if (failed > 0 && typeof process !== 'undefined') {
+      process.exitCode = 1;
+    }
   }
 
-  // Export
-  const testModule = {
-    test,
-    describe,
-    it,
-    before,
-    after,
-    beforeEach,
-    afterEach,
-    mock,
-    run,
-    TestContext,
-    skip: (name, fn) => test(name, { skip: true }, fn),
-    todo: (name, fn) => test(name, { todo: true }, fn),
-    only: (name, fn) => test(name, fn), // Would need filter support
-  };
+  // Export. In Node.js `require('node:test')` returns the test function
+  // itself, with the other helpers attached as properties (and also usable
+  // via destructuring). Mirror that here so both call styles work:
+  //   const test = require('node:test'); test('name', fn);
+  //   const { test } = require('node:test');
+  const testModule = test;
+  testModule.test = test;
+  testModule.describe = describe;
+  testModule.it = it;
+  testModule.before = before;
+  testModule.after = after;
+  testModule.beforeEach = beforeEach;
+  testModule.afterEach = afterEach;
+  testModule.mock = mock;
+  testModule.run = run;
+  testModule.TestContext = TestContext;
+  testModule.skip = (name, fn) => test(name, { skip: true }, fn);
+  testModule.todo = (name, fn) => test(name, { todo: true }, fn);
+  testModule.only = (name, fn) => test(name, fn); // Would need filter support
 
   // Also export as default
   testModule.default = test;

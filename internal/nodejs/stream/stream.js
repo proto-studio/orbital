@@ -698,14 +698,36 @@
 		return streams[streams.length - 1];
 	}
 
-	return {
-		Stream,
-		Readable,
-		Writable,
-		Duplex,
-		Transform,
-		PassThrough,
-		finished,
-		pipeline
-	};
+	// Match Node's module shape: `require('stream')` IS the legacy `Stream`
+	// constructor, with the other stream classes attached as properties. Real
+	// packages rely on two things Node's `Stream` provides that an ES6 `class`
+	// does not:
+	//   1. `util.inherits(X, require('stream'))` — needs a constructor with a
+	//      prototype (e.g. `send`).
+	//   2. `Stream.call(this)` — the classic ES5 super-constructor call used by
+	//      packages like `superagent` (`function Request(){ Stream.call(this) }`).
+	//      An ES6 class throws "Class constructor cannot be invoked without 'new'",
+	//      so the export must be a plain function callable without `new`.
+	// So expose a callable ES5 shim whose prototype is the class hierarchy's
+	// prototype (subclasses/instanceof keep working) and whose body initializes the
+	// EventEmitter fields inline (the base EventEmitter is itself a class and can't
+	// be `.call()`-ed). `new StreamCtor()`, `StreamCtor.call(obj)`, and
+	// `class X extends Stream` all keep working.
+	function StreamCtor(options) {
+		if (this._events === undefined || this._events === null) this._events = {};
+		if (this._maxListeners === undefined) this._maxListeners = 10;
+		this._options = options || {};
+		return this;
+	}
+	StreamCtor.prototype = Stream.prototype;
+
+	StreamCtor.Stream = StreamCtor;
+	StreamCtor.Readable = Readable;
+	StreamCtor.Writable = Writable;
+	StreamCtor.Duplex = Duplex;
+	StreamCtor.Transform = Transform;
+	StreamCtor.PassThrough = PassThrough;
+	StreamCtor.finished = finished;
+	StreamCtor.pipeline = pipeline;
+	return StreamCtor;
 })()

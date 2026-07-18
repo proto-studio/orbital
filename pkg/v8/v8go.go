@@ -139,8 +139,12 @@ func (c *Context) RunScript(source, origin string) (*Value, error) {
 		return nil, errors.New(err)
 	}
 
+	// An empty result with no captured exception means V8 returned an empty
+	// MaybeLocal while TryCatch reported nothing caught — i.e. execution was
+	// terminated/interrupted. Surface it instead of returning a silent nil so
+	// callers don't mistake a stopped script for a successful one.
 	if result == nil {
-		return nil, nil
+		return nil, ErrExecutionTerminated
 	}
 
 	return &Value{ptr: result, ctx: c}, nil

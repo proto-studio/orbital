@@ -21,11 +21,32 @@ using namespace v8;
 static std::unique_ptr<Platform> g_platform;
 static bool g_initialized = false;
 
-// Wrapper to hold persistent handles
+struct ModuleWrapper;  // fwd decl (defined below)
+
+// Wrapper to hold persistent handles. All ES-module state is scoped HERE (not in
+// process globals) so distinct isolates/contexts ("sandboxes") never share a
+// module cache or resolver. A pointer to this wrapper is stashed in the
+// context's embedder data (slot kContextWrapperSlot) so V8 callbacks that only
+// receive a Local<Context> (module resolution, dynamic import) can recover it.
 struct ContextWrapper {
     Isolate* isolate;
     Global<Context> context;
+    // Resolved modules for THIS context, keyed by resolved name/url.
+    std::unordered_map<std::string, ModuleWrapper*> module_cache;
+    // Go resolver id for the in-progress static instantiation (scoped to a
+    // single InstantiateModule call) and the persistent one for import().
+    int module_resolver_id = -1;
+    int dynamic_resolver_id = -1;
 };
+
+// Embedder-data slot in which each Context stores its ContextWrapper*.
+static const int kContextWrapperSlot = 1;
+
+static ContextWrapper* wrapperFromContext(Local<Context> context) {
+    if (context.IsEmpty()) return nullptr;
+    return static_cast<ContextWrapper*>(
+        context->GetAlignedPointerFromEmbedderData(kContextWrapperSlot));
+}
 
 struct ValueWrapper {
     Isolate* isolate;
@@ -56,12 +77,8 @@ struct ModuleWrapper {
     std::string name;
 };
 
-// Global module resolver callback ID for the current instantiation
-static thread_local int g_module_resolver_id = -1;
-static thread_local void* g_module_context = nullptr;
-
-// Module cache for resolved modules (maps specifier to ModuleWrapper*)
-static std::unordered_map<std::string, ModuleWrapper*> g_module_cache;
+// NOTE: all ES-module state (cache + resolver ids) lives in ContextWrapper so
+// it is scoped per sandbox; see the struct above.
 
 // Helper to extract isolate from context wrapper
 static Isolate* getIsolate(void* context_ptr) {
@@ -116,6 +133,40 @@ void* v8go_context_new(void* isolate_ptr) {
     return v8go_context_new_with_template(isolate_ptr, nullptr);
 }
 
+// hostInitializeImportMeta populates an ES module's `import.meta` object. V8
+// invokes it lazily the first time a module touches import.meta. We recover the
+// module's url by identity from the per-context module cache (the same reverse
+// lookup used for referrers) and expose it as import.meta.url, matching Node's
+// file:// URL convention. This is required by loader-hook registrars such as
+// ts-blank-space's register.js, which call module.register(hook, import.meta.url).
+static void hostInitializeImportMeta(Local<Context> context,
+                                     Local<Module> module,
+                                     Local<Object> meta) {
+    Isolate* isolate = Isolate::GetCurrent();
+    ContextWrapper* cw = wrapperFromContext(context);
+    std::string url;
+    if (cw) {
+        for (auto& [key, wrapper] : cw->module_cache) {
+            Local<Module> cached = wrapper->module.Get(isolate);
+            if (!cached.IsEmpty() &&
+                cached->GetIdentityHash() == module->GetIdentityHash()) {
+                url = key;
+                break;
+            }
+        }
+    }
+    std::string href = url;
+    if (!href.empty() && href.rfind("node:", 0) != 0 &&
+        href.rfind("file://", 0) != 0 && href[0] == '/') {
+        href = "file://" + href;
+    }
+    Local<String> key =
+        String::NewFromUtf8(isolate, "url").ToLocalChecked();
+    Local<String> val =
+        String::NewFromUtf8(isolate, href.c_str()).ToLocalChecked();
+    meta->CreateDataProperty(context, key, val).Check();
+}
+
 void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_ptr) {
     if (!isolate_ptr) return nullptr;
     
@@ -123,6 +174,7 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
     Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
+    isolate->SetHostInitializeImportMetaObjectCallback(hostInitializeImportMeta);
     
     Local<ObjectTemplate> global_template;
     if (global_template_ptr) {
@@ -135,6 +187,10 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
     ContextWrapper* wrapper = new ContextWrapper();
     wrapper->isolate = isolate;
     wrapper->context.Reset(isolate, context);
+    // Stash the wrapper in the context so module-resolution / dynamic-import
+    // callbacks (which only receive a Local<Context>) can recover per-sandbox
+    // state instead of reaching for process globals.
+    context->SetAlignedPointerInEmbedderData(kContextWrapperSlot, wrapper);
     
     return wrapper;
 }
@@ -1219,26 +1275,32 @@ static MaybeLocal<Module> moduleResolveCallback(
 #else
     Isolate* isolate = context->GetIsolate();
 #endif
+
+    ContextWrapper* cw = wrapperFromContext(context);
+    if (!cw) {
+        isolate->ThrowException(Exception::Error(
+            String::NewFromUtf8(isolate,
+                "module resolution: no context wrapper").ToLocalChecked()));
+        return MaybeLocal<Module>();
+    }
     
     String::Utf8Value specifier_utf8(isolate, specifier);
     const char* specifier_str = *specifier_utf8;
     
-    // Get referrer name for resolution
+    // Get referrer name for resolution (search THIS context's cache only).
     std::string referrer_name;
-    for (auto& [key, wrapper] : g_module_cache) {
-        if (wrapper->isolate == isolate) {
-            Local<Module> cached = wrapper->module.Get(isolate);
-            if (cached->GetIdentityHash() == referrer->GetIdentityHash()) {
-                referrer_name = wrapper->name;
-                break;
-            }
+    for (auto& [key, wrapper] : cw->module_cache) {
+        Local<Module> cached = wrapper->module.Get(isolate);
+        if (cached->GetIdentityHash() == referrer->GetIdentityHash()) {
+            referrer_name = wrapper->name;
+            break;
         }
     }
     
     // Call Go to resolve and load the module
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
-    int result = goModuleResolve(g_module_resolver_id, 
+    int result = goModuleResolve(cw->module_resolver_id, 
         const_cast<char*>(specifier_str), 
         const_cast<char*>(referrer_name.c_str()), 
         &resolved_source, &resolved_name);
@@ -1256,9 +1318,9 @@ static MaybeLocal<Module> moduleResolveCallback(
     
     std::string name_key(resolved_name);
     
-    // Check if module is already in cache
-    auto it = g_module_cache.find(name_key);
-    if (it != g_module_cache.end()) {
+    // Check if module is already in this context's cache
+    auto it = cw->module_cache.find(name_key);
+    if (it != cw->module_cache.end()) {
         free(resolved_source);
         free(resolved_name);
         return it->second->module.Get(isolate);
@@ -1295,12 +1357,12 @@ static MaybeLocal<Module> moduleResolveCallback(
     
     Local<Module> module = maybe_module.ToLocalChecked();
     
-    // Cache the module
+    // Cache the module in this context
     ModuleWrapper* wrapper = new ModuleWrapper();
     wrapper->isolate = isolate;
     wrapper->module.Reset(isolate, module);
     wrapper->name = name_key;
-    g_module_cache[name_key] = wrapper;
+    cw->module_cache[name_key] = wrapper;
     
     free(resolved_name);
     
@@ -1311,6 +1373,188 @@ static MaybeLocal<Module> moduleResolveCallback(
     }
     
     return module;
+}
+
+// Compile (or fetch from cache), instantiate and evaluate a module by its
+// already-resolved (source, name). Returns the module on success; on failure
+// sets *out_exception (if a JS exception is pending) and returns empty.
+static MaybeLocal<Module> compileInstantiateEvaluate(
+    ContextWrapper* cw, Isolate* isolate, Local<Context> context,
+    const char* resolved_source, const char* resolved_name,
+    Local<Value>* out_eval_result) {
+
+    std::string name_key(resolved_name);
+    Local<Module> module;
+
+    auto it = cw->module_cache.find(name_key);
+    if (it != cw->module_cache.end()) {
+        module = it->second->module.Get(isolate);
+    } else {
+        Local<String> source_str =
+            String::NewFromUtf8(isolate, resolved_source).ToLocalChecked();
+        Local<String> name_str =
+            String::NewFromUtf8(isolate, resolved_name).ToLocalChecked();
+        ScriptOrigin origin(name_str, 0, 0, false, -1, Local<Value>(),
+                            false, false, true);
+        ScriptCompiler::Source source(source_str, origin);
+        MaybeLocal<Module> maybe_module =
+            ScriptCompiler::CompileModule(isolate, &source);
+        if (maybe_module.IsEmpty()) {
+            return MaybeLocal<Module>();
+        }
+        module = maybe_module.ToLocalChecked();
+        ModuleWrapper* wrapper = new ModuleWrapper();
+        wrapper->isolate = isolate;
+        wrapper->module.Reset(isolate, module);
+        wrapper->name = name_key;
+        cw->module_cache[name_key] = wrapper;
+    }
+
+    // Nested static imports inside a dynamically imported module must resolve
+    // through the same callback; scope the dynamic resolver id for the duration.
+    int saved = cw->module_resolver_id;
+    cw->module_resolver_id = cw->dynamic_resolver_id;
+
+    if (module->GetStatus() < Module::kInstantiated) {
+        Maybe<bool> ok = module->InstantiateModule(context, moduleResolveCallback);
+        if (ok.IsNothing() || !ok.FromJust()) {
+            cw->module_resolver_id = saved;
+            return MaybeLocal<Module>();
+        }
+    }
+
+    MaybeLocal<Value> maybe_eval;
+    if (module->GetStatus() < Module::kEvaluated) {
+        maybe_eval = module->Evaluate(context);
+    } else {
+        maybe_eval = Undefined(isolate).As<Value>();
+    }
+    cw->module_resolver_id = saved;
+
+    if (maybe_eval.IsEmpty()) {
+        return MaybeLocal<Module>();
+    }
+    if (out_eval_result) *out_eval_result = maybe_eval.ToLocalChecked();
+    return module;
+}
+
+// Dynamic import() host callback. V8 calls this for every import() expression;
+// we must return a Promise that resolves to the module namespace (or rejects).
+static MaybeLocal<Promise> hostImportModuleDynamically(
+    Local<Context> context,
+    Local<Data> /*host_defined_options*/,
+    Local<Value> resource_name,
+    Local<String> specifier,
+    Local<FixedArray> /*import_attributes*/) {
+
+#if V8_MAJOR_VERSION >= 15
+    Isolate* isolate = Isolate::GetCurrent();
+#else
+    Isolate* isolate = context->GetIsolate();
+#endif
+
+    ContextWrapper* cw = wrapperFromContext(context);
+    if (!cw) return MaybeLocal<Promise>();
+
+    Local<Promise::Resolver> resolver;
+    if (!Promise::Resolver::New(context).ToLocal(&resolver)) {
+        return MaybeLocal<Promise>();
+    }
+    Local<Promise> promise = resolver->GetPromise();
+
+    String::Utf8Value spec_utf8(isolate, specifier);
+    const char* spec_str = *spec_utf8 ? *spec_utf8 : "";
+
+    std::string referrer;
+    if (!resource_name.IsEmpty() && resource_name->IsString()) {
+        String::Utf8Value ref_utf8(isolate, resource_name);
+        referrer = *ref_utf8 ? *ref_utf8 : "";
+    }
+
+    // Resolve + load the specifier's source via the Go loader.
+    char* resolved_source = nullptr;
+    char* resolved_name = nullptr;
+    int r = goModuleResolve(cw->dynamic_resolver_id,
+                            const_cast<char*>(spec_str),
+                            const_cast<char*>(referrer.c_str()),
+                            &resolved_source, &resolved_name);
+    if (r != 0 || !resolved_source || !resolved_name) {
+        Local<Value> err = Exception::Error(
+            String::NewFromUtf8(isolate,
+                (std::string("Cannot find module '") + spec_str + "'").c_str())
+                .ToLocalChecked());
+        resolver->Reject(context, err).Check();
+        if (resolved_source) free(resolved_source);
+        if (resolved_name) free(resolved_name);
+        return promise;
+    }
+
+    TryCatch try_catch(isolate);
+    Local<Value> eval_result;
+    MaybeLocal<Module> maybe_module = compileInstantiateEvaluate(
+        cw, isolate, context, resolved_source, resolved_name, &eval_result);
+    free(resolved_source);
+    free(resolved_name);
+
+    if (maybe_module.IsEmpty()) {
+        Local<Value> exc = try_catch.HasCaught()
+            ? try_catch.Exception()
+            : Exception::Error(String::NewFromUtf8(isolate,
+                  "dynamic import failed").ToLocalChecked());
+        resolver->Reject(context, exc).Check();
+        return promise;
+    }
+
+    Local<Module> module = maybe_module.ToLocalChecked();
+    Local<Value> ns = module->GetModuleNamespace();
+
+    // module->Evaluate() returns a promise (fulfilled once the body, including
+    // any top-level await, settles). Chain: resolve the import() promise with
+    // the namespace only after that evaluation promise fulfills, propagating
+    // rejections. A tiny JS helper does the .then mapping to the namespace.
+    Local<Object> global = context->Global();
+    Local<Value> finisher;
+    bool have_finisher =
+        global->Get(context, String::NewFromUtf8(isolate,
+                    "__esmFinishDynamicImport").ToLocalChecked())
+            .ToLocal(&finisher) && finisher->IsFunction();
+
+    if (have_finisher && !eval_result.IsEmpty() && eval_result->IsPromise()) {
+        Local<Value> argv[2] = { eval_result, ns };
+        Local<Value> chained;
+        if (finisher.As<Function>()->Call(context, Undefined(isolate), 2, argv)
+                .ToLocal(&chained)) {
+            resolver->Resolve(context, chained).Check();
+            return promise;
+        }
+    }
+
+    // No evaluation promise (or no finisher): the body already ran to
+    // completion, so resolve directly with the namespace.
+    resolver->Resolve(context, ns).Check();
+    return promise;
+}
+
+void v8go_set_dynamic_import_resolver(void* context_ptr, int resolver_id) {
+    if (!context_ptr) return;
+    ContextWrapper* cw = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = cw->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    // The resolver id is scoped to this context; the host callback is an
+    // isolate-wide hook that recovers per-context state via embedder data.
+    cw->dynamic_resolver_id = resolver_id;
+    isolate->SetHostImportModuleDynamicallyCallback(hostImportModuleDynamically);
+}
+
+void v8go_perform_microtask_checkpoint(void* isolate_ptr) {
+    if (!isolate_ptr) return;
+    Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    isolate->PerformMicrotaskCheckpoint();
 }
 
 void* v8go_compile_module(void* context_ptr, const char* source, const char* name, char** error) {
@@ -1366,8 +1610,8 @@ void* v8go_compile_module(void* context_ptr, const char* source, const char* nam
     wrapper->module.Reset(isolate, module);
     wrapper->name = name;
     
-    // Cache it
-    g_module_cache[name] = wrapper;
+    // Cache it in this context
+    ctx_wrapper->module_cache[name] = wrapper;
     
     return wrapper;
 }
@@ -1387,17 +1631,16 @@ int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id
     
     TryCatch try_catch(isolate);
     
-    // Set up the resolver callback context
-    g_module_resolver_id = resolver_id;
-    g_module_context = context_ptr;
+    // Set up the resolver id for this context's in-progress instantiation.
+    int saved_resolver_id = ctx_wrapper->module_resolver_id;
+    ctx_wrapper->module_resolver_id = resolver_id;
     
     Local<Module> module = mod_wrapper->module.Get(isolate);
     
     Maybe<bool> result = module->InstantiateModule(context, moduleResolveCallback);
     
-    // Clear the resolver context
-    g_module_resolver_id = -1;
-    g_module_context = nullptr;
+    // Restore the previous resolver id (supports nested/re-entrant loads).
+    ctx_wrapper->module_resolver_id = saved_resolver_id;
     
     if (result.IsNothing() || !result.FromJust()) {
         if (try_catch.HasCaught()) {

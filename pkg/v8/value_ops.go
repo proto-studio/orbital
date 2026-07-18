@@ -182,8 +182,11 @@ func (v *Value) Call(recv *Value, args ...*Value) (*Value, error) {
 		return nil, &JSError{Message: err}
 	}
 
+	// Empty result with no captured exception == terminated/interrupted
+	// execution. Report it rather than returning a silent nil (see
+	// ErrExecutionTerminated).
 	if result == nil {
-		return nil, nil
+		return nil, ErrExecutionTerminated
 	}
 
 	return &Value{ptr: result, ctx: v.ctx}, nil

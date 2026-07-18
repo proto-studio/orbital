@@ -4,6 +4,8 @@
 	// Polyfill TextEncoder/TextDecoder if not available
 	if (typeof TextEncoder === 'undefined') {
 		globalThis.TextEncoder = class TextEncoder {
+			get encoding() { return 'utf-8'; }
+
 			encode(str) {
 				const bytes = [];
 				for (let i = 0; i < str.length; i++) {
@@ -29,6 +31,60 @@
 					}
 				}
 				return new Uint8Array(bytes);
+			}
+
+			// encodeInto(source, destination): UTF-8-encode source into the
+			// destination Uint8Array, writing only whole code points that fit.
+			// Returns { read, written } (UTF-16 units consumed / bytes written).
+			// React's streaming SSR renderer relies on this being present.
+			encodeInto(str, dest) {
+				const cap = dest.length;
+				let read = 0;
+				let written = 0;
+				for (let i = 0; i < str.length; i++) {
+					let code = str.charCodeAt(i);
+					let units = 1;
+					let cp = code;
+					if (code >= 0xd800 && code < 0xdc00) {
+						const low = str.charCodeAt(i + 1);
+						if (low >= 0xdc00 && low < 0xe000) {
+							cp = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+							units = 2;
+						} else {
+							cp = 0xfffd; // unpaired high surrogate
+						}
+					} else if (code >= 0xdc00 && code < 0xe000) {
+						cp = 0xfffd; // unpaired low surrogate
+					}
+
+					let needed;
+					if (cp < 0x80) needed = 1;
+					else if (cp < 0x800) needed = 2;
+					else if (cp < 0x10000) needed = 3;
+					else needed = 4;
+
+					if (written + needed > cap) break;
+
+					if (needed === 1) {
+						dest[written++] = cp;
+					} else if (needed === 2) {
+						dest[written++] = 0xc0 | (cp >> 6);
+						dest[written++] = 0x80 | (cp & 0x3f);
+					} else if (needed === 3) {
+						dest[written++] = 0xe0 | (cp >> 12);
+						dest[written++] = 0x80 | ((cp >> 6) & 0x3f);
+						dest[written++] = 0x80 | (cp & 0x3f);
+					} else {
+						dest[written++] = 0xf0 | (cp >> 18);
+						dest[written++] = 0x80 | ((cp >> 12) & 0x3f);
+						dest[written++] = 0x80 | ((cp >> 6) & 0x3f);
+						dest[written++] = 0x80 | (cp & 0x3f);
+					}
+
+					i += units - 1;
+					read += units;
+				}
+				return { read: read, written: written };
 			}
 		};
 	}
@@ -116,13 +172,89 @@
 		};
 	}
 
-	const encodings = ['utf8', 'utf-8', 'ascii', 'latin1', 'binary', 'hex', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le'];
+	// Polyfill structuredClone (WHATWG global, Node >= 17) if not available. Many
+	// modern libraries (e.g. jose deep-clones JWT claim sets with it) rely on it.
+	if (typeof globalThis.structuredClone === 'undefined') {
+		globalThis.structuredClone = function structuredClone(value) {
+			const seen = new Map();
+
+			function dataCloneError(val) {
+				const err = new Error(
+					"Failed to execute 'structuredClone': " +
+						Object.prototype.toString.call(val) +
+						' could not be cloned.'
+				);
+				err.name = 'DataCloneError';
+				return err;
+			}
+
+			function clone(val) {
+				if (val === null || typeof val !== 'object') {
+					if (typeof val === 'function' || typeof val === 'symbol') {
+						throw dataCloneError(val);
+					}
+					return val;
+				}
+				if (seen.has(val)) return seen.get(val);
+
+				if (val instanceof Date) return new Date(val.getTime());
+				if (val instanceof RegExp) return new RegExp(val.source, val.flags);
+				if (typeof ArrayBuffer !== 'undefined' && val instanceof ArrayBuffer) {
+					return val.slice(0);
+				}
+				if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(val)) {
+					if (typeof DataView !== 'undefined' && val instanceof DataView) {
+						return new DataView(val.buffer.slice(0), val.byteOffset, val.byteLength);
+					}
+					const TypedCtor = val.constructor;
+					return new TypedCtor(val.buffer.slice(0), val.byteOffset, val.length);
+				}
+				if (val instanceof Map) {
+					const out = new Map();
+					seen.set(val, out);
+					val.forEach((v, k) => out.set(clone(k), clone(v)));
+					return out;
+				}
+				if (val instanceof Set) {
+					const out = new Set();
+					seen.set(val, out);
+					val.forEach((v) => out.add(clone(v)));
+					return out;
+				}
+				if (val instanceof Error) {
+					const ErrCtor = typeof val.constructor === 'function' ? val.constructor : Error;
+					const out = new ErrCtor(val.message);
+					seen.set(val, out);
+					if (val.stack !== undefined) out.stack = val.stack;
+					if (val.cause !== undefined) out.cause = clone(val.cause);
+					return out;
+				}
+				if (Array.isArray(val)) {
+					const out = new Array(val.length);
+					seen.set(val, out);
+					for (let i = 0; i < val.length; i++) out[i] = clone(val[i]);
+					return out;
+				}
+
+				const out = {};
+				seen.set(val, out);
+				for (const key of Object.keys(val)) {
+					out[key] = clone(val[key]);
+				}
+				return out;
+			}
+
+			return clone(value);
+		};
+	}
+
+	const encodings = ['utf8', 'utf-8', 'ascii', 'latin1', 'binary', 'hex', 'base64', 'base64url', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le'];
 
 	function normalizeEncoding(enc) {
 		if (!enc) return 'utf8';
 		enc = enc.toLowerCase();
 		if (enc === 'utf-8') return 'utf8';
-		if (enc === 'ucs-2' || enc === 'utf-16le' || enc === 'utf16le') return 'utf16le';
+		if (enc === 'ucs2' || enc === 'ucs-2' || enc === 'utf-16le' || enc === 'utf16le') return 'utf16le';
 		return enc;
 	}
 
@@ -169,6 +301,19 @@
 			binString += String.fromCharCode(bytes[i]);
 		}
 		return btoa(binString);
+	}
+
+	// base64url (RFC 4648 §5): URL-safe alphabet, padding optional. Decoding
+	// restores the standard alphabet + padding; encoding strips padding and maps
+	// +/ to -_ .
+	function base64UrlToBytes(str) {
+		str = String(str).replace(/-/g, '+').replace(/_/g, '/');
+		while (str.length % 4 !== 0) str += '=';
+		return base64ToBytes(str);
+	}
+
+	function bytesToBase64Url(bytes) {
+		return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 	}
 
 	class Buffer extends Uint8Array {
@@ -227,6 +372,9 @@
 					break;
 				case 'base64':
 					bytes = base64ToBytes(string);
+					break;
+				case 'base64url':
+					bytes = base64UrlToBytes(string);
 					break;
 				case 'utf16le':
 					bytes = [];
@@ -311,6 +459,9 @@
 					if (string[len - 1] === '=') len--;
 					if (string[len - 1] === '=') len--;
 					return (len * 3) >>> 2;
+				case 'base64url':
+					// base64url is unpadded; every 4 chars decode to 3 bytes.
+					return (string.length * 3) >>> 2;
 				case 'utf16le':
 					return string.length * 2;
 				case 'latin1':
@@ -380,6 +531,8 @@
 					return bytesToHex(slice);
 				case 'base64':
 					return bytesToBase64(slice);
+				case 'base64url':
+					return bytesToBase64Url(slice);
 				case 'utf16le':
 					let str = '';
 					for (let i = 0; i < slice.length - 1; i += 2) {
@@ -818,6 +971,23 @@
 
 	// Add constants
 	Buffer.kMaxLength = 2147483647;
+
+	// Node defines Buffer's static API (from/alloc/isBuffer/concat/...) as
+	// enumerable own properties (plain assignments), whereas ES6 class `static`
+	// members are non-enumerable. Packages such as safer-buffer copy the static
+	// surface with `for (key in Buffer)` + hasOwnProperty and therefore silently
+	// drop every non-enumerable static, which breaks iconv-lite at runtime
+	// ("Buffer.isBuffer is not a function") and anything layered on it
+	// (body-parser/express.json, etc.). Re-flag the statics as enumerable so the
+	// runtime matches Node's observable shape.
+	for (const name of Object.getOwnPropertyNames(Buffer)) {
+		if (name === 'length' || name === 'name' || name === 'prototype') continue;
+		const desc = Object.getOwnPropertyDescriptor(Buffer, name);
+		if (desc && desc.configurable && desc.enumerable === false) {
+			desc.enumerable = true;
+			Object.defineProperty(Buffer, name, desc);
+		}
+	}
 
 	return Buffer;
 })()

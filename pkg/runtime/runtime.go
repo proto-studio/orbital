@@ -105,6 +105,15 @@ func New(cfg *Config) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to create context: %w", err)
 	}
 
+	// Node.js exposes the global object under the name `global` in addition to
+	// the standard `globalThis`. Many npm packages (and their bundled deps)
+	// reference `global` directly, so alias it here for compatibility.
+	if _, err := ctx.RunScript("if (typeof global === 'undefined') { globalThis.global = globalThis; }", "<bootstrap:global>"); err != nil {
+		ctx.Dispose()
+		iso.Dispose()
+		return nil, fmt.Errorf("failed to set up global alias: %w", err)
+	}
+
 	// Set up filesystem
 	fs := cfg.Filesystem
 	if fs == nil {
@@ -255,6 +264,14 @@ func (rt *Runtime) RegisterModule(mod Module) error {
 
 	rt.modules[name] = mod
 	return nil
+}
+
+// GetModule returns a previously registered module by name.
+func (rt *Runtime) GetModule(name string) (Module, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	mod, ok := rt.modules[name]
+	return mod, ok
 }
 
 // RegisterNativeModule registers a user-defined native module that can be

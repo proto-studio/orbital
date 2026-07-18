@@ -208,8 +208,212 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
+	// process.stdout / process.stderr as real writable streams backed by the
+	// OS file descriptors. Many npm packages write via process.stdout.write and
+	// Node's own console is built on these, so they must be present.
+	stdoutObj, err := p.buildWriteStream(ctx, iso, os.Stdout, 1)
+	if err != nil {
+		return err
+	}
+	if err := processObj.Set("stdout", stdoutObj); err != nil {
+		return err
+	}
+	stderrObj, err := p.buildWriteStream(ctx, iso, os.Stderr, 2)
+	if err != nil {
+		return err
+	}
+	if err := processObj.Set("stderr", stderrObj); err != nil {
+		return err
+	}
+	stdinObj, err := p.buildReadStream(ctx, iso, os.Stdin, 0)
+	if err != nil {
+		return err
+	}
+	if err := processObj.Set("stdin", stdinObj); err != nil {
+		return err
+	}
+
 	// Set process as global
-	return rt.SetGlobal("process", processObj)
+	if err := rt.SetGlobal("process", processObj); err != nil {
+		return err
+	}
+
+	// In Node.js `process` is an EventEmitter (it emits 'exit', 'beforeExit',
+	// etc.). The events module runs before process, so mix EventEmitter into
+	// the process object here. Also expose a writable `exitCode` property,
+	// which the CLI honors when the program finishes.
+	_, err = rt.RunScript(`(function () {
+		if (typeof EventEmitter === 'function' && process && typeof process.on !== 'function') {
+			var emitter = new EventEmitter();
+			var methods = ['on', 'once', 'off', 'addListener', 'removeListener',
+				'removeAllListeners', 'emit', 'listeners', 'listenerCount',
+				'eventNames', 'prependListener', 'prependOnceListener',
+				'setMaxListeners', 'getMaxListeners'];
+			methods.forEach(function (m) {
+				if (typeof emitter[m] === 'function') {
+					process[m] = function () {
+						return emitter[m].apply(emitter, arguments);
+					};
+				}
+			});
+		}
+		if (process && !('exitCode' in process)) {
+			process.exitCode = undefined;
+		}
+
+		// Turn the Go-backed std streams into proper Node stream-like objects:
+		// mix in EventEmitter and add the writable/readable surface libraries
+		// expect. The underlying write()/read() are provided in Go.
+		var emMethods = ['on', 'once', 'off', 'addListener', 'removeListener',
+			'removeAllListeners', 'emit', 'listeners', 'listenerCount',
+			'eventNames', 'prependListener', 'prependOnceListener',
+			'setMaxListeners', 'getMaxListeners'];
+		function mixEmitter(s) {
+			if (!s || typeof EventEmitter !== 'function') return;
+			var em = new EventEmitter();
+			emMethods.forEach(function (m) {
+				if (typeof em[m] === 'function' && typeof s[m] !== 'function') {
+					s[m] = function () { return em[m].apply(em, arguments); };
+				}
+			});
+		}
+		['stdout', 'stderr'].forEach(function (name) {
+			var s = process[name];
+			if (!s) return;
+			mixEmitter(s);
+			s.writable = true;
+			s.readable = false;
+			if (typeof s.end !== 'function') {
+				s.end = function (chunk, enc, cb) {
+					if (chunk != null && typeof chunk !== 'function') this.write(chunk);
+					if (typeof enc === 'function') cb = enc;
+					if (typeof cb === 'function') cb();
+					return this;
+				};
+			}
+			if (typeof s.cork !== 'function') s.cork = function () {};
+			if (typeof s.uncork !== 'function') s.uncork = function () {};
+			if (typeof s.setDefaultEncoding !== 'function') s.setDefaultEncoding = function () { return this; };
+
+			// TTY WriteStream surface. Node only exposes these on real TTY
+			// streams; libraries (mocha, chalk, ora, ...) probe them to decide
+			// column width and color support. We back them with sensible values
+			// and honor COLUMNS/LINES / a default 80x24 when the size is unknown.
+			if (s.isTTY) {
+				if (!('columns' in s) || s.columns == null) {
+					var envCols = parseInt((process.env && process.env.COLUMNS) || '', 10);
+					s.columns = envCols > 0 ? envCols : 80;
+				}
+				if (!('rows' in s) || s.rows == null) {
+					var envRows = parseInt((process.env && process.env.LINES) || '', 10);
+					s.rows = envRows > 0 ? envRows : 24;
+				}
+				if (typeof s.getWindowSize !== 'function') {
+					s.getWindowSize = function () { return [this.columns || 80, this.rows || 24]; };
+				}
+				if (typeof s.getColorDepth !== 'function') {
+					s.getColorDepth = function () { return 8; };
+				}
+				if (typeof s.hasColors !== 'function') {
+					s.hasColors = function (count) {
+						var colors = 1 << this.getColorDepth();
+						return typeof count === 'number' ? colors >= count : true;
+					};
+				}
+				if (typeof s.clearLine !== 'function') s.clearLine = function () { return true; };
+				if (typeof s.clearScreenDown !== 'function') s.clearScreenDown = function () { return true; };
+				if (typeof s.cursorTo !== 'function') s.cursorTo = function () { return true; };
+				if (typeof s.moveCursor !== 'function') s.moveCursor = function () { return true; };
+			}
+		});
+		var stdin = process.stdin;
+		if (stdin) {
+			mixEmitter(stdin);
+			stdin.readable = true;
+			stdin.writable = false;
+			if (typeof stdin.resume !== 'function') stdin.resume = function () { return this; };
+			if (typeof stdin.pause !== 'function') stdin.pause = function () { return this; };
+			if (typeof stdin.setEncoding !== 'function') stdin.setEncoding = function () { return this; };
+			if (typeof stdin.read !== 'function') stdin.read = function () { return null; };
+		}
+	})();`, "process_events.js")
+	return err
+}
+
+// buildWriteStream builds a minimal writable stream object bound to an OS file.
+// The stream is enriched with EventEmitter + writable helpers in the bootstrap
+// JS above; here we provide the native write() plus fd/isTTY.
+func (p *Process) buildWriteStream(ctx *v8.Context, iso *v8.Isolate, f *os.File, fd int) (*v8.Value, error) {
+	obj, err := ctx.NewObject()
+	if err != nil {
+		return nil, err
+	}
+	writeFn, err := iso.NewFunctionTemplate(p.writeStreamFunc(f))
+	if err != nil {
+		return nil, err
+	}
+	writeVal, err := writeFn.GetFunction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := obj.Set("write", writeVal); err != nil {
+		return nil, err
+	}
+	if err := obj.Set("fd", ctx.NewInteger(int64(fd))); err != nil {
+		return nil, err
+	}
+	if err := obj.Set("isTTY", ctx.NewBoolean(isTerminal(f))); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// buildReadStream builds a minimal readable stream object bound to an OS file.
+// Full stdin reading is not wired to the event loop yet; this provides the
+// surface (fd/isTTY + JS-side resume/pause/read) so code that touches
+// process.stdin does not crash.
+func (p *Process) buildReadStream(ctx *v8.Context, iso *v8.Isolate, f *os.File, fd int) (*v8.Value, error) {
+	obj, err := ctx.NewObject()
+	if err != nil {
+		return nil, err
+	}
+	if err := obj.Set("fd", ctx.NewInteger(int64(fd))); err != nil {
+		return nil, err
+	}
+	if err := obj.Set("isTTY", ctx.NewBoolean(isTerminal(f))); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// writeStreamFunc returns a write(chunk[, encoding][, callback]) implementation
+// that writes to the given OS file and invokes a trailing callback if present.
+func (p *Process) writeStreamFunc(f *os.File) v8.FunctionCallback {
+	return func(info *v8.FunctionCallbackInfo) *v8.Value {
+		args := info.Args()
+		if len(args) > 0 && args[0] != nil && !args[0].IsUndefined() && !args[0].IsNull() {
+			_, _ = f.WriteString(args[0].String())
+		}
+		for i := 1; i < len(args); i++ {
+			if args[i] != nil && args[i].IsFunction() {
+				_, _ = args[i].Call(nil)
+				break
+			}
+		}
+		return info.Context().True()
+	}
+}
+
+// isTerminal reports whether the file is attached to a character device (TTY).
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func (p *Process) createArgv(ctx *v8.Context) (*v8.Value, error) {
