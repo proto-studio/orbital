@@ -23,7 +23,7 @@ pure-C shim and links the prebuilt archives.
 
 The V8 static libraries are **not committed to the repository**. They are
 published as checksum-verified GitHub Release assets (currently V8
-<!-- V8_VERSION -->15.1.206.8<!-- /V8_VERSION -->) and fetched on demand by
+<!-- V8_VERSION -->15.0.1240245<!-- /V8_VERSION -->) and fetched on demand by
 `go generate` into a project-local `.v8/` directory. Prebuilt libraries are
 available for:
 
