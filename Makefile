@@ -95,6 +95,14 @@ endif
 # Platform-specific V8 output directory
 V8_PLATFORM_DIR := $(V8_OUTPUT_DIR)/$(TARGET_OS)-$(TARGET_ARCH)
 
+# Shared V8 public headers (not the full source tree). Populated by
+# `make package-v8-headers` / `make v8-headers-setup`. Used by glue-only rebuilds.
+V8_INCLUDE_DIR := $(V8_OUTPUT_DIR)/include
+
+# GN output dir for the host/target (has compile_commands.json + the clang the
+# glue must be compiled with). Override with V8_OUT_DIR=... when needed.
+V8_OUT_DIR ?= $(V8_SRC_DIR)/out.gn/$(TARGET_OS)-$(V8_ARCH)
+
 # ============================================================================
 # Default Target
 # ============================================================================
@@ -316,13 +324,102 @@ v8-build: v8-deps $(V8_BUILD_PREREQ)
 		--output "$(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8go_glue.a" && \
 	echo ">>> Shipped library sizes:" && ls -lh $(CURDIR)/$(V8_PLATFORM_DIR)/lib/*.a
 	@echo ">>> V8 built: $(V8_PLATFORM_DIR)"
+	@$(MAKE) --no-print-directory package-v8-headers TARGET_OS=$(TARGET_OS) TARGET_ARCH=$(TARGET_ARCH)
 	@$(MAKE) --no-print-directory package-v8 TARGET_OS=$(TARGET_OS) TARGET_ARCH=$(TARGET_ARCH)
 	@echo ">>> V8 built and packaged successfully for $(TARGET_OS)/$(TARGET_ARCH)"
+
+# Copy V8's public headers (include/) into deps/v8/include and package them as
+# dist/v8-headers.tar.gz. Glue-only rebuilds need these headers but not the full
+# multi-GB V8 source tree. CI uploads this as the `v8-headers` Actions artifact.
+.PHONY: package-v8-headers
+package-v8-headers:
+	@src="$(V8_SRC_DIR)/include"; \
+	if [ ! -f "$$src/v8.h" ]; then \
+		echo "Error: $$src/v8.h not found; run 'make v8-fetch' (or a full v8-native) first." >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(V8_INCLUDE_DIR)" "$(V8_PLATFORM_DIR)/include" "$(DIST_DIR)"; \
+	echo ">>> Installing V8 headers → $(V8_INCLUDE_DIR)"; \
+	rm -rf "$(V8_INCLUDE_DIR)"; mkdir -p "$(V8_INCLUDE_DIR)"; \
+	cp -R "$$src"/. "$(V8_INCLUDE_DIR)/"; \
+	rm -rf "$(V8_PLATFORM_DIR)/include"; mkdir -p "$(V8_PLATFORM_DIR)/include"; \
+	cp -R "$$src"/. "$(V8_PLATFORM_DIR)/include/"; \
+	asset="v8-headers.tar.gz"; \
+	echo ">>> Packaging $(DIST_DIR)/$$asset"; \
+	tar -C "$(V8_OUTPUT_DIR)" -czf "$(DIST_DIR)/$$asset" include; \
+	( cd $(DIST_DIR) && shasum -a 256 "$$asset" > "$$asset.sha256" ); \
+	echo ">>> Wrote $(DIST_DIR)/$$asset ($$(du -h "$(DIST_DIR)/$$asset" | cut -f1))"; \
+	cat "$(DIST_DIR)/$$asset.sha256"
+
+# Install V8 public headers into deps/v8/include from dist/v8-headers.tar.gz.
+# Optionally download the CI artifact first: make v8-headers-setup RUN_ID=<id>
+.PHONY: v8-headers-setup
+v8-headers-setup:
+	@mkdir -p $(DIST_DIR)
+	@if [ -n "$(RUN_ID)" ]; then \
+		echo ">>> Downloading v8-headers artifact from Actions run $(RUN_ID)..."; \
+		gh run download "$(RUN_ID)" -n v8-headers -D $(DIST_DIR); \
+	fi
+	@if [ ! -f "$(DIST_DIR)/v8-headers.tar.gz" ]; then \
+		echo "Error: $(DIST_DIR)/v8-headers.tar.gz not found." >&2; \
+		echo "  make package-v8-headers          # after a local V8 fetch/build" >&2; \
+		echo "  make v8-headers-setup RUN_ID=…   # download CI artifact via gh" >&2; \
+		exit 1; \
+	fi
+	@echo ">>> Extracting headers → $(V8_INCLUDE_DIR)"
+	@rm -rf "$(V8_INCLUDE_DIR)"
+	@mkdir -p "$(V8_OUTPUT_DIR)"
+	@tar -C "$(V8_OUTPUT_DIR)" -xzf "$(DIST_DIR)/v8-headers.tar.gz"
+	@test -f "$(V8_INCLUDE_DIR)/v8.h" || { echo "Error: extract did not produce $(V8_INCLUDE_DIR)/v8.h" >&2; exit 1; }
+	@echo ">>> Headers ready at $(V8_INCLUDE_DIR) (override discovery with V8_INCLUDE=...)"
+
+# Rebuild only libv8go_glue.a (does NOT rebuild libv8_monolith.a).
+# Needs:
+#   - V8_OUT_DIR with compile_commands.json (from a prior gn gen / v8-build)
+#   - V8 public headers (discovered automatically; see below)
+# Header discovery (first hit wins): V8_INCLUDE → deps/v8/include →
+# deps/v8/<plat>/include → v8-build/v8/include
+.PHONY: v8-glue
+v8-glue:
+	@inc="$(V8_INCLUDE)"; \
+	if [ -z "$$inc" ] && [ -f "$(V8_INCLUDE_DIR)/v8.h" ]; then inc="$(V8_INCLUDE_DIR)"; fi; \
+	if [ -z "$$inc" ] && [ -f "$(V8_PLATFORM_DIR)/include/v8.h" ]; then inc="$(V8_PLATFORM_DIR)/include"; fi; \
+	if [ -z "$$inc" ] && [ -f "$(V8_SRC_DIR)/include/v8.h" ]; then inc="$(V8_SRC_DIR)/include"; fi; \
+	if [ -z "$$inc" ]; then \
+		echo "Error: V8 public headers not found." >&2; \
+		echo "  make v8-headers-setup RUN_ID=<ci-run>   # from CI artifact" >&2; \
+		echo "  make package-v8-headers                 # from local v8-build/v8/include" >&2; \
+		echo "  V8_INCLUDE=/path/to/include make v8-glue" >&2; \
+		exit 1; \
+	fi; \
+	if [ ! -f "$(V8_OUT_DIR)/compile_commands.json" ]; then \
+		echo "Error: $(V8_OUT_DIR)/compile_commands.json not found." >&2; \
+		echo "  Glue rebuild needs a prior GN output dir (compile flags + clang)." >&2; \
+		echo "  Run a full 'make v8-native' once, or point V8_OUT_DIR= at an existing out.gn." >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(V8_PLATFORM_DIR)/lib"; \
+	echo ">>> Rebuilding glue with headers from $$inc"; \
+	echo ">>> Using V8_OUT_DIR=$(V8_OUT_DIR)"; \
+	python3 scripts/build-glue.py \
+		--out-dir "$(V8_OUT_DIR)" \
+		--src "$(CURDIR)/pkg/v8/csrc/v8go.cc" \
+		--include "$(CURDIR)/pkg/v8" \
+		--include "$$inc" \
+		--drop-missing-includes \
+		--output "$(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8go_glue.a"; \
+	for d in .v8/*/$(TARGET_OS)-$(TARGET_ARCH)/lib; do \
+		[ -d "$$d" ] || continue; \
+		echo ">>> Updating installed runtime: $$d/libv8go_glue.a"; \
+		cp "$(V8_PLATFORM_DIR)/lib/libv8go_glue.a" "$$d/libv8go_glue.a"; \
+	done; \
+	echo ">>> Glue rebuilt. Re-link with: make build-native"
 
 # Package a built platform's libraries into a checksum-verified release asset:
 #   $(DIST_DIR)/v8-<goos>-<goarch>.tar.gz  (+ .sha256)
 # The archive contains only the lib/ directory (consumers never compile V8's
 # headers — pkg/v8 uses its own v8go.h). This is what CI uploads and publishes.
+# Headers ship separately as dist/v8-headers.tar.gz (see package-v8-headers).
 # gzip (not zstd) keeps the consumer-side extractor pure Go stdlib.
 .PHONY: package-v8
 package-v8:
@@ -544,8 +641,11 @@ help:
 	@echo "  v8-linux-amd64   Build V8 for Linux x86_64"
 	@echo "  v8-linux-arm64   Build V8 for Linux ARM64"
 	@echo "  v8-darwin-arm64  Build V8 for macOS ARM64 (Apple Silicon)"
+	@echo "  v8-glue          Rebuild ONLY libv8go_glue.a (needs headers + out.gn)"
 	@echo "  package-v8       Package a built platform into dist/v8-<goos>-<goarch>.tar.gz"
-	@echo "  v8-manifest      Assemble internal/v8dist/manifest.json from dist/ checksums"
+	@echo "  package-v8-headers  Package V8 public headers → dist/v8-headers.tar.gz"
+	@echo "  v8-headers-setup Install headers into deps/v8/include (RUN_ID=… to download)"
+	@echo "  v8-manifest      Assemble internal/v8dist/manifest.json from dist/"
 	@echo "  v8-fetch         Fetch V8 source only"
 	@echo "  v8-deps          Install depot_tools"
 	@echo ""
@@ -586,4 +686,5 @@ help:
 	@echo "Examples:"
 	@echo "  make v8-latest              # Check out latest stable V8, build for this platform"
 	@echo "  make v8-native              # Build V8 for your machine"
+	@echo "  make v8-glue                # Rebuild glue only (after editing v8go.cc)"
 	@echo "  make build-native           # Build Orbital for your machine"

@@ -146,13 +146,19 @@ jobs:
             echo "Downloading $name ..."
             gh run download "$RUN_ID" -n "$name" -D dist
           done
+          # Public headers for glue-only local rebuilds (not in the consumer lib
+          # tarball; not pinned in the manifest — verified via sidecar .sha256).
+          echo "Downloading v8-headers ..."
+          gh run download "$RUN_ID" -n v8-headers -D dist
           ls -la dist
 
       - name: Verify checksums against manifest
         run: |
           jq -r '.targets[] | .sha256 + "  " + .filename' internal/v8dist/manifest.json > dist/manifest.sha256
-          echo "Expected:" && cat dist/manifest.sha256
+          echo "Expected (libs):" && cat dist/manifest.sha256
           ( cd dist && shasum -a 256 -c manifest.sha256 )
+          echo "Expected (headers):" && cat dist/v8-headers.tar.gz.sha256
+          ( cd dist && shasum -a 256 -c v8-headers.tar.gz.sha256 )
 
       - name: Create and publish Release
         env:
@@ -161,11 +167,12 @@ jobs:
           V8: ${{ steps.m.outputs.v8 }}
         run: |
           cp internal/v8dist/manifest.json dist/manifest.json
+          # dist/v8-*.tar.gz includes both platform libs and v8-headers.tar.gz.
           gh release create "$TAG" \
             dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
             --target "${GITHUB_SHA}" \
             --title "$TAG (V8 $V8)" \
-            --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64).
+            --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md).
 
-          Fetched automatically by \`go generate\` via cmd/v8setup; see README. These are
+          Lib tarballs are fetched automatically by \`go generate\` via cmd/v8setup; see README. These are
           the exact artifacts validated on the merged PR (build run ${{ steps.m.outputs.run_id }})."

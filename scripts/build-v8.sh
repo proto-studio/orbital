@@ -342,16 +342,27 @@ python3 "$REPO_ROOT/scripts/build-glue.py" \
     --output "$OUTPUT_DIR/lib/libv8go_glue.a"
 
 # ============================================================================
-# Step 6: Package release asset
+# Step 6: Package release assets (libs + public headers)
 # ============================================================================
 
 echo ""
-echo ">>> Step 6: Packaging release asset..."
+echo ">>> Step 6: Packaging release assets..."
 
 # GOARCH naming for the asset (build dirs already use amd64/arm64).
 GOARCH="$TARGET_ARCH"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 mkdir -p "$DIST_DIR"
+
+# Public headers for glue-only rebuilds (not shipped in the consumer lib tarball).
+echo "Packaging V8 public headers..."
+rm -rf "$REPO_ROOT/deps/v8/include"
+mkdir -p "$REPO_ROOT/deps/v8/include" "$OUTPUT_DIR/include"
+cp -R include/. "$REPO_ROOT/deps/v8/include/"
+cp -R include/. "$OUTPUT_DIR/include/"
+HEADERS_ASSET="v8-headers.tar.gz"
+tar -C "$REPO_ROOT/deps/v8" -czf "$DIST_DIR/$HEADERS_ASSET" include
+( cd "$DIST_DIR" && shasum -a 256 "$HEADERS_ASSET" > "$HEADERS_ASSET.sha256" )
+
 # gzip (not zstd) so the consumer-side extractor stays pure Go stdlib.
 ASSET="v8-${TARGET_OS}-${GOARCH}.tar.gz"
 tar -C "$OUTPUT_DIR" -czf "$DIST_DIR/$ASSET" lib
@@ -364,8 +375,10 @@ tar -C "$OUTPUT_DIR" -czf "$DIST_DIR/$ASSET" lib
 echo ""
 echo "=== Build Complete ==="
 echo "V8 libraries:      $OUTPUT_DIR/lib/ (libv8_monolith.a, libv8_libcxx.a, libv8go_glue.a)"
+echo "V8 headers:        $REPO_ROOT/deps/v8/include/ (+ $DIST_DIR/$HEADERS_ASSET)"
 echo "Release asset:     $DIST_DIR/$ASSET"
 echo ""
 ls -lh "$OUTPUT_DIR/lib/"*.a
 echo ""
 cat "$DIST_DIR/$ASSET.sha256"
+cat "$DIST_DIR/$HEADERS_ASSET.sha256"

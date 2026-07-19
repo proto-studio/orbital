@@ -74,6 +74,17 @@ def pick_entry(entries):
 DROP_FLAGS = {"-c", "-MD", "-MMD", "-MP"}
 DROP_FLAGS_WITH_ARG = {"-o", "-MF", "-MT", "-MQ", "-MJ"}
 
+# Clang flags that start with "-I" / "-i" but are NOT -I include dirs.
+_NOT_DASH_I = (
+    "-include",
+    "-imacros",
+    "-idirafter",
+    "-iframework",
+    "-iprefix",
+    "-iwithprefix",
+    "-iwithprefixbefore",
+)
+
 
 def build_compile_args(tokens, source_file):
     """Strip file-specific flags, keeping everything ABI-relevant."""
@@ -101,12 +112,62 @@ def build_compile_args(tokens, source_file):
     return compiler, flags
 
 
+def _is_fused_include(tok: str, prefix: str) -> bool:
+    """True for fused forms like -I/path or -isystem/path (not -include …)."""
+    if not tok.startswith(prefix) or len(tok) <= len(prefix):
+        return False
+    if prefix == "-I" and any(tok.startswith(p) for p in _NOT_DASH_I):
+        return False
+    return True
+
+
+def drop_missing_includes(flags, cwd):
+    """Remove -I/-isystem entries whose directories do not exist on disk.
+
+    compile_commands.json embeds absolute/relative -I paths into the full V8
+    source tree. Glue-only rebuilds often supply headers via --include (from a
+    headers artifact or deps/v8/include) and may not have v8-build/v8 checked
+    out — dropping missing -I keeps those stale paths from breaking the compile.
+    """
+    out = []
+    skip = False
+    for i, tok in enumerate(flags):
+        if skip:
+            skip = False
+            continue
+        dropped = False
+        for p in ("-I", "-isystem"):
+            if tok == p and i + 1 < len(flags):
+                inc = flags[i + 1]
+                path = inc if os.path.isabs(inc) else os.path.join(cwd, inc)
+                if not os.path.isdir(path):
+                    print(f">>> Dropping missing include: {p} {inc}")
+                    skip = True
+                    dropped = True
+                break
+            if _is_fused_include(tok, p):
+                inc = tok[len(p) :]
+                path = inc if os.path.isabs(inc) else os.path.join(cwd, inc)
+                if not os.path.isdir(path):
+                    print(f">>> Dropping missing include: {tok}")
+                    dropped = True
+                break
+        if not dropped:
+            out.append(tok)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True, help="V8 GN output dir (has compile_commands.json)")
     ap.add_argument("--src", required=True, help="glue C++ source (v8go.cc)")
     ap.add_argument("--output", required=True, help="output static lib (libv8go_glue.a)")
     ap.add_argument("--include", action="append", default=[], help="extra -I dirs (absolute)")
+    ap.add_argument(
+        "--drop-missing-includes",
+        action="store_true",
+        help="skip -I/-isystem dirs that do not exist (for headers-artifact glue rebuilds)",
+    )
     ap.add_argument("--ar", default="ar", help="archiver")
     args = ap.parse_args()
 
@@ -128,6 +189,8 @@ def main():
     print(f">>> Using V8 compile flags from: {entry.get('file')}")
 
     compiler, flags = build_compile_args(tokens, entry.get("file", ""))
+    if args.drop_missing_includes:
+        flags = drop_missing_includes(flags, out_dir)
 
     obj = os.path.join(out_dir, "v8go_glue.o")
     cmd = [compiler] + flags

@@ -351,6 +351,20 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+      # Public headers only (not the full V8 source tree). Used locally to rebuild
+      # libv8go_glue.a without a multi-GB checkout. Same across platforms; upload
+      # once from linux-amd64 to avoid duplicate artifact names.
+      - name: Upload V8 headers
+        if: matrix.platform == 'linux-amd64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: v8-headers
+          path: |
+            dist/v8-headers.tar.gz
+            dist/v8-headers.tar.gz.sha256
+          retention-days: 90
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
   # Assemble the manifest (run id + checksums + source commit) and commit it to
   # the branch. Runs after every target build succeeds; the pinned sha256s are
@@ -376,15 +390,19 @@ jobs:
         run: |
           mkdir -p dist
           names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
-            --paginate --jq '.artifacts[].name | select(startswith("v8-"))')"
+            --paginate --jq '.artifacts[].name | select(startswith("v8-") and . != "v8-headers")')"
           if [ -z "$names" ]; then
-            echo "ERROR: no v8-* artifacts found for run ${GITHUB_RUN_ID}" >&2
+            echo "ERROR: no v8-<platform> artifacts found for run ${GITHUB_RUN_ID}" >&2
             exit 1
           fi
           for name in $names; do
             echo "Downloading $name ..."
             gh run download "${GITHUB_RUN_ID}" -n "$name" -D dist
           done
+          # Headers are optional for the manifest (libs only); keep a copy in dist/
+          # for humans downloading the run, but do not require it here.
+          gh run download "${GITHUB_RUN_ID}" -n v8-headers -D dist 2>/dev/null \
+            || echo "Note: v8-headers artifact not present (ok for older runs)"
           ls -la dist
 
       - name: Verify checksums
