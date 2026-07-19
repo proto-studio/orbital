@@ -63,35 +63,34 @@ Prebuilt Linux binaries (when available):
 
 ### Go library
 
+Create a full Node.js-compatible runtime with `nodejs.New` (same module set as the CLI):
+
 ```go
 package main
 
 import (
 	"fmt"
-	"os"
 
-	"proto.zip/studio/orbital/internal/nodejs/console"
-	"proto.zip/studio/orbital/internal/nodejs/process"
+	"proto.zip/studio/orbital/pkg/nodejs"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 func main() {
-	rt, err := runtime.New(nil)
+	inst, err := nodejs.New(runtime.DefaultConfig())
 	if err != nil {
 		panic(err)
 	}
-	defer rt.Dispose()
+	defer inst.Runtime.Dispose()
 
-	_ = console.New().Register(rt)
-	_ = process.New().Register(rt)
-
-	result, err := rt.RunScript(`console.log('Hello from Orbital!')`, "main.js")
+	result, err := inst.Runtime.RunScript(`console.log('Hello from Orbital!')`, "main.js")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(result.String())
 }
 ```
+
+Or register individual modules from `pkg/nodejs/<module>` when you only need a subset.
 
 Fetch the V8 runtime once, then build with CGO enabled:
 
@@ -101,8 +100,8 @@ CGO_ENABLED=1 go build -o myapp .
 ```
 
 See [Installing the V8 runtime](#installing-the-v8-runtime) for the one-time
-`go generate` wiring, and `examples/native/main.go` /
-`examples/sandbox-server/main.go` for fuller examples.
+`go generate` wiring, and `examples/native/modules`, `examples/native/esm`,
+or `examples/sandbox-server` for fuller examples.
 
 ## Installing the V8 runtime
 
@@ -182,10 +181,11 @@ GOOS=linux GOARCH=arm64 go generate ./...
 |---------|---------|
 | `pkg/v8` | Low-level V8 bindings (CGO) |
 | `pkg/runtime` | JavaScript runtime, event loop, sandbox interfaces |
-| `internal/nodejs/*` | Node.js standard library modules (`fs`, `console`, `process`, etc.) |
+| `pkg/nodejs` | Node.js-compatible runtime constructor (`nodejs.New`) |
+| `pkg/nodejs/*` | Individual Node.js standard library modules (`fs`, `console`, `process`, etc.) |
 | `cmd/orbital` | CLI binary |
 
-Register the Node.js modules you need with `runtime.RegisterModule()`. The CLI registers the full set; library users pick only what their scripts require.
+Use `nodejs.New` for a full Node.js-compatible runtime, or register individual modules from `pkg/nodejs/<module>` with `runtime.RegisterModule()`.
 
 ## Linking model
 

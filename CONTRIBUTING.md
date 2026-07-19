@@ -26,8 +26,8 @@ gnode/
 ├── pkg/
 │   ├── v8/                   # CGO bindings (v8go.go, v8go.h); carries NO -L/-l
 │   │   └── csrc/v8go.cc       # C++ bridge, pre-compiled into libv8go_glue.a
-│   └── runtime/              # JS runtime, event loop, sandbox interfaces
-├── internal/nodejs/          # Node.js standard library modules
+│   ├── runtime/              # JS runtime, event loop, sandbox interfaces
+│   └── nodejs/               # Node.js compat runtime (`New`) + stdlib modules
 ├── cmd/orbital/              # CLI entry point
 ├── examples/                 # Usage examples
 ├── deps/v8/                  # Built V8 output per platform (gitignored)
@@ -343,9 +343,9 @@ exclude `v8-build/` and `examples/` (which contain multi-`main` demo packages).
 
 ## Adding a Node.js module
 
-1. Create `internal/nodejs/<module>/`
+1. Create `pkg/nodejs/<module>/`
 2. Implement `runtime.Module` (`Name()`, `Register()`)
-3. Register in `cmd/orbital/main.go` for CLI support
+3. Register it in `pkg/nodejs/nodejs.go` (`defaultModules`) so `nodejs.New` and the CLI pick it up
 4. Add tests in `<module>_test.go`
 
 ## CI

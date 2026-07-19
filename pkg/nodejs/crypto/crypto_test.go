@@ -3,7 +3,7 @@ package crypto
 import (
 	"testing"
 
-	"proto.zip/studio/orbital/internal/nodejs/buffer"
+	"proto.zip/studio/orbital/pkg/nodejs/buffer"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 

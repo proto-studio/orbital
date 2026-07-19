@@ -32,9 +32,10 @@ import (
 var loaderHooksJS string
 
 // LoaderRuntimeProvider builds a fully-configured runtime for the isolated
-// loader realm. It is set by the command layer to the same builder used for the
-// application runtime (and for worker threads), so the loader realm has a real
-// require + builtins and can load hook modules and their dependencies.
+// loader realm. It is set by nodejs.New (or the embedder) to the same builder
+// used for the application runtime (and for worker threads), so the loader
+// realm has a real require + builtins and can load hook modules and their
+// dependencies.
 var LoaderRuntimeProvider func() (*runtime.Runtime, error)
 
 // maxHookTicks bounds how long Go will pump the loader realm waiting for a hook

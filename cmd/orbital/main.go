@@ -12,47 +12,8 @@ import (
 
 	"github.com/chzyer/readline"
 	"golang.org/x/term"
-	"proto.zip/studio/orbital/internal/nodejs/abort"
-	"proto.zip/studio/orbital/internal/nodejs/assert"
-	"proto.zip/studio/orbital/internal/nodejs/async_hooks"
-	"proto.zip/studio/orbital/internal/nodejs/buffer"
-	"proto.zip/studio/orbital/internal/nodejs/child_process"
-	"proto.zip/studio/orbital/internal/nodejs/console"
-	"proto.zip/studio/orbital/internal/nodejs/crypto"
-	"proto.zip/studio/orbital/internal/nodejs/dgram"
-	"proto.zip/studio/orbital/internal/nodejs/diagnostics_channel"
-	"proto.zip/studio/orbital/internal/nodejs/dns"
-	"proto.zip/studio/orbital/internal/nodejs/domain"
-	"proto.zip/studio/orbital/internal/nodejs/esm"
-	"proto.zip/studio/orbital/internal/nodejs/events"
-	"proto.zip/studio/orbital/internal/nodejs/fetch"
-	"proto.zip/studio/orbital/internal/nodejs/fs"
-	"proto.zip/studio/orbital/internal/nodejs/http"
-	"proto.zip/studio/orbital/internal/nodejs/http2"
-	"proto.zip/studio/orbital/internal/nodejs/https"
-	"proto.zip/studio/orbital/internal/nodejs/module"
-	"proto.zip/studio/orbital/internal/nodejs/net"
-	orbitalos "proto.zip/studio/orbital/internal/nodejs/os"
-	"proto.zip/studio/orbital/internal/nodejs/path"
-	"proto.zip/studio/orbital/internal/nodejs/perf_hooks"
-	"proto.zip/studio/orbital/internal/nodejs/process"
-	"proto.zip/studio/orbital/internal/nodejs/punycode"
-	"proto.zip/studio/orbital/internal/nodejs/querystring"
-	readlinemod "proto.zip/studio/orbital/internal/nodejs/readline"
-	replmod "proto.zip/studio/orbital/internal/nodejs/repl"
-	"proto.zip/studio/orbital/internal/nodejs/stream"
-	"proto.zip/studio/orbital/internal/nodejs/string_decoder"
-	"proto.zip/studio/orbital/internal/nodejs/sys"
-	"proto.zip/studio/orbital/internal/nodejs/test"
-	"proto.zip/studio/orbital/internal/nodejs/timers"
-	"proto.zip/studio/orbital/internal/nodejs/tls"
-	"proto.zip/studio/orbital/internal/nodejs/url"
-	"proto.zip/studio/orbital/internal/nodejs/util"
-	"proto.zip/studio/orbital/internal/nodejs/webcrypto"
-	"proto.zip/studio/orbital/internal/nodejs/webstream"
-	"proto.zip/studio/orbital/internal/nodejs/tty"
-	"proto.zip/studio/orbital/internal/nodejs/worker_threads"
-	"proto.zip/studio/orbital/internal/nodejs/zlib"
+	"proto.zip/studio/orbital/pkg/nodejs"
+	"proto.zip/studio/orbital/pkg/nodejs/esm"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
@@ -476,22 +437,6 @@ func nodeOptionArgs() []string {
 }
 
 func createRuntime() (*runtime.Runtime, error) {
-	// Workers spawn their own fully-configured runtime via this same builder.
-	// Set the provider here (idempotent) so it is available before any Worker is
-	// constructed on the parent runtime.
-	worker_threads.RuntimeProvider = createRuntime
-
-	// The ESM loader realm (module.register / --import hooks) also uses a fully
-	// provisioned runtime. createRuntime reassigns the package-level esmLoader as
-	// it builds one, so save/restore it here to keep the application's loader as
-	// the process-wide entry loader.
-	esm.LoaderRuntimeProvider = func() (*runtime.Runtime, error) {
-		saved := esmLoader
-		lrt, err := createRuntime()
-		esmLoader = saved
-		return lrt, err
-	}
-
 	cfg := runtime.DefaultConfig()
 
 	// Set up filesystem with optional sandboxing
@@ -541,67 +486,12 @@ func createRuntime() (*runtime.Runtime, error) {
 		}
 	}
 
-	rt, err := runtime.New(cfg)
+	inst, err := nodejs.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create ESM loader
-	esmLoader = esm.New()
-
-	// Register modules (order matters - module system must be last)
-	modules := []runtime.Module{
-		abort.New(), // AbortController/AbortSignal globals - early for other modules
-		console.New(),
-		timers.New(),
-		events.New(),
-		process.New(),
-		fs.New(),
-		path.New(),
-		buffer.New(),
-		stream.New(),
-		webstream.New(), // Web Streams API
-		url.New(),
-		orbitalos.New(),
-		util.New(),
-		crypto.New(),
-		webcrypto.New(), // Web Crypto API (must come after crypto)
-		net.New(),       // TCP/IPC sockets
-		dgram.New(),     // UDP sockets
-		tls.New(),       // TLS/SSL (must come after net)
-		http.New(),
-		https.New(), // Must come after http
-		http2.New(), // HTTP/2 (must come after tls)
-		string_decoder.New(),
-		querystring.New(),
-		assert.New(),
-		zlib.New(),
-		tty.New(),            // Terminal helpers (must come after process)
-		async_hooks.New(),    // AsyncLocalStorage / AsyncResource (must come after timers/process)
-		worker_threads.New(), // Isolate-backed workers (must come after events)
-		dns.New(),
-		readlinemod.New(),
-		fetch.New(),               // Web Fetch API
-		perf_hooks.New(),          // Performance hooks
-		punycode.New(),            // Punycode (deprecated)
-		sys.New(),                 // Sys (deprecated, must come after util)
-		diagnostics_channel.New(), // Diagnostics channel
-		domain.New(),              // Domain (deprecated, must come after events)
-		replmod.New(),             // REPL module (must come after events and util)
-		test.New(),                // Test runner (must come after events)
-		child_process.New(),       // Child process spawning
-		esmLoader,                 // ES Module system
-		module.New(),              // CommonJS module system - must be last
-	}
-
-	for _, mod := range modules {
-		if err := rt.RegisterModule(mod); err != nil {
-			rt.Dispose()
-			return nil, fmt.Errorf("failed to register %s module: %w", mod.Name(), err)
-		}
-	}
-
-	return rt, nil
+	esmLoader = inst.ESM
+	return inst.Runtime, nil
 }
 
 func runFile(filename string) error {

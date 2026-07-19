@@ -171,6 +171,15 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 		return "node:" + bare, nil
 	}
 
+	// Native Go modules registered via Runtime.RegisterNativeModule.
+	nativeName := spec
+	if strings.HasPrefix(nativeName, "native:") {
+		nativeName = nativeName[len("native:"):]
+	}
+	if _, ok := e.rt.GetNativeModule(nativeName); ok {
+		return "native:" + nativeName, nil
+	}
+
 	dir := e.referrerDir(referrer)
 	var abs string
 	switch {
@@ -382,7 +391,7 @@ func hasSubpathKeys(m map[string]interface{}) bool {
 // loadURL reads a resolved url and returns its raw source + Node "format"
 // ("builtin"|"json"|"commonjs"|"module").
 func (e *ESM) loadURL(url string) (source, format string, err error) {
-	if strings.HasPrefix(url, "node:") {
+	if strings.HasPrefix(url, "node:") || strings.HasPrefix(url, "native:") {
 		return "", "builtin", nil
 	}
 	switch {
@@ -425,6 +434,7 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 	switch format {
 	case "builtin":
 		bare := strings.TrimPrefix(url, "node:")
+		bare = strings.TrimPrefix(bare, "native:")
 		return e.cjsWrapper(bare)
 	case "commonjs":
 		return e.cjsWrapper(url)

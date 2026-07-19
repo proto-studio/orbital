@@ -23,9 +23,9 @@ import (
 //go:embed worker_threads.js
 var workerThreadsJS string
 
-// RuntimeProvider creates a fresh, fully-configured runtime for a worker. The
-// CLI injects this because it owns the module-registration list. When nil,
-// constructing a Worker throws (workers are unavailable).
+// RuntimeProvider creates a fresh, fully-configured runtime for a worker.
+// nodejs.New installs this (embedders may override). When nil, constructing a
+// Worker throws (workers are unavailable).
 var RuntimeProvider func() (*goruntime.Runtime, error)
 
 // wtEvent is a worker->parent event carried over a Go channel.

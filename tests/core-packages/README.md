@@ -136,7 +136,7 @@ the `$CORE_PKG_DIR` env var (the absolute path to this directory). Currently:
   test the exact ESM artifacts npm ships.
 - `support/jose-smoke.mjs` — drives **jose** on Orbital across the full JOSE
   surface (JWS/JWT/JWE/JWK, 45 checks) to exercise Orbital's native Go WebCrypto
-  (`internal/nodejs/webcrypto/subtle.go`): RSA/ECDSA/EdDSA signatures, AES-GCM/CBC
+  (`pkg/nodejs/webcrypto/subtle.go`): RSA/ECDSA/EdDSA signatures, AES-GCM/CBC
   content encryption, AES-KW/RSA-OAEP/ECDH-ES/PBES2 key management, JWK
   import/export + thumbprints, and tamper rejection.
 
@@ -202,14 +202,14 @@ Real Orbital gaps this surfaced (now fixed):
   with boolean props but no `isFile()`/`isDirectory()` **methods** (only the
   promises path had them), so `tsc` threw `stat.isFile is not a function`. The fs
   layer now attaches the full Stats method set across the sync/callback/promise
-  APIs (`internal/nodejs/fs/fs_setup.js`), and `readdirSync(..., {
+  APIs (`pkg/nodejs/fs/fs_setup.js`), and `readdirSync(..., {
   withFileTypes: true })` returns `Dirent`-like objects with the same predicates.
 - **`fs.realpathSync` / `fs.lstatSync`** were missing entirely; added (built on
   the existing primitives) so the compiler host can canonicalize/stat paths.
 - **Synchronous fd API.** `tsc` emits output via
   `openSync`/`writeSync`/`closeSync` (not `writeFileSync`). Orbital had none of
   these, so emit failed with `openSync is not a function`. They are now backed by
-  a real file-descriptor table in Go (`internal/nodejs/fs/fs.go`), along with
+  a real file-descriptor table in Go (`pkg/nodejs/fs/fs.go`), along with
   `readSync`/`fstatSync`. This also added `Context.Throw` to the V8 binding so
   these calls raise proper JS exceptions.
 
@@ -232,12 +232,12 @@ Real Orbital gaps this surfaced (now fixed):
   `https.get({ hostname, path })`) built an `http://host:443` URL because the
   scheme was only forced when a `protocol` was already present. The `https`
   module now pins the scheme to `https:` and defaults the port to `443` for the
-  options form (`internal/nodejs/https/https.js`). (axios itself already worked
+  options form (`pkg/nodejs/https/https.js`). (axios itself already worked
   because it passes a full URL; this fixes the common raw-`https` call pattern.)
 - **`http.createServer` was a non-functional placeholder** (it even referenced an
   undefined `runtime` global and threw). While chasing axios, `http.createServer`
   was replaced with a real **HTTP/1.1 server** built on Orbital's existing `net`
-  TCP server (`internal/nodejs/http/http.go`): request-line/header parsing,
+  TCP server (`pkg/nodejs/http/http.go`): request-line/header parsing,
   `Content-Length` and chunked request bodies, a streaming `IncomingMessage`, and
   a `ServerResponse` with `writeHead`/`setHeader`/`write`/`end`, correct
   `Content-Length`, and keep-alive/close handling.
@@ -277,23 +277,23 @@ Real Orbital gaps this surfaced (now fixed):
   became `JSON.parse(undefined)` → `SyntaxError` and crashed. `readFileSync` now
   raises a proper Node-style error (`code: 'ENOENT'`, `errno`, `syscall`, `path`)
   when a read fails, matching Node and the catchable behavior libraries expect
-  (`internal/nodejs/fs/fs_setup.js`).
+  (`pkg/nodejs/fs/fs_setup.js`).
 - **`util.format()` with no arguments returned `'undefined'`** instead of `''`.
   yargs' logger emits a blank separator line as `logger.error()` (zero args), and
   the suite captures it via `util.format(...msg)`; the stray `'undefined'` line
   broke ~37 `usage`/`validation` assertions. `format()`/`formatWithOptions()` now
   return `''` when called with no format arguments, matching Node
-  (`internal/nodejs/util/util.js`).
+  (`pkg/nodejs/util/util.js`).
 - **`require.cache` was a `Map`, not a plain object.** Node exposes it (and
   `Module._cache`) as a null-prototype object keyed by resolved filename, so
   `delete require.cache[require.resolve(id)]` and `id in require.cache` work —
   yargs' `clearRequireCache` and countless hot-reload/test patterns rely on this.
   Against a Map both are silent no-ops (the real cache was never busted). The
   cache is now a real object and cache-busting forces re-execution
-  (`internal/nodejs/module/module.js`).
+  (`pkg/nodejs/module/module.js`).
 - **`path.normalize` stripped trailing slashes.** `normalize('/tmp/')` returned
   `'/tmp'`; Node preserves the separator (`'/tmp/'`). Now fixed
-  (`internal/nodejs/path/path.go`), which keeps directory paths directory-shaped
+  (`pkg/nodejs/path/path.go`), which keeps directory paths directory-shaped
   for yargs' `normalize` option, static file servers, etc.
 - **Missing modules didn't produce a Node-shaped error.** `require.resolve` for an
   unresolvable request returned `null` (Node throws), and `require` of a missing
@@ -301,7 +301,7 @@ Real Orbital gaps this surfaced (now fixed):
   `err.code === 'MODULE_NOT_FOUND'` to treat an optional dependency as absent
   (yargs' config `extends` does exactly this). `require.resolve` now throws and
   both paths raise `Cannot find module 'x'` with `code: 'MODULE_NOT_FOUND'`
-  (`internal/nodejs/module/module.js`).
+  (`pkg/nodejs/module/module.js`).
 
 The 18 skipped specs (see `support/yargs-suite.sh` for the exact list) depend on
 capabilities Orbital does not emulate — none are yargs bugs:
@@ -357,31 +357,31 @@ Real Orbital gaps this surfaced (now fixed):
   bound asynchronously, but Node (and `supertest`) read `server.address().port`
   synchronously after `listen(0)`. Binding is now synchronous (only the
   `listening` event is deferred), and `address().family` reports `IPv4`/`IPv6`
-  (`internal/nodejs/net/net.{go,js}`).
+  (`pkg/nodejs/net/net.{go,js}`).
 - **`require('stream')` wasn't a callable constructor.** Node's stream module
   *is* the legacy `Stream` constructor; packages do `util.inherits(X, Stream)`
   (`send`) and `Stream.call(this)` (`superagent`). The export is now a callable
-  ES5 constructor with the stream classes attached (`internal/nodejs/stream/stream.js`).
+  ES5 constructor with the stream classes attached (`pkg/nodejs/stream/stream.js`).
 - **`require('process')` didn't resolve.** Node exposes `process` as a
   requireable builtin (superagent's `http2wrapper` uses it); added to the module
-  registry (`internal/nodejs/module/module.js`).
+  registry (`pkg/nodejs/module/module.js`).
 - **The HTTP client rejected non-string header values and never auto-flowed
   responses.** superagent sets `Content-Length` as a number (the native client
   unmarshals headers into `map[string]string`) and reads responses via
   `res.on('data')` without `resume()` (Node auto-flows on a `data` listener).
   Header values are now coerced to strings and the response `IncomingMessage`
-  auto-flows when a `data` listener is attached (`internal/nodejs/http/http.go`).
+  auto-flows when a `data` listener is attached (`pkg/nodejs/http/http.go`).
 - **Sockets didn't expose `readable`/`writable`.** `on-finished` (used by
   body-parser via raw-body) treats a request as already finished when
   `!req.socket.readable`, so `express.json`/`urlencoded`/etc. skipped reading the
   body and left `req.body` undefined. Public getters were added
-  (`internal/nodejs/net/net.js`).
+  (`pkg/nodejs/net/net.js`).
 - **Streaming file I/O and compression were missing.** `send` (behind
   `res.sendFile`/`express.static`) needs async `fs.stat`/`fs.access` and
   `fs.createReadStream` with byte-range support, and body-parser's gzip/deflate
   paths need streaming zlib. Both are now native: async fd stat/read/close plus a
-  chunk reader in Go (`internal/nodejs/fs/fs.go`) with a thin `Readable` glue, and
-  streaming gunzip/inflate/unzip over `io.Pipe` (`internal/nodejs/zlib/zlib.go`)
+  chunk reader in Go (`pkg/nodejs/fs/fs.go`) with a thin `Readable` glue, and
+  streaming gunzip/inflate/unzip over `io.Pipe` (`pkg/nodejs/zlib/zlib.go`)
   exposed as `stream.Transform`s. `fs.Stats` now also carries `Date` timestamps
   and the numeric fields (`ino`, `dev`, …) that `etag` requires.
 - **Byte integrity across the JS/Go boundary.** Request/response bodies, crypto
@@ -397,12 +397,12 @@ Real Orbital gaps this surfaced (now fixed):
   duplicate header lines the way Node's parser does (set-cookie stays an array,
   cookie joins with `"; "`, most others with `", "`), and the server no longer
   emits a `Content-Length` for 1xx/204/304 responses
-  (`internal/nodejs/http/http.go`).
+  (`pkg/nodejs/http/http.go`).
 - **`url.parse` mishandled backslashes and invalid host chars.** For special
   schemes the WHATWG rules treat `\` as `/`, a single leading slash is never a
   host, and a hostname is truncated at the first invalid label — all required so
   `res.location` can't be tricked into a redirect that bypasses allow-lists
-  (`internal/nodejs/url/url.js`).
+  (`pkg/nodejs/url/url.js`).
 
 The runner (`support/mocha-run.js`) also force-exits after the run (like
 `mocha --exit`) so suites that leave listening sockets open don't hang the
@@ -432,12 +432,12 @@ Real Orbital gaps this surfaced (now fixed):
 
 - **`queueMicrotask` was not a global.** React's SSR renderer defers work with the
   WHATWG `queueMicrotask(cb)` global, which Orbital didn't expose. It's now backed
-  by the event loop's microtask queue (`internal/nodejs/timers/timers.go`).
+  by the event loop's microtask queue (`pkg/nodejs/timers/timers.go`).
 - **`TextEncoder.prototype.encodeInto` was missing.** The streaming renderer
   UTF-8-encodes chunks straight into a preallocated `Uint8Array` via `encodeInto`,
   which Orbital's `TextEncoder` polyfill lacked (it only had `encode`). A
   spec-compliant `encodeInto` (whole-code-point writes, `{ read, written }`
-  result) was added (`internal/nodejs/buffer/buffer.js`).
+  result) was added (`pkg/nodejs/buffer/buffer.js`).
 
 ### Example: jose (encryption / signing)
 
@@ -470,7 +470,7 @@ interoperable with Node.js jose in both directions** during development.
 
 Before this, Orbital's `crypto.subtle` was a JS stub that only implemented
 `digest` and HMAC. It is now a **native Go-backed `SubtleCrypto`**
-(`internal/nodejs/webcrypto/subtle.go`): key generation, sign/verify,
+(`pkg/nodejs/webcrypto/subtle.go`): key generation, sign/verify,
 encrypt/decrypt and `deriveBits` are implemented with Go's standard library —
 `crypto/rsa` (PKCS1v15, PSS, OAEP), `crypto/ecdsa` (raw r‖s signatures),
 `crypto/ecdh` (P-256/384/521 + X25519 ECDH), `crypto/ed25519`, `crypto/aes` with
@@ -483,7 +483,7 @@ Real Orbital gaps this surfaced (now fixed):
 - **`structuredClone` was not a global.** jose deep-clones JWT claim sets with the
   WHATWG `structuredClone` global (Node ≥ 17), which Orbital didn't expose. A
   structured-clone implementation (dates, regexps, Map/Set, typed arrays, cyclic
-  refs) was added (`internal/nodejs/buffer/buffer.js`).
+  refs) was added (`pkg/nodejs/buffer/buffer.js`).
 - **A binary-unsafe hash path.** Hash inputs crossed the crypto module's boundary
   as NUL-terminated C strings, so any data containing a zero byte was **truncated
   at the first NUL** — invisible for ASCII (etags) but corrupting for binary. It
@@ -511,7 +511,7 @@ fd 1. All subsequent `process.stdout` writes then failed with `EBADF` and were
 silently dropped (`write()` errors are ignored). It only reproduced under
 aggressive GC because that's what makes the finalizer run promptly.
 
-The fix (`internal/nodejs/tty/tty.go`) inspects the descriptor with a raw
+The fix (`pkg/nodejs/tty/tty.go`) inspects the descriptor with a raw
 `syscall.Fstat` instead — no `*os.File`, no finalizer, no ownership — so borrowed
 fds are never closed. With that in place Go's GC runs completely normally; the
 runtime does **not** disable, throttle, or otherwise manipulate the collector.

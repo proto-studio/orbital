@@ -3,7 +3,7 @@
 // This demonstrates how to create and register a native Go module
 // that can be required from JavaScript.
 //
-// Run with: go run examples/native/main.go
+// Run with: go run ./examples/native/modules
 package main
 
 import (
@@ -11,47 +11,19 @@ import (
 	"math"
 	"os"
 
-	"proto.zip/studio/orbital/internal/nodejs/buffer"
-	"proto.zip/studio/orbital/internal/nodejs/console"
-	"proto.zip/studio/orbital/internal/nodejs/events"
-	"proto.zip/studio/orbital/internal/nodejs/fs"
-	"proto.zip/studio/orbital/internal/nodejs/module"
-	gnodeos "proto.zip/studio/orbital/internal/nodejs/os"
-	"proto.zip/studio/orbital/internal/nodejs/path"
-	"proto.zip/studio/orbital/internal/nodejs/process"
-	"proto.zip/studio/orbital/internal/nodejs/timers"
+	"proto.zip/studio/orbital/pkg/nodejs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
 func main() {
-	// Create runtime with default config
-	rt, err := runtime.New(nil)
+	inst, err := nodejs.New(runtime.DefaultConfig())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create runtime: %v\n", err)
 		os.Exit(1)
 	}
+	rt := inst.Runtime
 	defer rt.Dispose()
-
-	// Register standard Node.js modules
-	modules := []runtime.Module{
-		console.New(),
-		timers.New(),
-		events.New(),
-		process.New(),
-		fs.New(),
-		path.New(),
-		buffer.New(),
-		gnodeos.New(),
-		module.New(),
-	}
-
-	for _, mod := range modules {
-		if err := rt.RegisterModule(mod); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to register module: %v\n", err)
-			os.Exit(1)
-		}
-	}
 
 	// Create and register a native "hello" module
 	if err := registerHelloModule(rt); err != nil {
@@ -67,27 +39,27 @@ func main() {
 
 	// Run JavaScript that uses our native modules
 	script := `
-		runtime.log('=== Native Go Module Demo ===\n');
+		console.log('=== Native Go Module Demo ===\n');
 
 		// Using the hello module
 		const hello = require('hello');
-		runtime.log('hello.greet("World"):', hello.greet('World'));
-		runtime.log('hello.version:', hello.version);
-		runtime.log('hello.config:', JSON.stringify(hello.config));
+		console.log('hello.greet("World"):', hello.greet('World'));
+		console.log('hello.version:', hello.version);
+		console.log('hello.config:', JSON.stringify(hello.config));
 
-		runtime.log('');
+		console.log('');
 
 		// Using the mathext module
 		const mathext = require('mathext');
-		runtime.log('mathext.factorial(5):', mathext.factorial(5));
-		runtime.log('mathext.fibonacci(10):', mathext.fibonacci(10));
-		runtime.log('mathext.isPrime(17):', mathext.isPrime(17));
-		runtime.log('mathext.isPrime(18):', mathext.isPrime(18));
-		runtime.log('mathext.gcd(48, 18):', mathext.gcd(48, 18));
-		runtime.log('mathext.PI:', mathext.PI);
-		runtime.log('mathext.E:', mathext.E);
+		console.log('mathext.factorial(5):', mathext.factorial(5));
+		console.log('mathext.fibonacci(10):', mathext.fibonacci(10));
+		console.log('mathext.isPrime(17):', mathext.isPrime(17));
+		console.log('mathext.isPrime(18):', mathext.isPrime(18));
+		console.log('mathext.gcd(48, 18):', mathext.gcd(48, 18));
+		console.log('mathext.PI:', mathext.PI);
+		console.log('mathext.E:', mathext.E);
 
-		runtime.log('\n=== Demo Complete ===');
+		console.log('\n=== Demo Complete ===');
 	`
 
 	_, err = rt.Run(script, "demo.js")

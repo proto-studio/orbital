@@ -503,7 +503,7 @@ test: check-v8-link
 
 .PHONY: coverage
 coverage: check-v8-link
-	$(GO) test -coverpkg=./pkg/...,./internal/... -coverprofile=coverage.out ./pkg/... ./internal/nodejs/...
+	$(GO) test -coverpkg=./pkg/...,./internal/... -coverprofile=coverage.out ./pkg/... ./internal/...
 	$(GO) tool cover -func coverage.out
 
 .PHONY: coverage-html

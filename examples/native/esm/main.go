@@ -2,59 +2,26 @@
 //
 // This demonstrates using native Go modules from ES modules via import.
 //
-// Run with: go run examples/native/esm-demo.go
+// Run with: go run ./examples/native/esm
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"proto.zip/studio/orbital/internal/nodejs/buffer"
-	"proto.zip/studio/orbital/internal/nodejs/console"
-	"proto.zip/studio/orbital/internal/nodejs/esm"
-	"proto.zip/studio/orbital/internal/nodejs/events"
-	"proto.zip/studio/orbital/internal/nodejs/fs"
-	"proto.zip/studio/orbital/internal/nodejs/module"
-	gnodeos "proto.zip/studio/orbital/internal/nodejs/os"
-	"proto.zip/studio/orbital/internal/nodejs/path"
-	"proto.zip/studio/orbital/internal/nodejs/process"
-	"proto.zip/studio/orbital/internal/nodejs/timers"
+	"proto.zip/studio/orbital/pkg/nodejs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
 func main() {
-	// Create runtime
-	rt, err := runtime.New(nil)
+	inst, err := nodejs.New(runtime.DefaultConfig())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create runtime: %v\n", err)
 		os.Exit(1)
 	}
+	rt := inst.Runtime
 	defer rt.Dispose()
-
-	// Create ESM loader
-	esmLoader := esm.New()
-
-	// Register standard modules
-	modules := []runtime.Module{
-		console.New(),
-		timers.New(),
-		events.New(),
-		process.New(),
-		fs.New(),
-		path.New(),
-		buffer.New(),
-		gnodeos.New(),
-		esmLoader,
-		module.New(),
-	}
-
-	for _, mod := range modules {
-		if err := rt.RegisterModule(mod); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to register module: %v\n", err)
-			os.Exit(1)
-		}
-	}
 
 	// Register a native "database" module (simulated)
 	if err := registerDatabaseModule(rt); err != nil {
@@ -64,29 +31,27 @@ func main() {
 
 	// Run ES module code that imports the native module
 	script := `
-		// This is ES Module code
-		runtime.log('=== Native Go Modules with ESM ===\\n');
-
-		// Import native Go module
 		import database from 'database';
 
-		runtime.log('Connecting to database...');
+		console.log('=== Native Go Modules with ESM ===\n');
+
+		console.log('Connecting to database...');
 		const result = database.connect('localhost:5432');
-		runtime.log('Connection result:', result);
+		console.log('Connection result:', result);
 
-		runtime.log('');
-		runtime.log('Querying users table...');
+		console.log('');
+		console.log('Querying users table...');
 		const users = database.query('SELECT * FROM users');
-		runtime.log('Users:', JSON.stringify(users, null, 2));
+		console.log('Users:', JSON.stringify(users, null, 2));
 
-		runtime.log('');
-		runtime.log('Database version:', database.version);
-		runtime.log('Supported drivers:', database.drivers);
+		console.log('');
+		console.log('Database version:', database.version);
+		console.log('Supported drivers:', database.drivers);
 
-		runtime.log('\\n=== ESM Native Module Demo Complete ===');
+		console.log('\n=== ESM Native Module Demo Complete ===');
 	`
 
-	_, err = esmLoader.RunModule(script, "esm-demo.mjs")
+	_, err = inst.ESM.RunModule(script, "esm-demo.mjs")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Script error: %v\n", err)
 		os.Exit(1)
