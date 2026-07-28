@@ -550,14 +550,27 @@ func (p *Process) uptimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 func (p *Process) memoryUsageFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
+	obj, _ := ctx.NewObject()
+
+	// rss remains process-wide OS memory (Go runtime view). Heap fields must
+	// reflect this isolate's V8 heap so LRU / per-function budgeting is accurate.
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-
-	obj, _ := ctx.NewObject()
 	obj.Set("rss", ctx.NewNumber(float64(m.Sys)))
-	obj.Set("heapTotal", ctx.NewNumber(float64(m.HeapSys)))
-	obj.Set("heapUsed", ctx.NewNumber(float64(m.HeapAlloc)))
-	obj.Set("external", ctx.NewNumber(0))
+
+	heapTotal, heapUsed, external := 0.0, 0.0, 0.0
+	if iso := p.rt.Isolate(); iso != nil {
+		if stats, err := iso.GetHeapStatistics(); err == nil {
+			heapTotal = float64(stats.TotalHeapSize)
+			heapUsed = float64(stats.UsedHeapSize)
+			external = float64(stats.ExternalMemory)
+		}
+	}
+	obj.Set("heapTotal", ctx.NewNumber(heapTotal))
+	obj.Set("heapUsed", ctx.NewNumber(heapUsed))
+	obj.Set("external", ctx.NewNumber(external))
+	// arrayBuffers are a Node-specific subset of external; we do not track them
+	// separately yet, so report 0 rather than double-count external.
 	obj.Set("arrayBuffers", ctx.NewNumber(0))
 	return obj
 }

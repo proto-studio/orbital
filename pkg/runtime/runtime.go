@@ -71,6 +71,9 @@ type Config struct {
 	DocumentRoot string
 	// Timeout is the maximum execution time. 0 means no timeout.
 	Timeout time.Duration
+	// IsolateOptions are create-time V8 isolate options (heap limits, etc.).
+	// Heap limits cannot be changed after the isolate is created.
+	IsolateOptions v8.IsolateOptions
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -94,7 +97,7 @@ func New(cfg *Config) (*Runtime, error) {
 		cfg = DefaultConfig()
 	}
 
-	iso, err := v8.NewIsolate()
+	iso, err := v8.NewIsolateWithOptions(cfg.IsolateOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
@@ -183,8 +186,11 @@ func New(cfg *Config) (*Runtime, error) {
 		execController:  execController,
 	}
 
-	// Set up kill callback to stop the event loop and cancel all tasks
+	// Set up kill callback to stop the event loop, cancel tasks, and terminate
+	// any in-flight V8 JavaScript so runaway scripts / OOM recoveries stop
+	// without disposing the whole process.
 	execController.OnKill(func() {
+		iso.TerminateExecution()
 		rt.eventLoop.CancelAllTimers()
 		rt.eventLoop.ClearAllMicrotasks()
 		rt.eventLoop.Stop()

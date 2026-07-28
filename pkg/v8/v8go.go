@@ -48,24 +48,14 @@ func Dispose() {
 // Isolate represents an isolated instance of the V8 engine.
 // Each isolate has its own heap and is completely independent.
 type Isolate struct {
-	ptr unsafe.Pointer
-	mu  sync.Mutex
+	ptr             unsafe.Pointer
+	mu              sync.Mutex
+	nearHeapLimitID int // Go registry id for AddNearHeapLimitCallback; 0 = none
 }
 
-// NewIsolate creates a new V8 isolate.
+// NewIsolate creates a new V8 isolate with default create params.
 func NewIsolate() (*Isolate, error) {
-	if err := Initialize(); err != nil {
-		return nil, err
-	}
-
-	ptr := C.v8go_isolate_new()
-	if ptr == nil {
-		return nil, errors.New("failed to create V8 isolate")
-	}
-
-	iso := &Isolate{ptr: ptr}
-	runtime.SetFinalizer(iso, (*Isolate).release)
-	return iso, nil
+	return NewIsolateWithOptions(IsolateOptions{})
 }
 
 // Dispose releases the isolate resources.
@@ -77,6 +67,10 @@ func (i *Isolate) Dispose() {
 
 func (i *Isolate) release() {
 	if i.ptr != nil {
+		if i.nearHeapLimitID != 0 {
+			unregisterNearHeapLimitCallback(i.nearHeapLimitID)
+			i.nearHeapLimitID = 0
+		}
 		C.v8go_isolate_dispose(i.ptr)
 		i.ptr = nil
 	}

@@ -2,6 +2,8 @@
 #ifndef V8GO_H
 #define V8GO_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -10,9 +12,75 @@ extern "C" {
 void v8go_init();
 void v8go_dispose();
 
+// Isolate creation parameters. Zero means "use V8 defaults" for each field.
+// Prefer max_heap_size_in_bytes (ConfigureDefaultsFromHeapSize) for a hard
+// isolate ceiling; max_old_generation_size_in_bytes is an alternative when you
+// only want to cap the old generation. Heap limits are create-time only.
+typedef struct v8go_isolate_create_params {
+    size_t initial_heap_size_in_bytes;
+    size_t max_heap_size_in_bytes;
+    size_t max_old_generation_size_in_bytes;
+} v8go_isolate_create_params;
+
+typedef struct v8go_heap_statistics {
+    size_t total_heap_size;
+    size_t total_heap_size_executable;
+    size_t total_physical_size;
+    size_t total_available_size;
+    size_t total_global_handles_size;
+    size_t used_global_handles_size;
+    size_t used_heap_size;
+    size_t heap_size_limit;
+    size_t malloced_memory;
+    size_t external_memory;
+    size_t peak_malloced_memory;
+    size_t number_of_native_contexts;
+    size_t number_of_detached_contexts;
+    unsigned long long total_allocated_bytes;
+} v8go_heap_statistics;
+
+typedef struct v8go_heap_space_statistics {
+    const char* space_name;  // owned by V8; valid until next GC / isolate dispose
+    size_t space_size;
+    size_t space_used_size;
+    size_t space_available_size;
+    size_t physical_space_size;
+} v8go_heap_space_statistics;
+
+// Memory pressure levels (match v8::MemoryPressureLevel).
+enum {
+    V8GO_MEMORY_PRESSURE_NONE = 0,
+    V8GO_MEMORY_PRESSURE_MODERATE = 1,
+    V8GO_MEMORY_PRESSURE_CRITICAL = 2
+};
+
+// Garbage collection types for RequestGarbageCollectionForTesting.
+enum {
+    V8GO_GC_FULL = 0,
+    V8GO_GC_MINOR = 1
+};
+
 // Isolate operations
 void* v8go_isolate_new();
+void* v8go_isolate_new_with_params(const v8go_isolate_create_params* params);
 void v8go_isolate_dispose(void* isolate);
+
+void v8go_isolate_get_heap_statistics(void* isolate, v8go_heap_statistics* out);
+size_t v8go_isolate_number_of_heap_spaces(void* isolate);
+int v8go_isolate_get_heap_space_statistics(void* isolate, size_t index,
+                                           v8go_heap_space_statistics* out);
+
+void v8go_isolate_add_near_heap_limit_callback(void* isolate, int callback_id);
+void v8go_isolate_remove_near_heap_limit_callback(void* isolate, size_t heap_limit);
+
+void v8go_isolate_terminate_execution(void* isolate);
+void v8go_isolate_cancel_terminate_execution(void* isolate);
+int v8go_isolate_is_execution_terminating(void* isolate);
+
+void v8go_isolate_memory_pressure_notification(void* isolate, int level);
+long long v8go_isolate_adjust_amount_of_external_allocated_memory(void* isolate,
+                                                                  long long change_in_bytes);
+void v8go_isolate_request_garbage_collection_for_testing(void* isolate, int type);
 
 // Context operations
 void* v8go_context_new(void* isolate);

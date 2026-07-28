@@ -10,7 +10,9 @@
 #include "v8go_exports.h"
 
 #include <v8.h>
+#include <v8-external-memory-accounter.h>
 #include <libplatform/libplatform.h>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <unordered_map>
@@ -93,40 +95,234 @@ static Local<Context> getLocalContext(void* context_ptr) {
 
 extern "C" {
 
+// Per-isolate state stashed in Isolate::SetData(kIsolateStateSlot). Owns the
+// ArrayBuffer allocator (V8 does not free it on Dispose) and tracks the Go
+// near-heap-limit callback id for RemoveNearHeapLimitCallback.
+struct IsolateState {
+    ArrayBuffer::Allocator* allocator = nullptr;
+    int near_heap_limit_cb_id = -1;
+    // Prefer ExternalMemoryAccounter over the deprecated
+    // Isolate::AdjustAmountOfExternalAllocatedMemory (sandbox-safe).
+    ExternalMemoryAccounter external_memory;
+};
+
+static const int kIsolateStateSlot = 0;
+
+static IsolateState* isolateState(Isolate* isolate) {
+    if (!isolate) return nullptr;
+    return static_cast<IsolateState*>(isolate->GetData(kIsolateStateSlot));
+}
+
+static size_t nearHeapLimitThunk(void* data, size_t current_heap_limit,
+                                 size_t initial_heap_limit) {
+    int callback_id = static_cast<int>(reinterpret_cast<intptr_t>(data));
+    return goNearHeapLimitCallback(callback_id, current_heap_limit,
+                                   initial_heap_limit);
+}
+
 void v8go_init() {
     if (g_initialized) return;
-    
+
+    // Required for Isolate::RequestGarbageCollectionForTesting. Must be set
+    // before Initialize(). Production GC nudging should use
+    // MemoryPressureNotification instead.
+    V8::SetFlagsFromString("--expose_gc");
+
     V8::InitializeICUDefaultLocation("");
     V8::InitializeExternalStartupData("");
     g_platform = v8::platform::NewDefaultPlatform();
     V8::InitializePlatform(g_platform.get());
     V8::Initialize();
-    
+
     g_initialized = true;
 }
 
 void v8go_dispose() {
     if (!g_initialized) return;
-    
+
     V8::Dispose();
     V8::DisposePlatform();
     g_platform.reset();
-    
+
     g_initialized = false;
 }
 
 void* v8go_isolate_new() {
+    return v8go_isolate_new_with_params(nullptr);
+}
+
+void* v8go_isolate_new_with_params(const v8go_isolate_create_params* params) {
     Isolate::CreateParams create_params;
-    create_params.array_buffer_allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
-    
+    ArrayBuffer::Allocator* allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
+    create_params.array_buffer_allocator = allocator;
+
+    if (params) {
+        // ConfigureDefaultsFromHeapSize sets both young+old defaults from a
+        // total heap budget. Prefer it when a hard isolate ceiling is desired.
+        if (params->max_heap_size_in_bytes > 0 ||
+            params->initial_heap_size_in_bytes > 0) {
+            create_params.constraints.ConfigureDefaultsFromHeapSize(
+                params->initial_heap_size_in_bytes,
+                params->max_heap_size_in_bytes);
+        }
+        if (params->max_old_generation_size_in_bytes > 0) {
+            create_params.constraints.set_max_old_generation_size_in_bytes(
+                params->max_old_generation_size_in_bytes);
+        }
+    }
+
     Isolate* isolate = Isolate::New(create_params);
+    if (!isolate) {
+        delete allocator;
+        return nullptr;
+    }
+
+    IsolateState* state = new IsolateState();
+    state->allocator = allocator;
+    isolate->SetData(kIsolateStateSlot, state);
     return isolate;
 }
 
 void v8go_isolate_dispose(void* ptr) {
     if (!ptr) return;
     Isolate* isolate = static_cast<Isolate*>(ptr);
+    IsolateState* state = isolateState(isolate);
+    isolate->SetData(kIsolateStateSlot, nullptr);
     isolate->Dispose();
+    if (state) {
+        delete state->allocator;
+        delete state;
+    }
+}
+
+void v8go_isolate_get_heap_statistics(void* ptr, v8go_heap_statistics* out) {
+    if (!ptr || !out) return;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HeapStatistics stats;
+    isolate->GetHeapStatistics(&stats);
+    out->total_heap_size = stats.total_heap_size();
+    out->total_heap_size_executable = stats.total_heap_size_executable();
+    out->total_physical_size = stats.total_physical_size();
+    out->total_available_size = stats.total_available_size();
+    out->total_global_handles_size = stats.total_global_handles_size();
+    out->used_global_handles_size = stats.used_global_handles_size();
+    out->used_heap_size = stats.used_heap_size();
+    out->heap_size_limit = stats.heap_size_limit();
+    out->malloced_memory = stats.malloced_memory();
+    out->external_memory = stats.external_memory();
+    out->peak_malloced_memory = stats.peak_malloced_memory();
+    out->number_of_native_contexts = stats.number_of_native_contexts();
+    out->number_of_detached_contexts = stats.number_of_detached_contexts();
+    out->total_allocated_bytes = stats.total_allocated_bytes();
+}
+
+size_t v8go_isolate_number_of_heap_spaces(void* ptr) {
+    if (!ptr) return 0;
+    return static_cast<Isolate*>(ptr)->NumberOfHeapSpaces();
+}
+
+int v8go_isolate_get_heap_space_statistics(void* ptr, size_t index,
+                                           v8go_heap_space_statistics* out) {
+    if (!ptr || !out) return 0;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    HeapSpaceStatistics stats;
+    if (!isolate->GetHeapSpaceStatistics(&stats, index)) {
+        return 0;
+    }
+    out->space_name = stats.space_name();
+    out->space_size = stats.space_size();
+    out->space_used_size = stats.space_used_size();
+    out->space_available_size = stats.space_available_size();
+    out->physical_space_size = stats.physical_space_size();
+    return 1;
+}
+
+void v8go_isolate_add_near_heap_limit_callback(void* ptr, int callback_id) {
+    if (!ptr) return;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    IsolateState* state = isolateState(isolate);
+    if (state) {
+        if (state->near_heap_limit_cb_id >= 0) {
+            isolate->RemoveNearHeapLimitCallback(nearHeapLimitThunk, 0);
+        }
+        state->near_heap_limit_cb_id = callback_id;
+    }
+    isolate->AddNearHeapLimitCallback(
+        nearHeapLimitThunk,
+        reinterpret_cast<void*>(static_cast<intptr_t>(callback_id)));
+}
+
+void v8go_isolate_remove_near_heap_limit_callback(void* ptr, size_t heap_limit) {
+    if (!ptr) return;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    IsolateState* state = isolateState(isolate);
+    isolate->RemoveNearHeapLimitCallback(nearHeapLimitThunk, heap_limit);
+    if (state) {
+        state->near_heap_limit_cb_id = -1;
+    }
+}
+
+void v8go_isolate_terminate_execution(void* ptr) {
+    if (!ptr) return;
+    static_cast<Isolate*>(ptr)->TerminateExecution();
+}
+
+void v8go_isolate_cancel_terminate_execution(void* ptr) {
+    if (!ptr) return;
+    static_cast<Isolate*>(ptr)->CancelTerminateExecution();
+}
+
+int v8go_isolate_is_execution_terminating(void* ptr) {
+    if (!ptr) return 0;
+    return static_cast<Isolate*>(ptr)->IsExecutionTerminating() ? 1 : 0;
+}
+
+void v8go_isolate_memory_pressure_notification(void* ptr, int level) {
+    if (!ptr) return;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    MemoryPressureLevel v8_level = MemoryPressureLevel::kNone;
+    switch (level) {
+        case V8GO_MEMORY_PRESSURE_MODERATE:
+            v8_level = MemoryPressureLevel::kModerate;
+            break;
+        case V8GO_MEMORY_PRESSURE_CRITICAL:
+            v8_level = MemoryPressureLevel::kCritical;
+            break;
+        default:
+            v8_level = MemoryPressureLevel::kNone;
+            break;
+    }
+    isolate->MemoryPressureNotification(v8_level);
+}
+
+long long v8go_isolate_adjust_amount_of_external_allocated_memory(
+    void* ptr, long long change_in_bytes) {
+    if (!ptr) return 0;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    // Prefer ExternalMemoryAccounter (sandbox-safe). Also keep a per-isolate
+    // accounter so outstanding bytes are tracked for dispose/checks.
+    IsolateState* state = isolateState(isolate);
+    if (state) {
+        state->external_memory.Update(isolate, change_in_bytes);
+    }
+    return ExternalMemoryAccounter::GetTotalAmountOfExternalAllocatedMemoryForTesting(
+        isolate);
+}
+
+void v8go_isolate_request_garbage_collection_for_testing(void* ptr, int type) {
+    if (!ptr) return;
+    Isolate* isolate = static_cast<Isolate*>(ptr);
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    Isolate::GarbageCollectionType v8_type =
+        (type == V8GO_GC_MINOR)
+            ? Isolate::kMinorGarbageCollection
+            : Isolate::kFullGarbageCollection;
+    isolate->RequestGarbageCollectionForTesting(v8_type);
 }
 
 void* v8go_context_new(void* isolate_ptr) {
@@ -223,6 +419,11 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
     MaybeLocal<Script> maybe_script = Script::Compile(context, source_str, &script_origin);
     
     if (maybe_script.IsEmpty()) {
+        if (try_catch.HasTerminated()) {
+            // Execution was terminated; leave *error unset so Go returns
+            // ErrExecutionTerminated rather than a bogus exception string.
+            return nullptr;
+        }
         if (try_catch.HasCaught()) {
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
@@ -234,6 +435,9 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
     MaybeLocal<Value> maybe_result = script->Run(context);
     
     if (maybe_result.IsEmpty()) {
+        if (try_catch.HasTerminated()) {
+            return nullptr;
+        }
         if (try_catch.HasCaught()) {
             String::Utf8Value exception(isolate, try_catch.Exception());
             String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
@@ -1006,13 +1210,16 @@ void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, 
     MaybeLocal<Value> maybe_result = func->Call(context, recv, argc, argc > 0 ? args.data() : nullptr);
     
     if (maybe_result.IsEmpty()) {
+        if (try_catch.HasTerminated()) {
+            return nullptr;
+        }
         if (try_catch.HasCaught()) {
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
         }
         return nullptr;
     }
-    
+
     ValueWrapper* wrapper = new ValueWrapper();
     wrapper->isolate = isolate;
     wrapper->value.Reset(isolate, maybe_result.ToLocalChecked());
