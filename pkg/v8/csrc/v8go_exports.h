@@ -10,6 +10,8 @@
 #ifndef V8GO_EXPORTS_H
 #define V8GO_EXPORTS_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,6 +19,10 @@ extern "C" {
 extern void* goCallbackHandler(void* ctx, int callbackID, void* info);
 extern int goModuleResolve(int resolverID, char* specifier, char* referrer,
                            char** sourceOut, char** nameOut);
+// Near-heap-limit: return the new heap limit in bytes. Typically bump slightly
+// so TerminateExecution can unwind without FatalProcessOutOfMemory.
+extern size_t goNearHeapLimitCallback(int callbackID, size_t currentHeapLimit,
+                                      size_t initialHeapLimit);
 
 #ifdef __cplusplus
 }

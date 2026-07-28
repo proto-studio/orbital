@@ -20,7 +20,7 @@ NUM_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4
 # and SOURCE_RUN_ID; the GitHub repo hosting the Releases is proto-studio/orbital.
 OWNER ?= proto-studio
 REPO ?= orbital
-MODULE_VERSION ?= v0.1.0
+MODULE_VERSION ?= v0.1.1
 SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 SOURCE_RUN_ID ?=
 

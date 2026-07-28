@@ -220,14 +220,24 @@ func TestProcess_MemoryUsage(t *testing.T) {
 
 	result, err := rt.RunScript(`
 		const mem = process.memoryUsage();
-		typeof mem.heapTotal === 'number' && typeof mem.heapUsed === 'number';
+		typeof mem.heapTotal === 'number' && typeof mem.heapUsed === 'number' &&
+		typeof mem.external === 'number' && typeof mem.rss === 'number' &&
+		mem.heapTotal > 0 && mem.heapUsed > 1024 && mem.heapTotal >= mem.heapUsed;
 	`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
 
 	if !result.Boolean() {
-		t.Error("process.memoryUsage should return object with numeric properties")
+		t.Error("process.memoryUsage should return V8 heap stats (non-zero heapTotal/heapUsed)")
+	}
+
+	stats, err := rt.Isolate().GetHeapStatistics()
+	if err != nil {
+		t.Fatalf("GetHeapStatistics: %v", err)
+	}
+	if stats.UsedHeapSize == 0 || stats.TotalHeapSize == 0 {
+		t.Fatalf("unexpected empty isolate heap stats: %+v", stats)
 	}
 }
 

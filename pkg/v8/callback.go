@@ -123,6 +123,37 @@ func unregisterModuleResolver(id int) {
 	delete(moduleResolverRegistry.resolvers, id)
 }
 
+// nearHeapLimitRegistry stores NearHeapLimitCallbacks indexed by ID.
+var nearHeapLimitRegistry = struct {
+	sync.RWMutex
+	callbacks map[int]NearHeapLimitCallback
+	nextID    int
+}{
+	callbacks: make(map[int]NearHeapLimitCallback),
+	nextID:    1,
+}
+
+func registerNearHeapLimitCallback(cb NearHeapLimitCallback) int {
+	nearHeapLimitRegistry.Lock()
+	defer nearHeapLimitRegistry.Unlock()
+	id := nearHeapLimitRegistry.nextID
+	nearHeapLimitRegistry.nextID++
+	nearHeapLimitRegistry.callbacks[id] = cb
+	return id
+}
+
+func getNearHeapLimitCallback(id int) NearHeapLimitCallback {
+	nearHeapLimitRegistry.RLock()
+	defer nearHeapLimitRegistry.RUnlock()
+	return nearHeapLimitRegistry.callbacks[id]
+}
+
+func unregisterNearHeapLimitCallback(id int) {
+	nearHeapLimitRegistry.Lock()
+	defer nearHeapLimitRegistry.Unlock()
+	delete(nearHeapLimitRegistry.callbacks, id)
+}
+
 // FunctionTemplate represents a V8 FunctionTemplate for creating functions.
 type FunctionTemplate struct {
 	ptr        unsafe.Pointer
@@ -277,4 +308,16 @@ func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, n
 	*nameOut = C.CString(resolvedPath)
 
 	return C.int(0)
+}
+
+//export goNearHeapLimitCallback
+func goNearHeapLimitCallback(callbackID C.int, currentHeapLimit, initialHeapLimit C.size_t) C.size_t {
+	cb := getNearHeapLimitCallback(int(callbackID))
+	if cb == nil {
+		// No Go callback — keep the current limit so V8 can proceed toward OOM
+		// handling rather than inventing a bump.
+		return currentHeapLimit
+	}
+	newLimit := cb(uint64(currentHeapLimit), uint64(initialHeapLimit))
+	return C.size_t(newLimit)
 }
