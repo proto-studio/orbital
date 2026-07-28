@@ -11,7 +11,7 @@ V8_BUILD_DIR := v8-build
 V8_OUTPUT_DIR := deps/v8
 # Packaged release artifacts (v8-<goos>-<goarch>.tar.gz + .sha256) land here.
 DIST_DIR := dist
-V8_VERSION := 15.0.1240245
+V8_VERSION := 15.0.245.21
 GO := go
 GOFLAGS :=
 NUM_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
@@ -20,7 +20,7 @@ NUM_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4
 # and SOURCE_RUN_ID; the GitHub repo hosting the Releases is proto-studio/orbital.
 OWNER ?= proto-studio
 REPO ?= orbital
-MODULE_VERSION ?= v0.1.1
+MODULE_VERSION ?= v0.2.2
 SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 SOURCE_RUN_ID ?=
 
