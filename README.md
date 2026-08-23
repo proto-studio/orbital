@@ -1,69 +1,18 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/orbital-logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset=".github/orbital-logo-light.png">
+  <img alt="Orbital" src=".github/orbital-logo-light.png" width="480">
+</picture>
+
 # Orbital
 
-A Go JavaScript runtime powered by V8 with Node.js-compatible APIs.
+[![Go Reference](https://pkg.go.dev/badge/proto.zip/studio/orbital.svg)](https://pkg.go.dev/proto.zip/studio/orbital)
+[![Release](https://img.shields.io/github/v/release/proto-studio/orbital)](https://github.com/proto-studio/orbital/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/proto-studio/orbital)](https://github.com/proto-studio/orbital)
 
-Use Orbital as a **CLI** to run scripts, or embed it as a **Go library** to execute JavaScript with sandboxing, native modules, and CommonJS/ESM support.
+[Orbital][orbital] is a Go JavaScript runtime powered by V8. It provides Node.js-compatible APIs so you can run scripts from the CLI or embed a sandboxed JavaScript engine in a Go program — with native modules and CommonJS/ESM support.
 
-## Requirements
-
-### Running the prebuilt CLI
-
-On a standard glibc-based Linux or macOS system, no extra setup is needed beyond the binary itself. Linux builds dynamically link system libraries that are already present on most distros (`libc`, `libstdc++`, `libatomic`, etc.).
-
-### Building or importing the library
-
-Orbital uses CGO and links a prebuilt V8 static library. You need:
-
-- Go 1.24+
-- A C toolchain for CGO (`clang` on macOS, `gcc` on Linux)
-
-You do **not** need a C++ compiler or the V8 headers: the C++ bridge is shipped
-pre-compiled (see [Linking model](#linking-model)), so CGO only compiles a small
-pure-C shim and links the prebuilt archives.
-
-The V8 static libraries are **not committed to the repository**. They are
-published as checksum-verified GitHub Release assets (currently V8
-<!-- V8_VERSION -->15.2.124.8<!-- /V8_VERSION -->) and fetched on demand by
-`go generate` into a project-local `.v8/` directory. Prebuilt libraries are
-available for:
-
-| Platform | Target |
-|----------|--------|
-| macOS ARM64 (Apple Silicon) | `darwin/arm64` |
-| Linux ARM64 | `linux/arm64` |
-| Linux x86_64 | `linux/amd64` |
-
-> Intel macOS (`darwin/amd64`) is not supported: current V8 requires the
-> macOS 15+ SDK, which ships only on Apple Silicon.
-
-See [Installing the V8 runtime](#installing-the-v8-runtime) for the one-time
-setup an embedding project needs.
-
-## Quick start
-
-### CLI
-
-```bash
-# On your platform (after `make build-native` on macOS/Linux)
-./build/orbital script.js
-
-# Evaluate inline code
-./build/orbital -e "console.log('Hello!')"
-
-# REPL
-./build/orbital
-```
-
-Prebuilt Linux binaries (when available):
-
-```bash
-./build/orbital-linux-arm64 script.js
-./build/orbital-linux-x64 script.js
-```
-
-### Go library
-
-Create a full Node.js-compatible runtime with `nodejs.New` (same module set as the CLI):
+With Orbital, creating a runtime is idiomatic Go:
 
 ```go
 package main
@@ -82,7 +31,7 @@ func main() {
 	}
 	defer inst.Runtime.Dispose()
 
-	result, err := inst.Runtime.RunScript(`console.log('Hello from Orbital!')`, "main.js")
+	result, err := inst.Runtime.RunScript(`console.log("Hello from Orbital!")`, "main.js")
 	if err != nil {
 		panic(err)
 	}
@@ -92,27 +41,21 @@ func main() {
 
 Or register individual modules from `pkg/nodejs/<module>` when you only need a subset.
 
-Fetch the V8 runtime once, then build with CGO enabled:
+## Installation
 
-```bash
-go generate ./...          # downloads V8 into .v8/ and writes the cgo link file
-CGO_ENABLED=1 go build -o myapp .
+> [!TIP]
+> You need Go 1.24+ and a C toolchain for CGO (`clang` on macOS, `gcc` on Linux). You do **not** need a C++ compiler: the V8 C++ bridge ships pre-compiled.
+
+```shell
+go get proto.zip/studio/orbital
 ```
 
-See [Installing the V8 runtime](#installing-the-v8-runtime) for the one-time
-`go generate` wiring, and `examples/native/modules`, `examples/native/esm`,
-or `examples/sandbox-server` for fuller examples.
+Orbital links a prebuilt V8 static library (currently V8
+<!-- V8_VERSION -->15.2.124.8<!-- /V8_VERSION -->). The libraries are **not** committed to the repository: they are published as checksum-verified GitHub Release assets and fetched on demand.
 
-## Installing the V8 runtime
+Because those libraries live in the (clearable) Go module cache after `go get`, they cannot be linked from there. A small setup tool (`cmd/v8setup`) downloads the pinned, checksum-verified libraries into a project-local `.v8/` directory. Wire it in **once**:
 
-Because the V8 libraries live in the (clearable) Go module cache when you `go get`
-Orbital, they cannot be linked directly from there. Instead, a small setup tool
-(`cmd/v8setup`) downloads the version-pinned, checksum-verified libraries into a
-project-local `.v8/` directory and writes a per-target cgo file that carries the
-`-L`/`-l` link flags. Wire it into your project **once**:
-
-1. Add a tiny helper package that runs the setup tool via `go generate` and is
-   blank-imported by your `main` so its generated link flags are in the build:
+1. Add a helper package that runs the setup tool via `go generate` and is blank-imported from `main` so its generated link flags are in the build:
 
 ```go
 // internal/v8dist/v8dist.go
@@ -125,98 +68,29 @@ package v8dist
 import _ "yourmodule/internal/v8dist"
 ```
 
-2. Run `go generate ./...` before building. It fetches the libraries for your
-   `GOOS`/`GOARCH` into `.v8/<version>/<goos>-<goarch>/` and writes
-   `zz_generated_v8link_<goos>_<goarch>.go` into the helper package.
+2. Fetch V8, then build with CGO enabled:
 
-3. Add `.v8/` and `**/zz_generated_v8link_*.go` to your `.gitignore` (the
-   libraries and link file are machine/target-specific and regenerated).
-
-`go build` does **not** run `go generate` automatically — run it yourself after
-`go get`, after bumping the Orbital version, or in CI before building.
-
-### Cross-compiling
-
-`go generate` respects `GOOS`/`GOARCH`, so you can install multiple targets side
-by side and cross-compile:
-
-```bash
-GOOS=linux GOARCH=arm64 go generate ./...
-GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -o myapp-linux-arm64 .
+```shell
+go generate ./...          # downloads V8 into .v8/ and writes the cgo link file
+CGO_ENABLED=1 go build -o myapp .
 ```
 
-Each target gets its own `.v8/<version>/<goos>-<goarch>/` directory and its own
-build-tagged link file, so targets never collide.
+3. Add `.v8/` and `**/zz_generated_v8link_*.go` to `.gitignore`.
 
-### Layout, caching, and clearing
+`go build` does **not** run `go generate` automatically — run it after `go get`, after bumping Orbital, or in CI before building.
 
-```
-.v8/
-  v1.4.2/                    # pinned module version
-    linux-amd64/lib/*.a
-    darwin-arm64/lib/*.a
-```
+See [Installing the V8 runtime](#installing-the-v8-runtime) for cross-compilation, caching, and troubleshooting.
 
-- **Custom location:** set `V8_HOME=/path` to install into a shared OS user-data
-  directory instead of the project (the generated link file then uses an absolute
-  path; keep it gitignored).
-- **CI caching:** cache the `.v8/` directory keyed on the Orbital module version
-  to skip re-downloading on every run.
-- **Clearing:** delete `.v8/` (and re-run `go generate`) to force a fresh,
-  re-verified download.
+## CLI
 
-### If the link fails
-
-If `go build` reports `cannot find -lv8go_glue` or `undefined reference` errors,
-the V8 runtime hasn't been installed for that target. Run the exact command the
-tool prints, e.g.:
-
-```bash
-GOOS=linux GOARCH=arm64 go generate ./...
+```shell
+make build-native          # after go generate
+./build/orbital script.js
+./build/orbital -e "console.log('Hello!')"
+./build/orbital            # REPL
 ```
 
-## Packages
-
-| Package | Purpose |
-|---------|---------|
-| `pkg/v8` | Low-level V8 bindings (CGO) |
-| `pkg/runtime` | JavaScript runtime, event loop, sandbox interfaces |
-| `pkg/nodejs` | Node.js-compatible runtime constructor (`nodejs.New`) |
-| `pkg/nodejs/*` | Individual Node.js standard library modules (`fs`, `console`, `process`, etc.) |
-| `cmd/orbital` | CLI binary |
-
-Use `nodejs.New` for a full Node.js-compatible runtime, or register individual modules from `pkg/nodejs/<module>` with `runtime.RegisterModule()`.
-
-## Linking model
-
-After `go generate` has installed the runtime, when you `go build`:
-
-1. CGO compiles only the pure-C boundary (`pkg/v8/v8go.h`) with your C compiler.
-   `pkg/v8` itself carries **no** `-L`/`-l` flags.
-2. The generated `zz_generated_v8link_<goos>_<goarch>.go` file in your helper
-   package supplies the `-L${SRCDIR}/…/.v8/<version>/<goos>-<goarch>/lib` path and
-   the `-l` flags. Because it is blank-imported into your build, its flags are
-   aggregated at the final link step, pulling in the static archives:
-   `libv8go_glue.a`, `libv8_monolith.a`, and `libv8_libcxx.a`.
-3. Standard system libraries are linked dynamically on Linux.
-
-The C++ bridge (`pkg/v8/csrc/v8go.cc`) is **not** compiled by CGO. V8 is built
-with Chromium's custom libc++ (the `std::__Cr::` inline namespace), which is
-ABI-incompatible with the system `libstdc++` a stock `g++` would use. The bridge
-is therefore pre-compiled per platform into `libv8go_glue.a` with V8's own
-toolchain (see `scripts/build-glue.py`) so its `std::` symbols match
-`libv8_monolith.a`. This keeps the V8 sandbox enabled while letting consumers
-link with a plain C toolchain. Chromium's libc++ ships as a separate
-`libv8_libcxx.a`.
-
-Why not commit the archives? The Go module proxy / `go get` do not run Git LFS
-smudge, so LFS is unusable, and V8's monolith exceeds GitHub's 100MB per-file Git
-limit. GitHub **Releases**, by contrast, allow multi-GB assets — so the libraries
-are published there and fetched on demand, and the repository stays small.
-
-## Sandboxing
-
-```bash
+```shell
 # Restrict filesystem to a directory
 ./build/orbital --root ./sandbox script.js
 
@@ -226,6 +100,10 @@ are published there and fetched on demand, and the repository stays small.
 # Network allow/deny lists
 ./build/orbital --allow-net=api.example.com script.js
 ```
+
+Flags are documented in [`docs/cli-flags.md`](docs/cli-flags.md).
+
+## Sandboxing
 
 In library code, pass a `runtime.Config` with sandboxed implementations:
 
@@ -241,50 +119,95 @@ cfg := &runtime.Config{
 rt, err := runtime.New(cfg)
 ```
 
-## CLI options
+## Packages
 
-| Flag | Description |
-|------|-------------|
-| `-e, --eval <code>` | Evaluate JavaScript code |
-| `-p, --print <code>` | Evaluate and print result |
-| `-c, --check` | Syntax check without executing |
-| `-i, --interactive` | Start REPL after script/stdin |
-| `-r, --require <module>` | Preload module at startup |
-| `--root <dir>` | Sandbox filesystem to directory |
-| `-s, --sandbox` | Fake system info and block network |
-| `--timeout <duration>` | Execution timeout (e.g. `30s`, `5m`) |
-| `-N, --allow-net` | Allow all network access |
-| `--allow-net=<hosts>` | Allow specific hosts |
-| `--deny-net` | Deny all network access |
-| `-h, --help` | Show help |
-| `-v, --version` | Show version |
+| Package | Purpose |
+|---------|---------|
+| `pkg/v8` | Low-level V8 bindings (CGO) |
+| `pkg/runtime` | JavaScript runtime, event loop, sandbox interfaces |
+| `pkg/nodejs` | Node.js-compatible runtime constructor (`nodejs.New`) |
+| `pkg/nodejs/*` | Individual Node.js standard library modules (`fs`, `console`, `process`, …) |
+| `cmd/orbital` | CLI binary |
 
-## Node.js APIs
+Orbital implements a growing subset of Node.js — CommonJS and ESM, `console`, timers, `process`, `Buffer`, `fs`, `path`, `http`, `crypto`, isolate-backed `worker_threads`, `async_hooks`, and more. See [`modules.md`](modules.md) for the full checklist and [`docs/known-limitations.md`](docs/known-limitations.md) for gaps inside implemented modules.
 
-Orbital implements a growing subset of Node.js:
+Not yet implemented: `cluster`, full stream piping, async iterators. `async_hooks` context does not yet cross native `await` boundaries (see [`docs/async-context.md`](docs/async-context.md)).
 
-- **Modules:** CommonJS (`require`) and ES Modules (`import`/`export`)
-- **Globals:** `console`, timers, `process`, `EventEmitter`, `Buffer`, `URL`, `TextEncoder`/`TextDecoder`, `atob`/`btoa`
-- **Built-ins:** `fs`, `path`, `stream`, `url`, `os`, `util`, `crypto`, `http`, `worker_threads` (isolate-backed), `async_hooks`, and more
+## Installing the V8 runtime
 
-Not yet implemented: `cluster`, full stream piping, async iterators. `async_hooks`
-context does not yet cross native `await` boundaries (see `docs/async-context.md`).
+Prebuilt libraries are available for:
 
-## Platform support
+| Platform | Target |
+|----------|--------|
+| macOS ARM64 (Apple Silicon) | `darwin/arm64` |
+| Linux ARM64 | `linux/arm64` |
+| Linux x86_64 | `linux/amd64` |
 
-Prebuilt V8 libraries are published as Release assets for macOS (ARM64) and
-Linux (ARM64/x86_64) — see the table under
-[Requirements](#building-or-importing-the-library).
+> Intel macOS (`darwin/amd64`) is not supported: current V8 requires the macOS 15+ SDK, which ships only on Apple Silicon.
 
-After `go generate`, build for your current platform with `make build` (or
-`make build-native`), or cross-compile with `GOOS`/`GOARCH` (see
-[Cross-compiling](#cross-compiling)). Refreshed V8 libraries are built by CI on
-native runners per platform and published to a new Release.
+On a standard glibc-based Linux or macOS system, the prebuilt CLI needs no extra setup beyond the binary. Linux builds dynamically link system libraries already present on most distros (`libc`, `libstdc++`, `libatomic`, etc.).
+
+### Cross-compiling
+
+`go generate` respects `GOOS`/`GOARCH`, so you can install multiple targets side by side:
+
+```shell
+GOOS=linux GOARCH=arm64 go generate ./...
+GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -o myapp-linux-arm64 .
+```
+
+Each target gets its own `.v8/<version>/<goos>-<goarch>/` directory and its own build-tagged link file, so targets never collide.
+
+### Layout, caching, and clearing
+
+```
+.v8/
+  v0.2.4/                    # pinned module version
+    linux-amd64/lib/*.a
+    darwin-arm64/lib/*.a
+```
+
+- **Custom location:** set `V8_HOME=/path` to install into a shared OS user-data directory instead of the project (the generated link file then uses an absolute path; keep it gitignored).
+- **CI caching:** cache the `.v8/` directory keyed on the Orbital module version to skip re-downloading on every run.
+- **Clearing:** delete `.v8/` (and re-run `go generate`) to force a fresh, re-verified download.
+
+If `go build` reports `cannot find -lv8go_glue` or `undefined reference` errors, the V8 runtime hasn't been installed for that target. Run the exact command the tool prints, e.g.:
+
+```shell
+GOOS=linux GOARCH=arm64 go generate ./...
+```
+
+### Linking model
+
+After `go generate`, `go build` compiles only the pure-C boundary (`pkg/v8/v8go.h`) with your C compiler. `pkg/v8` itself carries **no** `-L`/`-l` flags. A generated `zz_generated_v8link_<goos>_<goarch>.go` file in your helper package supplies the link path and `-l` flags, pulling in `libv8go_glue.a`, `libv8_monolith.a`, and `libv8_libcxx.a`.
+
+The C++ bridge (`pkg/v8/csrc/v8go.cc`) is **not** compiled by CGO. V8 is built with Chromium's custom libc++ (`std::__Cr::`), which is ABI-incompatible with the system `libstdc++` a stock `g++` would use. The bridge is therefore pre-compiled per platform into `libv8go_glue.a` with V8's own toolchain so consumers can link with a plain C toolchain.
+
+The archives are not committed because the Go module proxy / `go get` do not run Git LFS smudge, and V8's monolith exceeds GitHub's 100MB per-file Git limit. GitHub Releases allow multi-GB assets, so the libraries are published there and fetched on demand.
+
+## Examples
+
+Fuller examples live in [`examples/`](examples/):
+
+- [`examples/hellov8`](examples/hellov8) — lowest-level V8 isolate
+- [`examples/native/modules`](examples/native/modules) — native Go modules callable from JS
+- [`examples/native/esm`](examples/native/esm) — ES modules
+- [`examples/sandbox-server`](examples/sandbox-server) — sandboxed HTTP server
+
+## Documentation
+
+- [Contributing](CONTRIBUTING.md) — building V8 from source, glue rebuilds, and tests
+- [CLI flags](docs/cli-flags.md) — Orbital flags vs Node.js
+- [Node.js module checklist](modules.md)
+- [Known limitations](docs/known-limitations.md)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for building V8 from source, testing, and development setup.
+We genuinely appreciate any help! If you'd like to contribute, see the [Contributing Guidelines][contributing].
 
-## License
+## Legal
 
-MIT
+Offered under the MIT license.
+
+[orbital]: https://github.com/proto-studio/orbital
+[contributing]: CONTRIBUTING.md
