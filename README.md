@@ -51,7 +51,7 @@ go get proto.zip/studio/orbital
 ```
 
 Orbital links a prebuilt V8 static library (currently V8
-<!-- V8_VERSION -->15.2.124.8<!-- /V8_VERSION -->). The libraries are **not** committed to the repository: they are published as checksum-verified GitHub Release assets and fetched on demand.
+<!-- V8_VERSION -->15.1.206.23<!-- /V8_VERSION -->). The libraries are **not** committed to the repository: they are published as checksum-verified GitHub Release assets and fetched on demand.
 
 Because those libraries live in the (clearable) Go module cache after `go get`, they cannot be linked from there. A small setup tool (`cmd/v8setup`) downloads the pinned, checksum-verified libraries into a project-local `.v8/` directory. Wire it in **once**:
 
