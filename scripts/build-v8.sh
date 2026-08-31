@@ -17,7 +17,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-V8_VERSION="${V8_VERSION:-15.2.124.8}"
+V8_VERSION="${V8_VERSION:-15.3.76.4}"
 BUILD_DIR="${BUILD_DIR:-$(pwd)/v8-build}"
 OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-$(pwd)/deps/v8}"
 DEPOT_TOOLS_DIR="${BUILD_DIR}/depot_tools"
