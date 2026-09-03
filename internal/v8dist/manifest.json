@@ -1,8 +1,8 @@
 {
   "v8_version": "15.1.206.23",
   "module_version": "v0.2.5",
-  "source_commit": "aaf664d0f938bd0688eaf75e903ef605b0978641",
-  "source_run_id": "32713420001",
+  "source_commit": "03bf8cd5761675d1d598ef7bdce8fe852a7402d7",
+  "source_run_id": "33788383161",
   "owner": "proto-studio",
   "repo": "orbital",
   "targets": [
@@ -10,19 +10,19 @@
       "goos": "linux",
       "goarch": "amd64",
       "filename": "v8-linux-amd64.tar.gz",
-      "sha256": "bfb687dbcc7db74638084c8abe4faeaa9b5936ffb36122c1c2ff2819dba9e721"
+      "sha256": "82b63be763011f793a2dea42bea363c9293fe96b409a4db4b473263b3410f1c0"
     },
     {
       "goos": "linux",
       "goarch": "arm64",
       "filename": "v8-linux-arm64.tar.gz",
-      "sha256": "b8e17325b9073c1874cbb63178d7c5af1e09101528a55da374048beec0c0c5ad"
+      "sha256": "fab105b0c141756dd3a4fbcff3e3ea461257c9cfa21d053060225624f13af060"
     },
     {
       "goos": "darwin",
       "goarch": "arm64",
       "filename": "v8-darwin-arm64.tar.gz",
-      "sha256": "39513c3e523f958625aeec234bfc617cf6197827928f74f6d770b3003a77a4b3"
+      "sha256": "3b122aeb5a2f7648b2bba63115353036e3f483533808e16c220762b05e1ad422"
     }
   ]
 }
