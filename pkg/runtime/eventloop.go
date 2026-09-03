@@ -104,12 +104,12 @@ func NewEventLoopWithContext(ctx context.Context) *EventLoop {
 func (el *EventLoop) SetContext(ctx context.Context) {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	
+
 	// Cancel old context
 	if el.cancelCtx != nil {
 		el.cancelCtx()
 	}
-	
+
 	el.ctx, el.cancelCtx = context.WithCancel(ctx)
 }
 
@@ -326,7 +326,6 @@ func (el *EventLoop) Run() {
 // RunOnce processes one iteration of the event loop.
 func (el *EventLoop) RunOnce() bool {
 	el.mu.Lock()
-	defer el.mu.Unlock()
 
 	// Process microtasks
 	for len(el.microtasks) > 0 {
@@ -355,6 +354,7 @@ func (el *EventLoop) RunOnce() bool {
 					el.mu.Lock()
 					task.scheduled = time.Now().Add(task.interval)
 					heap.Push(&el.timers, task)
+					el.mu.Unlock()
 					return true
 				}
 			}
@@ -362,7 +362,9 @@ func (el *EventLoop) RunOnce() bool {
 		}
 	}
 
-	return el.timers.Len() > 0 || atomic.LoadInt32(&el.pendingWork) > 0
+	hasWork := el.timers.Len() > 0 || atomic.LoadInt32(&el.pendingWork) > 0
+	el.mu.Unlock()
+	return hasWork
 }
 
 // Stop signals the event loop to stop.
@@ -380,7 +382,7 @@ func (el *EventLoop) Stop() {
 func (el *EventLoop) CancelAllTimers() {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	
+
 	for el.timers.Len() > 0 {
 		task := heap.Pop(&el.timers).(*Task)
 		task.Cancel()
