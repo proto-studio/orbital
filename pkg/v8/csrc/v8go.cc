@@ -43,11 +43,15 @@ struct ContextWrapper {
 
 // Embedder-data slot in which each Context stores its ContextWrapper*.
 static const int kContextWrapperSlot = 1;
+// V8 15.4+ requires a type tag on aligned embedder-data pointer APIs.
+// Store and load must use the same tag.
+static constexpr EmbedderDataTypeTag kContextWrapperTag = 1;
 
 static ContextWrapper* wrapperFromContext(Local<Context> context) {
     if (context.IsEmpty()) return nullptr;
     return static_cast<ContextWrapper*>(
-        context->GetAlignedPointerFromEmbedderData(kContextWrapperSlot));
+        context->GetAlignedPointerFromEmbedderData(
+            kContextWrapperSlot, kContextWrapperTag));
 }
 
 struct ValueWrapper {
@@ -386,7 +390,8 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
     // Stash the wrapper in the context so module-resolution / dynamic-import
     // callbacks (which only receive a Local<Context>) can recover per-sandbox
     // state instead of reaching for process globals.
-    context->SetAlignedPointerInEmbedderData(kContextWrapperSlot, wrapper);
+    context->SetAlignedPointerInEmbedderData(
+        kContextWrapperSlot, wrapper, kContextWrapperTag);
     
     return wrapper;
 }
