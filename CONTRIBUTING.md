@@ -372,11 +372,31 @@ against the exact packaged artifacts — never a rebuild.
   `go generate` flow) and runs `make test`/`make coverage` on a native runner per
   arch, and finally marks the PR ready. A failure leaves the PR a draft. Because the
   manifest is re-pinned on every build, it always names the most recent run.
-- `.github/workflows/release.yml` — On merge to `main` (when `manifest.json` changes),
-  verifies provenance (run succeeded, belongs to this repo, `source_commit` matches,
-  checksums match, tag/release absent), re-downloads the **same** artifacts by run id
-  (platform libs + `v8-headers`), then tags and publishes them as a GitHub Release.
+- `.github/workflows/release.yml` — On merge to `main` (when `manifest.json` changes
+  and the `module_version` tag does not yet exist), verifies provenance (run
+  succeeded, belongs to this repo, `source_commit` matches, checksums match,
+  tag/release absent), re-downloads the **same** artifacts by run id (platform
+  libs + `v8-headers`), then tags and publishes them as a GitHub Release.
   Never rebuilds.
+
+### Go/JS-only release (no V8 rebuild)
+
+`update-v8.yml` compiles V8. Do not dispatch it for a Go or JS change; it also
+no-ops unless upstream V8 has moved.
+
+A GitHub Release is still required because `cmd/v8setup` downloads libs by
+`module_version` tag. `release.yml` never compiles V8 — it copies the tarballs
+already pinned in `internal/v8dist/manifest.json`.
+
+1. Bump `ModuleVersion` in `internal/v8dist/version.go` and `module_version` in
+   `internal/v8dist/manifest.json`. Leave `v8_version`, `source_run_id`,
+   `source_commit`, and the target sha256s alone.
+2. Merge to `main`. Release sees a new tag, copies the existing artifacts, and
+   publishes.
+
+To retry a publish after fixing the Release workflow itself (no version bump):
+Actions → Release → Run workflow, or `gh workflow run release.yml`. That fails
+if the tag already exists (releases are immutable).
 
 The GitHub repository that hosts the Releases is `proto-studio/orbital` (distinct
 from the vanity module path `proto.zip/studio/orbital`).
