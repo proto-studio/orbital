@@ -164,6 +164,57 @@
   }
 
   /**
+   * Convert a Fetch body init to bytes. BufferSource (ArrayBuffer / typed
+   * arrays / DataView) must be treated as raw bytes. String(uint8Array) is
+   * the comma-separated decimal form ("104,105"), not UTF-8 text.
+   */
+  function bodyToUint8Array(body) {
+    if (body === null || body === undefined) {
+      return new Uint8Array(0);
+    }
+    if (typeof body === 'string') {
+      return new TextEncoder().encode(body);
+    }
+    if (body instanceof ArrayBuffer) {
+      return new Uint8Array(body);
+    }
+    if (ArrayBuffer.isView(body)) {
+      return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    }
+    if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+      return new TextEncoder().encode(body.toString());
+    }
+    if (body instanceof FormData) {
+      return new TextEncoder().encode(body._toString().body);
+    }
+    return new TextEncoder().encode(String(body));
+  }
+
+  function bodyToText(body) {
+    if (body === null || body === undefined) {
+      return '';
+    }
+    if (typeof body === 'string') {
+      return body;
+    }
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      return new TextDecoder().decode(bodyToUint8Array(body));
+    }
+    if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+      return body.toString();
+    }
+    if (body instanceof FormData) {
+      return body._toString().body;
+    }
+    return String(body);
+  }
+
+  function bodyToArrayBuffer(body) {
+    const bytes = bodyToUint8Array(body);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+
+  /**
    * Request class representing an HTTP request.
    */
   class Request {
@@ -229,8 +280,7 @@
 
     async text() {
       this._bodyUsed = true;
-      if (this._body === null || this._body === undefined) return '';
-      return String(this._body);
+      return bodyToText(this._body);
     }
 
     async json() {
@@ -239,9 +289,8 @@
     }
 
     async arrayBuffer() {
-      const text = await this.text();
-      const encoder = new TextEncoder();
-      return encoder.encode(text).buffer;
+      this._bodyUsed = true;
+      return bodyToArrayBuffer(this._body);
     }
 
     async blob() {
@@ -299,8 +348,7 @@
 
     async text() {
       this._bodyUsed = true;
-      if (this._body === null || this._body === undefined) return '';
-      return String(this._body);
+      return bodyToText(this._body);
     }
 
     async json() {
@@ -309,9 +357,8 @@
     }
 
     async arrayBuffer() {
-      const text = await this.text();
-      const encoder = new TextEncoder();
-      return encoder.encode(text).buffer;
+      this._bodyUsed = true;
+      return bodyToArrayBuffer(this._body);
     }
 
     async blob() {
@@ -439,7 +486,7 @@
           request.headers.set('content-type', 'application/x-www-form-urlencoded');
         }
       } else {
-        body = String(request._body);
+        body = bodyToText(request._body);
       }
     }
 
