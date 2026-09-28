@@ -37,24 +37,25 @@ on:
   push:
     branches: ['automated/update-v8-**']
   schedule:
-    # Every Monday at 04:00 America/New_York. GitHub cron is UTC-only and does
-    # not observe DST, so we list both offsets: 08:00 UTC = 04:00 EDT (Mar-Nov)
-    # and 09:00 UTC = 04:00 EST (Nov-Mar). Only one is 04:00 local on any given
-    # Monday; the other is 05:00, but `check` is create-only (skips when there's
-    # no newer V8 or the update branch already exists) so the extra tick is a
-    # cheap no-op rather than a duplicate PR.
-    - cron: '0 8 * * 1'   # 04:00 EDT (daylight saving)
-    - cron: '0 9 * * 1'   # 04:00 EST (standard time)
+    # One Monday run. 08:00 UTC is 04:00 EDT / 03:00 EST — early enough that a
+    # ~2h build is done well before 09:00 ET. GitHub cron is UTC-only (no DST
+    # timezone); do not add a second EST offset or both fire every week and
+    # the later one cancels this compile.
+    - cron: '0 8 * * 1'
 
 permissions:
   contents: write
   pull-requests: write
+  # upload-artifact FinalizeArtifact and gh run download both use the actions API.
+  actions: write
 
 concurrency:
-  # Per branch (push) or per dispatch ref: a newer push/dispatch supersedes an
-  # in-flight build of the same ref so the latest source always wins.
-  group: update-v8-${{ github.ref }}
-  cancel-in-progress: true
+  # Push: one in-flight build per update branch; a newer push cancels the last.
+  # Schedule: never cancel. A later dispatch (or any other run on main) is the
+  # extra — it must not kill the Monday compile.
+  # Dispatch: latest dispatch of the same ref wins.
+  group: ${{ github.event_name == 'schedule' && format('update-v8-schedule-{0}', github.run_id) || format('update-v8-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -85,12 +86,17 @@ jobs:
           current="$(grep -E '^V8_VERSION :=' Makefile | sed -E 's/^V8_VERSION := *//')"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
-          if [ "$latest" != "$current" ]; then
+          # sort -V: only bump when Chromium-stable is strictly newer. A
+          # recently published patch on an older milestone must not downgrade.
+          if [ "$latest" = "$current" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on latest stable V8 ($current)."
+          elif [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$latest" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "New V8 available: $current -> $latest"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Already on latest stable V8 ($current)."
+            echo "Pinned V8 $current is newer than Chromium-stable $latest; not downgrading."
           fi
 
       - name: Compute next module version + branch
@@ -342,6 +348,8 @@ jobs:
         run: sccache --show-stats || true
 
       - name: Upload packaged artifact
+        id: upload-lib
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: v8-${{ matrix.platform }}
@@ -350,12 +358,30 @@ jobs:
             dist/v8-${{ matrix.platform }}.tar.gz.sha256
           retention-days: 90
           if-no-files-found: error
+          overwrite: true
+
+      # FinalizeArtifact 403s from GitHub's blob intermediary are non-retryable
+      # inside upload-artifact; a second attempt with overwrite usually lands.
+      - name: Retry packaged artifact upload
+        id: upload-lib-retry
+        if: steps.upload-lib.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: v8-${{ matrix.platform }}
+          path: |
+            dist/v8-${{ matrix.platform }}.tar.gz
+            dist/v8-${{ matrix.platform }}.tar.gz.sha256
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: true
 
       # Public headers only (not the full V8 source tree). Used locally to rebuild
       # libv8go_glue.a without a multi-GB checkout. Same across platforms; upload
       # once from linux-amd64 to avoid duplicate artifact names.
       - name: Upload V8 headers
         if: matrix.platform == 'linux-amd64'
+        id: upload-headers
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: v8-headers
@@ -364,6 +390,32 @@ jobs:
             dist/v8-headers.tar.gz.sha256
           retention-days: 90
           if-no-files-found: error
+          overwrite: true
+
+      - name: Require packaged artifact
+        if: steps.upload-lib.outcome != 'success' && steps.upload-lib-retry.outcome != 'success'
+        run: |
+          echo "Failed to upload v8-${{ matrix.platform }} artifact." >&2
+          exit 1
+
+      - name: Retry V8 headers upload
+        id: upload-headers-retry
+        if: matrix.platform == 'linux-amd64' && steps.upload-headers.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: v8-headers
+          path: |
+            dist/v8-headers.tar.gz
+            dist/v8-headers.tar.gz.sha256
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Require V8 headers artifact
+        if: matrix.platform == 'linux-amd64' && steps.upload-headers.outcome != 'success' && steps.upload-headers-retry.outcome != 'success'
+        run: |
+          echo "Failed to upload v8-headers artifact." >&2
+          exit 1
 
   # ---------------------------------------------------------------------------
   # Assemble the manifest (run id + checksums + source commit) and commit it to
