@@ -1,6 +1,15 @@
 (function() {
 	'use strict';
 
+	// Node's %s inspects objects (so an Error keeps its stack). null stays
+	// "null"; primitives use String().
+	function formatStringSpecifier(arg, inspectOptions) {
+		if (typeof arg === 'object' && arg !== null) {
+			return inspect(arg, inspectOptions);
+		}
+		return String(arg);
+	}
+
 	// util.format - printf-like string formatting
 	function format(fmt, ...args) {
 		// Node returns '' for util.format() with no arguments (whereas
@@ -17,7 +26,7 @@
 			
 			const arg = args[i++];
 			switch (type) {
-				case 's': return String(arg);
+				case 's': return formatStringSpecifier(arg);
 				case 'd': 
 				case 'i': return parseInt(arg, 10).toString();
 				case 'f': return parseFloat(arg).toString();
@@ -52,7 +61,7 @@
 			
 			const arg = args[i++];
 			switch (type) {
-				case 's': return String(arg);
+				case 's': return formatStringSpecifier(arg, inspectOptions);
 				case 'd':
 				case 'i': return parseInt(arg, 10).toString();
 				case 'f': return parseFloat(arg).toString();
@@ -111,6 +120,18 @@
 				// Circular reference check
 				if (seen.has(value)) return '[Circular]';
 
+				// Errors are formatted before the depth cutoff. Node still
+				// prints the stack of a nested Error; only its extra fields
+				// are dropped once the depth is exceeded.
+				let isError = false;
+				try { isError = value instanceof Error; } catch (e) { isError = false; }
+				if (isError) {
+					seen.add(value);
+					const result = formatError(value, currentDepth);
+					seen.delete(value);
+					return result;
+				}
+
 				// Depth check
 				if (currentDepth > opts.depth) {
 					if (Array.isArray(value)) return '[Array]';
@@ -133,8 +154,6 @@
 					result = value.toISOString();
 				} else if (value instanceof RegExp) {
 					result = value.toString();
-				} else if (value instanceof Error) {
-					result = formatError(value);
 				} else if (value instanceof Map) {
 					result = formatMap(value, currentDepth);
 				} else if (value instanceof Set) {
@@ -183,6 +202,10 @@
 				items.push(`... ${arr.length - maxLen} more items`);
 			}
 
+			if (items.some(item => item.indexOf('\n') !== -1)) {
+				const lines = items.map(item => item.replace(/\n/g, '\n  '));
+				return '[\n  ' + lines.join(',\n  ') + '\n]';
+			}
 			return '[ ' + items.join(', ') + ' ]';
 		}
 
@@ -212,9 +235,90 @@
 			return prefix + '{ ' + items.join(', ') + ' }';
 		}
 
-		function formatError(err) {
-			let str = err.stack || err.toString();
-			return str;
+		function errorCtorName(err) {
+			let obj = err;
+			while (obj) {
+				let desc;
+				try { desc = Object.getOwnPropertyDescriptor(obj, 'constructor'); }
+				catch (e) { desc = undefined; }
+				if (desc && typeof desc.value === 'function' && desc.value.name !== '') {
+					try {
+						if (err instanceof desc.value) return String(desc.value.name);
+					} catch (e) {}
+				}
+				try { obj = Object.getPrototypeOf(obj); }
+				catch (e) { break; }
+			}
+			return null;
+		}
+
+		// Rewrite "Error: msg" to "MyErr [Error]: msg" when the constructor
+		// name and err.name disagree, matching Node's inspect.
+		function improveErrorStack(stack, name, ctor) {
+			if (ctor === null) return stack;
+			const len = name.length;
+			const regular = name.endsWith('Error') && stack.startsWith(name) &&
+				(stack.length === len || stack[len] === ':' || stack[len] === '\n');
+			if (!regular) return stack;
+			if (name === ctor) return stack;
+			if (ctor.includes(name)) {
+				return len === 0 ? ctor + ': ' + stack : ctor + stack.slice(len);
+			}
+			return ctor + ' [' + name + ']' + stack.slice(len);
+		}
+
+		function formatError(err, depth) {
+			const name = err.name != null ? String(err.name) : 'Error';
+			const message = err.message != null ? String(err.message) : '';
+			const rawStack = err.stack ? String(err.stack) : '';
+			let stack = rawStack || (name + (message ? ': ' + message : ''));
+			stack = improveErrorStack(stack, name, errorCtorName(err));
+
+			const from = message && stack.indexOf(message) >= 0
+				? stack.indexOf(message) + message.length
+				: 0;
+			if (stack.indexOf('\n    at', from) === -1) {
+				stack = '[' + stack + ']';
+			}
+
+			if (depth > opts.depth) return stack;
+
+			let keys = [];
+			try { keys = Object.keys(err); } catch (e) { keys = []; }
+			keys = keys.filter(key => {
+				if (key !== 'name' && key !== 'message' && key !== 'stack') return true;
+				if (!rawStack) return true;
+				const prop = err[key];
+				if (prop == null) return true;
+				const text = String(prop);
+				return text === '' || rawStack.indexOf(text) === -1;
+			});
+
+			const hidden = [];
+			try {
+				if (keys.indexOf('cause') === -1 && 'cause' in err) hidden.push('cause');
+			} catch (e) {}
+			try {
+				if (keys.indexOf('errors') === -1 && Array.isArray(err.errors)) hidden.push('errors');
+			} catch (e) {}
+
+			if (keys.length === 0 && hidden.length === 0) return stack;
+
+			const parts = [];
+			for (const key of keys) {
+				parts.push(key + ': ' + inspectValue(err[key], depth + 1));
+			}
+			for (const key of hidden) {
+				parts.push('[' + key + ']: ' + inspectValue(err[key], depth + 1));
+			}
+
+			const multiline = stack.indexOf('\n') !== -1 ||
+				parts.some(part => part.indexOf('\n') !== -1);
+			if (multiline) {
+				const lines = parts.map(part => part.replace(/\n/g, '\n  '));
+				return stack + ' {\n  ' + lines.join(',\n  ') + '\n}';
+			}
+			return stack + ' { ' + parts.join(', ') + ' }';
 		}
 
 		function formatMap(map, depth) {

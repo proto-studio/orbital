@@ -2,6 +2,7 @@ package console
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -53,6 +54,120 @@ func TestConsole_Error(t *testing.T) {
 	output := stderr.String()
 	if output == "" {
 		t.Error("console.error should produce output to stderr")
+	}
+}
+
+// TestConsole_ErrorObject checks that console.error prints a real Error the way
+// Node does: the stack (name, message, and frames), then any extra own
+// properties. Error message/stack are non-enumerable, so a generic object dump
+// drops them.
+func TestConsole_ErrorObject(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		want   []string
+		reject []string
+	}{
+		{
+			name:   "stack and extra enumerable field",
+			script: `const err = new Error('boom'); err.code = 'ENOENT'; console.error(err);`,
+			want: []string{
+				"Error: boom\n",
+				"\n    at ",
+				"{\n  code: 'ENOENT'\n}",
+			},
+			reject: []string{"{ code: 'ENOENT' }\n"},
+		},
+		{
+			name:   "TypeError",
+			script: `console.error(new TypeError('bad'));`,
+			want:   []string{"TypeError: bad\n", "\n    at "},
+			reject: []string{"{}\n"},
+		},
+		{
+			name:   "missing stack",
+			script: `const err = new Error('bare'); err.stack = undefined; console.error(err);`,
+			want:   []string{"[Error: bare]\n"},
+		},
+		{
+			name:   "missing stack keeps extra fields",
+			script: `const err = new Error('bare'); err.stack = undefined; err.code = 'X'; console.error(err);`,
+			want:   []string{"[Error: bare] { code: 'X' }\n"},
+		},
+		{
+			name:   "plain object is not an Error",
+			script: `console.error({ message: 'boom', stack: 'Error: boom' });`,
+			want:   []string{"{ message: 'boom', stack: 'Error: boom' }\n"},
+		},
+		{
+			name:   "subclass constructor name",
+			script: `class MyErr extends Error { constructor(m) { super(m); this.extra = 1; } } console.error(new MyErr('x'));`,
+			want:   []string{"MyErr [Error]: x\n", "\n    at ", "{\n  extra: 1\n}"},
+		},
+		{
+			name:   "cause",
+			script: `console.error(new Error('bad', { cause: new Error('root') }));`,
+			want:   []string{"Error: bad\n", "[cause]: Error: root\n", "\n    at "},
+		},
+		{
+			name:   "AggregateError",
+			script: `console.error(new AggregateError([new Error('a'), 'b'], 'many'));`,
+			want:   []string{"AggregateError: many\n", "[errors]:", "Error: a\n", "'b'"},
+		},
+		{
+			name:   "percent-s uses the stack",
+			script: `console.error('failed: %s', new Error('boom'));`,
+			want:   []string{"failed: Error: boom\n", "\n    at "},
+		},
+		{
+			name:   "percent-j stays JSON-like",
+			script: `console.error('%j', new Error('boom'));`,
+			want:   []string{"{}\n"},
+			reject: []string{"Error: boom", "\n    at "},
+		},
+		{
+			name:   "console.log uses the same formatting",
+			script: `console.log(new Error('boom'));`,
+			want:   []string{"Error: boom\n", "\n    at "},
+		},
+		{
+			name:   "circular",
+			script: `const err = new Error('boom'); err.self = err; console.error(err);`,
+			want:   []string{"<ref *1> Error: boom\n", "self: [Circular *1]"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			rt, err := runtime.New(nil)
+			if err != nil {
+				t.Fatalf("Failed to create runtime: %v", err)
+			}
+			defer rt.Dispose()
+
+			writer := runtime.NewStandardWriter(&stdout, &stderr)
+			consoleMod := NewWithWriterAndFormatter(writer, runtime.NewPlainFormatter())
+			if err := consoleMod.Register(rt); err != nil {
+				t.Fatalf("Failed to register console module: %v", err)
+			}
+
+			if _, err := rt.RunScript(tt.script, "test.js"); err != nil {
+				t.Fatalf("RunScript failed: %v", err)
+			}
+
+			output := stdout.String() + stderr.String()
+			for _, want := range tt.want {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing %q\nfull output:\n%s", want, output)
+				}
+			}
+			for _, reject := range tt.reject {
+				if strings.Contains(output, reject) {
+					t.Errorf("output unexpectedly contains %q\nfull output:\n%s", reject, output)
+				}
+			}
+		})
 	}
 }
 

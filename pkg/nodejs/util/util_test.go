@@ -1,6 +1,7 @@
 package util
 
 import (
+	"strings"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -57,6 +58,38 @@ func TestUtil_Inspect(t *testing.T) {
 	str := result.String()
 	if str == "" {
 		t.Error("inspect should return non-empty string")
+	}
+}
+
+func TestUtil_InspectError(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const err = new Error('boom');
+		err.code = 'ENOENT';
+		__util_module.inspect(err);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	got := result.String()
+	for _, want := range []string{"Error: boom\n", "\n    at ", "code: 'ENOENT'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect(error) missing %q\n%s", want, got)
+		}
+	}
+
+	bare, err := rt.RunScript(`
+		const bareErr = new Error('bare');
+		bareErr.stack = undefined;
+		__util_module.inspect(bareErr);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if bare.String() != "[Error: bare]" {
+		t.Errorf("inspect(error without stack) = %q", bare.String())
 	}
 }
 

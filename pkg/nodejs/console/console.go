@@ -22,6 +22,16 @@ type Console struct {
 	timers     map[string]time.Time
 	counts     map[string]int
 	groupDepth int
+
+	// errorTools is the {classify, enter, leave, reset} object installed during
+	// Register. classify reports whether a value is an Error; the others track
+	// object identity so a property that points back at an Error is printed as
+	// Node's [Circular *n].
+	errorTools *v8.Value
+	// skipErrorFormat keeps printf %j on the generic object path. Node's %j is
+	// JSON.stringify, which drops non-enumerable Error fields and yields {}.
+	skipErrorFormat bool
+	errorTracking   bool
 }
 
 // New creates a new Console module with default settings.
@@ -82,6 +92,10 @@ func (c *Console) Name() string {
 
 // Register sets up the console global object.
 func (c *Console) Register(rt *runtime.Runtime) error {
+	if err := c.installErrorClass(rt); err != nil {
+		return err
+	}
+
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
@@ -402,7 +416,20 @@ func (c *Console) formatLog(args []*v8.Value) string {
 					} else {
 						b.WriteString("%f")
 					}
-				case 'j', 'o', 'O':
+				case 'j':
+					// Node's %j is JSON.stringify. Error message/stack are
+					// non-enumerable, so an Error becomes {} (plus any
+					// enumerable own data). Do not use the Error inspect path.
+					if argi < len(args) {
+						prev := c.skipErrorFormat
+						c.skipErrorFormat = true
+						b.WriteString(c.formatValue(args[argi]))
+						c.skipErrorFormat = prev
+						argi++
+					} else {
+						b.WriteString("%j")
+					}
+				case 'o', 'O':
 					if argi < len(args) {
 						b.WriteString(c.formatValue(args[argi]))
 						argi++
@@ -569,6 +596,9 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 			parts[i] = c.formatValueQuotedWithDepth(elem, depth)
 		}
 	}
+	if partsHaveNewline(parts) {
+		return multilineBraces("[", "]", parts)
+	}
 	return "[ " + strings.Join(parts, ", ") + " ]"
 }
 
@@ -579,6 +609,11 @@ func (c *Console) formatObject(v *v8.Value) string {
 
 // formatObjectWithDepth formats an object with depth limiting.
 func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
+	// Errors are formatted even past the depth limit: Node still prints the
+	// stack for an Error that has no extra fields.
+	if s, ok := c.tryFormatError(v, depth); ok {
+		return s
+	}
 	if depth <= 0 {
 		return "[Object]"
 	}
@@ -636,6 +671,9 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		return "{}"
 	}
 
+	if partsHaveNewline(parts) {
+		return multilineBraces("{", "}", parts)
+	}
 	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
@@ -928,6 +966,9 @@ func (c *Console) formatArrayDeep(v *v8.Value, depth int) string {
 		} else {
 			parts[i] = c.formatValueDeep(elem, depth-1)
 		}
+	}
+	if partsHaveNewline(parts) {
+		return multilineBraces("[", "]", parts)
 	}
 	return "[ " + strings.Join(parts, ", ") + " ]"
 }
