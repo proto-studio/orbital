@@ -1,6 +1,7 @@
 package util
 
 import (
+	"strings"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -57,6 +58,70 @@ func TestUtil_Inspect(t *testing.T) {
 	str := result.String()
 	if str == "" {
 		t.Error("inspect should return non-empty string")
+	}
+}
+
+func TestUtil_InspectError(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const err = new Error('boom');
+		err.code = 'ENOENT';
+		__util_module.inspect(err);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	got := result.String()
+	for _, want := range []string{"Error: boom\n", "\n    at ", "code: 'ENOENT'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect(error) missing %q\n%s", want, got)
+		}
+	}
+
+	bare, err := rt.RunScript(`
+		const bareErr = new Error('bare');
+		bareErr.stack = undefined;
+		__util_module.inspect(bareErr);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if bare.String() != "[Error: bare]" {
+		t.Errorf("inspect(error without stack) = %q", bare.String())
+	}
+
+	nullProto, err := rt.RunScript(`
+		const nullErr = new Error('boom');
+		nullErr.code = 'ENOENT';
+		Object.setPrototypeOf(nullErr, null);
+		__util_module.inspect(nullErr);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	got = nullProto.String()
+	for _, want := range []string{"[Error: null prototype]: boom\n", "code: 'ENOENT'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect(null-prototype error) missing %q\n%s", want, got)
+		}
+	}
+
+	native, err := rt.RunScript(`
+		const nullErr2 = new Error('boom');
+		Object.setPrototypeOf(nullErr2, null);
+		const fake = { message: 'x', stack: 'Error: x' };
+		Object.defineProperty(fake, Symbol.toStringTag, { value: 'Error' });
+		__util_module.types.isNativeError(nullErr2) === true &&
+			__util_module.types.isNativeError(fake) === false &&
+			__util_module.types.isNativeError(new Error('ok')) === true;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if !native.Boolean() {
+		t.Error("isNativeError should follow the error brand, including null prototypes")
 	}
 }
 
