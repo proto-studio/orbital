@@ -1,6 +1,6 @@
 {
   "v8_version": "15.5.35.14",
-  "module_version": "v0.2.10",
+  "module_version": "v0.3.0",
   "source_commit": "771361f00b00107a9a9541faa08963f9512bebdc",
   "source_run_id": "37341947278",
   "owner": "proto-studio",
