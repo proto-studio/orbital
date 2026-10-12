@@ -135,6 +135,27 @@ func TestConsole_ErrorObject(t *testing.T) {
 			script: `const err = new Error('boom'); err.self = err; console.error(err);`,
 			want:   []string{"<ref *1> Error: boom\n", "self: [Circular *1]"},
 		},
+		{
+			name:   "null prototype",
+			script: `const err = new Error('boom'); Object.setPrototypeOf(err, null); console.error(err);`,
+			want:   []string{"[Error: null prototype]: boom\n", "\n    at "},
+		},
+		{
+			name:   "null prototype keeps extra fields",
+			script: `const err = new Error('boom'); err.code = 'ENOENT'; Object.setPrototypeOf(err, null); console.error(err);`,
+			want:   []string{"[Error: null prototype]: boom\n", "code: 'ENOENT'"},
+		},
+		{
+			name:   "null prototype uses the captured stack header",
+			script: `const err = new TypeError('bad'); void err.stack; Object.setPrototypeOf(err, null); console.error(err);`,
+			want:   []string{"[TypeError: null prototype]: bad\n"},
+		},
+		{
+			name:   "toStringTag Error is not a branded error",
+			script: `const fake = { message: 'x', stack: 'Error: x' }; Object.defineProperty(fake, Symbol.toStringTag, { value: 'Error' }); console.error(fake);`,
+			want:   []string{"{ message: 'x', stack: 'Error: x' }\n"},
+			reject: []string{"[Error: null prototype]"},
+		},
 	}
 
 	for _, tt := range tests {

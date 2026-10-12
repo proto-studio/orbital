@@ -1,6 +1,26 @@
 (function() {
 	'use strict';
 
+	// Native error brand. instanceof Error is false after
+	// Object.setPrototypeOf(err, null); Node still treats that value as an
+	// error (util.types.isNativeError). Error.isError is the standard check
+	// when this V8 provides it.
+	function isBrandedError(v) {
+		if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return false;
+		if (typeof Error.isError === 'function') {
+			try { return Error.isError(v); } catch (e) { return false; }
+		}
+		try {
+			if (v instanceof Error) return true;
+		} catch (e) {}
+		try {
+			if (v[Symbol.toStringTag] != null) return false;
+			return Object.prototype.toString.call(v) === '[object Error]';
+		} catch (e) {
+			return false;
+		}
+	}
+
 	// Node's %s inspects objects (so an Error keeps its stack). null stays
 	// "null"; primitives use String().
 	function formatStringSpecifier(arg, inspectOptions) {
@@ -123,9 +143,7 @@
 				// Errors are formatted before the depth cutoff. Node still
 				// prints the stack of a nested Error; only its extra fields
 				// are dropped once the depth is exceeded.
-				let isError = false;
-				try { isError = value instanceof Error; } catch (e) { isError = false; }
-				if (isError) {
+				if (isBrandedError(value)) {
 					seen.add(value);
 					const result = formatError(value, currentDepth);
 					seen.delete(value);
@@ -252,19 +270,39 @@
 			return null;
 		}
 
+		function nullProtoFallback(stack) {
+			const header = /^([A-Z][A-Za-z0-9_ \[\]()-]*)(?::|\n {4}at)/.exec(stack);
+			if (header) return header[1];
+			const only = /^([A-Za-z0-9_-]*Error)$/.exec(stack);
+			if (only) return only[1];
+			return '';
+		}
+
 		// Rewrite "Error: msg" to "MyErr [Error]: msg" when the constructor
-		// name and err.name disagree, matching Node's inspect.
+		// name and err.name disagree, and to "[Error: null prototype]: msg"
+		// when the prototype was removed. Matches Node's inspect.
 		function improveErrorStack(stack, name, ctor) {
-			if (ctor === null) return stack;
-			const len = name.length;
+			let len = name.length;
 			const regular = name.endsWith('Error') && stack.startsWith(name) &&
 				(stack.length === len || stack[len] === ':' || stack[len] === '\n');
-			if (!regular) return stack;
-			if (name === ctor) return stack;
-			if (ctor.includes(name)) {
-				return len === 0 ? ctor + ': ' + stack : ctor + stack.slice(len);
+			if (ctor !== null && !regular) return stack;
+
+			let prefix = ctor;
+			if (ctor === null) {
+				const fallback = nullProtoFallback(stack);
+				if (fallback) {
+					len = fallback.length;
+					prefix = '[' + fallback + ': null prototype]';
+				} else {
+					len = 0;
+					prefix = '[Error: null prototype]';
+				}
 			}
-			return ctor + ' [' + name + ']' + stack.slice(len);
+			if (name === prefix) return stack;
+			if (prefix.includes(name)) {
+				return len === 0 ? prefix + ': ' + stack : prefix + stack.slice(len);
+			}
+			return prefix + ' [' + name + ']' + stack.slice(len);
 		}
 
 		function formatError(err, depth) {
@@ -507,7 +545,7 @@
 		isInt32Array: v => v instanceof Int32Array,
 		isMap: v => v instanceof Map,
 		isMapIterator: v => v && v[Symbol.toStringTag] === 'Map Iterator',
-		isNativeError: v => v instanceof Error,
+		isNativeError: isBrandedError,
 		isNumberObject: v => v instanceof Number,
 		isPromise: v => v instanceof Promise,
 		isRegExp: v => v instanceof RegExp,

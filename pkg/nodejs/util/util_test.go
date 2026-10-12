@@ -91,6 +91,38 @@ func TestUtil_InspectError(t *testing.T) {
 	if bare.String() != "[Error: bare]" {
 		t.Errorf("inspect(error without stack) = %q", bare.String())
 	}
+
+	nullProto, err := rt.RunScript(`
+		const nullErr = new Error('boom');
+		nullErr.code = 'ENOENT';
+		Object.setPrototypeOf(nullErr, null);
+		__util_module.inspect(nullErr);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	got = nullProto.String()
+	for _, want := range []string{"[Error: null prototype]: boom\n", "code: 'ENOENT'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect(null-prototype error) missing %q\n%s", want, got)
+		}
+	}
+
+	native, err := rt.RunScript(`
+		const nullErr2 = new Error('boom');
+		Object.setPrototypeOf(nullErr2, null);
+		const fake = { message: 'x', stack: 'Error: x' };
+		Object.defineProperty(fake, Symbol.toStringTag, { value: 'Error' });
+		__util_module.types.isNativeError(nullErr2) === true &&
+			__util_module.types.isNativeError(fake) === false &&
+			__util_module.types.isNativeError(new Error('ok')) === true;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if !native.Boolean() {
+		t.Error("isNativeError should follow the error brand, including null prototypes")
+	}
 }
 
 func TestUtil_Types_IsArray(t *testing.T) {

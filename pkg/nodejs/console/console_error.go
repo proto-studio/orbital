@@ -15,9 +15,9 @@ import (
 // own keys, and whether non-enumerable cause / errors should be appended.
 // enter/leave/reset track object identity for circular Errors.
 //
-// Detection is `instanceof Error`, which covers Error and its subclasses in
-// this realm. A null-prototype error fails that test; formatting those needs
-// V8's native error brand, which this binding does not expose.
+// Detection uses the native error brand (Error.isError when this V8 has it).
+// instanceof Error is false after Object.setPrototypeOf(err, null), but Node
+// still formats that value as "[Error: null prototype]: ...".
 const errorToolsSource = `(function () {
   var active = [];
   var refs = [];
@@ -28,13 +28,27 @@ const errorToolsSource = `(function () {
     }
     return -1;
   }
-  function classify(v) {
-    if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return undefined;
-    try {
-      if (!(v instanceof Error)) return undefined;
-    } catch (e) {
-      return undefined;
+  function isBrandedError(v) {
+    if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return false;
+    if (typeof Error.isError === 'function') {
+      try { return Error.isError(v); } catch (e) { return false; }
     }
+    try {
+      if (v instanceof Error) return true;
+    } catch (e) {}
+    // Null-prototype errors keep V8's error brand. Object.prototype.toString
+    // reports "[object Error]" for that brand, and Error.prototype has no
+    // Symbol.toStringTag here. A plain object that sets toStringTag to
+    // "Error" must stay a plain object.
+    try {
+      if (v[Symbol.toStringTag] != null) return false;
+      return Object.prototype.toString.call(v) === '[object Error]';
+    } catch (e) {
+      return false;
+    }
+  }
+  function classify(v) {
+    if (!isBrandedError(v)) return undefined;
     var ctor = null;
     var obj = v;
     while (obj) {
