@@ -168,14 +168,47 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.m.outputs.tag }}
           V8: ${{ steps.m.outputs.v8 }}
+          RUN_ID: ${{ steps.m.outputs.run_id }}
         run: |
           cp internal/v8dist/manifest.json dist/manifest.json
+
+          git fetch --tags --force
+          prev="$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)"
+          prev_v8=""
+          if [ -n "$prev" ]; then
+            prev_v8="$(git show "$prev:internal/v8dist/manifest.json" 2>/dev/null | jq -r .v8_version || true)"
+          fi
+
+          if [ -n "$prev_v8" ] && [ "$prev_v8" = "$V8" ]; then
+            title="$TAG"
+          else
+            title="$TAG (V8 $V8)"
+          fi
+
+          notes="$(mktemp)"
+          {
+            echo "## Changes"
+            echo
+            if [ -n "$prev" ]; then
+              git log --format='* %s' "${prev}..${GITHUB_SHA}" | grep -v '^\* Pin V8 artifacts' || true
+              echo
+            fi
+            if [ -n "$prev_v8" ] && [ "$prev_v8" = "$V8" ]; then
+              echo "V8 is unchanged ($V8). Same linux (amd64/arm64) and macOS (arm64) lib tarballs as $prev, plus \`v8-headers.tar.gz\`. Fetched by \`go generate\` / \`cmd/v8setup\`."
+            else
+              echo "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md). Fetched by \`go generate\` / \`cmd/v8setup\`."
+            fi
+            echo
+            echo "Artifacts are from build run $RUN_ID."
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${TAG}"
+            fi
+          } > "$notes"
+
           # dist/v8-*.tar.gz includes both platform libs and v8-headers.tar.gz.
           gh release create "$TAG" \
             dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
             --target "${GITHUB_SHA}" \
-            --title "$TAG (V8 $V8)" \
-            --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md).
-
-          Lib tarballs are fetched automatically by \`go generate\` via cmd/v8setup; see README. These are
-          the exact artifacts validated on the merged PR (build run ${{ steps.m.outputs.run_id }})."
+            --title "$title" \
+            --notes-file "$notes"
