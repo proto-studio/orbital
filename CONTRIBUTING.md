@@ -390,9 +390,15 @@ already pinned in `internal/v8dist/manifest.json`.
 
 1. Bump `ModuleVersion` in `internal/v8dist/version.go` and `module_version` in
    `internal/v8dist/manifest.json`. Leave `v8_version`, `source_run_id`,
-   `source_commit`, and the target sha256s alone.
+   `source_commit`, and the target sha256s alone. Commit subject: `Cut vX.Y.Z
+   from the existing V8 artifacts.`
 2. Merge to `main`. Release sees a new tag, copies the existing artifacts, and
    publishes.
+
+Release notes are the other commits since the previous tag (subject plus body).
+The version-bump commit and `Pin V8 artifacts` commits are left out, and the
+title omits the V8 version when it did not change. Write the note you want
+published in the commit that lands the change, before the version bump.
 
 To retry a publish after fixing the Release workflow itself (no version bump):
 Actions → Release → Run workflow, or `gh workflow run release.yml`. That fails

@@ -11,7 +11,8 @@ name: Release
 #     and sha256s — reuse the existing tarballs, no V8 compile.
 #
 # Push events publish when the manifest's module_version tag does not yet
-# exist. workflow_dispatch remains for an intentional publish after a
+# exist. Notes are the commits since the previous tag, not the V8 artifact
+# blurb. workflow_dispatch remains for an intentional publish after a
 # workflow-only fix (path filter would not fire).
 on:
   push:
@@ -168,14 +169,58 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.m.outputs.tag }}
           V8: ${{ steps.m.outputs.v8 }}
+          RUN_ID: ${{ steps.m.outputs.run_id }}
         run: |
+          set -euo pipefail
           cp internal/v8dist/manifest.json dist/manifest.json
+
+          git fetch --tags --force
+          prev="$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)"
+          prev_v8=""
+          if [ -n "$prev" ]; then
+            prev_v8="$(git show "$prev:internal/v8dist/manifest.json" 2>/dev/null | jq -r .v8_version || true)"
+          fi
+
+          if [ -n "$prev_v8" ] && [ "$prev_v8" = "$V8" ]; then
+            title="$TAG"
+          else
+            title="$TAG (V8 $V8)"
+          fi
+
+          notes="$(mktemp)"
+          {
+            echo "## Changes"
+            echo
+            if [ -n "$prev" ]; then
+              # Version-bump and manifest-pin commits are release machinery.
+              # Everything else since the previous tag is the changelog.
+              git log --reverse --format='%s%x1e%b%x1e' "${prev}..${GITHUB_SHA}" |
+                while IFS= read -r -d $'\x1e' subject && IFS= read -r -d $'\x1e' body; do
+                  case "$subject" in
+                    "Pin V8 artifacts"*|"Cut v"*) continue ;;
+                  esac
+                  [ -z "$subject" ] && continue
+                  echo "* $subject"
+                  printf '%s\n' "$body" | sed -e '/^[[:space:]]*$/d' -e 's/^/  /'
+                  echo
+                done
+            fi
+            if [ -n "$prev_v8" ] && [ "$prev_v8" = "$V8" ]; then
+              echo "V8 is unchanged ($V8). Same linux (amd64/arm64) and macOS (arm64) lib tarballs as $prev, plus \`v8-headers.tar.gz\`. Fetched by \`go generate\` / \`cmd/v8setup\`."
+            else
+              echo "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md). Fetched by \`go generate\` / \`cmd/v8setup\`."
+            fi
+            echo
+            echo "Artifacts are from build run $RUN_ID."
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${TAG}"
+            fi
+          } > "$notes"
+
           # dist/v8-*.tar.gz includes both platform libs and v8-headers.tar.gz.
           gh release create "$TAG" \
             dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
             --target "${GITHUB_SHA}" \
-            --title "$TAG (V8 $V8)" \
-            --notes "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md).
-
-          Lib tarballs are fetched automatically by \`go generate\` via cmd/v8setup; see README. These are
-          the exact artifacts validated on the merged PR (build run ${{ steps.m.outputs.run_id }})."
+            --title "$title" \
+            --notes-file "$notes"
