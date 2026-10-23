@@ -214,6 +214,110 @@
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
+  function isReadableStream(value) {
+    return typeof ReadableStream !== 'undefined' && value instanceof ReadableStream;
+  }
+
+  // Go hands response bytes across as a latin1 string (one code unit per byte).
+  function latin1ToUint8Array(value) {
+    const text = value == null ? '' : String(value);
+    const out = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) {
+      out[i] = text.charCodeAt(i) & 0xff;
+    }
+    return out;
+  }
+
+  function abortError() {
+    return new DOMException('This operation was aborted', 'AbortError');
+  }
+
+  async function readStreamBytes(stream) {
+    const reader = stream.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value == null) continue;
+        const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+        chunks.push(bytes);
+        total += bytes.byteLength;
+      }
+    } finally {
+      try { reader.releaseLock(); } catch (e) { /* already released */ }
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
+  }
+
+  // Live fetch bodies. id is the Go-side stream. terminal records cancel/abort
+  // that happens when no read is in flight, so the next pull still observes it.
+  const fetchStreams = new Map();
+
+  function readFetchBody(id) {
+    return new Promise((resolve) => {
+      __http_fetch_read(id, (err, chunk, done) => {
+        if (err === 'AbortError') {
+          resolve({ abort: true });
+          return;
+        }
+        if (err) {
+          resolve({ error: String(err) });
+          return;
+        }
+        if (done) {
+          resolve({ done: true });
+          return;
+        }
+        resolve({ value: latin1ToUint8Array(chunk) });
+      });
+    });
+  }
+
+  function createFetchStream(id) {
+    let terminal = null;
+    const stream = new ReadableStream({
+      async pull(controller) {
+        if (terminal === 'abort') {
+          throw abortError();
+        }
+        if (terminal === 'cancel') {
+          controller.close();
+          return;
+        }
+        const result = await readFetchBody(id);
+        if (terminal === 'abort' || result.abort) {
+          throw abortError();
+        }
+        if (result.error) {
+          throw new TypeError(result.error);
+        }
+        if (result.done || terminal === 'cancel') {
+          controller.close();
+          return;
+        }
+        controller.enqueue(result.value);
+      },
+      cancel() {
+        terminal = terminal || 'cancel';
+        if (typeof __http_fetch_cancel === 'function') {
+          __http_fetch_cancel(id);
+        }
+      }
+    });
+    fetchStreams.set(id, {
+      abort() { terminal = 'abort'; }
+    });
+    return stream;
+  }
+
   /**
    * Request class representing an HTTP request.
    */
@@ -323,6 +427,7 @@
       this._url = init.url || '';
       this._redirected = false;
       this._bodyUsed = false;
+      this._stream = isReadableStream(body) ? body : null;
     }
 
     get status() { return this._status; }
@@ -333,6 +438,34 @@
     get url() { return this._url; }
     get redirected() { return this._redirected; }
     get bodyUsed() { return this._bodyUsed; }
+
+    // Node's fetch body is a ReadableStream of Uint8Array chunks, or null when
+    // the response has no body (HEAD, 204, 205, 304).
+    get body() {
+      if (this._body === null || this._body === undefined) {
+        return null;
+      }
+      if (this._stream) {
+        return this._stream;
+      }
+      if (typeof ReadableStream === 'undefined') {
+        throw new TypeError('ReadableStream is not available');
+      }
+      const bytes = bodyToUint8Array(this._body);
+      let pulled = false;
+      this._stream = new ReadableStream({
+        pull(controller) {
+          if (!pulled) {
+            pulled = true;
+            if (bytes.byteLength > 0) {
+              controller.enqueue(bytes);
+            }
+          }
+          controller.close();
+        }
+      });
+      return this._stream;
+    }
 
     clone() {
       if (this._bodyUsed) {
@@ -346,9 +479,24 @@
       });
     }
 
-    async text() {
+    async _bytes() {
+      if (this._bodyUsed) {
+        throw new TypeError('Body has already been used');
+      }
       this._bodyUsed = true;
-      return bodyToText(this._body);
+      if (this._body === null || this._body === undefined) {
+        return new Uint8Array(0);
+      }
+      const stream = this._stream || (isReadableStream(this._body) ? this._body : null);
+      if (stream) {
+        return readStreamBytes(stream);
+      }
+      return bodyToUint8Array(this._body);
+    }
+
+    async text() {
+      const bytes = await this._bytes();
+      return new TextDecoder().decode(bytes);
     }
 
     async json() {
@@ -357,8 +505,8 @@
     }
 
     async arrayBuffer() {
-      this._bodyUsed = true;
-      return bodyToArrayBuffer(this._body);
+      const bytes = await this._bytes();
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     }
 
     async blob() {
@@ -466,7 +614,7 @@
     
     // Check if aborted
     if (request.signal && request.signal.aborted) {
-      throw new DOMException('The operation was aborted', 'AbortError');
+      throw abortError();
     }
 
     // Get body if any
@@ -497,39 +645,77 @@
     });
 
     return new Promise((resolve, reject) => {
-      // Check abort signal
-      if (request.signal) {
-        request.signal.addEventListener('abort', () => {
-          reject(new DOMException('The operation was aborted', 'AbortError'));
-        }, { once: true });
+      let settled = false;
+      let requestId = 0;
+
+      function fail(err) {
+        if (settled) return;
+        settled = true;
+        reject(err);
       }
 
-      // Call internal fetch
-      if (typeof __http_fetch === 'function') {
-        __http_fetch(
-          request.url,
-          request.method,
-          JSON.stringify(headersObj),
-          body || '',
-          (error, statusCode, statusText, responseHeaders, responseBody) => {
-            if (error) {
-              reject(new TypeError('Failed to fetch: ' + error));
-              return;
-            }
+      function onAbort() {
+        if (requestId && typeof __http_fetch_abort === 'function') {
+          __http_fetch_abort(requestId);
+        }
+        const entry = fetchStreams.get(requestId);
+        if (entry) entry.abort();
+        // Reject only when headers have not arrived. After that, abort errors
+        // the body stream (Node does not reject the already-resolved promise).
+        if (!settled) fail(abortError());
+      }
 
-            const respHeaders = responseHeaders ? JSON.parse(responseHeaders) : {};
-            const response = new Response(responseBody, {
-              status: statusCode,
-              statusText: statusText,
-              headers: respHeaders,
-              url: request.url
-            });
-            
-            resolve(response);
+      if (typeof __http_fetch !== 'function') {
+        fail(new TypeError('fetch not available (HTTP client not configured)'));
+        return;
+      }
+
+      requestId = __http_fetch(
+        request.url,
+        request.method,
+        JSON.stringify(headersObj),
+        body || '',
+        (error, statusCode, statusText, responseHeaders, responseBody, streamId) => {
+          if (settled) {
+            if (streamId && typeof __http_fetch_cancel === 'function') {
+              __http_fetch_cancel(streamId);
+            }
+            return;
           }
-        );
-      } else {
-        reject(new TypeError('fetch not available (HTTP client not configured)'));
+          if (error) {
+            if (error === 'AbortError') fail(abortError());
+            else fail(new TypeError('Failed to fetch: ' + error));
+            return;
+          }
+
+          settled = true;
+          const respHeaders = responseHeaders ? JSON.parse(responseHeaders) : {};
+          let responseBodyValue = null;
+          if (streamId) {
+            responseBodyValue = createFetchStream(streamId);
+          } else if (responseBody !== null && responseBody !== undefined) {
+            responseBodyValue = latin1ToUint8Array(responseBody);
+          }
+          resolve(new Response(responseBodyValue, {
+            status: statusCode,
+            statusText: statusText,
+            headers: respHeaders,
+            url: request.url
+          }));
+        }
+      );
+
+      if (typeof requestId !== 'number') {
+        fail(new TypeError('Failed to fetch'));
+        return;
+      }
+
+      if (request.signal) {
+        if (request.signal.aborted) {
+          onAbort();
+          return;
+        }
+        request.signal.addEventListener('abort', onAbort, { once: true });
       }
     });
   }

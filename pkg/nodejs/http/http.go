@@ -874,13 +874,23 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	client := h.rt.HTTPClient()
 	ctx := info.Context()
+	reqCtx := h.rt.ExecutionContext()
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
 
-	// Execute async
+	// Execute async. Do may return a streaming body; read it here so the http
+	// module still hands JavaScript the full payload, and so the isolate
+	// deadline cancels a slow read.
 	h.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer h.rt.EventLoop().DonePendingWork()
 
-		resp, err := client.Do(context.Background(), req)
+		resp, err := client.Do(reqCtx, req)
+		var body []byte
+		if err == nil {
+			body, err = resp.Bytes()
+		}
 
 		h.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -903,7 +913,7 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				"statusCode":    resp.StatusCode,
 				"statusMessage": resp.Status,
 				"headers":       respHeaders,
-				"body":          string(resp.Body),
+				"body":          string(body),
 			}
 
 			respJSON, _ := json.Marshal(respObj)
