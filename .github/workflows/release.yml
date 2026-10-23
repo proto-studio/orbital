@@ -194,8 +194,13 @@ jobs:
             if [ -n "$prev" ]; then
               # Version-bump and manifest-pin commits are release machinery.
               # Everything else since the previous tag is the changelog.
-              git log --reverse --format='%s%x1e%b%x1e' "${prev}..${GITHUB_SHA}" |
-                while IFS= read -r -d $'\x1e' subject && IFS= read -r -d $'\x1e' body; do
+              # -z keeps git from inserting a newline between records. That
+              # newline was landing on the next subject, so "Cut v…" no longer
+              # matched and the version bump showed up as its own bullet.
+              git log --reverse -z --pretty=format:'%s%x1e%b' "${prev}..${GITHUB_SHA}" |
+                while IFS= read -r -d '' record; do
+                  subject="${record%%$'\x1e'*}"
+                  body="${record#*$'\x1e'}"
                   case "$subject" in
                     "Pin V8 artifacts"*|"Cut v"*) continue ;;
                   esac
