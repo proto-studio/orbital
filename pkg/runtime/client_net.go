@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,17 +39,53 @@ type Request struct {
 }
 
 // Response represents an HTTP response.
+//
+// A client may either buffer the payload in Body or stream it through
+// BodyReader. When BodyReader is set it is the body: fetch resolves as soon
+// as Do returns and pulls chunks from the reader. Body is the buffered
+// fallback used when BodyReader is nil. Callers that want the full payload
+// regardless of which form the client used should call Bytes, which consumes
+// and closes BodyReader.
 type Response struct {
 	StatusCode    int
 	Status        string
 	Headers       map[string][]string
 	Body          []byte
 	ContentLength int64
+	// BodyReader is the streaming response body. The caller must Close it,
+	// unless Bytes is used, which closes it. Nil when the client buffered
+	// the payload in Body instead.
+	BodyReader io.ReadCloser
+}
+
+// Bytes returns the full response payload. A buffered Body is returned as-is.
+// A BodyReader is read to completion and closed, and the bytes are also
+// stored on Body.
+func (r *Response) Bytes() ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if r.BodyReader == nil {
+		return r.Body, nil
+	}
+	rc := r.BodyReader
+	r.BodyReader = nil
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, err
+	}
+	r.Body = body
+	return body, nil
 }
 
 // HTTPClient defines the interface for making HTTP requests.
 type HTTPClient interface {
-	// Do performs an HTTP request and returns the response.
+	// Do performs an HTTP request and returns once response headers are
+	// available. Implementations may stream the payload by setting
+	// Response.BodyReader; cancelling ctx must abort the exchange and
+	// unblock reads of that reader. Buffered clients leave BodyReader nil
+	// and put the payload in Body.
 	Do(ctx context.Context, req *Request) (*Response, error)
 
 	// Get is a convenience method for GET requests.
@@ -62,16 +100,19 @@ type RealHTTPClient struct {
 	client *http.Client
 }
 
-// NewRealHTTPClient creates a new real HTTP client.
+// NewRealHTTPClient creates a client that streams response bodies.
+//
+// The 30s client timeout bounds only the wait for response headers, matching
+// fetch resolving once headers arrive. Reading BodyReader continues until the
+// server finishes or ctx is cancelled. Request.Timeout, when set, bounds the
+// whole exchange including the body. Get and Post still buffer the payload and
+// apply the client timeout to that full read.
 func NewRealHTTPClient() *RealHTTPClient {
-	return &RealHTTPClient{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
+	return NewRealHTTPClientWithTimeout(30 * time.Second)
 }
 
-// NewRealHTTPClientWithTimeout creates a client with custom timeout.
+// NewRealHTTPClientWithTimeout creates a streaming client whose header timeout
+// is timeout. See NewRealHTTPClient for how the timeout applies.
 func NewRealHTTPClientWithTimeout(timeout time.Duration) *RealHTTPClient {
 	return &RealHTTPClient{
 		client: &http.Client{
@@ -80,15 +121,35 @@ func NewRealHTTPClientWithTimeout(timeout time.Duration) *RealHTTPClient {
 	}
 }
 
-// Do performs an HTTP request and returns the response.
+// Do performs an HTTP request and returns when response headers arrive.
+// The body is streamed through Response.BodyReader; the caller must Close it
+// (Bytes does this). Cancelling ctx aborts the request and unblocks body reads.
 func (c *RealHTTPClient) Do(ctx context.Context, req *Request) (*Response, error) {
+	if req == nil {
+		return nil, errors.New("nil request")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var bodyReader io.Reader
 	if req.Body != nil {
 		bodyReader = bytes.NewReader(req.Body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, bodyReader)
+	// Request.Timeout covers headers and the body. The client timeout covers
+	// headers only, so a long-lived stream is not cut off after Do returns.
+	callCtx := ctx
+	var timeoutCancel context.CancelFunc
+	if req.Timeout > 0 {
+		callCtx, timeoutCancel = context.WithTimeout(ctx, req.Timeout)
+	}
+
+	httpReq, err := http.NewRequestWithContext(callCtx, req.Method, req.URL, bodyReader)
 	if err != nil {
+		if timeoutCancel != nil {
+			timeoutCancel()
+		}
 		return nil, err
 	}
 
@@ -109,65 +170,71 @@ func (c *RealHTTPClient) Do(ctx context.Context, req *Request) (*Response, error
 		}
 	}
 
-	// Use request-specific timeout and/or redirect policy if needed. Both are
-	// per-http.Client settings, so build a lightweight client that reuses the
-	// shared Transport (keeping connection pooling) when either differs from the
-	// default.
-	client := c.client
-	if req.Timeout > 0 || req.NoFollowRedirects {
-		custom := &http.Client{
-			Timeout:   c.client.Timeout,
-			Transport: c.client.Transport,
+	// Timeout is applied to the request context above (overall) or as a headers
+	// timer below. The http.Client timeout must stay 0 so it does not also
+	// cancel body reads after Do returns.
+	client := &http.Client{
+		Transport:     c.client.Transport,
+		CheckRedirect: c.client.CheckRedirect,
+		Jar:           c.client.Jar,
+	}
+	if req.NoFollowRedirects {
+		// Return the 3xx response as-is instead of following it, matching
+		// Node's http.request semantics.
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
 		}
-		if req.Timeout > 0 {
-			custom.Timeout = req.Timeout
-		}
-		if req.NoFollowRedirects {
-			// Return the 3xx response as-is instead of following it, matching
-			// Node's http.request semantics.
-			custom.CheckRedirect = func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
+	}
+
+	headerTimeout := time.Duration(0)
+	if req.Timeout == 0 {
+		headerTimeout = c.client.Timeout
+	}
+
+	if headerTimeout > 0 {
+		headerCtx, headerCancel := context.WithCancel(callCtx)
+		timer := time.AfterFunc(headerTimeout, headerCancel)
+		httpReq = httpReq.WithContext(headerCtx)
+		resp, err := client.Do(httpReq)
+		if !timer.Stop() {
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
 			}
+			headerCancel()
+			return nil, fmt.Errorf("request timed out after %s awaiting headers: %w", headerTimeout, context.DeadlineExceeded)
 		}
-		client = custom
+		if err != nil {
+			headerCancel()
+			return nil, err
+		}
+		resp.Body = &onCloseReader{ReadCloser: resp.Body, fn: headerCancel}
+		return responseFromHTTP(resp), nil
 	}
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if timeoutCancel != nil {
+			timeoutCancel()
+		}
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if timeoutCancel != nil {
+		resp.Body = &onCloseReader{ReadCloser: resp.Body, fn: timeoutCancel}
 	}
-
-	headers := make(map[string][]string)
-	for key, values := range resp.Header {
-		headers[strings.ToLower(key)] = values
-	}
-
-	return &Response{
-		StatusCode:    resp.StatusCode,
-		Status:        resp.Status,
-		Headers:       headers,
-		Body:          body,
-		ContentLength: resp.ContentLength,
-	}, nil
+	return responseFromHTTP(resp), nil
 }
 
-// Get performs a GET request to the specified URL.
+// Get performs a GET request and buffers the response body.
 func (c *RealHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
-	return c.Do(ctx, &Request{
+	return c.doBuffered(ctx, &Request{
 		Method: "GET",
 		URL:    url,
 	})
 }
 
-// Post performs a POST request with the specified content type and body.
+// Post performs a POST request and buffers the response body.
 func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
-	return c.Do(ctx, &Request{
+	return c.doBuffered(ctx, &Request{
 		Method: "POST",
 		URL:    url,
 		Headers: map[string][]string{
@@ -175,6 +242,23 @@ func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType strin
 		},
 		Body: body,
 	})
+}
+
+// doBuffered runs Do and reads the streamed body to completion. A client
+// timeout that Do would apply only to headers is widened to the whole read,
+// preserving the previous Get/Post deadline.
+func (c *RealHTTPClient) doBuffered(ctx context.Context, req *Request) (*Response, error) {
+	if req.Timeout == 0 && c.client != nil && c.client.Timeout > 0 {
+		req.Timeout = c.client.Timeout
+	}
+	resp, err := c.Do(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resp.Bytes(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // SandboxedHTTPClient implements HTTPClient with restrictions.
@@ -215,8 +299,8 @@ func DefaultSandboxHTTPConfig() *SandboxHTTPConfig {
 		AllowedHosts:      []string{}, // No hosts allowed by default
 		BlockedHosts:      []string{"localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.*", "10.*", "172.16.*", "192.168.*"},
 		AllowedSchemes:    []string{"http", "https"},
-		MaxRequestSize:    10 * 1024 * 1024,  // 10MB
-		MaxResponseSize:   50 * 1024 * 1024,  // 50MB
+		MaxRequestSize:    10 * 1024 * 1024, // 10MB
+		MaxResponseSize:   50 * 1024 * 1024, // 50MB
 		AllowRealRequests: false,
 	}
 }
@@ -340,9 +424,12 @@ func (c *SandboxedHTTPClient) Do(ctx context.Context, req *Request) (*Response, 
 			return nil, err
 		}
 
-		// Check response size
-		if c.MaxResponseSize > 0 && int64(len(resp.Body)) > c.MaxResponseSize {
-			return nil, errors.New("EMSGSIZE: response body too large")
+		if c.MaxResponseSize > 0 {
+			if resp.BodyReader != nil {
+				resp.BodyReader = &maxBytesReadCloser{rc: resp.BodyReader, left: c.MaxResponseSize}
+			} else if int64(len(resp.Body)) > c.MaxResponseSize {
+				return nil, errResponseTooLarge
+			}
 		}
 
 		return resp, nil
@@ -351,24 +438,34 @@ func (c *SandboxedHTTPClient) Do(ctx context.Context, req *Request) (*Response, 
 	return nil, ErrRequestBlocked
 }
 
-// Get performs a sandboxed GET request.
+// Get performs a sandboxed GET request and buffers the body.
 func (c *SandboxedHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
-	return c.Do(ctx, &Request{
+	return bufferResponse(c.Do(ctx, &Request{
 		Method: "GET",
 		URL:    url,
-	})
+	}))
 }
 
-// Post performs a sandboxed POST request.
+// Post performs a sandboxed POST request and buffers the body.
 func (c *SandboxedHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
-	return c.Do(ctx, &Request{
+	return bufferResponse(c.Do(ctx, &Request{
 		Method: "POST",
 		URL:    url,
 		Headers: map[string][]string{
 			"content-type": {contentType},
 		},
 		Body: body,
-	})
+	}))
+}
+
+func bufferResponse(resp *Response, err error) (*Response, error) {
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resp.Bytes(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // matchHost checks if a host matches a pattern (supports * wildcard).
@@ -453,4 +550,86 @@ func (c *NoOpHTTPClient) Get(ctx context.Context, url string) (*Response, error)
 // Post returns the default response or ErrRequestBlocked.
 func (c *NoOpHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
 	return c.Do(ctx, nil)
+}
+
+// errResponseTooLarge is returned when a sandboxed response exceeds MaxResponseSize.
+var errResponseTooLarge = errors.New("EMSGSIZE: response body too large")
+
+// responseFromHTTP copies headers and leaves the body as a stream.
+func responseFromHTTP(resp *http.Response) *Response {
+	headers := make(map[string][]string, len(resp.Header))
+	for key, values := range resp.Header {
+		headers[strings.ToLower(key)] = append([]string(nil), values...)
+	}
+	return &Response{
+		StatusCode:    resp.StatusCode,
+		Status:        resp.Status,
+		Headers:       headers,
+		BodyReader:    resp.Body,
+		ContentLength: resp.ContentLength,
+	}
+}
+
+// onCloseReader runs fn exactly once when the body is closed. It releases the
+// header-timeout or overall-timeout context that body reads are bound to.
+type onCloseReader struct {
+	io.ReadCloser
+	once sync.Once
+	fn   func()
+}
+
+func (r *onCloseReader) Close() error {
+	err := r.ReadCloser.Close()
+	if r.fn != nil {
+		r.once.Do(r.fn)
+	}
+	return err
+}
+
+// maxBytesReadCloser fails the read after limit bytes instead of buffering the
+// whole payload to measure it. A body of exactly limit bytes is allowed.
+type maxBytesReadCloser struct {
+	rc   io.ReadCloser
+	left int64
+	err  error
+}
+
+func (m *maxBytesReadCloser) Read(p []byte) (int, error) {
+	if m.err != nil {
+		return 0, m.err
+	}
+	if m.left <= 0 {
+		m.err = errResponseTooLarge
+		return 0, m.err
+	}
+	if int64(len(p)) > m.left {
+		p = p[:m.left]
+	}
+	n, err := m.rc.Read(p)
+	if n > 0 {
+		m.left -= int64(n)
+	}
+	if err != nil {
+		return n, err
+	}
+	if m.left == 0 {
+		var extra [1]byte
+		nn, peekErr := m.rc.Read(extra[:])
+		if nn > 0 {
+			// The bytes already copied into p are within the limit. The next
+			// read reports the overflow so callers can finish this chunk first.
+			m.err = errResponseTooLarge
+			return n, nil
+		}
+		if peekErr != nil && !errors.Is(peekErr, io.EOF) {
+			m.err = peekErr
+			return n, nil
+		}
+		m.err = io.EOF
+	}
+	return n, nil
+}
+
+func (m *maxBytesReadCloser) Close() error {
+	return m.rc.Close()
 }
