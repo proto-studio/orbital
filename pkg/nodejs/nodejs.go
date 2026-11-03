@@ -61,8 +61,9 @@ type Instance struct {
 // New creates a runtime and registers the full Node.js compatibility module set
 // (the same set used by the orbital CLI). cfg may be nil for runtime.DefaultConfig().
 //
-// New also configures worker_threads.RuntimeProvider and esm.LoaderRuntimeProvider
-// so Worker and module.register hooks receive equally complete runtimes.
+// Worker and module.register hooks receive equally complete runtimes built from
+// the same configuration. That binding is per instance: runtimes created by
+// separate New calls never observe each other's configuration.
 func New(cfg *runtime.Config) (*Instance, error) {
 	if cfg == nil {
 		cfg = runtime.DefaultConfig()
@@ -70,22 +71,21 @@ func New(cfg *runtime.Config) (*Instance, error) {
 	// Capture a shallow copy so later mutations of the caller's cfg do not affect
 	// worker / loader-realm clones.
 	cfgCopy := *cfg
-	installProviders(&cfgCopy)
-
 	return newInstance(&cfgCopy)
 }
 
 // Register attaches the default Node.js modules to an existing runtime.
 // Prefer New unless you need a custom runtime construction path.
 //
-// Register does not install worker / loader providers; call New for that, or set
-// worker_threads.RuntimeProvider and esm.LoaderRuntimeProvider yourself.
+// Register has no configuration to build child runtimes from, so Worker and
+// module.register are unavailable. Call New for those, or register
+// worker_threads.NewWithProvider and esm.NewWithLoaderProvider yourself.
 func Register(rt *runtime.Runtime) (*esm.ESM, error) {
 	if rt == nil {
 		return nil, fmt.Errorf("nodejs: runtime is nil")
 	}
 	loader := esm.New()
-	if err := registerModules(rt, loader); err != nil {
+	if err := registerModules(rt, loader, worker_threads.New()); err != nil {
 		return nil, err
 	}
 	return loader, nil
@@ -96,24 +96,7 @@ func Register(rt *runtime.Runtime) (*esm.ESM, error) {
 // Callers who register a custom subset should preserve relative ordering for
 // interdependent modules (e.g. webcrypto after crypto, module last).
 func Modules() []runtime.Module {
-	return defaultModules(esm.New())
-}
-
-func installProviders(cfg *runtime.Config) {
-	worker_threads.RuntimeProvider = func() (*runtime.Runtime, error) {
-		inst, err := newInstance(cfg)
-		if err != nil {
-			return nil, err
-		}
-		return inst.Runtime, nil
-	}
-	esm.LoaderRuntimeProvider = func() (*runtime.Runtime, error) {
-		inst, err := newInstance(cfg)
-		if err != nil {
-			return nil, err
-		}
-		return inst.Runtime, nil
-	}
+	return defaultModules(esm.New(), worker_threads.New())
 }
 
 func newInstance(cfg *runtime.Config) (*Instance, error) {
@@ -122,8 +105,19 @@ func newInstance(cfg *runtime.Config) (*Instance, error) {
 		return nil, err
 	}
 
-	loader := esm.New()
-	if err := registerModules(rt, loader); err != nil {
+	// Children are built from this instance's configuration only. The provider
+	// holds cfg, not rt, so it stays valid if this runtime is disposed first, and
+	// nested workers and loader realms inherit the same configuration.
+	provider := func() (*runtime.Runtime, error) {
+		inst, err := newInstance(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Runtime, nil
+	}
+
+	loader := esm.NewWithLoaderProvider(provider)
+	if err := registerModules(rt, loader, worker_threads.NewWithProvider(provider)); err != nil {
 		rt.Dispose()
 		return nil, err
 	}
@@ -131,8 +125,8 @@ func newInstance(cfg *runtime.Config) (*Instance, error) {
 	return &Instance{Runtime: rt, ESM: loader}, nil
 }
 
-func registerModules(rt *runtime.Runtime, loader *esm.ESM) error {
-	for _, mod := range defaultModules(loader) {
+func registerModules(rt *runtime.Runtime, loader *esm.ESM, workers *worker_threads.WorkerThreads) error {
+	for _, mod := range defaultModules(loader, workers) {
 		if err := rt.RegisterModule(mod); err != nil {
 			return fmt.Errorf("failed to register %s module: %w", mod.Name(), err)
 		}
@@ -140,7 +134,7 @@ func registerModules(rt *runtime.Runtime, loader *esm.ESM) error {
 	return nil
 }
 
-func defaultModules(loader *esm.ESM) []runtime.Module {
+func defaultModules(loader *esm.ESM, workers *worker_threads.WorkerThreads) []runtime.Module {
 	// Order matters — see comments. CommonJS module system must be last.
 	return []runtime.Module{
 		abort.New(), // AbortController/AbortSignal globals - early for other modules
@@ -168,9 +162,9 @@ func defaultModules(loader *esm.ESM) []runtime.Module {
 		querystring.New(),
 		assert.New(),
 		zlib.New(),
-		tty.New(),            // Terminal helpers (must come after process)
-		async_hooks.New(),    // AsyncLocalStorage / AsyncResource (must come after timers/process)
-		worker_threads.New(), // Isolate-backed workers (must come after events)
+		tty.New(),         // Terminal helpers (must come after process)
+		async_hooks.New(), // AsyncLocalStorage / AsyncResource (must come after timers/process)
+		workers,           // Isolate-backed workers (must come after events)
 		dns.New(),
 		readline.New(),
 		fetch.New(),               // Web Fetch API

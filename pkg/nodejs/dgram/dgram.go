@@ -3,6 +3,9 @@ package dgram
 
 import (
 	_ "embed"
+	"encoding/base64"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -173,11 +176,17 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
+	data, err := base64.StdEncoding.DecodeString(msg)
+	if err != nil {
+		d.callCallbackWithBytes(callback, err.Error(), 0)
+		return nil
+	}
+
 	d.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer d.rt.EventLoop().DonePendingWork()
 
-		n, err := socket.Send([]byte(msg), address, port)
+		n, err := socket.Send(data, address, port)
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -239,7 +248,11 @@ func (d *Dgram) receiveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			rinfo.Set("size", ctx.NewNumber(float64(n)))
 
 			// Return message as binary string
-			msgStr, _ := ctx.NewString(string(buf[:n]))
+			binary := make([]rune, n)
+			for i, b := range buf[:n] {
+				binary[i] = rune(b)
+			}
+			msgStr, _ := ctx.NewString(string(binary))
 			d.callReceiveCallback(callback, "", msgStr, rinfo)
 		})
 	}()
@@ -291,11 +304,20 @@ func (d *Dgram) addressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Null()
 	}
 
+	host, port := addr.String(), 0
+	if udp, ok := addr.(*net.UDPAddr); ok {
+		host, port = udp.IP.String(), udp.Port
+	}
+	family := "IPv4"
+	if strings.Contains(host, ":") {
+		family = "IPv6"
+	}
+
 	obj, _ := ctx.NewObject()
-	addrStr, _ := ctx.NewString(addr.String())
+	addrStr, _ := ctx.NewString(host)
 	obj.Set("address", addrStr)
-	obj.Set("port", ctx.NewNumber(0)) // Would need to parse from addr.String()
-	familyStr, _ := ctx.NewString("IPv4")
+	obj.Set("port", ctx.NewNumber(float64(port)))
+	familyStr, _ := ctx.NewString(family)
 	obj.Set("family", familyStr)
 
 	return obj

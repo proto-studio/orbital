@@ -5,6 +5,35 @@
   const EventEmitter = global.__events_module.EventEmitter;
   const internal = global.__dgram_internal;
 
+  function toBuffer(msg) {
+    if (Buffer.isBuffer(msg)) return msg;
+    if (typeof msg === 'string') return Buffer.from(msg);
+    if (ArrayBuffer.isView(msg)) return Buffer.from(msg.buffer, msg.byteOffset, msg.byteLength);
+    return Buffer.from(String(msg));
+  }
+
+  // Applies the offset and length of the six-argument send form.
+  function sliceMessage(msg, offset, length) {
+    if (Array.isArray(msg)) return msg;
+    if (typeof offset !== 'number' || typeof length !== 'number') return msg;
+    return toBuffer(msg).subarray(offset, offset + length);
+  }
+
+  // Messages cross into Go as base64, so binary data and the byte count reported to
+  // the callback are preserved.
+  function messageToBase64(msg) {
+    const buf = Array.isArray(msg) ? Buffer.concat(msg.map(toBuffer)) : toBuffer(msg);
+    return buf.toString('base64');
+  }
+
+  // Errors from socket implementations are prefixed with their code ("EACCES: ...").
+  function socketError(message) {
+    const error = new Error(message);
+    const match = /^([A-Z][A-Z0-9_]+):/.exec(message);
+    if (match) error.code = match[1];
+    return error;
+  }
+
   /**
    * Socket class - Represents a UDP socket.
    */
@@ -62,7 +91,7 @@
 
       internal.bind(this._id, address, port, (err) => {
         if (err) {
-          this.emit('error', new Error(err));
+          this.emit('error', socketError(err));
           return;
         }
 
@@ -113,22 +142,15 @@
      * Send a message.
      */
     send(msg, offset, length, port, address, callback) {
-      // Handle overloads
-      if (typeof offset === 'number' && typeof length === 'number') {
-        // send(msg, offset, length, port, address, callback)
-        if (Buffer.isBuffer(msg)) {
-          msg = msg.slice(offset, offset + length);
-        }
-      } else if (typeof offset === 'number') {
-        // send(msg, port, address, callback)
-        callback = address;
-        address = length;
-        port = offset;
+      // Same overload rule as Node: arguments four and five only exist in the
+      // (msg, offset, length, port[, address][, callback]) forms. Otherwise this is
+      // (msg, port[, address][, callback]).
+      if (address || (port && typeof port !== 'function')) {
+        msg = sliceMessage(msg, offset, length);
       } else {
-        // send(msg, port, address, callback)
-        callback = length;
-        address = port;
+        callback = port;
         port = offset;
+        address = length;
       }
 
       if (typeof address === 'function') {
@@ -139,27 +161,24 @@
       // Default address
       address = address || (this._type === 'udp6' ? '::1' : '127.0.0.1');
 
-      // Convert message to string
-      let msgStr;
-      if (Buffer.isBuffer(msg)) {
-        msgStr = msg.toString('binary');
-      } else if (typeof msg === 'string') {
-        msgStr = msg;
-      } else if (Array.isArray(msg)) {
-        // Array of buffers
-        msgStr = Buffer.concat(msg.map(m => Buffer.isBuffer(m) ? m : Buffer.from(m))).toString('binary');
-      } else {
-        msgStr = String(msg);
-      }
+      const wasBound = this._bound;
 
-      internal.send(this._id, msgStr, address, port, (err, bytes) => {
+      internal.send(this._id, messageToBase64(msg), address, port, (err, bytes) => {
         if (err) {
-          if (callback) callback(new Error(err));
-          else this.emit('error', new Error(err));
+          const error = socketError(err);
+          if (typeof callback === 'function') callback(error);
+          else this.emit('error', error);
           return;
         }
 
-        if (callback) callback(null, bytes);
+        // A successful first send may have bound an ephemeral port. Replies to it
+        // are delivered as for an explicit bind, as in Node.
+        if (!wasBound && !this._bound && this._id !== null && internal.address(this._id)) {
+          this._bound = true;
+          this._startReceiving();
+        }
+
+        if (typeof callback === 'function') callback(null, bytes);
       });
 
       return this;

@@ -50,16 +50,17 @@ func (rt *ResourceTracker) Untrack(id uint64) {
 // CloseAll closes all tracked resources.
 func (rt *ResourceTracker) CloseAll() []error {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
-
 	rt.closed = true
-	var errors []error
+	resources := rt.resources
+	rt.resources = make(map[uint64]io.Closer)
+	rt.mu.Unlock()
 
-	for id, resource := range rt.resources {
+	// Closed without the lock: a resource may untrack itself as it closes.
+	var errors []error
+	for _, resource := range resources {
 		if err := resource.Close(); err != nil {
 			errors = append(errors, err)
 		}
-		delete(rt.resources, id)
 	}
 
 	return errors

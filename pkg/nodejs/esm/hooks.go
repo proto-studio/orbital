@@ -31,13 +31,6 @@ import (
 //go:embed loader-hooks.js
 var loaderHooksJS string
 
-// LoaderRuntimeProvider builds a fully-configured runtime for the isolated
-// loader realm. It is set by nodejs.New (or the embedder) to the same builder
-// used for the application runtime (and for worker threads), so the loader
-// realm has a real require + builtins and can load hook modules and their
-// dependencies.
-var LoaderRuntimeProvider func() (*runtime.Runtime, error)
-
 // maxHookTicks bounds how long Go will pump the loader realm waiting for a hook
 // promise to settle before giving up (guards against a runaway loader hook).
 const maxHookTicks = 200000
@@ -47,6 +40,14 @@ type loaderRealm struct {
 	rt        *runtime.Runtime
 	esm       *ESM // the loader realm's own esm instance (loads hook modules)
 	hookCount int
+}
+
+// realmCloser disposes a loader realm when its owning runtime is disposed.
+type realmCloser struct{ rt *runtime.Runtime }
+
+func (c realmCloser) Close() error {
+	c.rt.Dispose()
+	return nil
 }
 
 // hooksActive reports whether any resolve/load hooks are registered.
@@ -60,23 +61,30 @@ func (e *ESM) ensureLoaderRealm() error {
 	if e.loader != nil {
 		return nil
 	}
-	if LoaderRuntimeProvider == nil {
+	if e.provider == nil {
 		return errors.New("esm: loader realm provider not configured")
 	}
-	lrt, err := LoaderRuntimeProvider()
+	lrt, err := e.provider()
 	if err != nil {
+		return err
+	}
+	// The loader realm belongs to this runtime and is disposed with it.
+	realmID := e.rt.TrackResource(realmCloser{lrt})
+	fail := func(err error) error {
+		e.rt.UntrackResource(realmID)
+		lrt.Dispose()
 		return err
 	}
 	mod, ok := lrt.GetModule("esm")
 	if !ok {
-		return errors.New("esm: loader realm is missing the esm module")
+		return fail(errors.New("esm: loader realm is missing the esm module"))
 	}
 	le, ok := mod.(*ESM)
 	if !ok {
-		return errors.New("esm: loader realm esm module has unexpected type")
+		return fail(errors.New("esm: loader realm esm module has unexpected type"))
 	}
 	if err := le.ensureLoader(); err != nil {
-		return err
+		return fail(err)
 	}
 
 	// Prime the builtin-name set on the application realm now, so the loader
@@ -85,10 +93,10 @@ func (e *ESM) ensureLoaderRealm() error {
 	e.loadBuiltins()
 
 	if _, err := lrt.RunScript(loaderHooksJS, "loader-hooks.js"); err != nil {
-		return err
+		return fail(err)
 	}
 	if err := e.installLoaderBridges(lrt); err != nil {
-		return err
+		return fail(err)
 	}
 
 	e.loader = &loaderRealm{rt: lrt, esm: le}

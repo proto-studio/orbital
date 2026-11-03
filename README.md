@@ -108,16 +108,41 @@ Flags are documented in [`docs/cli-flags.md`](docs/cli-flags.md).
 In library code, pass a `runtime.Config` with sandboxed implementations:
 
 ```go
+policy := runtime.CommonPolicies.NoPrivateNetworks()
 cfg := &runtime.Config{
 	Filesystem:     runtime.NewLocalFilesystem("/sandbox"),
 	SystemInfo:     runtime.NewSandboxedSystemInfo(nil),
-	HTTPClient:     runtime.NewFilteredHTTPClient(runtime.DenyAllPolicy()),
+	HTTPClient:     runtime.NewFilteredHTTPClient(nil, policy),
+	SocketFactory:  runtime.NewFilteredSocketFactory(nil, policy),
 	ProcessSpawner: runtime.NewNoOpProcessSpawner(),
 	DocumentRoot:   "/sandbox",
 	Timeout:        30 * time.Second,
 }
-rt, err := runtime.New(cfg)
+inst, err := nodejs.New(cfg)
 ```
+
+Workers and `module.register` loader realms created by an instance inherit that
+instance's configuration, and are stopped when it is disposed. Instances do not share
+configuration, so one process can host parents with different sandboxes.
+
+### HTTP/2
+
+`node:http2` connects through the same injected controls as other sockets:
+
+- `Config.DNSResolver` resolves the name. `Config.SocketFactory` then connects to the
+  resolved IP, so a check on that IP applies to the real destination and DNS cannot
+  change it afterwards.
+- `FilteredSocketFactory` evaluates the requested name and the resolved IP together. A
+  custom `NetworkPolicy` can do the same by implementing `ResolvedAddressPolicy`;
+  otherwise both must be allowed. A custom socket that decides by hostname can implement
+  `ResolvedTCPSocket`; otherwise it receives only the IP.
+- Certificates are verified. As in Node, scripts may opt out for a connection with
+  `rejectUnauthorized`, `ca` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set
+  `Config.HTTP2TLSConfig` (`&tls.Config{}` for the system roots) to make your TLS
+  configuration authoritative so scripts cannot change it.
+- `HTTPClient` cannot carry HTTP/2. If you inject one but leave `SocketFactory` as real
+  sockets, `http2.connect` fails with `ERR_HTTP2_TRANSPORT_UNAVAILABLE` rather than
+  connecting around your restrictions.
 
 ## Packages
 
