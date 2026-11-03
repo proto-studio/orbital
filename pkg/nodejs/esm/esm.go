@@ -25,11 +25,20 @@ type ESM struct {
 	loaderReady bool
 	builtins    map[string]bool
 	loader      *loaderRealm
+	provider    func() (*runtime.Runtime, error)
 }
 
-// New creates a new ESM module runtime.
+// New creates an ESM module runtime without a loader realm provider, so
+// module.register is unavailable.
 func New() *ESM {
 	return &ESM{}
+}
+
+// NewWithLoaderProvider creates an ESM module runtime whose isolated loader realm
+// (module.register hooks) is built by provider. provider must return a runtime with
+// the esm module registered, configured as this module's owner intends.
+func NewWithLoaderProvider(provider func() (*runtime.Runtime, error)) *ESM {
+	return &ESM{provider: provider}
 }
 
 // Name returns the module name.

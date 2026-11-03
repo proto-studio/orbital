@@ -92,6 +92,26 @@ func (s *FilteredTCPSocket) Connect(ctx context.Context, address string, port in
 	return nil
 }
 
+// ConnectResolved checks the requested name and the resolved IP against the
+// policy, then connects to that same IP so DNS cannot change the destination
+// between the check and the connection.
+func (s *FilteredTCPSocket) ConnectResolved(ctx context.Context, hostname, ip string, port int) error {
+	if err := checkResolvedConnection(s.policy, ProtocolTCP, DirectionOutbound, hostname, ip, port); err != nil {
+		return err
+	}
+	var err error
+	if resolved, ok := s.underlying.(ResolvedTCPSocket); ok {
+		err = resolved.ConnectResolved(ctx, hostname, ip, port)
+	} else {
+		err = s.underlying.Connect(ctx, ip, port)
+	}
+	if err != nil {
+		return err
+	}
+	s.connected = true
+	return nil
+}
+
 // Write delegates to the underlying socket.
 func (s *FilteredTCPSocket) Write(data []byte) (int, error) {
 	return s.underlying.Write(data)
@@ -219,6 +239,14 @@ func (s *FilteredUDPSocket) Bind(ctx context.Context, address string, port int) 
 func (s *FilteredUDPSocket) Send(data []byte, address string, port int) (int, error) {
 	if err := s.policy.CheckConnection(ProtocolUDP, DirectionOutbound, address, port); err != nil {
 		return 0, err
+	}
+	// A real socket binds on first send, which is subject to the same policy as an
+	// explicit Bind.
+	if real, ok := s.underlying.(*RealUDPSocket); ok && !s.bound {
+		if err := s.policy.CheckConnection(ProtocolUDP, DirectionInbound, real.wildcardAddress(), 0); err != nil {
+			return 0, err
+		}
+		s.bound = true
 	}
 	return s.underlying.Send(data, address, port)
 }

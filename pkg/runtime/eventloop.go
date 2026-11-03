@@ -231,6 +231,12 @@ func (el *EventLoop) Run() {
 			return
 		}
 
+		// Cancelled timers are not work: they must not keep the loop alive until
+		// their deadline. Once the earliest timer is live, one live timer exists.
+		for el.timers.Len() > 0 && el.timers[0].cancelled.Load() {
+			heap.Pop(&el.timers)
+		}
+
 		// Check if there's any work left
 		hasTimers := el.timers.Len() > 0
 		hasPending := atomic.LoadInt32(&el.pendingWork) > 0

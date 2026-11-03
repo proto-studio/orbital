@@ -187,6 +187,26 @@ type NetworkPolicy interface {
 	Description() string
 }
 
+// ResolvedAddressPolicy is an optional extension of NetworkPolicy for a connection
+// to a hostname whose IP is already known. A hostname allowlist cannot be applied
+// to the IP alone and an IP denylist cannot be applied to the name alone, so
+// policies that implement this evaluate both together.
+type ResolvedAddressPolicy interface {
+	CheckResolvedConnection(protocol Protocol, direction Direction, hostname, ip string, port int) error
+}
+
+// checkResolvedConnection applies policy to a resolved connection. A policy that
+// does not implement ResolvedAddressPolicy must allow both the name and the IP.
+func checkResolvedConnection(policy NetworkPolicy, protocol Protocol, direction Direction, hostname, ip string, port int) error {
+	if p, ok := policy.(ResolvedAddressPolicy); ok {
+		return p.CheckResolvedConnection(protocol, direction, hostname, ip, port)
+	}
+	if err := policy.CheckConnection(protocol, direction, hostname, port); err != nil {
+		return err
+	}
+	return policy.CheckConnection(protocol, direction, ip, port)
+}
+
 // AllowAllPolicy permits all network operations.
 type AllowAllPolicy struct{}
 
@@ -309,6 +329,30 @@ func (p *HostListPolicy) Description() string {
 	return fmt.Sprintf("host list policy (allow: %d, deny: %d)", len(p.allowHosts), len(p.denyHosts))
 }
 
+// CheckResolvedConnection denies when either the name or the IP is denied. When an
+// allow list is set, either one being listed is sufficient.
+func (p *HostListPolicy) CheckResolvedConnection(protocol Protocol, direction Direction, hostname, ip string, port int) error {
+	hostname = strings.ToLower(hostname)
+	ip = strings.ToLower(ip)
+
+	for _, denied := range p.denyHosts {
+		denied = strings.ToLower(denied)
+		if matchHostPattern(hostname, denied) || matchHostPattern(ip, denied) {
+			return fmt.Errorf("%w: host %s (%s) is denied", ErrConnectionDenied, hostname, ip)
+		}
+	}
+	if len(p.allowHosts) == 0 {
+		return nil
+	}
+	for _, allowed := range p.allowHosts {
+		allowed = strings.ToLower(allowed)
+		if matchHostPattern(hostname, allowed) || matchHostPattern(ip, allowed) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: host %s (%s) is not in allow list", ErrConnectionDenied, hostname, ip)
+}
+
 // matchHostPattern checks if a host matches a pattern.
 func matchHostPattern(host, pattern string) bool {
 	if pattern == host {
@@ -394,6 +438,26 @@ func (p *RuleBasedPolicy) CheckConnection(protocol Protocol, direction Direction
 	}
 	return fmt.Errorf("%w: %s %s to %s:%d denied by default policy",
 		ErrConnectionDenied, protocol, direction, host, port)
+}
+
+// CheckResolvedConnection evaluates the rules in order; the first rule matching
+// either the requested name or the resolved IP decides. Ordering therefore has the
+// same meaning as for a literal address: put deny rules before broad allow rules.
+func (p *RuleBasedPolicy) CheckResolvedConnection(protocol Protocol, direction Direction, hostname, ip string, port int) error {
+	for _, rule := range p.Rules {
+		if rule.Matches(protocol, direction, hostname, port) || rule.Matches(protocol, direction, ip, port) {
+			if rule.Action == ActionAllow {
+				return nil
+			}
+			return fmt.Errorf("%w: %s %s to %s (%s):%d denied by rule: %s",
+				ErrConnectionDenied, protocol, direction, hostname, ip, port, rule.Description)
+		}
+	}
+	if p.DefaultAction == ActionAllow {
+		return nil
+	}
+	return fmt.Errorf("%w: %s %s to %s (%s):%d denied by default policy",
+		ErrConnectionDenied, protocol, direction, hostname, ip, port)
 }
 
 // CheckHTTP checks if an HTTP request is allowed.
@@ -494,7 +558,8 @@ var CommonPolicies = struct {
 	DNSOnly func() *RuleBasedPolicy
 	// LocalhostOnly allows only localhost connections.
 	LocalhostOnly func() *RuleBasedPolicy
-	// NoPrivateNetworks blocks RFC1918 private networks.
+	// NoPrivateNetworks blocks private, loopback, link-local (including cloud
+	// metadata) and carrier-grade NAT ranges, for IPv4 and IPv6.
 	NoPrivateNetworks func() *RuleBasedPolicy
 }{
 	WebOnly: func() *RuleBasedPolicy {
@@ -517,7 +582,8 @@ var CommonPolicies = struct {
 		p := NewRuleBasedPolicy()
 		p.DefaultAction = ActionAllow
 		// Deny private networks first (rules evaluated in order)
-		p.DenyHost(ProtocolAny, DirectionAny, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16")
+		p.DenyHost(ProtocolAny, DirectionAny, "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+			"::/128", "::1/128", "fc00::/7", "fe80::/10")
 		return p
 	},
 }

@@ -40,3 +40,21 @@ func TestRunOnce_IntervalTimerNoDoubleUnlock(t *testing.T) {
 		}
 	}
 }
+
+func TestRunDoesNotWaitForCancelledTimers(t *testing.T) {
+	el := NewEventLoop()
+	task := el.SetTimeout(func() {}, time.Minute)
+	el.ClearTimer(task)
+
+	done := make(chan struct{})
+	go func() {
+		el.Run()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		el.Stop()
+		t.Fatal("Run waited for a cancelled timer")
+	}
+}

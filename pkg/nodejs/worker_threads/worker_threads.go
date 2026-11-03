@@ -2,7 +2,7 @@
 // isolate-backed workers.
 //
 // Each Worker runs on its own goroutine with its own V8 isolate + runtime +
-// event loop (created via RuntimeProvider). Parent and worker never share V8
+// event loop (created by the provider bound to the module). Parent and worker never share V8
 // values; messages are serialized to JSON inside the owning isolate and handed
 // across goroutines as plain strings over Go channels, then re-parsed and
 // dispatched on the receiving runtime's event loop. This keeps every isolate
@@ -12,7 +12,6 @@ package worker_threads
 import (
 	_ "embed"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -22,11 +21,6 @@ import (
 
 //go:embed worker_threads.js
 var workerThreadsJS string
-
-// RuntimeProvider creates a fresh, fully-configured runtime for a worker.
-// nodejs.New installs this (embedders may override). When nil, constructing a
-// Worker throws (workers are unavailable).
-var RuntimeProvider func() (*goruntime.Runtime, error)
 
 // wtEvent is a worker->parent event carried over a Go channel.
 type wtEvent struct {
@@ -44,6 +38,13 @@ type worker struct {
 	fromWorker chan wtEvent
 	terminate  chan struct{}
 	termOnce   sync.Once
+	resourceID uint64
+}
+
+// Close terminates the worker when its parent runtime is disposed.
+func (wk *worker) Close() error {
+	wk.termOnce.Do(func() { close(wk.terminate) })
+	return nil
 }
 
 // WorkerThreads is the module instance for one runtime (parent or worker).
@@ -53,11 +54,21 @@ type WorkerThreads struct {
 	workers    map[int]*worker
 	nextID     int
 	dispatcher *v8.Value // parent-side JS event dispatcher
+	provider   func() (*goruntime.Runtime, error)
 }
 
-// New creates a new WorkerThreads module.
+// New creates a WorkerThreads module without a runtime provider: constructing a
+// Worker throws because workers are unavailable.
 func New() *WorkerThreads {
 	return &WorkerThreads{workers: make(map[int]*worker)}
+}
+
+// NewWithProvider creates a WorkerThreads module whose workers run on runtimes
+// built by provider. provider is called from the worker's goroutine, possibly
+// after this module's runtime has been disposed, so it must not depend on that
+// runtime; it should return a runtime configured as the module's owner intends.
+func NewWithProvider(provider func() (*goruntime.Runtime, error)) *WorkerThreads {
+	return &WorkerThreads{workers: make(map[int]*worker), provider: provider}
 }
 
 // Name returns the module name.
@@ -72,9 +83,9 @@ func (w *WorkerThreads) Register(rt *goruntime.Runtime) error {
 	ctx := rt.Context()
 
 	// Only expose the spawn bridge (and therefore a working Worker class) when a
-	// RuntimeProvider is available. Without it, worker_threads.js leaves Worker
-	// as a throwing stub.
-	if RuntimeProvider != nil {
+	// provider is available. Without it, worker_threads.js leaves Worker as a
+	// throwing stub.
+	if w.provider != nil {
 		if err := w.setFunc(iso, ctx, "__wt_spawn", w.spawnFunc); err != nil {
 			return err
 		}
@@ -145,6 +156,7 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	w.workers[id] = wk
 	w.mu.Unlock()
+	wk.resourceID = w.rt.TrackResource(wk)
 
 	// Keep the parent event loop alive while the worker runs.
 	w.rt.EventLoop().AddPendingWork()
@@ -160,6 +172,7 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				w.mu.Lock()
 				delete(w.workers, id)
 				w.mu.Unlock()
+				w.rt.UntrackResource(wk.resourceID)
 				w.rt.EventLoop().DonePendingWork()
 			}
 		}
@@ -218,7 +231,7 @@ func (w *WorkerThreads) terminateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	wk := w.workers[id]
 	w.mu.Unlock()
 	if wk != nil {
-		wk.termOnce.Do(func() { close(wk.terminate) })
+		wk.Close()
 	}
 	return nil
 }
@@ -226,13 +239,25 @@ func (w *WorkerThreads) terminateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 // ---- worker side ---------------------------------------------------------
 
 func (w *WorkerThreads) runWorker(wk *worker) {
-	wrt, err := RuntimeProvider()
+	wrt, err := w.provider()
 	if err != nil {
 		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
 		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
 		return
 	}
+
+	// The pump below may call wrt.Kill, so it must be finished before the isolate
+	// is disposed. Deferred calls run in reverse: stop the pump, then dispose.
 	defer wrt.Dispose()
+	workerDone := make(chan struct{})
+	pumpDone := make(chan struct{})
+	pumpStarted := false
+	defer func() {
+		close(workerDone)
+		if pumpStarted {
+			<-pumpDone
+		}
+	}()
 
 	// Worker-side native bridges.
 	_ = w.setWorkerFunc(wrt, "__wt_worker_send", func(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -265,9 +290,13 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	deliverFn, _ := wrt.GetGlobal("__wt_deliver")
 
 	// Incoming-message pump + termination watcher.
+	pumpStarted = true
 	go func() {
+		defer close(pumpDone)
 		for {
 			select {
+			case <-workerDone:
+				return
 			case <-wk.terminate:
 				wrt.Kill("terminated")
 				return
@@ -295,7 +324,9 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	filename := "[worker eval]"
 	dirname := "."
 	if !wk.eval {
-		data, readErr := os.ReadFile(wk.target)
+		// The entry is read through the configured filesystem, like any other file
+		// the program opens, so an injected sandbox applies to it.
+		data, readErr := wrt.Filesystem().ReadFile(wk.target)
 		if readErr != nil {
 			wk.fromWorker <- wtEvent{kind: "error", data: readErr.Error()}
 			wk.fromWorker <- wtEvent{kind: "exit", code: 1}

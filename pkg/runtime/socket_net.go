@@ -58,6 +58,57 @@ type TCPSocket interface {
 	Unref()
 }
 
+// ResolvedTCPSocket is an optional extension of TCPSocket for sockets that make
+// access decisions by hostname. Callers that resolve DNS themselves (the http2
+// module, through Config.DNSResolver) use it to connect to a pinned IP while
+// still reporting the name the guest asked for. A socket without this method
+// receives Connect(ctx, ip, port) and so only ever sees the resolved IP.
+type ResolvedTCPSocket interface {
+	TCPSocket
+
+	// ConnectResolved connects to ip, which the caller resolved from hostname.
+	// Implementations must connect to ip and must not resolve hostname again.
+	ConnectResolved(ctx context.Context, hostname, ip string, port int) error
+}
+
+// NewSocketConn adapts a connected TCPSocket to a net.Conn so protocol stacks
+// such as crypto/tls can run on top of an injected SocketFactory.
+//
+// TCPSocket has no per-call deadlines, so the deadline methods are no-ops;
+// callers interrupt blocked I/O by closing the connection.
+func NewSocketConn(socket TCPSocket) net.Conn {
+	return &socketConn{socket: socket}
+}
+
+type socketConn struct {
+	socket    TCPSocket
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (c *socketConn) Read(b []byte) (int, error)  { return c.socket.Read(b) }
+func (c *socketConn) Write(b []byte) (int, error) { return c.socket.Write(b) }
+func (c *socketConn) LocalAddr() net.Addr         { return socketAddr(c.socket.LocalAddr()) }
+func (c *socketConn) RemoteAddr() net.Addr        { return socketAddr(c.socket.RemoteAddr()) }
+
+func (c *socketConn) Close() error {
+	c.closeOnce.Do(func() { c.closeErr = c.socket.Close() })
+	return c.closeErr
+}
+
+func (c *socketConn) SetDeadline(time.Time) error      { return nil }
+func (c *socketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *socketConn) SetWriteDeadline(time.Time) error { return nil }
+
+// socketAddr substitutes a placeholder for sockets that report no address, since
+// net.Conn callers do not expect a nil Addr.
+func socketAddr(addr net.Addr) net.Addr {
+	if addr != nil {
+		return addr
+	}
+	return &net.TCPAddr{}
+}
+
 // TCPServer represents a TCP server interface.
 type TCPServer interface {
 	// Listen starts listening on the given address and port.
@@ -189,15 +240,19 @@ func (s *RealTCPSocket) Connect(ctx context.Context, address string, port int) e
 // Write sends data on the TCP connection.
 func (s *RealTCPSocket) Write(data []byte) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	conn := s.conn
+	timeout := s.timeout
+	s.mu.Unlock()
 
-	if s.conn == nil {
+	if conn == nil {
 		return 0, ErrSocketClosed
 	}
-	if s.timeout > 0 {
-		s.conn.SetWriteDeadline(time.Now().Add(s.timeout))
+	if timeout > 0 {
+		conn.SetWriteDeadline(time.Now().Add(timeout))
 	}
-	return s.conn.Write(data)
+	// The lock is not held across the write: a peer that stops reading must not
+	// prevent Close from interrupting it.
+	return conn.Write(data)
 }
 
 // Read receives data from the TCP connection into the buffer.
@@ -465,7 +520,10 @@ type RealUDPSocket struct {
 func (s *RealUDPSocket) Bind(ctx context.Context, address string, port int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.bindLocked(address, port)
+}
 
+func (s *RealUDPSocket) bindLocked(address string, port int) error {
 	network := "udp"
 	if s.socketType == "udp4" {
 		network = "udp4"
@@ -492,8 +550,11 @@ func (s *RealUDPSocket) Send(data []byte, address string, port int) (int, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// An unbound socket binds an ephemeral source port on first send, as Node does.
 	if s.conn == nil {
-		return 0, ErrSocketClosed
+		if err := s.bindLocked(s.wildcardAddress(), 0); err != nil {
+			return 0, err
+		}
 	}
 
 	addr := net.JoinHostPort(address, strconv.Itoa(port))
@@ -503,6 +564,13 @@ func (s *RealUDPSocket) Send(data []byte, address string, port int) (int, error)
 	}
 
 	return s.conn.WriteToUDP(data, udpAddr)
+}
+
+func (s *RealUDPSocket) wildcardAddress() string {
+	if s.socketType == "udp6" {
+		return "::"
+	}
+	return "0.0.0.0"
 }
 
 // Receive receives a UDP datagram, returning bytes read, sender address, port, and error.
