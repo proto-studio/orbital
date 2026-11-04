@@ -1,4 +1,4 @@
-# Every pull request into main must link an accepted issue, or be labeled as a standard change.
+# Every pull request into main must link an issue, or be labeled as a standard change.
 #
 # This uses pull_request_target so that a pull request can't edit this check to pass itself: the workflow
 # and script both come from the base branch. That's only safe because this job never checks out or runs
