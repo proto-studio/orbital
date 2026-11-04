@@ -22,6 +22,9 @@ type UncaughtError struct {
 	ExitCode int
 	// Origin is "uncaughtException" or "unhandledRejection".
 	Origin string
+	// HandlerThrew reports that the exception came from an 'uncaughtException' handler, which
+	// is what the 7 means. A worker exits 1 in that case.
+	HandlerThrew bool
 }
 
 // Error returns the text Node would print.
@@ -117,16 +120,18 @@ func (rt *Runtime) setNative(obj *v8.Value, name string, cb v8.FunctionCallback)
 	return obj.Set(name, fn)
 }
 
-// fatalFunc implements native.fatal(message, exitCode, origin): no handler took an exception.
+// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew): no handler took
+// an exception.
 func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 3 {
+	if len(args) < 4 {
 		return nil
 	}
 	rt.fatal.Store(&UncaughtError{
-		Message:  args[0].String(),
-		ExitCode: int(args[1].Integer()),
-		Origin:   args[2].String(),
+		Message:      args[0].String(),
+		ExitCode:     int(args[1].Integer()),
+		Origin:       args[2].String(),
+		HandlerThrew: args[3].Boolean(),
 	})
 	rt.eventLoop.CancelAllTimers()
 	rt.eventLoop.ClearAllMicrotasks()
@@ -237,6 +242,11 @@ func (rt *Runtime) reportRejections() {
 	for rt.rejectionsPending && rt.fatal.Load() == nil && !rt.execController.IsDone() {
 		rt.rejectionsPending = false
 		if _, err := rt.uncaught.processRejections.Call(nil); err != nil {
+			return
+		}
+		// Work the listeners queued runs before the next batch, and could still handle a
+		// rejection they made. The loop comes back here once it has run.
+		if rt.eventLoop.hasMicrotasks() {
 			return
 		}
 	}

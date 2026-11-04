@@ -11,6 +11,7 @@ package worker_threads
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -350,6 +351,12 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 		if !wrt.IsKilled() {
 			wk.fromWorker <- wtEvent{kind: "error", data: runErr.Error()}
 			code = 1
+			// The 7 for a throwing handler is a whole process's exit code, and Node's
+			// workers report 1 for it.
+			var uncaught *goruntime.UncaughtError
+			if errors.As(runErr, &uncaught) && !uncaught.HandlerThrew {
+				code = uncaught.ExitCode
+			}
 		}
 	}
 	wk.fromWorker <- wtEvent{kind: "exit", code: code}
