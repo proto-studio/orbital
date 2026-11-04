@@ -339,3 +339,189 @@ worker.on('exit', (code) => note('exit', code));
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
+
+// Node stops at a fatal exception: nothing already queued runs, whichever queue it is in.
+func TestUncaughtStopsQueuedWork(t *testing.T) {
+	notes, err := runUncaught(t, `
+process.on('exit', (code) => {
+  note('exit', code);
+  Promise.resolve().then(() => note('then in exit'));
+});
+setTimeout(() => {
+  Promise.resolve().then(() => note('then'));
+  queueMicrotask(() => note('queueMicrotask'));
+  process.nextTick(() => note('nextTick'));
+  setImmediate(() => note('setImmediate'));
+  (async () => { await null; note('await'); })();
+  throw new Error('boom');
+}, 1);
+`)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) {
+		t.Fatalf("Run returned %v, want an UncaughtError", err)
+	}
+	if want := []string{"exit 1"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+// The same, for the promise work a main script leaves behind when it throws.
+func TestUncaughtMainScriptStopsQueuedWork(t *testing.T) {
+	notes, err := runUncaught(t, `
+process.on('exit', (code) => note('exit', code));
+Promise.resolve().then(() => note('then'));
+throw new Error('boom');
+`)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) {
+		t.Fatalf("Run returned %v, want an UncaughtError", err)
+	}
+	if want := []string{"exit 1"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+// A handler that takes the exception keeps the program going, promises included.
+func TestUncaughtHandledKeepsQueuedWork(t *testing.T) {
+	notes, err := runUncaught(t, `
+process.on('uncaughtException', (e) => note('caught', e.message));
+setTimeout(() => {
+  Promise.resolve().then(() => note('then'));
+  throw new Error('boom');
+}, 1);
+setTimeout(() => note('later'), 20);
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"caught boom", "then", "later"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+// runModuleUncaught runs source as an ES module, failing if it needs the whole timeout.
+func runModuleUncaught(t *testing.T, source string) ([]string, error) {
+	t.Helper()
+	const timeout = 2 * time.Second
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: timeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	prelude := `globalThis.__notes = []; globalThis.note = (...a) => __notes.push(a.join(' '));`
+	if _, err := inst.Runtime.RunScript(prelude, "prelude.js"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.ESM.RunModule(source, "/test.mjs")
+	if inst.Runtime.IsDone() {
+		t.Fatalf("ran out of time, so the exception waited for the interval (error: %v)", runErr)
+	}
+	val, err := inst.Runtime.RunScript(`JSON.stringify(__notes)`, "notes.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	if err := json.Unmarshal([]byte(val.String()), &notes); err != nil {
+		t.Fatal(err)
+	}
+	return notes, runErr
+}
+
+// A module's exception reaches the handler while its handles are still open. Node sends it
+// straight to 'uncaughtException', so 'unhandledRejection' does not see it.
+func TestUncaughtModuleWithActiveHandle(t *testing.T) {
+	notes, err := runModuleUncaught(t, `
+process.on('uncaughtException', (e, origin) => {
+  note('uncaught', e.message, origin);
+  clearInterval(timer);
+});
+process.on('unhandledRejection', (e) => note('unhandledRejection', e.message));
+const timer = setInterval(() => {}, 10);
+throw new Error('boom');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"uncaught boom unhandledRejection"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+func TestUncaughtModuleAfterTopLevelAwait(t *testing.T) {
+	notes, err := runModuleUncaught(t, `
+process.on('uncaughtException', (e, origin) => {
+  note('uncaught', e.message, origin);
+  clearInterval(timer);
+});
+const timer = setInterval(() => {}, 10);
+await new Promise((resolve) => setTimeout(resolve, 5));
+note('resumed');
+throw new Error('late');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"resumed", "uncaught late unhandledRejection"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+func TestUncaughtModuleWithoutHandler(t *testing.T) {
+	notes, err := runModuleUncaught(t, `
+process.on('exit', (code) => note('exit', code));
+setInterval(() => {}, 10);
+setTimeout(() => note('timer'), 1);
+throw new Error('boom');
+`)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) {
+		t.Fatalf("RunModule returned %v, want an UncaughtError", err)
+	}
+	if uncaught.ExitCode != 1 || uncaught.Origin != "unhandledRejection" {
+		t.Errorf("got %+v", uncaught)
+	}
+	if want := []string{"exit 1"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+// Work the module queued before it threw runs first, and work for later runs after the handler.
+func TestUncaughtModuleOrder(t *testing.T) {
+	notes, err := runModuleUncaught(t, `
+process.on('uncaughtException', (e) => note('uncaught', e.message));
+Promise.resolve().then(() => note('then'));
+setTimeout(() => note('timer'), 1);
+throw new Error('boom');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"then", "uncaught boom", "timer"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %q, want %q", notes, want)
+	}
+}
+
+// A runtime that has ended runs nothing more, whichever way it is asked to.
+func TestRunModuleAfterUncaught(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, first := inst.Runtime.Run(`throw new Error('boom')`, "main.js")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(first, &uncaught) {
+		t.Fatalf("Run returned %v, want an UncaughtError", first)
+	}
+	_, second := inst.ESM.RunModule(`globalThis.after = true;`, "/after.mjs")
+	if second != error(uncaught) {
+		t.Errorf("RunModule returned %v, want the first error", second)
+	}
+	val, err := inst.Runtime.GetGlobal("after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !val.IsUndefined() {
+		t.Error("a module ran after the runtime ended")
+	}
+}

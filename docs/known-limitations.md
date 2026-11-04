@@ -111,6 +111,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   reaches a domain's `'error'` listener. A throw from a timer started in one is uncaught.
 - **[approx] A worker's `'error'` event carries text.** The parent gets an `Error` whose message
   is the worker's whole printed exception, not a copy of the thrown value.
+- **[approx] `process.nextTick` runs after promise reactions.** Node runs the tick queue first.
+  Orbital's ticks are event-loop work, so a promise reaction queued by the same code runs ahead
+  of them.
+- **[approx] A `_write` that throws before calling back becomes a stream error.** `doWrite` in
+  `stream.js` gives it to the stream's `'error'` event, where Node lets it propagate to the caller
+  of `write` and on to `uncaughtException`.
 - **[approx] Native modules must use `Runtime.MakeCallback`.** A Go module that calls a function
   with `Value.Call` from the event loop and ignores the error still loses the exception.
 

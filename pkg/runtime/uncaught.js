@@ -207,5 +207,11 @@
     apply(then, promise, [undefined, function () {}]);
   }
 
-  return { callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled };
+  // watchModule is what Node's ESM loader does with a module's evaluation: a rejection goes
+  // straight to the fatal path, so 'unhandledRejection' never sees it.
+  function watchModule(promise) {
+    apply(then, promise, [undefined, function (err) { trigger(err, true); }]);
+  }
+
+  return { callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled, watchModule };
 })
