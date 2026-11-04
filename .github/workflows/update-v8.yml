@@ -569,9 +569,31 @@ jobs:
     needs: [setup, validate]
     if: ${{ !cancelled() && needs.validate.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     steps:
       - name: Mark PR ready for review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh pr ready "${{ needs.setup.outputs.ref }}" || echo "PR already ready (or none to mark)."
+      # GitHub doesn't start other workflows for a pull request opened with GITHUB_TOKEN, so the Change link
+      # check can't run on this one. Having passed validate above, it reports that check itself. A new commit
+      # needs a new report, so this can't carry over to anything pushed later.
+      - name: Report as a standard change
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ needs.setup.outputs.ref }}
+        run: |
+          case "$REF" in
+            automated/update-v8-*) ;;
+            *) echo "Not an automated V8 branch, so nothing to report."; exit 0 ;;
+          esac
+          pr=$(gh pr view "$REF" --json number,headRefOid --jq '"\(.number) \(.headRefOid)"') || { echo "No pull request to mark."; exit 0; }
+          number=${pr% *}
+          sha=${pr#* }
+          gh api "repos/$GH_REPO/issues/$number/labels" -f "labels[]=standard-change" > /dev/null
+          gh api "repos/$GH_REPO/statuses/$sha" -f state=success -f context="Change link" -f description="Automated V8 update that passed validation" > /dev/null
