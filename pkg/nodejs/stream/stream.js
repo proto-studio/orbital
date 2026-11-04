@@ -891,6 +891,7 @@
 			this.writing = false;
 			this.sync = true;
 			this.corked = 0;
+			this.bufferProcessing = false;
 			this.needDrain = false;
 			this.ending = false;
 			this.ended = false;
@@ -1142,38 +1143,49 @@
 	}
 
 	function clearBuffer(stream, s) {
-		if (s.corked || s.destroyed) return;
-		if (s.buffer.length > 1 && typeof stream._writev === 'function') {
-			const entries = s.buffer.splice(0);
-			let total = 0;
-			for (const e of entries) total += s.objectMode ? 1 : e.chunk.length;
-			s.pendingCallbacks -= entries.length - 1;
-			const finishAll = (err) => {
-				for (const e of entries) if (e.cb) e.cb(err || null);
-			};
-			s.writing = true;
-			s.sync = true;
-			s.writeLen = total;
-			let called = false;
-			try {
-				stream._writev(entries, (err) => {
-					if (called) return;
-					called = true;
-					onWrite(stream, s, err, finishAll);
-				});
-			} catch (err) {
-				if (!called) {
-					called = true;
-					onWrite(stream, s, err, finishAll);
+		// A write that finishes synchronously comes back here through onWrite. The loop
+		// below carries on from where it left off, so a long buffer does not recurse.
+		if (s.bufferProcessing) return;
+		s.bufferProcessing = true;
+		try {
+			while (s.buffer.length && !s.writing && !s.corked && !s.destroyed) {
+				if (s.buffer.length > 1 && typeof stream._writev === 'function') {
+					doWritev(stream, s);
+				} else {
+					const { chunk, encoding, cb } = s.buffer.shift();
+					doWrite(stream, s, chunk, encoding, s.objectMode ? 1 : chunk.length, cb);
 				}
 			}
-			s.sync = false;
-			return;
+		} finally {
+			s.bufferProcessing = false;
 		}
-		while (s.buffer.length && !s.writing) {
-			const { chunk, encoding, cb } = s.buffer.shift();
-			doWrite(stream, s, chunk, encoding, s.objectMode ? 1 : chunk.length, cb);
+	}
+
+	function doWritev(stream, s) {
+		const entries = s.buffer.splice(0);
+		let total = 0;
+		for (const e of entries) total += s.objectMode ? 1 : e.chunk.length;
+		s.pendingCallbacks -= entries.length - 1;
+		const finishAll = (err) => {
+			for (const e of entries) if (e.cb) e.cb(err || null);
+		};
+		s.writing = true;
+		s.sync = true;
+		s.writeLen = total;
+		let called = false;
+		try {
+			stream._writev(entries, (err) => {
+				if (called) return;
+				called = true;
+				onWrite(stream, s, err, finishAll);
+			});
+		} catch (err) {
+			if (!called) {
+				called = true;
+				onWrite(stream, s, err, finishAll);
+			}
 		}
+		s.sync = false;
 	}
 
 	function needFinish(s) {

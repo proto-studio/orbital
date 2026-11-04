@@ -774,6 +774,35 @@ done({
 		}
 	})
 
+	t.Run("cannot be bypassed by a custom connection", func(t *testing.T) {
+		client := newClient()
+		factory := &recordingFactory{}
+		result := runHTTP(t, &runtime.Config{HTTPClient: client, SocketFactory: factory}, `
+const https = require('https');
+const net = require('net');
+let created = 0;
+const createConnection = (o) => { created++; return net.connect(80, 'internal.test'); };
+const attempt = (mod, options) => new Promise((resolve) => {
+  const q = mod.request({ host: 'internal.test', createConnection, ...options }, () => resolve('response'));
+  q.on('error', (e) => resolve(e.code));
+  q.end();
+});
+done({
+  http: await attempt(http, {}),
+  noAgent: await attempt(http, { agent: false }),
+  https: await attempt(https, {}),
+  created,
+});`)
+		const code = "ERR_HTTP_TRANSPORT_UNAVAILABLE"
+		wantJSON(t, result, map[string]any{"http": code, "noAgent": code, "https": code, "created": float64(0)})
+		if got := factory.dialed(); len(got) != 0 {
+			t.Errorf("opened sockets: %v", got)
+		}
+		if len(client.requests) != 0 {
+			t.Errorf("client saw %d requests", len(client.requests))
+		}
+	})
+
 	t.Run("cannot be given a host that means two things", func(t *testing.T) {
 		client := newClient()
 		result := runHTTP(t, &runtime.Config{HTTPClient: client}, `

@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -375,6 +376,129 @@ func TestTLSConnect_ClientTLSConfigIsAuthoritative(t *testing.T) {
 		wantTLS(t, runJS(t, cfg, tlsScript("", fmt.Sprintf(`{host: 'localhost', port: %d}`, good))), true, nil, tlsConnected...)
 		if calls.Load() != 1 {
 			t.Errorf("VerifyConnection ran %d times", calls.Load())
+		}
+	})
+	t.Run("embedder callbacks see verified chains", func(t *testing.T) {
+		var order []string
+		var peerRaw int
+		var peerChains, connChains [][]*x509.Certificate
+		cfg := &runtime.Config{ClientTLSConfig: &tls.Config{
+			RootCAs: ca.pool,
+			VerifyPeerCertificate: func(raw [][]byte, chains [][]*x509.Certificate) error {
+				order = append(order, "peer")
+				peerRaw, peerChains = len(raw), chains
+				return nil
+			},
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				order = append(order, "connection")
+				connChains = cs.VerifiedChains
+				return nil
+			},
+		}}
+		wantTLS(t, runJS(t, cfg, tlsScript("", fmt.Sprintf(`{host: 'localhost', port: %d}`, good))), true, nil, tlsConnected...)
+		if !reflect.DeepEqual(order, []string{"peer", "connection"}) {
+			t.Fatalf("callbacks ran as %v", order)
+		}
+		if peerRaw != 1 {
+			t.Errorf("VerifyPeerCertificate saw %d raw certificates", peerRaw)
+		}
+		for name, chains := range map[string][][]*x509.Certificate{"VerifyPeerCertificate": peerChains, "VerifyConnection": connChains} {
+			if len(chains) != 1 || !chains[0][len(chains[0])-1].Equal(ca.cert) {
+				t.Errorf("%s saw chains %v, want one ending at the root", name, chains)
+			}
+		}
+	})
+	t.Run("embedder callbacks can reject", func(t *testing.T) {
+		deny := errors.New("denied by embedder")
+		for name, base := range map[string]*tls.Config{
+			"VerifyPeerCertificate": {RootCAs: ca.pool, VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error { return deny }},
+			"VerifyConnection":      {RootCAs: ca.pool, VerifyConnection: func(tls.ConnectionState) error { return deny }},
+		} {
+			t.Run(name, func(t *testing.T) {
+				result := runJS(t, &runtime.Config{ClientTLSConfig: base}, tlsScript("", fmt.Sprintf(`{host: 'localhost', port: %d}`, good)))
+				if events := result["events"].([]any); len(events) == 0 || events[0] == "callback" || events[0] == "secureConnect" {
+					t.Errorf("connected anyway: %v", events)
+				}
+			})
+		}
+	})
+	t.Run("untrusted peer does not reach embedder callbacks", func(t *testing.T) {
+		var calls atomic.Int32
+		cfg := &runtime.Config{ClientTLSConfig: &tls.Config{
+			RootCAs:               ca.pool,
+			VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error { calls.Add(1); return nil },
+			VerifyConnection:      func(tls.ConnectionState) error { calls.Add(1); return nil },
+		}}
+		wantTLS(t, runJS(t, cfg, tlsScript("", fmt.Sprintf(`{host: 'localhost', port: %d}`, guest))), false, leafCode, tlsFailed(leafCode)...)
+		if calls.Load() != 0 {
+			t.Errorf("callbacks ran %d times", calls.Load())
+		}
+	})
+	t.Run("skipping verification leaves chains empty, as crypto/tls does", func(t *testing.T) {
+		var peerCalls, connCalls atomic.Int32
+		var peerChains, connChains [][]*x509.Certificate
+		cfg := &runtime.Config{ClientTLSConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			RootCAs:            ca.pool,
+			VerifyPeerCertificate: func(_ [][]byte, chains [][]*x509.Certificate) error {
+				peerCalls.Add(1)
+				peerChains = chains
+				return nil
+			},
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				connCalls.Add(1)
+				connChains = cs.VerifiedChains
+				return nil
+			},
+		}}
+		wantTLS(t, runJS(t, cfg, tlsScript("", fmt.Sprintf(`{host: 'localhost', port: %d}`, good))), true, nil, tlsConnected...)
+		if peerCalls.Load() != 1 || connCalls.Load() != 1 {
+			t.Fatalf("callbacks ran %d and %d times", peerCalls.Load(), connCalls.Load())
+		}
+		if peerChains != nil || connChains != nil {
+			t.Errorf("chains = %v and %v, want none", peerChains, connChains)
+		}
+	})
+	t.Run("resumed connections match crypto/tls", func(t *testing.T) {
+		var peerCalls, connCalls, resumed atomic.Int32
+		var connChains [][][]*x509.Certificate
+		cfg := &runtime.Config{ClientTLSConfig: &tls.Config{
+			RootCAs:            ca.pool,
+			ClientSessionCache: tls.NewLRUClientSessionCache(4),
+			VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error {
+				peerCalls.Add(1)
+				return nil
+			},
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				connCalls.Add(1)
+				if cs.DidResume {
+					resumed.Add(1)
+				}
+				connChains = append(connChains, cs.VerifiedChains)
+				return nil
+			},
+		}}
+		// Reading the echo is what delivers the session ticket before the next connection.
+		result := runJS(t, cfg, fmt.Sprintf(`
+const tls = require('tls');
+const once = () => new Promise((resolve, reject) => {
+  const s = tls.connect({ host: 'localhost', port: %d }, () => s.write('x'));
+  s.on('error', reject);
+  s.on('data', () => s.destroy());
+  s.on('close', () => resolve(s.authorized));
+});
+(async () => done({ first: await once(), second: await once() }))().catch((e) => done({ error: String(e) }));`, good))
+		wantJSON(t, result, map[string]any{"first": true, "second": true})
+		if resumed.Load() != 1 {
+			t.Fatalf("%d connections resumed, want 1", resumed.Load())
+		}
+		if peerCalls.Load() != 1 || connCalls.Load() != 2 {
+			t.Errorf("VerifyPeerCertificate ran %d times, VerifyConnection %d", peerCalls.Load(), connCalls.Load())
+		}
+		for i, chains := range connChains {
+			if len(chains) == 0 {
+				t.Errorf("connection %d had no verified chains", i)
+			}
 		}
 	})
 }

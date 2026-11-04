@@ -1587,9 +1587,18 @@
 
       const finalOptions = { ...options };
 
-      // Without connection-level access, the embedder's HTTPClient does all the work.
-      if (!useSockets && typeof options.createConnection !== 'function') {
+      // Without connection-level access, the embedder's HTTPClient does all the work. A
+      // connection the script brings would go around it, and sending the request through
+      // the client instead could deliver it somewhere the script did not ask for.
+      if (!useSockets) {
         this.agent = undefined;
+        if (typeof options.createConnection === 'function') {
+          this._last = true;
+          this.shouldKeepAlive = false;
+          this.onSocket(null, codedError(Error, 'ERR_HTTP_TRANSPORT_UNAVAILABLE',
+            'the configured HTTPClient cannot use createConnection; set Config.SocketFactory and leave HTTPClient unset'));
+          return;
+        }
         const socket = new HTTPClientSocket({ ...finalOptions, protocol });
         this._last = true;
         this.shouldKeepAlive = false;
