@@ -122,6 +122,9 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if err := e.ensureLoader(); err != nil {
 		return nil, err
 	}
+	if uncaught := e.rt.UncaughtError(); uncaught != nil {
+		return nil, uncaught
+	}
 
 	ctx := e.rt.Context()
 
@@ -139,34 +142,25 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 		return nil, err
 	}
 
+	// A module always evaluates to a promise (top-level-await semantics): it
+	// fulfills once the module graph finishes evaluating and REJECTS if the
+	// module (or anything it imports) threw. V8 hands that promise back here with
+	// no Go-level error, and the module's open handles can keep the loop below
+	// running indefinitely, so the rejection has to be observed from inside it.
+	isPromise := result != nil && result.IsPromise()
+	if isPromise {
+		e.rt.WatchModuleEvaluation(result)
+	}
+
 	// Run any pending async operations (timers, microtasks, top-level await).
 	e.rt.EventLoop().Run()
 	if uncaught := e.rt.UncaughtError(); uncaught != nil {
 		return nil, uncaught
 	}
 
-	// A module always evaluates to a promise (top-level-await semantics): it
-	// fulfills once the module graph finishes evaluating and REJECTS if the
-	// module (or anything it imports) threw. V8 hands that promise back here with
-	// no Go-level error, so we must inspect it — otherwise a module that throws
-	// at import time fails silently. Drain the microtask queue once more, then
-	// surface a rejection (with its stack) or an unsettled top-level await.
-	if result != nil && result.IsPromise() {
+	if isPromise {
 		ctx.PerformMicrotaskCheckpoint()
-		switch result.PromiseState() {
-		case v8.PromiseRejected:
-			// Nothing handles this promise, so it is an unhandled rejection like any
-			// other, and the loop above already reported it if the V8 glue can track them.
-			if !e.rt.TracksRejections() {
-				if !e.rt.HandleUncaught(result.PromiseResult(), true) {
-					return nil, e.rt.UncaughtError()
-				}
-				e.rt.EventLoop().Run()
-				if uncaught := e.rt.UncaughtError(); uncaught != nil {
-					return nil, uncaught
-				}
-			}
-		case v8.PromisePending:
+		if result.PromiseState() == v8.PromisePending {
 			return nil, errors.New("Top-level await promise never resolved before the event loop drained")
 		}
 	}
