@@ -95,19 +95,32 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ---
 
-## tls (`pkg/nodejs/tls/`)
+## Network modules (`pkg/nodejs/net`, `tls`, `http`, `https`, `dns`, `dgram`)
 
-- **`tls.createServer` does not encrypt.** It wraps a plain `net` server and reports
-  `encrypted` and `authorized` as true. Client verification in `tls.connect` is real.
+- **Uncaught exceptions.** The runtime has no `uncaughtException` handling, so an exception
+  thrown in an async callback, including a socket or HTTP handler, is lost silently and the
+  process exits 0. In Node it would crash the process.
 - **Hostname checks follow Go, not Node, unless a script passes `checkServerIdentity`.** A
-  certificate with only a Common Name and no SAN fails where Node accepts it, and only a
-  whole-label `*.` wildcard matches, not `f*.example.com`. `tls.checkServerIdentity` itself
-  follows Node.
-- **Reported values are partly fixed.** `getCipher` and `getProtocol` return constants,
-  `ALPNProtocols` is ignored, and `getPeerCertificate(true)` omits `issuerCertificate`.
-- **`options.socket` and the `connect` event are not implemented.** Only `secureConnect` fires.
-- **Names are not pinned.** `tls.connect` passes the hostname to `SocketFactory`, so the OS
-  resolves it and a network policy sees only the name.
+  certificate with only a Common Name and no SAN fails where Node accepts it. Only a
+  whole-label `*.` wildcard matches, not `f*.example.com`, and Go accepts `*.com` from a
+  trusted CA where Node rejects it. `tls.checkServerIdentity` itself follows Node.
+- **TLS options with no effect.** `ciphers`, `honorCipherOrder`, `ecdhCurve`, `dhparam` and
+  `sigalgs` are ignored. `pfx` and encrypted keys are not supported and throw. Session
+  resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no
+  `session` event fires. `tls.rootCertificates` is empty.
+- **`TLSSocket` can only wrap a `net.Socket`,** not an arbitrary stream.
+- **The HTTP parser is stricter than Node in places.** A request with a non-chunked final
+  `Transfer-Encoding` is refused before the handler runs, where Node runs the handler first.
+- **`'finish'` on a response can come after the request's `'end'`,** because it waits for
+  the write to complete on another thread.
+- **Sockets cannot be made from file descriptors,** and `server.listen` cannot take a handle.
+- **`net.connect` with an IPv6 zone** (`fe80::1%en0`) fails with `ENOTFOUND`, because a zone
+  is free-form text a policy could be made to match on. `net.isIP` still accepts it.
+- **Happy-eyeballs is sequential.** Addresses are tried in order, and `'lookup'` fires once
+  rather than per address.
+- **`dgram.getRecvBufferSize` and `getSendBufferSize`** report the size last set, or a default,
+  rather than asking the OS.
+- **`fs.createWriteStream` does not exist,** so a stream cannot be piped to a file.
 
 ## Node features found missing during development
 

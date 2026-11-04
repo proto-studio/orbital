@@ -53,20 +53,22 @@ type Config struct {
 	// SystemInfo is the system information provider.
 	// If nil, real system information is used.
 	SystemInfo SystemInfo
-	// HTTPClient is the HTTP client for outbound requests.
-	// If nil, a real HTTP client with no restrictions is used.
+	// HTTPClient is the HTTP client for fetch, and for node:http and node:https when
+	// it is set to anything but the real client. It then sees every such request.
+	// If nil, a real HTTP client with no restrictions is used, and node:http and
+	// node:https connect through SocketFactory instead.
 	HTTPClient HTTPClient
 	// Environment is the environment variable provider.
 	// If nil, real system environment variables are used.
 	Environment Environment
-	// DNSResolver is the DNS resolver for network lookups.
+	// DNSResolver resolves names for node:dns and for everything that connects by name.
 	// If nil, the system's DNS resolver is used.
 	DNSResolver Resolver
 	// SocketFactory creates TCP/UDP sockets.
 	// If nil, real sockets with no restrictions are used.
 	SocketFactory SocketFactory
 	// ClientTLSConfig, when non-nil, is the authoritative client TLS configuration
-	// for node:tls and node:http2: JavaScript options such as rejectUnauthorized,
+	// for node:tls, node:https and node:http2: JavaScript options such as rejectUnauthorized,
 	// ca, cert, servername and checkServerIdentity, and
 	// NODE_TLS_REJECT_UNAUTHORIZED, are ignored so guest code cannot weaken it. Set
 	// &tls.Config{} to lock verification to the system roots. When nil, those

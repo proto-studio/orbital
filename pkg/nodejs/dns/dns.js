@@ -4,315 +4,424 @@
 
   const internal = global.__dns_internal;
 
-  // Error codes
-  const NODATA = 'ENODATA';
-  const FORMERR = 'EFORMERR';
-  const SERVFAIL = 'ESERVFAIL';
-  const NOTFOUND = 'ENOTFOUND';
-  const NOTIMP = 'ENOTIMP';
-  const REFUSED = 'EREFUSED';
-  const BADQUERY = 'EBADQUERY';
-  const BADNAME = 'EBADNAME';
-  const BADFAMILY = 'EBADFAMILY';
-  const BADRESP = 'EBADRESP';
-  const CONNREFUSED = 'ECONNREFUSED';
-  const TIMEOUT = 'ETIMEOUT';
-  const EOF = 'EOF';
-  const FILE = 'EFILE';
-  const NOMEM = 'ENOMEM';
-  const DESTRUCTION = 'EDESTRUCTION';
-  const BADSTR = 'EBADSTR';
-  const BADFLAGS = 'EBADFLAGS';
-  const NONAME = 'ENONAME';
-  const BADHINTS = 'EBADHINTS';
-  const NOTINITIALIZED = 'ENOTINITIALIZED';
-  const LOADIPHLPAPI = 'ELOADIPHLPAPI';
-  const ADDRGETNETWORKPARAMS = 'EADDRGETNETWORKPARAMS';
-  const CANCELLED = 'ECANCELLED';
+  const codes = {
+    NODATA: 'ENODATA',
+    FORMERR: 'EFORMERR',
+    SERVFAIL: 'ESERVFAIL',
+    NOTFOUND: 'ENOTFOUND',
+    NOTIMP: 'ENOTIMP',
+    REFUSED: 'EREFUSED',
+    BADQUERY: 'EBADQUERY',
+    BADNAME: 'EBADNAME',
+    BADFAMILY: 'EBADFAMILY',
+    BADRESP: 'EBADRESP',
+    CONNREFUSED: 'ECONNREFUSED',
+    TIMEOUT: 'ETIMEOUT',
+    EOF: 'EOF',
+    FILE: 'EFILE',
+    NOMEM: 'ENOMEM',
+    DESTRUCTION: 'EDESTRUCTION',
+    BADSTR: 'EBADSTR',
+    BADFLAGS: 'EBADFLAGS',
+    NONAME: 'ENONAME',
+    BADHINTS: 'EBADHINTS',
+    NOTINITIALIZED: 'ENOTINITIALIZED',
+    LOADIPHLPAPI: 'ELOADIPHLPAPI',
+    ADDRGETNETWORKPARAMS: 'EADDRGETNETWORKPARAMS',
+    CANCELLED: 'ECANCELLED'
+  };
+  const kErrnoGetaddrinfo = { ENOTFOUND: -3008, EAI_AGAIN: -3001 };
 
-  // Helper to create DNS error
-  function createDnsError(syscall, hostname, code) {
-    const err = new Error(`${syscall} ${code || NOTFOUND} ${hostname}`);
-    err.code = code || NOTFOUND;
-    err.syscall = syscall;
-    err.hostname = hostname;
+  let defaultResultOrder = 'verbatim';
+
+  function codedError(Type, code, message) {
+    const err = new Type(message);
+    err.code = code;
     return err;
   }
 
-  // Helper to promisify sync function
-  function promisify(syncFn, syscall) {
-    return function(hostname, ...args) {
-      return new Promise((resolve, reject) => {
-        setImmediate(() => {
-          try {
-            const result = syncFn(hostname, ...args);
-            if (result === null || result === undefined) {
-              reject(createDnsError(syscall, hostname));
-            } else {
-              resolve(result);
-            }
-          } catch (e) {
-            reject(createDnsError(syscall, hostname, e.code || NOTFOUND));
-          }
-        });
-      });
-    };
+  function requireCallback(callback) {
+    if (typeof callback !== 'function') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "callback" argument must be of type function.');
+    }
   }
 
-  // Callback-style wrapper
-  function callbackify(syncFn, syscall) {
-    return function(hostname, options, callback) {
-      if (typeof options === 'function') {
-        callback = options;
-        options = {};
-      }
-      
-      if (typeof callback !== 'function') {
-        // Return promise if no callback
-        return promisify(syncFn, syscall)(hostname, options);
-      }
-      
-      setImmediate(() => {
-        try {
-          const result = syncFn(hostname, options);
-          if (result === null || result === undefined) {
-            callback(createDnsError(syscall, hostname));
-          } else {
-            callback(null, result);
-          }
-        } catch (e) {
-          callback(createDnsError(syscall, hostname, e.code || NOTFOUND));
-        }
-      });
-    };
+  function requireString(value, name) {
+    if (typeof value !== 'string') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', `The "${name}" argument must be of type string. Received ${String(value)}`);
+    }
   }
 
-  const dns = {
-    // Error codes
-    NODATA,
-    FORMERR,
-    SERVFAIL,
-    NOTFOUND,
-    NOTIMP,
-    REFUSED,
-    BADQUERY,
-    BADNAME,
-    BADFAMILY,
-    BADRESP,
-    CONNREFUSED,
-    TIMEOUT,
-    EOF,
-    FILE,
-    NOMEM,
-    DESTRUCTION,
-    BADSTR,
-    BADFLAGS,
-    NONAME,
-    BADHINTS,
-    NOTINITIALIZED,
-    LOADIPHLPAPI,
-    ADDRGETNETWORKPARAMS,
-    CANCELLED,
+  function dnsError(code, syscall, hostname) {
+    const err = new Error(`${syscall} ${code}${hostname ? ` ${hostname}` : ''}`);
+    if (syscall === 'getaddrinfo' && kErrnoGetaddrinfo[code]) err.errno = kErrnoGetaddrinfo[code];
+    err.code = code;
+    err.syscall = syscall;
+    if (hostname) err.hostname = hostname;
+    return err;
+  }
 
-    /**
-     * Lookup a hostname and return the first found A (IPv4) or AAAA (IPv6) record.
-     * @param {string} hostname - The hostname to look up
-     * @param {object|function} options - Options or callback
-     * @param {function} callback - Callback function
-     */
-    lookup: function(hostname, options, callback) {
-      if (typeof options === 'function') {
-        callback = options;
-        options = {};
+  function isIP(host) {
+    return global.__net_module.isIP(host);
+  }
+
+  function normalizeLookupOptions(options) {
+    let family = 0;
+    let all = false;
+    let order = defaultResultOrder;
+    if (typeof options === 'number') {
+      family = options;
+    } else if (options !== undefined && options !== null) {
+      if (typeof options !== 'object') {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options" argument must be of type object.');
       }
-
-      if (typeof callback !== 'function') {
-        return new Promise((resolve, reject) => {
-          setImmediate(() => {
-            const result = internal.lookup(hostname);
-            if (result === null || result === undefined) {
-              reject(createDnsError('getaddrinfo', hostname));
-            } else {
-              const family = result.includes(':') ? 6 : 4;
-              resolve({ address: result, family });
-            }
-          });
-        });
+      if (options.family !== undefined && options.family !== null) {
+        if (options.family === 'IPv4') family = 4;
+        else if (options.family === 'IPv6') family = 6;
+        else family = options.family;
       }
+      all = options.all === true;
+      if (options.verbatim === true) order = 'verbatim';
+      else if (options.verbatim === false) order = 'ipv4first';
+      if (options.order !== undefined) order = options.order;
+    }
+    if (family !== 0 && family !== 4 && family !== 6) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The property 'options.family' must be one of: 0, 4, 6. Received ${String(family)}`);
+    }
+    if (order !== 'verbatim' && order !== 'ipv4first' && order !== 'ipv6first') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The property 'options.order' must be one of: 'verbatim', 'ipv4first', 'ipv6first'.`);
+    }
+    return { family, all, order };
+  }
 
-      setImmediate(() => {
-        const result = internal.lookup(hostname);
-        if (result === null || result === undefined) {
-          callback(createDnsError('getaddrinfo', hostname));
-        } else {
-          const family = result.includes(':') ? 6 : 4;
-          callback(null, result, family);
-        }
+  function orderAddresses(addresses, order) {
+    if (order === 'verbatim') return addresses;
+    const first = order === 'ipv4first' ? 4 : 6;
+    return [...addresses.filter((a) => a.family === first), ...addresses.filter((a) => a.family !== first)];
+  }
+
+  function lookupInternal(hostname, opts, done) {
+    if (!hostname) {
+      process.nextTick(done, null, []);
+      return;
+    }
+    const literal = isIP(hostname);
+    if (literal) {
+      process.nextTick(done, null, [{ address: hostname, family: literal }]);
+      return;
+    }
+    internal.lookup(hostname, opts.family, (code, encoded) => {
+      if (code) {
+        done(dnsError(code, 'getaddrinfo', hostname));
+        return;
+      }
+      done(null, orderAddresses(JSON.parse(encoded), opts.order));
+    });
+  }
+
+  function lookup(hostname, options, callback) {
+    if (hostname !== undefined && hostname !== null && hostname !== '' && typeof hostname !== 'string') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "hostname" argument must be of type string.');
+    }
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    requireCallback(callback);
+    const opts = normalizeLookupOptions(options);
+    lookupInternal(hostname, opts, (err, addresses) => {
+      if (err) {
+        callback(err);
+      } else if (opts.all) {
+        callback(null, addresses);
+      } else if (addresses.length === 0) {
+        callback(null, null, opts.family === 6 ? 6 : 4);
+      } else {
+        callback(null, addresses[0].address, addresses[0].family);
+      }
+    });
+    return {};
+  }
+
+  function lookupPromise(hostname, options) {
+    return new Promise((resolve, reject) => {
+      const opts = normalizeLookupOptions(options);
+      lookupInternal(hostname, opts, (err, addresses) => {
+        if (err) reject(err);
+        else if (opts.all) resolve(addresses);
+        else if (addresses.length === 0) resolve({ address: null, family: opts.family === 6 ? 6 : 4 });
+        else resolve(addresses[0]);
       });
-    },
+    });
+  }
 
-    /**
-     * Resolves a hostname into an array of resource records.
-     * @param {string} hostname - The hostname to resolve
-     * @param {string|object|function} rrtype - Record type or options or callback
-     * @param {function} callback - Callback function
-     */
-    resolve: function(hostname, rrtype, callback) {
+  const kSyscalls = {
+    A: 'queryA', AAAA: 'queryAaaa', ANY: 'queryAny', CAA: 'queryCaa', CNAME: 'queryCname',
+    MX: 'queryMx', NAPTR: 'queryNaptr', NS: 'queryNs', PTR: 'queryPtr', SOA: 'querySoa',
+    SRV: 'querySrv', TXT: 'queryTxt'
+  };
+
+  // Turns native records into the shape each dns function reports.
+  function shape(rrtype, records, options) {
+    const strip = (record) => {
+      const { type, ...rest } = record;
+      return rest;
+    };
+    switch (rrtype) {
+      case 'A':
+      case 'AAAA':
+        if (options && options.ttl) return records.map(({ address, ttl }) => ({ address, ttl }));
+        return records.map((r) => r.address);
+      case 'CNAME':
+      case 'NS':
+      case 'PTR':
+        return records.map((r) => r.value);
+      case 'TXT':
+        return records.map((r) => r.entries);
+      case 'SOA':
+        return strip(records[0]);
+      case 'ANY':
+        return records.map((r) => {
+          if (r.type === 'TXT') return { entries: r.entries, type: 'TXT' };
+          if (r.type === 'CNAME' || r.type === 'NS' || r.type === 'PTR') return { value: r.value, type: r.type };
+          return r;
+        });
+      default:
+        return records.map(strip);
+    }
+  }
+
+  function queryInternal(rrtype, name, options, servers, done) {
+    internal.query(rrtype, name, JSON.stringify(servers), (code, encoded) => {
+      if (code) {
+        done(dnsError(code, kSyscalls[rrtype], name));
+        return;
+      }
+      done(null, shape(rrtype, JSON.parse(encoded), options));
+    });
+  }
+
+  const kRecordMethods = {
+    resolve4: 'A', resolve6: 'AAAA', resolveAny: 'ANY', resolveCaa: 'CAA', resolveCname: 'CNAME',
+    resolveMx: 'MX', resolveNaptr: 'NAPTR', resolveNs: 'NS', resolvePtr: 'PTR', resolveSoa: 'SOA',
+    resolveSrv: 'SRV', resolveTxt: 'TXT'
+  };
+
+  function validRrtype(rrtype) {
+    if (typeof rrtype !== 'string') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "rrtype" argument must be of type string.');
+    }
+    if (!kSyscalls[rrtype]) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The argument 'rrtype' is invalid. Received '${rrtype}'`);
+    }
+  }
+
+  // Formats a server as "host", "host:port" or "[v6]:port", dropping the default port.
+  function parseServer(server) {
+    requireString(server, 'servers[]');
+    let host = server;
+    let port = 53;
+    let m;
+    if ((m = /^\[([^\]]+)\](?::(\d+))?$/.exec(server))) {
+      host = m[1];
+      port = m[2] ? Number(m[2]) : 53;
+    } else if ((m = /^([^:]+):(\d+)$/.exec(server))) {
+      host = m[1];
+      port = Number(m[2]);
+    }
+    if (!isIP(host)) {
+      throw codedError(TypeError, 'ERR_INVALID_IP_ADDRESS', `Invalid IP address: ${server}`);
+    }
+    return { host, port };
+  }
+
+  function formatServer({ host, port }) {
+    if (port === 53) return host;
+    return isIP(host) === 6 ? `[${host}]:${port}` : `${host}:${port}`;
+  }
+
+  function nativeServer({ host, port }) {
+    return isIP(host) === 6 ? `[${host}]:${port}` : `${host}:${port}`;
+  }
+
+  class ResolverBase {
+    constructor() {
+      this._servers = null;
+    }
+
+    getServers() {
+      if (this._servers) return this._servers.map(formatServer);
+      return JSON.parse(internal.systemServers());
+    }
+
+    setServers(servers) {
+      if (!Array.isArray(servers)) {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "servers" argument must be an instance of Array.');
+      }
+      this._servers = servers.map(parseServer);
+    }
+
+    _native() {
+      return this._servers ? this._servers.map(nativeServer) : [];
+    }
+
+    cancel() {}
+    setLocalAddress() {}
+  }
+
+  class Resolver extends ResolverBase {
+    resolve(hostname, rrtype, callback) {
       if (typeof rrtype === 'function') {
         callback = rrtype;
         rrtype = 'A';
-      } else if (typeof rrtype === 'object') {
-        callback = callback || rrtype.callback;
-        rrtype = rrtype.rrtype || 'A';
       }
-
-      const syscall = 'query' + (rrtype || 'A').toUpperCase();
-
-      if (typeof callback !== 'function') {
-        return new Promise((resolve, reject) => {
-          setImmediate(() => {
-            const result = internal.resolve(hostname, rrtype || 'A');
-            if (result === null || result === undefined) {
-              reject(createDnsError(syscall, hostname));
-            } else {
-              resolve(result);
-            }
-          });
-        });
-      }
-
-      setImmediate(() => {
-        const result = internal.resolve(hostname, rrtype || 'A');
-        if (result === null || result === undefined) {
-          callback(createDnsError(syscall, hostname));
-        } else {
-          callback(null, result);
-        }
-      });
-    },
-
-    /**
-     * Resolve IPv4 addresses.
-     */
-    resolve4: callbackify((hostname) => internal.resolve4(hostname), 'queryA'),
-
-    /**
-     * Resolve IPv6 addresses.
-     */
-    resolve6: callbackify((hostname) => internal.resolve6(hostname), 'queryAAAA'),
-
-    /**
-     * Resolve MX records.
-     */
-    resolveMx: callbackify((hostname) => internal.resolveMx(hostname), 'queryMX'),
-
-    /**
-     * Resolve TXT records.
-     */
-    resolveTxt: callbackify((hostname) => internal.resolveTxt(hostname), 'queryTXT'),
-
-    /**
-     * Resolve NS records.
-     */
-    resolveNs: callbackify((hostname) => internal.resolveNs(hostname), 'queryNS'),
-
-    /**
-     * Resolve CNAME records.
-     */
-    resolveCname: callbackify((hostname) => internal.resolveCname(hostname), 'queryCNAME'),
-
-    /**
-     * Perform reverse DNS lookup.
-     */
-    reverse: callbackify((ip) => internal.reverse(ip), 'getHostByAddr'),
-
-    /**
-     * Returns an array of IP addresses used for resolution.
-     * (In sandbox mode, this returns empty or fake servers)
-     */
-    getServers: function() {
-      return ['8.8.8.8', '8.8.4.4'];
-    },
-
-    /**
-     * Sets the IP addresses of DNS servers.
-     * (No-op in sandbox mode)
-     */
-    setServers: function(servers) {
-      // No-op - servers are handled by the resolver interface
-    },
-
-    /**
-     * Set default result order for dns.lookup().
-     */
-    setDefaultResultOrder: function(order) {
-      // No-op
-    },
-
-    /**
-     * Get default result order.
-     */
-    getDefaultResultOrder: function() {
-      return 'verbatim';
+      if (rrtype === undefined) rrtype = 'A';
+      requireString(hostname, 'hostname');
+      validRrtype(rrtype);
+      requireCallback(callback);
+      queryInternal(rrtype, hostname, null, this._native(), callback);
+      return {};
     }
-  };
 
-  // Promises API
-  dns.promises = {
-    lookup: promisify((hostname) => internal.lookup(hostname), 'getaddrinfo'),
-    resolve: function(hostname, rrtype) {
-      return promisify((h) => internal.resolve(h, rrtype || 'A'), 'query' + (rrtype || 'A').toUpperCase())(hostname);
+    reverse(ip, callback) {
+      requireString(ip, 'ip');
+      requireCallback(callback);
+      if (!isIP(ip)) throw dnsError('EINVAL', 'getHostByAddr', ip);
+      internal.reverse(ip, JSON.stringify(this._native()), (code, encoded) => {
+        if (code) callback(dnsError(code, 'getHostByAddr', ip));
+        else callback(null, JSON.parse(encoded));
+      });
+      return {};
+    }
+  }
+
+  class PromiseResolver extends ResolverBase {
+    resolve(hostname, rrtype) {
+      if (rrtype === undefined) rrtype = 'A';
+      requireString(hostname, 'hostname');
+      validRrtype(rrtype);
+      return new Promise((resolve, reject) => {
+        queryInternal(rrtype, hostname, null, this._native(), (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        });
+      });
+    }
+
+    reverse(ip) {
+      requireString(ip, 'ip');
+      if (!isIP(ip)) throw dnsError('EINVAL', 'getHostByAddr', ip);
+      return new Promise((resolve, reject) => {
+        internal.reverse(ip, JSON.stringify(this._native()), (code, encoded) => {
+          if (code) reject(dnsError(code, 'getHostByAddr', ip));
+          else resolve(JSON.parse(encoded));
+        });
+      });
+    }
+  }
+
+  for (const [method, rrtype] of Object.entries(kRecordMethods)) {
+    Resolver.prototype[method] = function(hostname, options, callback) {
+      if (typeof options === 'function') {
+        callback = options;
+        options = undefined;
+      }
+      requireString(hostname, 'hostname');
+      requireCallback(callback);
+      queryInternal(rrtype, hostname, options, this._native(), callback);
+      return {};
+    };
+    PromiseResolver.prototype[method] = function(hostname, options) {
+      requireString(hostname, 'hostname');
+      return new Promise((resolve, reject) => {
+        queryInternal(rrtype, hostname, options, this._native(), (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        });
+      });
+    };
+  }
+
+  function lookupService(address, port, callback) {
+    if (arguments.length !== 3) {
+      throw codedError(TypeError, 'ERR_MISSING_ARGS', 'The "address", "port", and "callback" arguments must be specified');
+    }
+    if (!isIP(address)) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The argument 'address' is invalid. Received '${address}'`);
+    }
+    const p = Number(port);
+    if (!(p >= 0 && p <= 65535) || !Number.isInteger(p)) {
+      throw codedError(RangeError, 'ERR_SOCKET_BAD_PORT', `Port should be >= 0 and < 65536. Received ${String(port)}.`);
+    }
+    requireCallback(callback);
+    internal.lookupService(address, p, (code, encoded) => {
+      if (code) {
+        callback(dnsError(code, 'getnameinfo', address));
+        return;
+      }
+      const { hostname, service } = JSON.parse(encoded);
+      callback(null, hostname, service);
+    });
+    return {};
+  }
+
+  function lookupServicePromise(address, port) {
+    return new Promise((resolve, reject) => {
+      lookupService(address, port, (err, hostname, service) => {
+        if (err) reject(err);
+        else resolve({ hostname, service });
+      });
+    });
+  }
+
+  function setDefaultResultOrder(order) {
+    if (order !== 'ipv4first' && order !== 'ipv6first' && order !== 'verbatim') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The argument 'order' must be one of: 'verbatim', 'ipv4first', 'ipv6first'. Received '${String(order)}'`);
+    }
+    defaultResultOrder = order;
+  }
+
+  const defaultResolver = new Resolver();
+  const defaultPromiseResolver = new PromiseResolver();
+
+  const dns = {
+    ...codes,
+    ADDRCONFIG: 1024,
+    V4MAPPED: 2048,
+    ALL: 256,
+    lookup,
+    lookupService,
+    Resolver,
+    getServers: () => defaultResolver.getServers(),
+    setServers: (servers) => {
+      defaultResolver.setServers(servers);
+      defaultPromiseResolver._servers = defaultResolver._servers;
     },
-    resolve4: promisify((hostname) => internal.resolve4(hostname), 'queryA'),
-    resolve6: promisify((hostname) => internal.resolve6(hostname), 'queryAAAA'),
-    resolveMx: promisify((hostname) => internal.resolveMx(hostname), 'queryMX'),
-    resolveTxt: promisify((hostname) => internal.resolveTxt(hostname), 'queryTXT'),
-    resolveNs: promisify((hostname) => internal.resolveNs(hostname), 'queryNS'),
-    resolveCname: promisify((hostname) => internal.resolveCname(hostname), 'queryCNAME'),
-    reverse: promisify((ip) => internal.reverse(ip), 'getHostByAddr'),
+    setDefaultResultOrder,
+    getDefaultResultOrder: () => defaultResultOrder,
+    resolve: (...args) => defaultResolver.resolve(...args),
+    reverse: (...args) => defaultResolver.reverse(...args)
+  };
+  for (const method of Object.keys(kRecordMethods)) {
+    dns[method] = (...args) => defaultResolver[method](...args);
+  }
+
+  dns.promises = {
+    ...codes,
+    lookup: lookupPromise,
+    lookupService: lookupServicePromise,
+    Resolver: PromiseResolver,
     getServers: dns.getServers,
     setServers: dns.setServers,
-    setDefaultResultOrder: dns.setDefaultResultOrder,
-    getDefaultResultOrder: dns.getDefaultResultOrder,
-
-    // Resolver class
-    Resolver: class Resolver {
-      constructor() {
-        this._servers = ['8.8.8.8', '8.8.4.4'];
-      }
-      getServers() { return this._servers; }
-      setServers(servers) { this._servers = servers; }
-      resolve(hostname, rrtype) { return dns.promises.resolve(hostname, rrtype); }
-      resolve4(hostname) { return dns.promises.resolve4(hostname); }
-      resolve6(hostname) { return dns.promises.resolve6(hostname); }
-      resolveMx(hostname) { return dns.promises.resolveMx(hostname); }
-      resolveTxt(hostname) { return dns.promises.resolveTxt(hostname); }
-      resolveNs(hostname) { return dns.promises.resolveNs(hostname); }
-      resolveCname(hostname) { return dns.promises.resolveCname(hostname); }
-      reverse(ip) { return dns.promises.reverse(ip); }
-      cancel() {}
-    }
+    setDefaultResultOrder,
+    getDefaultResultOrder: () => defaultResultOrder,
+    resolve: (...args) => defaultPromiseResolver.resolve(...args),
+    reverse: (...args) => defaultPromiseResolver.reverse(...args)
   };
+  for (const method of Object.keys(kRecordMethods)) {
+    dns.promises[method] = (...args) => defaultPromiseResolver[method](...args);
+  }
 
-  // Resolver class
-  dns.Resolver = class Resolver {
-    constructor() {
-      this._servers = ['8.8.8.8', '8.8.4.4'];
-    }
-    getServers() { return this._servers; }
-    setServers(servers) { this._servers = servers; }
-    resolve(hostname, rrtype, callback) { return dns.resolve(hostname, rrtype, callback); }
-    resolve4(hostname, callback) { return dns.resolve4(hostname, callback); }
-    resolve6(hostname, callback) { return dns.resolve6(hostname, callback); }
-    resolveMx(hostname, callback) { return dns.resolveMx(hostname, callback); }
-    resolveTxt(hostname, callback) { return dns.resolveTxt(hostname, callback); }
-    resolveNs(hostname, callback) { return dns.resolveNs(hostname, callback); }
-    resolveCname(hostname, callback) { return dns.resolveCname(hostname, callback); }
-    reverse(ip, callback) { return dns.reverse(ip, callback); }
-    cancel() {}
-  };
-
-  // Export
   global.__dns_module = dns;
   global.__dns_promises_module = dns.promises;
 

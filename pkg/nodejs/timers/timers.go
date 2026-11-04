@@ -14,6 +14,9 @@ import (
 //go:embed promises.js
 var promisesJS string
 
+//go:embed timeout.js
+var timeoutJS string
+
 // Timers provides timer functionality (setTimeout, setInterval, etc.).
 type Timers struct {
 	rt     *runtime.Runtime
@@ -120,6 +123,22 @@ func (t *Timers) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// setTimeoutRef(id, ref) lets the Timeout wrapper below control the event loop.
+	setRefFn, err := iso.NewFunctionTemplate(t.setRefFunc)
+	if err != nil {
+		return err
+	}
+	setRefVal, err := setRefFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rt.SetGlobal("__timer_set_ref", setRefVal); err != nil {
+		return err
+	}
+	if _, err := rt.RunScript(timeoutJS, "timers/timeout.js"); err != nil {
+		return err
+	}
+
 	// Initialize timers/promises
 	if _, err := rt.RunScript(promisesJS, "timers/promises.js"); err != nil {
 		return err
@@ -193,6 +212,20 @@ func (t *Timers) clearTimeoutFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		t.timers.Delete(id)
 	}
 
+	return nil
+}
+
+// setRefFunc implements __timer_set_ref(id, ref).
+func (t *Timers) setRefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
+		return nil
+	}
+	if val, ok := t.timers.Load(uint64(args[0].Integer())); ok {
+		if handle := val.(*timerHandle); handle.task != nil {
+			handle.task.SetRef(args[1].Boolean())
+		}
+	}
 	return nil
 }
 

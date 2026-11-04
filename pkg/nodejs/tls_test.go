@@ -383,62 +383,57 @@ func TestTLSConnect_InjectedSockets(t *testing.T) {
 	ca := newTestCA(t)
 	port := newTLSServer(t, ca.issue(t, "api.test"))
 	target := "127.0.0.1:" + strconv.Itoa(port)
+	const publicIP = "203.0.113.80"
+	resolver := func() *recordingResolver {
+		return &recordingResolver{hosts: map[string][]string{"api.test": {publicIP}, "nope.test": {publicIP}}}
+	}
 	script := fmt.Sprintf(`{host: 'api.test', port: 443, ca: %q}`, ca.pem)
 
 	t.Run("custom factory carries the handshake", func(t *testing.T) {
-		factory := &recordingFactory{redirect: map[string]string{"api.test": target}}
-		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: factory}, tlsScript("", script)), true, nil, tlsConnected...)
-		if got := factory.dialed(); !reflect.DeepEqual(got, []string{"api.test:443"}) {
+		factory := &recordingFactory{redirect: map[string]string{publicIP: target}}
+		dns := resolver()
+		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: factory, DNSResolver: dns}, tlsScript("", script)), true, nil, tlsConnected...)
+		if got := factory.dialed(); !reflect.DeepEqual(got, []string{publicIP + ":443"}) {
 			t.Errorf("dialed %v", got)
+		}
+		if !reflect.DeepEqual(dns.lookups, []string{"api.test"}) {
+			t.Errorf("lookups %v", dns.lookups)
 		}
 	})
 	t.Run("custom factory is verified", func(t *testing.T) {
-		factory := &recordingFactory{redirect: map[string]string{"nope.test": target}}
-		result := runJS(t, &runtime.Config{SocketFactory: factory}, tlsScript("", fmt.Sprintf(`{host: 'nope.test', port: 443, ca: %q}`, ca.pem)))
+		factory := &recordingFactory{redirect: map[string]string{publicIP: target}}
+		result := runJS(t, &runtime.Config{SocketFactory: factory, DNSResolver: resolver()}, tlsScript("", fmt.Sprintf(`{host: 'nope.test', port: 443, ca: %q}`, ca.pem)))
 		wantTLS(t, result, false, "ERR_TLS_CERT_ALTNAME_INVALID", tlsFailed("ERR_TLS_CERT_ALTNAME_INVALID")...)
 	})
 	t.Run("filtered factory keeps its policy and verification", func(t *testing.T) {
-		underlying := &recordingFactory{redirect: map[string]string{"api.test": target}}
+		underlying := &recordingFactory{redirect: map[string]string{publicIP: target}}
 		deny := runtime.NewFilteredSocketFactory(underlying, runtime.NewDenyAllPolicy())
-		result := runJS(t, &runtime.Config{SocketFactory: deny}, tlsScript("", script))
+		result := runJS(t, &runtime.Config{SocketFactory: deny, DNSResolver: resolver()}, tlsScript("", script))
 		wantTLS(t, result, false, nil, tlsFailed("EACCES")...)
 		if got := underlying.dialed(); len(got) != 0 {
 			t.Errorf("denied connection dialed %v", got)
 		}
 
 		allow := runtime.NewFilteredSocketFactory(underlying, runtime.NewAllowAllPolicy())
-		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: allow}, tlsScript("", script)), true, nil, tlsConnected...)
+		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: allow, DNSResolver: resolver()}, tlsScript("", script)), true, nil, tlsConnected...)
 		wrongCA := fmt.Sprintf(`{host: 'api.test', port: 443, ca: %q}`, newTestCA(t).pem)
-		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: allow}, tlsScript("", wrongCA)), false,
+		wantTLS(t, runJS(t, &runtime.Config{SocketFactory: allow, DNSResolver: resolver()}, tlsScript("", wrongCA)), false,
 			"UNABLE_TO_VERIFY_LEAF_SIGNATURE", tlsFailed("UNABLE_TO_VERIFY_LEAF_SIGNATURE")...)
 	})
+	t.Run("policy sees the resolved address", func(t *testing.T) {
+		underlying := &recordingFactory{redirect: map[string]string{"10.0.0.9": target}}
+		factory := runtime.NewFilteredSocketFactory(underlying, runtime.CommonPolicies.NoPrivateNetworks())
+		dns := &recordingResolver{hosts: map[string][]string{"api.test": {"10.0.0.9"}}}
+		result := runJS(t, &runtime.Config{SocketFactory: factory, DNSResolver: dns}, tlsScript("", script))
+		wantTLS(t, result, false, nil, tlsFailed("EACCES")...)
+		if got := underlying.dialed(); len(got) != 0 {
+			t.Errorf("denied connection dialed %v", got)
+		}
+	})
 	t.Run("no-op factory", func(t *testing.T) {
-		result := runJS(t, &runtime.Config{SocketFactory: &runtime.NoOpSocketFactory{}}, tlsScript("", script))
+		result := runJS(t, &runtime.Config{SocketFactory: &runtime.NoOpSocketFactory{}, DNSResolver: resolver()}, tlsScript("", script))
 		wantTLS(t, result, false, nil, tlsFailed("ENETUNREACH")...)
 	})
-	t.Run("factory that ignores the configuration fails closed", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer ln.Close()
-		plainPort := ln.Addr().(*net.TCPAddr).Port
-		options := fmt.Sprintf(`{host: '127.0.0.1', port: %d}`, plainPort)
-
-		result := runJS(t, &runtime.Config{SocketFactory: &plaintextFactory{}}, tlsScript("", options))
-		wantTLS(t, result, false, nil, tlsFailed("ERR_TLS_CERT_NOT_VERIFIED")...)
-
-		cfg := &runtime.Config{SocketFactory: &plaintextFactory{}}
-		cfg.ClientTLSConfig = &tls.Config{InsecureSkipVerify: true}
-		wantTLS(t, runJS(t, cfg, tlsScript("", options)), false, nil, tlsConnected...)
-	})
-}
-
-// plaintextFactory returns the TCP socket unwrapped, so no handshake runs.
-type plaintextFactory struct{ runtime.RealSocketFactory }
-
-func (plaintextFactory) CreateTLSSocket(socket runtime.TCPSocket, _ *tls.Config, _ bool) runtime.TCPSocket {
-	return socket
 }
 
 func TestTLSConnect_DestroyInterruptsHandshake(t *testing.T) {
@@ -806,6 +801,7 @@ func TestTLSSocket_PeerEndsFirst(t *testing.T) {
 const ev = [];
 const s = require('tls').connect({host: 'localhost', port: %d, ca: %q, allowHalfOpen: true});
 for (const name of ['end', 'finish']) s.on(name, () => ev.push(name));
+s.resume();
 s.on('end', () => setTimeout(() => s.end('late'), 50));
 s.on('error', (e) => ev.push('error:' + e.code));
 s.on('close', (hadError) => { ev.push('close:' + hadError); done({ ev }); });`, port, ca.pem))
@@ -909,5 +905,157 @@ func TestTLSSocket_EndThroughInjectedSockets(t *testing.T) {
 		if got := string(<-received); got != "bye" {
 			t.Errorf("server received %q", got)
 		}
+	})
+}
+
+func TestTLS_Servers(t *testing.T) {
+	ca := newTestCA(t)
+	certPEM, keyPEM := ca.issuePEM(t, "localhost", "127.0.0.1")
+	otherPEM, otherKeyPEM := ca.issuePEM(t, "other.test")
+	clientPEM, clientKeyPEM := ca.issueClientPEM(t, "client.test")
+	prelude := fmt.Sprintf(`
+const tls = require('tls');
+const CA = %q, CERT = %q, KEY = %q, OTHER = %q, OTHER_KEY = %q, CLIENT = %q, CLIENT_KEY = %q;
+const secure = async (options, handler) => {
+  const server = tls.createServer({ cert: CERT, key: KEY, ...options }, handler);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return server;
+};
+const clientOf = (server, options) => ({ port: server.address().port, host: 'localhost', ca: CA, ...options });
+`, ca.pem, certPEM, keyPEM, otherPEM, otherKeyPEM, clientPEM, clientKeyPEM)
+
+	result := runScript(t, &runtime.Config{}, prelude+`
+const out = {};
+const s1 = await secure({}, (c) => c.on('data', (d) => c.end(d)));
+out.encryptedEcho = await new Promise((resolve) => {
+  const c = tls.connect(clientOf(s1), () => c.write(Buffer.from([0, 255, 1])));
+  const b = [];
+  c.on('data', (d) => b.push(d));
+  c.on('close', () => resolve(Buffer.concat(b).toString('hex')));
+});
+s1.close();
+
+out.isEncrypted = await new Promise(async (resolve) => {
+  const s = await secure({}, (c) => c.end('secret'));
+  const raw = net.connect(s.address().port, '127.0.0.1', () => raw.write('not tls'));
+  raw.on('data', (d) => { raw.destroy(); s.close(); resolve(d.toString('latin1').includes('secret')); });
+  raw.on('error', () => { s.close(); resolve(false); });
+  raw.on('close', () => { s.close(); resolve(false); });
+});
+
+const props = {};
+const s2 = await secure({ ALPNProtocols: ['h2', 'x'] }, (c) => {
+  props.server = [c.encrypted, c.authorized, c.alpnProtocol, c.servername, c.getProtocol(), typeof c.getCipher().name, c instanceof tls.TLSSocket, c instanceof net.Socket];
+  c.end();
+});
+await new Promise((resolve) => {
+  const c = tls.connect(clientOf(s2, { ALPNProtocols: ['x'] }), () => {
+    const leaf = c.getPeerCertificate(true);
+    props.client = [c.encrypted, c.authorized, c.alpnProtocol, c.servername, c.getProtocol(), c.getCipher().version, leaf.subject.CN, leaf.issuerCertificate.subject.CN, c.isSessionReused(), c.exportKeyingMaterial(8, 'l').length];
+  });
+  c.resume();
+  c.on('close', resolve);
+});
+s2.close();
+out.props = props;
+
+const certs = [];
+const s3 = await secure({ requestCert: true, rejectUnauthorized: false, ca: CA }, (c) => {
+  certs.push([c.authorized, c.authorizationError, c.getPeerCertificate().subject && c.getPeerCertificate().subject.CN]);
+  c.end();
+});
+for (const extra of [{}, { cert: CLIENT, key: CLIENT_KEY }]) {
+  await new Promise((resolve) => { const c = tls.connect(clientOf(s3, extra)); c.resume(); c.on('close', resolve); });
+}
+s3.close();
+out.clientCerts = certs;
+
+out.requiredClientCert = await new Promise(async (resolve) => {
+  const ev = [];
+  const s = await secure({ requestCert: true, ca: CA }, (c) => { ev.push('secure'); c.end(); });
+  s.on('tlsClientError', () => ev.push('tlsClientError'));
+  const c = tls.connect(clientOf(s, { maxVersion: 'TLSv1.2' }));
+  c.on('error', () => {});
+  c.resume();
+  c.on('close', () => setTimeout(() => { s.close(); resolve(ev); }, 20));
+});
+
+const peerName = (s, options) => new Promise((resolve) => {
+  const c = tls.connect(clientOf(s, { host: '127.0.0.1', ...options }), () => {
+    const name = c.getPeerCertificate().subject.CN;
+    c.resume();
+    c.on('close', () => resolve(name));
+  });
+  c.on('error', (e) => resolve(e.code));
+});
+const s4 = await secure({}, (c) => c.end());
+s4.addContext('other.test', tls.createSecureContext({ cert: OTHER, key: OTHER_KEY }));
+out.addContext = await peerName(s4, { servername: 'other.test' });
+s4.close();
+const seen = [];
+const s5 = await secure({ SNICallback: (name, cb) => {
+  seen.push(name);
+  const context = tls.createSecureContext({ cert: OTHER, key: OTHER_KEY });
+  // Answering twice must not block anything.
+  cb(null, context);
+  cb(null, context);
+} }, (c) => c.end());
+out.sniCallback = [await peerName(s5, { servername: 'other.test' }), seen];
+s5.close();
+
+out.startTLS = await new Promise(async (resolve) => {
+  const context = tls.createSecureContext({ cert: CERT, key: KEY });
+  const s = await new Promise((r) => {
+    const server = net.createServer((plain) => {
+      plain.once('data', () => {
+        plain.write('go');
+        const upgraded = new tls.TLSSocket(plain, { isServer: true, secureContext: context });
+        upgraded.on('data', (d) => upgraded.end(String(d).toUpperCase()));
+        upgraded.on('error', () => {});
+      });
+    });
+    server.listen(0, '127.0.0.1', () => r(server));
+  });
+  const plain = net.connect(s.address().port, '127.0.0.1', () => plain.write('starttls'));
+  plain.once('data', () => {
+    plain.removeAllListeners('data');
+    const c = tls.connect({ socket: plain, host: 'localhost', ca: CA }, () => c.write('hello'));
+    c.on('data', (d) => { s.close(); resolve(String(d)); });
+    c.on('error', (e) => { s.close(); resolve(e.code); });
+  });
+});
+
+const badCreds = [];
+for (const f of [() => tls.createServer({ key: 'x', cert: 'y' }), () => tls.createSecureContext({ key: 'x', cert: 'y' }), () => tls.createServer({ pfx: 'x' })]) {
+  try { f(); badCreds.push('ok'); } catch (e) { badCreds.push(typeof e.code); }
+}
+out.badCreds = badCreds;
+
+out.versionBound = await new Promise(async (resolve) => {
+  const s = await secure({ maxVersion: 'TLSv1.2' }, (c) => c.end());
+  const c = tls.connect(clientOf(s), () => {
+    const v = c.getProtocol();
+    c.resume();
+    c.on('close', () => { s.close(); resolve(v); });
+  });
+});
+done(out);`)
+	wantJSON(t, result, map[string]any{
+		"encryptedEcho": "00ff01",
+		"isEncrypted":   false,
+		"props": map[string]any{
+			"server": []any{true, false, "x", false, "TLSv1.3", "string", true, true},
+			"client": []any{true, true, "x", false, "TLSv1.3", "TLSv1.3", "localhost", "Orbital Test CA", false, float64(8)},
+		},
+		"clientCerts": []any{
+			[]any{false, "UNABLE_TO_GET_ISSUER_CERT", nil},
+			[]any{true, nil, "client.test"},
+		},
+		"requiredClientCert": []any{"tlsClientError"},
+		"addContext":         "other.test",
+		"sniCallback":        []any{"other.test", []any{"other.test"}},
+		"startTLS":           "HELLO",
+		"badCreds":           []any{"string", "string", "string"},
+		"versionBound":       "TLSv1.2",
 	})
 }

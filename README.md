@@ -125,9 +125,9 @@ Workers and `module.register` loader realms created by an instance inherit that
 instance's configuration, and are stopped when it is disposed. Instances do not share
 configuration, so one process can host parents with different sandboxes.
 
-### HTTP/2
+### Network modules
 
-`node:http2` connects through the same injected controls as other sockets:
+`node:net`, `node:tls`, `node:http`, `node:https`, `node:http2` and `node:dgram` connect through the same injected controls:
 
 - `Config.DNSResolver` resolves the name. `Config.SocketFactory` then connects to the
   resolved IP, so a check on that IP applies to the real destination and DNS cannot
@@ -135,32 +135,55 @@ configuration, so one process can host parents with different sandboxes.
 - `FilteredSocketFactory` evaluates the requested name and the resolved IP together. A
   custom `NetworkPolicy` can do the same by implementing `ResolvedAddressPolicy`;
   otherwise both must be allowed. A custom socket that decides by hostname can implement
-  `ResolvedTCPSocket`; otherwise it receives only the IP.
-- Certificates are verified. As in Node, scripts may opt out for a connection with
-  `rejectUnauthorized`, `ca` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set
-  `Config.ClientTLSConfig` (`&tls.Config{}` for the system roots) to make your TLS
-  configuration authoritative so scripts cannot change it.
-- `HTTPClient` cannot carry HTTP/2. If you inject one but leave `SocketFactory` as real
-  sockets, `http2.connect` fails with `ERR_HTTP2_TRANSPORT_UNAVAILABLE` rather than
-  connecting around your restrictions.
+  `ResolvedTCPSocket` or `ResolvedUDPSocket`; otherwise it receives only the IP.
+- An address from a script's `lookup` option is checked as an address. The name it answered
+  for is not trusted, so it cannot borrow an allowed name.
+
+### HTTP clients
+
+`http.request` and `https.request` open their own connections when `Config.HTTPClient` is
+unset, or is a `FilteredHTTPClient` over the real client using the same built-in policy
+object as a `FilteredSocketFactory`. Any other `HTTPClient` is your own and sees every
+request as a whole: bodies are buffered, and `CONNECT`, upgrades and other protocol switches
+fail with `ERR_HTTP_TRANSPORT_UNAVAILABLE` rather than opening a connection around it.
+`fetch` always uses `Config.HTTPClient`.
+
+`http2.connect` cannot use an `HTTPClient`. If you inject one but leave `SocketFactory` as
+real sockets, it fails with `ERR_HTTP2_TRANSPORT_UNAVAILABLE` rather than connecting around
+your restrictions.
 
 ### TLS
 
-`tls.connect` verifies certificates as Node does: the chain, then the hostname. A failure
-closes the connection with Node's error code, such as `DEPTH_ZERO_SELF_SIGNED_CERT` or
+Certificates are verified as Node does: the chain, then the hostname. A failure closes the
+connection with Node's error code, such as `DEPTH_ZERO_SELF_SIGNED_CERT` or
 `ERR_TLS_CERT_ALTNAME_INVALID`.
 
 - As in Node, scripts may change or skip this with `rejectUnauthorized`, `ca`,
   `checkServerIdentity` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set `Config.ClientTLSConfig`
   (`&tls.Config{}` for the system roots) to make your TLS configuration authoritative for
-  both `node:tls` and `node:http2`.
-- A custom `SocketFactory` must run the `*tls.Config` given to `CreateTLSSocket` during
-  `Connect`. A connection made without it fails with `ERR_TLS_CERT_NOT_VERIFIED`, unless
-  `ClientTLSConfig` has set `InsecureSkipVerify`.
-- `tls.connect` connects by name through `SocketFactory`, so unlike HTTP/2 it does not use
-  `Config.DNSResolver` and a policy checks only the name.
-- `tls.createServer` does not encrypt yet. See
-  [`docs/known-limitations.md`](docs/known-limitations.md).
+  `node:tls`, `node:https` and `node:http2`.
+- TLS runs on top of a socket from `SocketFactory`. `SocketFactory.CreateTLSSocket` is no
+  longer called by these modules.
+- `tls.createServer` and `https.createServer` are real TLS servers. Scripts supply their own
+  keys, and listening is subject to the socket policy as usual.
+
+### DNS
+
+`dns.lookup` and `dns.resolve*` use `Config.DNSResolver`. Querying a server directly, which
+`dns.resolveSoa`, `resolveCaa`, `resolveNaptr`, `resolvePtr`, `resolveAny` and TTLs need, is
+available with the real resolver or one implementing `RecordResolver`, and otherwise fails
+with `ENOTIMP`.
+
+A script's `dns.setServers` choice is only honored with the real resolver and real sockets.
+Under any other configuration it is recorded but not used, because a query to a server of
+the script's choosing would be traffic your controls never saw.
+
+### Unix domain sockets
+
+Unix sockets reach local services through the filesystem, and a network policy knows nothing
+about them. They work only with `RealSocketFactory` itself and an unrestricted filesystem,
+and otherwise fail with `EACCES`. A type that embeds `RealSocketFactory` does not inherit
+them. A custom factory can offer them by implementing `UnixSocketFactory`.
 
 ## Packages
 
@@ -174,7 +197,7 @@ closes the connection with Node's error code, such as `DEPTH_ZERO_SELF_SIGNED_CE
 
 Orbital implements a growing subset of Node.js — CommonJS and ESM, `console`, timers, `process`, `Buffer`, `fs`, `path`, `http`, `crypto`, isolate-backed `worker_threads`, `async_hooks`, and more. See [`modules.md`](modules.md) for the full checklist and [`docs/known-limitations.md`](docs/known-limitations.md) for gaps inside implemented modules.
 
-Not yet implemented: `cluster`, full stream piping, async iterators. `async_hooks` context does not yet cross native `await` boundaries (see [`docs/async-context.md`](docs/async-context.md)).
+Not yet implemented: `cluster`. `async_hooks` context does not yet cross native `await` boundaries (see [`docs/async-context.md`](docs/async-context.md)).
 
 ## Installing the V8 runtime
 

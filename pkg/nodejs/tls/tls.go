@@ -1,4 +1,6 @@
-// Package tls implements the Node.js tls module for TLS/SSL networking.
+// Package tls implements the Node.js tls module. A TLS socket is a net socket whose
+// transport has been upgraded in place, so it shares all of node:net's behavior and the
+// runtime's injected network controls.
 package tls
 
 import (
@@ -14,11 +16,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/nodejs/internal/tlsclient"
+	netmodule "proto.zip/studio/orbital/pkg/nodejs/net"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -28,34 +33,28 @@ var tlsJS string
 
 // TLS provides TLS/SSL functionality.
 type TLS struct {
-	rt       *runtime.Runtime
-	sockets  map[int64]*connection
-	socketID int64
-	mu       sync.Mutex
+	rt  *runtime.Runtime
+	net *netmodule.Net
+
+	mu          sync.Mutex
+	sessions    map[int64]*session
+	contexts    map[int64]*serverContext
+	nextContext int64
 }
 
-// connection is one tls.connect socket. verifier is nil for a server-side socket.
-type connection struct {
-	socket   runtime.TCPSocket
-	verifier *tlsclient.Verifier
-	host     string
-	ctx      context.Context
-	cancel   context.CancelFunc
+// session is the TLS state of one upgraded socket.
+type session struct {
+	conn   *tls.Conn
+	peer   func() []*x509.Certificate
+	config *tls.Config
 }
 
-// connectResult is what the JavaScript connect callback receives.
-type connectResult struct {
-	Message              string `json:"message,omitempty"`
-	Code                 string `json:"code,omitempty"`
-	Authorized           bool   `json:"authorized"`
-	AuthorizationError   string `json:"authorizationError,omitempty"`
-	ScriptChecksIdentity bool   `json:"scriptChecksIdentity"`
-}
-
-// New creates a new TLS module.
-func New() *TLS {
+// New creates a new TLS module on top of the given net module.
+func New(netModule *netmodule.Net) *TLS {
 	return &TLS{
-		sockets: make(map[int64]*connection),
+		net:      netModule,
+		sessions: make(map[int64]*session),
+		contexts: make(map[int64]*serverContext),
 	}
 }
 
@@ -70,23 +69,22 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
-	// Create internal object with native functions
 	internal, err := ctx.NewObject()
 	if err != nil {
 		return err
 	}
 
-	// Register functions
 	funcs := map[string]v8.FunctionCallback{
-		"createTLSSocket":    t.createTLSSocketFunc,
-		"connect":            t.connectFunc,
-		"write":              t.writeFunc,
-		"read":               t.readFunc,
-		"shutdown":           t.shutdownFunc,
-		"close":              t.closeFunc,
-		"getPeerCertificate": t.getPeerCertificateFunc,
-		"getCipher":          t.getCipherFunc,
-		"getProtocol":        t.getProtocolFunc,
+		"validateClient":       t.validateClientFunc,
+		"upgradeClient":        t.upgradeClientFunc,
+		"createServerContext":  t.createServerContextFunc,
+		"upgradeServer":        t.upgradeServerFunc,
+		"getPeerCertificate":   t.getPeerCertificateFunc,
+		"getCertificate":       t.getCertificateFunc,
+		"getCipher":            t.getCipherFunc,
+		"getProtocol":          t.getProtocolFunc,
+		"isSessionReused":      t.isSessionReusedFunc,
+		"exportKeyingMaterial": t.exportKeyingMaterialFunc,
 	}
 
 	for name, fn := range funcs {
@@ -108,302 +106,544 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 	}
 
 	// Must come after net module
-	if _, err := rt.RunScript(tlsJS, "tls.js"); err != nil {
-		return err
-	}
+	_, err = rt.RunScript(tlsJS, "tls.js")
+	return err
+}
 
+func (t *TLS) deliver(fn func(ctx *v8.Context)) {
+	t.rt.EventLoop().EnqueueMicrotask(func() {
+		ctx := t.rt.Context()
+		fn(ctx)
+		ctx.PerformMicrotaskCheckpoint()
+	})
+}
+
+func jsString(ctx *v8.Context, s string) *v8.Value {
+	v, err := ctx.NewString(s)
+	if err != nil {
+		return ctx.Null()
+	}
+	return v
+}
+
+func jsJSON(ctx *v8.Context, v any) *v8.Value {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return ctx.Null()
+	}
+	return jsString(ctx, string(encoded))
+}
+
+// handshakeResult is what the JavaScript handshake callback receives.
+type handshakeResult struct {
+	Message              string `json:"message,omitempty"`
+	Code                 string `json:"code,omitempty"`
+	Authorized           bool   `json:"authorized"`
+	AuthorizationError   string `json:"authorizationError,omitempty"`
+	ScriptChecksIdentity bool   `json:"scriptChecksIdentity"`
+	ALPN                 string `json:"alpn,omitempty"`
+	Servername           string `json:"servername,omitempty"`
+}
+
+// clientOptions are tls.connect's options.
+type clientOptions struct {
+	tlsclient.Options
+	ALPNProtocols []string `json:"ALPNProtocols"`
+	MinVersion    string   `json:"minVersion"`
+	MaxVersion    string   `json:"maxVersion"`
+}
+
+func (o *clientOptions) newVerifier(base *tls.Config, host string) (*tlsclient.Verifier, error) {
+	o.Options.SNIOnlyFromServername = true
+	verifier, err := tlsclient.New(base, host, o.Options)
+	if err != nil {
+		return nil, err
+	}
+	if len(o.ALPNProtocols) > 0 {
+		verifier.Config.NextProtos = o.ALPNProtocols
+	}
+	if base == nil {
+		if err := applyVersions(verifier.Config, o.MinVersion, o.MaxVersion); err != nil {
+			return nil, err
+		}
+	}
+	return verifier, nil
+}
+
+func tlsVersion(name string) (uint16, error) {
+	switch name {
+	case "TLSv1":
+		return tls.VersionTLS10, nil
+	case "TLSv1.1":
+		return tls.VersionTLS11, nil
+	case "TLSv1.2":
+		return tls.VersionTLS12, nil
+	case "TLSv1.3":
+		return tls.VersionTLS13, nil
+	}
+	return 0, fmt.Errorf("ERR_TLS_INVALID_PROTOCOL_VERSION: %s is not a valid TLS protocol version", name)
+}
+
+func applyVersions(cfg *tls.Config, minVersion, maxVersion string) error {
+	if minVersion != "" {
+		v, err := tlsVersion(minVersion)
+		if err != nil {
+			return err
+		}
+		cfg.MinVersion = v
+	}
+	if maxVersion != "" {
+		v, err := tlsVersion(maxVersion)
+		if err != nil {
+			return err
+		}
+		cfg.MaxVersion = v
+	}
 	return nil
 }
 
-func (t *TLS) createTLSSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+func describeForJS(err error) handshakeResult {
+	msg, code := tlsclient.Describe(err, "", 0)
+	if code != "" {
+		msg = strings.TrimPrefix(msg, code+": ")
+	}
+	return handshakeResult{Message: msg, Code: code}
+}
+
+// validateClient(optionsJSON) checks options before anything connects, because bad
+// credentials throw from tls.connect in Node. It returns null or a JSON error.
+func (t *TLS) validateClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 3 {
+	if len(args) < 1 {
+		return ctx.Null()
+	}
+	var opts clientOptions
+	if err := json.Unmarshal([]byte(args[0].String()), &opts); err != nil {
 		return ctx.Throw("tls: invalid connect options")
 	}
+	if _, err := opts.newVerifier(t.rt.ClientTLSConfig(), "localhost"); err != nil {
+		return jsJSON(ctx, describeForJS(err))
+	}
+	return ctx.Null()
+}
 
-	isServer := args[0].Boolean()
+// upgradeClient(netId, host, optionsJSON, callback) starts a client handshake on a
+// connected socket. callback receives a JSON handshakeResult.
+func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 4 {
+		return ctx.Throw("tls: invalid arguments")
+	}
+	id := int64(args[0].Integer())
 	host := args[1].String()
+	callback := args[3]
 
-	var opts tlsclient.Options
+	var opts clientOptions
 	if err := json.Unmarshal([]byte(args[2].String()), &opts); err != nil {
 		return ctx.Throw("tls: invalid connect options")
 	}
-
-	config := &tls.Config{}
-	var verifier *tlsclient.Verifier
-	if !isServer {
-		var err error
-		if verifier, err = tlsclient.New(t.rt.ClientTLSConfig(), host, opts); err != nil {
-			// Returned rather than thrown so JavaScript can attach the code.
-			msg, code := tlsclient.Describe(err, host, 0)
-			encoded, _ := json.Marshal(connectResult{Message: strings.TrimPrefix(msg, code+": "), Code: code})
-			return t.jsonString(encoded)
-		}
-		config = verifier.Config
-	}
-
-	// Create underlying TCP socket first
-	tcpSocket := t.rt.SocketFactory().CreateTCPSocket()
-
-	// Wrap with TLS
-	tlsSocket := t.rt.SocketFactory().CreateTLSSocket(tcpSocket, config, isServer)
-
-	conn := &connection{socket: tlsSocket, verifier: verifier, host: host}
-	conn.ctx, conn.cancel = context.WithCancel(t.rt.ExecutionContext())
-
-	t.mu.Lock()
-	id := atomic.AddInt64(&t.socketID, 1)
-	t.sockets[id] = conn
-	t.mu.Unlock()
-
-	return ctx.NewNumber(float64(id))
-}
-
-func (t *TLS) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 3 {
-		return nil
-	}
-
-	id := int64(args[0].Integer())
-	port := int(args[1].Integer())
-	callback := args[2]
-
-	t.mu.Lock()
-	conn, ok := t.sockets[id]
-	t.mu.Unlock()
-
-	if !ok {
-		t.deliverConnect(callback, connectResult{Message: "Socket not found"})
-		return nil
-	}
-
-	t.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer t.rt.EventLoop().DonePendingWork()
-
-		err := conn.socket.Connect(conn.ctx, conn.host, port)
-		if err == nil && conn.verifier != nil {
-			err = conn.verifier.Check()
-		}
-		result := resultOf(conn, port, err)
-
-		t.rt.EventLoop().EnqueueMicrotask(func() {
-			t.deliverConnect(callback, result)
-		})
-	}()
-
-	return nil
-}
-
-func resultOf(conn *connection, port int, err error) connectResult {
-	var result connectResult
+	verifier, err := opts.newVerifier(t.rt.ClientTLSConfig(), host)
 	if err != nil {
-		result.Message, result.Code = tlsclient.Describe(err, conn.host, port)
+		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
+		return nil
 	}
-	if conn.verifier == nil {
+
+	finish := func(conn *tls.Conn, err error) handshakeResult {
+		var result handshakeResult
+		if err != nil {
+			result = describeForJS(err)
+		}
+		result.Authorized = verifier.Authorized()
+		result.ScriptChecksIdentity = verifier.ScriptChecksIdentity()
+		if authErr := verifier.AuthorizationError(); authErr != nil {
+			_, result.AuthorizationError = tlsclient.Describe(authErr, host, 0)
+		}
+		if err == nil {
+			result.ALPN = conn.ConnectionState().NegotiatedProtocol
+		}
 		return result
 	}
-	result.Authorized = conn.verifier.Authorized()
-	result.ScriptChecksIdentity = conn.verifier.ScriptChecksIdentity()
-	if authErr := conn.verifier.AuthorizationError(); authErr != nil {
-		_, result.AuthorizationError = tlsclient.Describe(authErr, conn.host, port)
-	}
-	return result
+	t.startHandshake(id, callback, verifier.Config, false, verifier.PeerCertificates, finish)
+	return nil
 }
 
-func (t *TLS) deliverConnect(callback *v8.Value, result connectResult) {
-	encoded, err := json.Marshal(result)
+// startHandshake upgrades the socket in place and reports the outcome to callback.
+func (t *TLS) startHandshake(id int64, callback *v8.Value, cfg *tls.Config, isServer bool,
+	peer func() []*x509.Certificate, finish func(*tls.Conn, error) handshakeResult) {
+	fail := func(err error) {
+		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
+	}
+
+	conn, ok := t.net.Conn(id)
+	if !ok {
+		fail(runtime.ErrSocketClosed)
+		return
+	}
+	raw := conn.Socket()
+	transport, err := conn.BeginUpgrade()
 	if err != nil {
-		encoded = []byte(`{"message":"tls: internal error"}`)
-	}
-	t.callCallback(callback, "", t.jsonString(encoded))
-}
-
-func (t *TLS) jsonString(encoded []byte) *v8.Value {
-	val, _ := t.rt.Context().NewString(string(encoded))
-	return val
-}
-
-// writeFunc is write(id, base64Data, callback). Bytes cross the boundary as base64
-// because a JavaScript string cannot carry them unchanged.
-func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 3 {
-		return nil
+		fail(err)
+		return
 	}
 
-	id := int64(args[0].Integer())
-	callback := args[2]
-	data, err := base64.StdEncoding.DecodeString(args[1].String())
-	if err != nil {
-		t.callCallback(callback, "tls: invalid write data", nil)
-		return nil
+	var tlsConn *tls.Conn
+	if isServer {
+		tlsConn = tls.Server(transport, cfg)
+	} else {
+		tlsConn = tls.Client(transport, cfg)
 	}
 
 	t.mu.Lock()
-	conn, ok := t.sockets[id]
+	t.sessions[id] = &session{conn: tlsConn, peer: peer, config: cfg}
 	t.mu.Unlock()
-
-	if !ok {
-		t.callCallback(callback, "Socket not found", nil)
-		return nil
-	}
-	socket := conn.socket
+	context.AfterFunc(conn.Context(), func() {
+		t.mu.Lock()
+		delete(t.sessions, id)
+		t.mu.Unlock()
+	})
 
 	t.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer t.rt.EventLoop().DonePendingWork()
 
-		_, err := socket.Write(data)
-
-		t.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
-				t.callCallback(callback, err.Error(), nil)
-			} else {
-				t.callCallback(callback, "", nil)
-			}
-		})
-	}()
-
-	return nil
-}
-
-// readFunc is read(id, callback). The callback receives base64 data, or null at the
-// end of the stream.
-func (t *TLS) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	id := int64(args[0].Integer())
-	callback := args[1]
-
-	t.mu.Lock()
-	conn, ok := t.sockets[id]
-	t.mu.Unlock()
-
-	if !ok {
-		t.callCallback(callback, "Socket not found", nil)
-		return nil
-	}
-	socket := conn.socket
-
-	t.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer t.rt.EventLoop().DonePendingWork()
-
-		buf := make([]byte, 65536)
-		n, _ := socket.Read(buf)
-
-		// crypto/tls can return data and EOF together when close_notify follows the last
-		// record. The data comes first; the next read reports the end again.
-		var encoded string
-		if n > 0 {
-			encoded = base64.StdEncoding.EncodeToString(buf[:n])
+		err := tlsConn.HandshakeContext(conn.Context())
+		if err == nil {
+			conn.SetSocket(&socket{Conn: tlsConn, raw: raw})
 		}
-
-		t.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := t.rt.Context()
-			if n == 0 {
-				t.callCallback(callback, "", ctx.Null())
-				return
-			}
-			dataStr, _ := ctx.NewString(encoded)
-			t.callCallback(callback, "", dataStr)
-		})
+		result := finish(tlsConn, err)
+		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, result)) })
 	}()
+}
 
+// socket presents an established TLS connection as a socket.
+type socket struct {
+	*tls.Conn
+	raw runtime.TCPSocket
+}
+
+// Connect is never called: the connection already exists.
+func (s *socket) Connect(context.Context, string, int) error { return nil }
+
+// SetTimeout delegates to the underlying socket.
+func (s *socket) SetTimeout(d time.Duration) error { return s.raw.SetTimeout(d) }
+
+// SetKeepAlive delegates to the underlying socket.
+func (s *socket) SetKeepAlive(enable bool) error { return s.raw.SetKeepAlive(enable) }
+
+// SetNoDelay delegates to the underlying socket.
+func (s *socket) SetNoDelay(enable bool) error { return s.raw.SetNoDelay(enable) }
+
+// LocalAddr delegates to the underlying socket.
+func (s *socket) LocalAddr() net.Addr { return s.raw.LocalAddr() }
+
+// RemoteAddr delegates to the underlying socket.
+func (s *socket) RemoteAddr() net.Addr { return s.raw.RemoteAddr() }
+
+// Ref delegates to the underlying socket.
+func (s *socket) Ref() { s.raw.Ref() }
+
+// Unref delegates to the underlying socket.
+func (s *socket) Unref() { s.raw.Unref() }
+
+// CloseWrite sends close_notify and then, where the underlying socket supports it, a TCP
+// FIN. The close_notify alone tells a TLS peer the data is complete, so an underlying
+// socket that cannot half-close is not an error.
+func (s *socket) CloseWrite() error {
+	if err := s.Conn.CloseWrite(); err != nil {
+		return err
+	}
+	if err := runtime.CloseWrite(s.raw); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		return err
+	}
 	return nil
 }
 
-// shutdownFunc is shutdown(id, callback). It finishes the sending side and leaves the
-// receiving side open. A socket from a factory that cannot half-close is closed
-// outright, which still delivers what was written but ends the read side too. The
-// peer being gone already is not an error, as in Node.
-func (t *TLS) shutdownFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
+// SetLinger delegates to the underlying socket if it supports linger.
+func (s *socket) SetLinger(seconds int) error {
+	if l, ok := s.raw.(runtime.LingerSetter); ok {
+		return l.SetLinger(seconds)
 	}
-
-	callback := args[1]
-
-	t.mu.Lock()
-	conn, ok := t.sockets[int64(args[0].Integer())]
-	t.mu.Unlock()
-
-	if !ok {
-		t.callCallback(callback, "", nil)
-		return nil
-	}
-	socket := conn.socket
-
-	t.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer t.rt.EventLoop().DonePendingWork()
-
-		if errors.Is(runtime.CloseWrite(socket), errors.ErrUnsupported) {
-			socket.Close()
-		}
-
-		t.rt.EventLoop().EnqueueMicrotask(func() {
-			t.callCallback(callback, "", nil)
-		})
-	}()
-
-	return nil
+	return errors.ErrUnsupported
 }
 
-func (t *TLS) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	id := int64(args[0].Integer())
-
-	t.mu.Lock()
-	conn, ok := t.sockets[id]
-	if ok {
-		delete(t.sockets, id)
-	}
-	t.mu.Unlock()
-
-	if ok {
-		conn.cancel()
-		conn.socket.Close()
-	}
-
-	return nil
+// serverContext is a parsed tls.createSecureContext or tls.createServer configuration.
+type serverContext struct {
+	certificates []tls.Certificate
+	clientCAs    *x509.CertPool
+	minVersion   uint16
+	maxVersion   uint16
 }
 
-// getPeerCertificateFunc returns the peer's certificate as JSON, or undefined if the
-// handshake has not received one.
-func (t *TLS) getPeerCertificateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+type contextOptions struct {
+	Cert       []string `json:"cert"`
+	Key        []string `json:"key"`
+	CA         []string `json:"ca"`
+	MinVersion string   `json:"minVersion"`
+	MaxVersion string   `json:"maxVersion"`
+}
+
+// createServerContext(optionsJSON) parses credentials and returns an id, or a JSON error.
+func (t *TLS) createServerContextFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
-		return ctx.Undefined()
+		return ctx.Throw("tls: invalid context options")
+	}
+	var opts contextOptions
+	if err := json.Unmarshal([]byte(args[0].String()), &opts); err != nil {
+		return ctx.Throw("tls: invalid context options")
 	}
 
+	context := &serverContext{}
+	if len(opts.Cert) != len(opts.Key) && len(opts.Key) != 0 && len(opts.Cert) != 0 {
+		return jsJSON(ctx, handshakeResult{Message: "certificates and keys do not pair up", Code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH"})
+	}
+	for i := range opts.Cert {
+		if i >= len(opts.Key) {
+			break
+		}
+		cert, err := tls.X509KeyPair([]byte(opts.Cert[i]), []byte(opts.Key[i]))
+		if err != nil {
+			return jsJSON(ctx, handshakeResult{Message: err.Error(), Code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH"})
+		}
+		context.certificates = append(context.certificates, cert)
+	}
+	if opts.CA != nil {
+		context.clientCAs = x509.NewCertPool()
+		for _, pem := range opts.CA {
+			context.clientCAs.AppendCertsFromPEM([]byte(pem))
+		}
+	}
+	probe := &tls.Config{}
+	if err := applyVersions(probe, opts.MinVersion, opts.MaxVersion); err != nil {
+		return jsJSON(ctx, describeForJS(err))
+	}
+	context.minVersion = probe.MinVersion
+	context.maxVersion = probe.MaxVersion
+
 	t.mu.Lock()
-	conn, ok := t.sockets[int64(args[0].Integer())]
+	t.nextContext++
+	id := t.nextContext
+	t.contexts[id] = context
 	t.mu.Unlock()
-	if !ok || conn.verifier == nil {
+	return ctx.NewNumber(float64(id))
+}
+
+func (t *TLS) context(id int64) *serverContext {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.contexts[id]
+}
+
+type serverOptions struct {
+	Context            int64    `json:"context"`
+	ALPNProtocols      []string `json:"ALPNProtocols"`
+	RequestCert        bool     `json:"requestCert"`
+	RejectUnauthorized bool     `json:"rejectUnauthorized"`
+	HasSNI             bool     `json:"hasSNI"`
+}
+
+// upgradeServer(netId, optionsJSON, chooseContext, callback) starts a server handshake.
+// chooseContext(servername, reply) picks a secure context for a ClientHello, and is only
+// called when the options ask for it. callback receives a JSON handshakeResult.
+func (t *TLS) upgradeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 4 {
+		return ctx.Throw("tls: invalid arguments")
+	}
+	id := int64(args[0].Integer())
+	var opts serverOptions
+	if err := json.Unmarshal([]byte(args[1].String()), &opts); err != nil {
+		return ctx.Throw("tls: invalid server options")
+	}
+	chooseContext := args[2]
+	callback := args[3]
+
+	conn, ok := t.net.Conn(id)
+	if !ok {
+		t.deliver(func(ctx *v8.Context) {
+			callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(runtime.ErrSocketClosed)))
+		})
+		return nil
+	}
+
+	var (
+		mu       sync.Mutex
+		peer     []*x509.Certificate
+		authErr  error
+		sawCerts bool
+	)
+	active := t.context(opts.Context)
+
+	buildConfig := func(sc *serverContext) *tls.Config {
+		cfg := &tls.Config{
+			NextProtos: opts.ALPNProtocols,
+		}
+		if sc != nil {
+			cfg.Certificates = sc.certificates
+			cfg.MinVersion = sc.minVersion
+			cfg.MaxVersion = sc.maxVersion
+		}
+		if opts.RequestCert {
+			// The client certificate is checked below, so the outcome can be recorded
+			// when the server does not reject.
+			cfg.ClientAuth = tls.RequestClientCert
+			var roots *x509.CertPool
+			if sc != nil {
+				roots = sc.clientCAs
+			}
+			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+				err := verifyClient(cs, roots)
+				mu.Lock()
+				peer = cs.PeerCertificates
+				sawCerts = true
+				authErr = err
+				mu.Unlock()
+				if err != nil && opts.RejectUnauthorized {
+					return err
+				}
+				return nil
+			}
+		}
+		return cfg
+	}
+
+	cfg := buildConfig(active)
+	if opts.HasSNI {
+		cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			chosen := make(chan int64, 1)
+			t.deliver(func(ctx *v8.Context) {
+				tmpl, err := ctx.Isolate().NewFunctionTemplate(func(replyInfo *v8.FunctionCallbackInfo) *v8.Value {
+					var id int64
+					if args := replyInfo.Args(); len(args) > 0 {
+						id = int64(args[0].Integer())
+					}
+					// A script may call back more than once. Only the first answer counts.
+					select {
+					case chosen <- id:
+					default:
+					}
+					return nil
+				})
+				if err != nil {
+					chosen <- 0
+					return
+				}
+				reply, err := tmpl.GetFunction(ctx)
+				if err != nil {
+					chosen <- 0
+					return
+				}
+				chooseContext.Call(ctx.Undefined(), jsString(ctx, hello.ServerName), reply)
+			})
+			select {
+			case id := <-chosen:
+				if sc := t.context(id); sc != nil {
+					return buildConfig(sc), nil
+				}
+				return nil, nil
+			case <-conn.Context().Done():
+				return nil, conn.Context().Err()
+			}
+		}
+	}
+
+	finish := func(tlsConn *tls.Conn, err error) handshakeResult {
+		var result handshakeResult
+		if err != nil {
+			result = describeForJS(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		result.Authorized = opts.RequestCert && sawCerts && authErr == nil
+		if authErr != nil {
+			_, result.AuthorizationError = tlsclient.Describe(authErr, "", 0)
+		}
+		if err == nil {
+			state := tlsConn.ConnectionState()
+			result.ALPN = state.NegotiatedProtocol
+			result.Servername = state.ServerName
+		}
+		return result
+	}
+	peers := func() []*x509.Certificate {
+		mu.Lock()
+		defer mu.Unlock()
+		return peer
+	}
+	t.startHandshake(id, callback, cfg, true, peers, finish)
+	return nil
+}
+
+// verifyClient checks a client's certificate against the context's CAs, or the system's
+// when it has none.
+func verifyClient(cs tls.ConnectionState, roots *x509.CertPool) error {
+	if len(cs.PeerCertificates) == 0 {
+		return errNoClientCertificate
+	}
+	opts := x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: x509.NewCertPool(),
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	for _, cert := range cs.PeerCertificates[1:] {
+		opts.Intermediates.AddCert(cert)
+	}
+	if _, err := cs.PeerCertificates[0].Verify(opts); err != nil {
+		return &tls.CertificateVerificationError{UnverifiedCertificates: cs.PeerCertificates, Err: err}
+	}
+	return nil
+}
+
+var errNoClientCertificate = errors.New("UNABLE_TO_GET_ISSUER_CERT: unable to get issuer certificate")
+
+func (t *TLS) session(info *v8.FunctionCallbackInfo) *session {
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessions[int64(args[0].Integer())]
+}
+
+// getPeerCertificate(netId) returns the peer's certificate chain as JSON, leaf first, or
+// undefined if the handshake has not received one.
+func (t *TLS) getPeerCertificateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	s := t.session(info)
+	if s == nil {
 		return ctx.Undefined()
 	}
-	peer := conn.verifier.PeerCertificates()
-	if len(peer) == 0 {
+	return encodeChain(ctx, s.peer())
+}
+
+// getCertificate(netId) returns this side's certificate as JSON, or undefined.
+func (t *TLS) getCertificateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	s := t.session(info)
+	if s == nil || len(s.config.Certificates) == 0 || len(s.config.Certificates[0].Certificate) == 0 {
 		return ctx.Undefined()
 	}
-	encoded, err := json.Marshal(describeCertificate(peer[0]))
+	cert, err := x509.ParseCertificate(s.config.Certificates[0].Certificate[0])
 	if err != nil {
 		return ctx.Undefined()
 	}
-	return t.jsonString(encoded)
+	return encodeChain(ctx, []*x509.Certificate{cert})
+}
+
+func encodeChain(ctx *v8.Context, chain []*x509.Certificate) *v8.Value {
+	if len(chain) == 0 {
+		return ctx.Undefined()
+	}
+	out := make([]map[string]any, len(chain))
+	for i, cert := range chain {
+		out[i] = describeCertificate(cert)
+	}
+	return jsJSON(ctx, out)
 }
 
 // describeCertificate builds the object Node's getPeerCertificate returns. raw is
@@ -479,39 +719,97 @@ func fingerprint(sum []byte) string {
 	return strings.Join(parts, ":")
 }
 
+// opensslCipherNames maps the TLS 1.2 suites Go offers to the names Node reports. TLS 1.3
+// suites have the same name in both.
+var opensslCipherNames = map[uint16]string{
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:         "ECDHE-RSA-AES128-GCM-SHA256",
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:         "ECDHE-RSA-AES256-GCM-SHA384",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:       "ECDHE-ECDSA-AES128-GCM-SHA256",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:       "ECDHE-ECDSA-AES256-GCM-SHA384",
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:   "ECDHE-RSA-CHACHA20-POLY1305",
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: "ECDHE-ECDSA-CHACHA20-POLY1305",
+	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:            "ECDHE-RSA-AES128-SHA",
+	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:            "ECDHE-RSA-AES256-SHA",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:          "ECDHE-ECDSA-AES128-SHA",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:          "ECDHE-ECDSA-AES256-SHA",
+	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:               "AES128-GCM-SHA256",
+	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:               "AES256-GCM-SHA384",
+}
+
+func protocolName(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLSv1"
+	case tls.VersionTLS11:
+		return "TLSv1.1"
+	case tls.VersionTLS12:
+		return "TLSv1.2"
+	case tls.VersionTLS13:
+		return "TLSv1.3"
+	}
+	return "unknown"
+}
+
+func established(s *session) (tls.ConnectionState, bool) {
+	if s == nil {
+		return tls.ConnectionState{}, false
+	}
+	state := s.conn.ConnectionState()
+	return state, state.HandshakeComplete
+}
+
+// getCipher(netId) returns the negotiated cipher as JSON, or undefined.
 func (t *TLS) getCipherFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
-	obj, _ := ctx.NewObject()
-	nameStr, _ := ctx.NewString("TLS_AES_256_GCM_SHA384")
-	versionStr, _ := ctx.NewString("TLSv1.3")
-	obj.Set("name", nameStr)
-	obj.Set("standardName", nameStr)
-	obj.Set("version", versionStr)
-	return obj
+	state, ok := established(t.session(info))
+	if !ok {
+		return ctx.Undefined()
+	}
+	standard := tls.CipherSuiteName(state.CipherSuite)
+	name := opensslCipherNames[state.CipherSuite]
+	if name == "" {
+		name = standard
+	}
+	version := "TLSv1/SSLv3"
+	if state.Version == tls.VersionTLS13 {
+		version = "TLSv1.3"
+	} else if state.Version == tls.VersionTLS12 {
+		version = "TLSv1.2"
+	}
+	return jsJSON(ctx, map[string]string{"name": name, "standardName": standard, "version": version})
 }
 
+// getProtocol(netId) returns the negotiated protocol version, or null.
 func (t *TLS) getProtocolFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
-	val, _ := ctx.NewString("TLSv1.3")
-	return val
+	state, ok := established(t.session(info))
+	if !ok {
+		return ctx.Null()
+	}
+	return jsString(ctx, protocolName(state.Version))
 }
 
-func (t *TLS) callCallback(callback *v8.Value, errMsg string, result *v8.Value) {
-	if callback == nil || !callback.IsFunction() {
-		return
-	}
+func (t *TLS) isSessionReusedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	state, ok := established(t.session(info))
+	return ctx.NewBoolean(ok && state.DidResume)
+}
 
-	ctx := t.rt.Context()
-	var errVal *v8.Value
-	if errMsg != "" {
-		errVal, _ = ctx.NewString(errMsg)
-	} else {
-		errVal = ctx.Null()
+// exportKeyingMaterial(netId, length, label, base64Context) returns base64 keying material.
+func (t *TLS) exportKeyingMaterialFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	state, ok := established(t.session(info))
+	if !ok || len(args) < 3 {
+		return ctx.Throw("TLS socket connection must be securely established")
 	}
-
-	if result == nil {
-		result = ctx.Undefined()
+	var context []byte
+	if len(args) > 3 && !args[3].IsNull() && !args[3].IsUndefined() {
+		context, _ = base64.StdEncoding.DecodeString(args[3].String())
 	}
-
-	callback.Call(ctx.Undefined(), errVal, result)
+	material, err := state.ExportKeyingMaterial(args[2].String(), context, int(args[1].Integer()))
+	if err != nil {
+		return ctx.Throw(err.Error())
+	}
+	return jsString(ctx, base64.StdEncoding.EncodeToString(material))
 }

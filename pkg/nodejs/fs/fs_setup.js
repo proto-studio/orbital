@@ -147,102 +147,51 @@
         super({ highWaterMark: hwm });
         this.path = path;
         this.bytesRead = 0;
-        this._hwm = hwm;
+        this.pending = true;
         this._fsId = -1;
-        this._fsReading = false;
-        this._fsDestroyed = false;
-        this._fsEnded = false;
-        this._fsFlowing = false;
-        this._fsPaused = false;
 
         const start = typeof options.start === 'number' ? options.start : -1;
         const end = typeof options.end === 'number' ? options.end : -1;
         const res = fs._readStreamOpen(String(path), start, end);
         if (!res || res.error) {
-          const err = fs.__makeFsError(
+          this.destroy(fs.__makeFsError(
             (res && res.error) || 'open failed',
-            (res && res.code) || 'ENOENT', path, 'open');
-          process.nextTick(() => { if (!this._fsDestroyed) this.emit('error', err); });
+            (res && res.code) || 'ENOENT', path, 'open'));
           return;
         }
         this._fsId = res.id;
+        this.pending = false;
         process.nextTick(() => {
-          if (this._fsDestroyed) return;
+          if (this.destroyed) return;
           this.emit('open', this._fsId);
           this.emit('ready');
         });
       }
 
-      // Attaching a 'data' listener switches a readable into flowing mode in
-      // Node (and Stream.prototype.pipe relies on that). `on` is the base
-      // EventEmitter primitive here (addListener/once both delegate to it), so
-      // overriding it alone covers every listen path without recursion.
-      on(event, listener) {
-        super.on(event, listener);
-        if (event === 'data') this.resume();
-        return this;
-      }
-
-      resume() {
-        if (this._fsDestroyed || this._fsEnded) return this;
-        this._fsPaused = false;
-        this._fsFlowing = true;
-        this._fsPump();
-        return this;
-      }
-
-      pause() {
-        this._fsFlowing = false;
-        this._fsPaused = true;
-        return this;
-      }
-
-      _fsPump() {
-        if (this._fsDestroyed || this._fsEnded || this._fsReading ||
-          this._fsPaused || !this._fsFlowing || this._fsId < 0) {
-          return;
-        }
-        this._fsReading = true;
-        fs._readStreamRead(this._fsId, this._hwm, (err, chunk) => {
-          this._fsReading = false;
-          if (this._fsDestroyed) return;
+      _read(size) {
+        if (this._fsId < 0) return;
+        fs._readStreamRead(this._fsId, size, (err, chunk) => {
+          if (this.destroyed) return;
           if (err) {
-            const e = fs.__makeFsError(err, 'EIO', this.path, 'read');
-            this._closeNative();
-            this.emit('error', e);
+            this.destroy(fs.__makeFsError(err, 'EIO', this.path, 'read'));
             return;
           }
           if (chunk === null || chunk === undefined) {
-            this._fsEnded = true;
-            this._closeNative();
-            this.emit('end');
-            this.emit('close');
+            this.push(null);
             return;
           }
           const buf = Buffer.from(chunk, 'latin1');
           this.bytesRead += buf.length;
-          this.emit('data', buf);
-          if (this._fsFlowing && !this._fsPaused) this._fsPump();
+          this.push(buf);
         });
       }
 
-      _closeNative() {
+      _destroy(err, callback) {
         if (this._fsId >= 0) {
           try { fs._readStreamClose(this._fsId); } catch (e) {}
           this._fsId = -1;
         }
-      }
-
-      destroy(err) {
-        if (this._fsDestroyed) return this;
-        this._fsDestroyed = true;
-        this.destroyed = true;
-        this._closeNative();
-        process.nextTick(() => {
-          if (err) this.emit('error', err);
-          this.emit('close');
-        });
-        return this;
+        callback(err);
       }
 
       close(cb) {

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/netip"
 	"strings"
 	"sync"
 
 	"golang.org/x/net/http2"
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/nodejs/internal/tlsclient"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
@@ -21,8 +21,6 @@ var errNoHTTP2Transport = errors.New("ERR_HTTP2_TRANSPORT_UNAVAILABLE: the confi
 	"(for example runtime.NewFilteredSocketFactory) to define how HTTP/2 connects")
 
 var errNotHTTP2 = errors.New("ERR_HTTP2_ERROR: Protocol error")
-
-var errInvalidHost = errors.New("ERR_INVALID_URL: Invalid URL")
 
 // dialJSON holds the options http2.connect passes from JavaScript.
 type dialJSON struct {
@@ -89,69 +87,13 @@ func (h *HTTP2) checkTransport() error {
 	return errNoHTTP2Transport
 }
 
-// connectSocket resolves the destination with the injected resolver and connects
-// with a socket from the injected factory. The IP handed to the socket is the one
-// resolved here, so the factory's decision applies to the actual destination and a
-// DNS change cannot move the connection afterwards.
+// connectSocket connects through the runtime's injected resolver and socket factory.
 func (h *HTTP2) connectSocket(ctx context.Context, opts dialOptions) (net.Conn, error) {
-	ips, isName, err := h.resolve(ctx, opts.host)
+	result, err := netdial.Connect(ctx, h.rt, opts.host, opts.port, netdial.Options{})
 	if err != nil {
 		return nil, err
 	}
-
-	var firstErr error
-	for _, ip := range ips {
-		socket := h.rt.SocketFactory().CreateTCPSocket()
-		var err error
-		// Only a name that went through DNS is reported as a hostname. Anything else
-		// the guest wrote must not reach a policy as a name it could match on.
-		if resolved, ok := socket.(runtime.ResolvedTCPSocket); ok && isName {
-			err = resolved.ConnectResolved(ctx, opts.host, ip, opts.port)
-		} else {
-			err = socket.Connect(ctx, ip, opts.port)
-		}
-		if err == nil {
-			return runtime.NewSocketConn(socket), nil
-		}
-		socket.Close()
-		if firstErr == nil {
-			firstErr = err
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return nil, firstErr
-}
-
-// resolve returns canonical IPs for host, and whether host is a name resolved through
-// DNS rather than an address literal. Literals are canonicalized, so an IPv4-mapped
-// IPv6 literal is checked as the IPv4 address it reaches. Zones are rejected as in
-// Node's URL parser: the zone is free-form text that does not choose the destination.
-func (h *HTTP2) resolve(ctx context.Context, host string) ([]string, bool, error) {
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if addr.Zone() != "" {
-			return nil, false, errInvalidHost
-		}
-		return []string{addr.Unmap().String()}, false, nil
-	}
-	if strings.ContainsAny(host, ":%") {
-		return nil, false, errInvalidHost
-	}
-	ips, err := h.rt.DNSResolver().LookupIP(ctx, "ip", host)
-	if err != nil {
-		return nil, false, err
-	}
-	out := make([]string, 0, len(ips))
-	for _, ip := range ips {
-		if addr, ok := netip.AddrFromSlice(ip); ok {
-			out = append(out, addr.Unmap().String())
-		}
-	}
-	if len(out) == 0 {
-		return nil, false, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
-	}
-	return out, true, nil
+	return runtime.NewSocketConn(result.Socket), nil
 }
 
 // closeNotifyConn reports the end of the connection. HTTP/2 reads continuously, so

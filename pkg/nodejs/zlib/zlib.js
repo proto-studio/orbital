@@ -355,66 +355,22 @@
     class ZlibStream extends Transform {
       constructor(format, options) {
         super(options || {});
-        // Manage the readable side directly: the base Readable.push buffers even
-        // in flowing mode and never re-emits 'end', so drive 'data'/'end'
-        // ourselves. _zBuf holds output produced before a consumer starts
-        // flowing (Node buffers until a 'data' listener / resume()).
-        this._zBuf = [];
-        this._zFlowing = false;
-        this._zEnded = false;
-        this._zEndEmitted = false;
-        this._zDestroyed = false;
         this._zFinalCb = null;
         this._zId = internal._streamCreate(format, (err, chunk) => {
-          if (this._zDestroyed) return;
+          if (this.destroyed) return;
           if (err) {
             const e = new Error(err);
             e.code = 'Z_DATA_ERROR';
-            this.emit('error', e);
+            this.destroy(e);
             return;
           }
           if (chunk === null || chunk === undefined) {
-            // Native codec finished: complete the writable side ('finish') and
-            // let the readable side flush any buffered output then emit 'end'.
-            this._zEnded = true;
+            this.push(null);
             if (this._zFinalCb) { const cb = this._zFinalCb; this._zFinalCb = null; cb(); }
-            this._zDrain();
             return;
           }
-          this._zBuf.push(Buffer.from(chunk, 'base64'));
-          this._zDrain();
+          this.push(Buffer.from(chunk, 'base64'));
         });
-      }
-
-      _zDrain() {
-        if (!this._zFlowing) return;
-        while (this._zBuf.length > 0 && this._zFlowing) {
-          this.emit('data', this._zBuf.shift());
-        }
-        if (this._zEnded && this._zBuf.length === 0 && !this._zEndEmitted) {
-          this._zEndEmitted = true;
-          this.emit('end');
-        }
-      }
-
-      // Attaching a 'data' listener puts the readable side into flowing mode
-      // (raw-body reads via on('data')/on('end')). `on` is the EventEmitter
-      // primitive; overriding it covers on/once/addListener without recursion.
-      on(event, listener) {
-        super.on(event, listener);
-        if (event === 'data') this.resume();
-        return this;
-      }
-
-      resume() {
-        this._zFlowing = true;
-        this._zDrain();
-        return this;
-      }
-
-      pause() {
-        this._zFlowing = false;
-        return this;
       }
 
       _transform(chunk, encoding, callback) {
@@ -425,24 +381,15 @@
         callback();
       }
 
-      // Override _final (not _flush) so we do NOT go through Transform's
-      // push(null) path; 'end' is emitted by _zDrain when the native codec
-      // signals completion. Signal the codec to flush and remember the callback
-      // that fires 'finish' on the writable side.
+      // The native codec signals the end of the output, not the Transform base class.
       _final(callback) {
-        if (this._zEnded) { callback(); return; }
         this._zFinalCb = callback;
         internal._streamEnd(this._zId);
       }
 
-      destroy(err) {
-        if (this._zDestroyed) return this;
-        this._zDestroyed = true;
-        this.destroyed = true;
+      _destroy(err, callback) {
         try { internal._streamDestroy(this._zId); } catch (e) {}
-        if (err) this.emit('error', err);
-        this.emit('close');
-        return this;
+        callback(err);
       }
 
       close(cb) {

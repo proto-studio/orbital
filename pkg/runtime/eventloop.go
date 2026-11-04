@@ -15,7 +15,14 @@ type Task struct {
 	scheduled time.Time
 	interval  time.Duration // 0 for one-shot timers
 	cancelled atomic.Bool
+	unref     atomic.Bool
 	index     int // heap index
+}
+
+// SetRef sets whether this task keeps the event loop running. An unreferenced task
+// still fires if the loop is running for another reason.
+func (t *Task) SetRef(ref bool) {
+	t.unref.Store(!ref)
 }
 
 // Cancel cancels this task.
@@ -171,6 +178,10 @@ func (el *EventLoop) AddPendingWork() {
 // DonePendingWork decrements the pending work counter.
 // Call this when an async operation completes.
 func (el *EventLoop) DonePendingWork() {
+	// The lock closes the gap between the loop checking for work and parking. Without it
+	// the loop can miss this wakeup, and sleep until a timer it no longer has to wait for.
+	el.mu.Lock()
+	defer el.mu.Unlock()
 	atomic.AddInt32(&el.pendingWork, -1)
 	el.cond.Signal()
 }
@@ -237,11 +248,12 @@ func (el *EventLoop) Run() {
 			heap.Pop(&el.timers)
 		}
 
-		// Check if there's any work left
+		// Check if there's any work left. Unreferenced timers run while something else
+		// keeps the loop alive, but do not count as work themselves.
 		hasTimers := el.timers.Len() > 0
 		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
 
-		if !hasTimers && !hasPending {
+		if !el.hasReferencedTimerLocked() && !hasPending {
 			el.running = false
 			el.mu.Unlock()
 			return
@@ -368,9 +380,19 @@ func (el *EventLoop) RunOnce() bool {
 		}
 	}
 
-	hasWork := el.timers.Len() > 0 || atomic.LoadInt32(&el.pendingWork) > 0
+	hasWork := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
 	el.mu.Unlock()
 	return hasWork
+}
+
+// hasReferencedTimerLocked reports whether a live timer keeps the loop alive.
+func (el *EventLoop) hasReferencedTimerLocked() bool {
+	for _, task := range el.timers {
+		if !task.cancelled.Load() && !task.unref.Load() {
+			return true
+		}
+	}
+	return false
 }
 
 // Stop signals the event loop to stop.
@@ -406,5 +428,5 @@ func (el *EventLoop) ClearAllMicrotasks() {
 func (el *EventLoop) HasPendingWork() bool {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	return el.timers.Len() > 0 || len(el.microtasks) > 0 || atomic.LoadInt32(&el.pendingWork) > 0
+	return el.hasReferencedTimerLocked() || len(el.microtasks) > 0 || atomic.LoadInt32(&el.pendingWork) > 0
 }

@@ -4,13 +4,17 @@ package fetch
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	neturl "net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -95,15 +99,20 @@ func (f *Fetch) Register(rt *runtime.Runtime) error {
 // callback once status and headers are available, not when the body ends.
 func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 5 {
+	if len(args) < 6 {
 		return nil
 	}
 
 	url := args[0].String()
 	method := args[1].String()
 	headersJSON := args[2].String()
-	body := args[3].String()
-	callback := args[4]
+	// Bodies cross as base64 because a JavaScript string cannot carry bytes unchanged.
+	body, err := base64.StdEncoding.DecodeString(args[3].String())
+	if err != nil {
+		return info.Context().Throw("fetch: invalid body")
+	}
+	redirect := args[4].String()
+	callback := args[5]
 	if !callback.IsFunction() {
 		return nil
 	}
@@ -142,7 +151,9 @@ func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		Method:  method,
 		URL:     url,
 		Headers: reqHeaders,
-		Body:    []byte(body),
+		Body:    body,
+		// "manual" hands the 3xx back, and "error" fails on it once it arrives.
+		NoFollowRedirects: redirect != "follow",
 	}
 	jsCtx := info.Context()
 	client := f.rt.HTTPClient()
@@ -150,13 +161,13 @@ func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
-		f.perform(op, client, req, jsCtx, callback)
+		f.perform(op, client, req, redirect, jsCtx, callback)
 	}()
 
 	return jsCtx.NewNumber(float64(op.id))
 }
 
-func (f *Fetch) perform(op *fetchOp, client runtime.HTTPClient, req *runtime.Request, jsCtx *v8.Context, callback *v8.Value) {
+func (f *Fetch) perform(op *fetchOp, client runtime.HTTPClient, req *runtime.Request, redirect string, jsCtx *v8.Context, callback *v8.Value) {
 	resp, err := client.Do(op.ctx, req)
 	if err != nil || op.aborted.Load() || op.ctx.Err() != nil {
 		if resp != nil && resp.BodyReader != nil {
@@ -167,11 +178,20 @@ func (f *Fetch) perform(op *fetchOp, client runtime.HTTPClient, req *runtime.Req
 		case op.aborted.Load():
 			msg = "AbortError"
 		case err != nil:
-			msg = err.Error()
+			msg = describeFailure(err, req.URL)
 		case op.ctx.Err() != nil:
 			msg = op.ctx.Err().Error()
 		}
 		f.finishEarly(op, jsCtx, callback, msg)
+		return
+	}
+	if redirect == "error" && resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.Headers != nil &&
+		(len(resp.Headers["location"]) > 0 || len(resp.Headers["Location"]) > 0) {
+		if resp.BodyReader != nil {
+			resp.BodyReader.Close()
+		}
+		encoded, _ := json.Marshal(netdial.NodeError{Message: "unexpected redirect"})
+		f.finishEarly(op, jsCtx, callback, string(encoded))
 		return
 	}
 
@@ -204,6 +224,24 @@ func (f *Fetch) perform(op *fetchOp, client runtime.HTTPClient, req *runtime.Req
 
 	f.enqueueResponse(op, jsCtx, callback, resp, false, false)
 	f.closeBody(op)
+}
+
+// describeFailure encodes the error's cause as JSON, for fetch's TypeError.
+func describeFailure(err error, target string) string {
+	host, port := "", 0
+	if parsed, parseErr := neturl.Parse(target); parseErr == nil {
+		host = parsed.Hostname()
+		port, _ = strconv.Atoi(parsed.Port())
+	}
+	var urlErr *neturl.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	encoded, marshalErr := json.Marshal(netdial.Describe(err, "connect", host, port))
+	if marshalErr != nil {
+		return err.Error()
+	}
+	return string(encoded)
 }
 
 func (f *Fetch) attachBody(op *fetchOp, body io.ReadCloser) bool {

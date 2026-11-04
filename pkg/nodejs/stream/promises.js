@@ -10,65 +10,20 @@
      */
     pipeline: function(...streams) {
       return new Promise((resolve, reject) => {
-        if (streams.length < 2) {
-          reject(new Error('pipeline requires at least 2 streams'));
-          return;
+        const last = streams[streams.length - 1];
+        let signal;
+        if (last && typeof last.pipe !== 'function' && typeof last !== 'function' &&
+            !last[Symbol.asyncIterator] && !last[Symbol.iterator]) {
+          signal = streams.pop().signal;
         }
-
-        const source = streams[0];
-        const dest = streams[streams.length - 1];
-        let error = null;
-
-        // Handle errors on all streams
-        const onError = (err) => {
-          error = err;
-          cleanup();
-          reject(err);
-        };
-
-        const cleanup = () => {
-          streams.forEach(stream => {
-            if (stream.removeListener) {
-              stream.removeListener('error', onError);
-            }
-          });
-        };
-
-        // Attach error handlers
-        streams.forEach(stream => {
-          if (stream.on) {
-            stream.on('error', onError);
-          }
+        if (signal) {
+          const source = streams.length === 1 && Array.isArray(streams[0]) ? streams[0][0] : streams[0];
+          if (source && source.destroy) global.__stream_module.addAbortSignal(signal, source);
+        }
+        global.__stream_module.pipeline(...streams, (err) => {
+          if (err) reject(err);
+          else resolve();
         });
-
-        // Pipe through all streams
-        let current = source;
-        for (let i = 1; i < streams.length; i++) {
-          current = current.pipe(streams[i]);
-        }
-
-        // Wait for completion
-        if (dest.on) {
-          dest.on('finish', () => {
-            if (!error) {
-              cleanup();
-              resolve(dest);
-            }
-          });
-
-          dest.on('close', () => {
-            if (!error) {
-              cleanup();
-              resolve(dest);
-            }
-          });
-        } else {
-          // Non-standard stream
-          setImmediate(() => {
-            cleanup();
-            resolve(dest);
-          });
-        }
       });
     },
 
@@ -81,44 +36,10 @@
      */
     finished: function(stream, options) {
       return new Promise((resolve, reject) => {
-        const onFinish = () => {
-          cleanup();
-          resolve();
-        };
-
-        const onEnd = () => {
-          cleanup();
-          resolve();
-        };
-
-        const onError = (err) => {
-          cleanup();
-          reject(err);
-        };
-
-        const onClose = () => {
-          cleanup();
-          resolve();
-        };
-
-        const cleanup = () => {
-          if (stream.removeListener) {
-            stream.removeListener('finish', onFinish);
-            stream.removeListener('end', onEnd);
-            stream.removeListener('error', onError);
-            stream.removeListener('close', onClose);
-          }
-        };
-
-        if (stream.on) {
-          stream.on('finish', onFinish);
-          stream.on('end', onEnd);
-          stream.on('error', onError);
-          stream.on('close', onClose);
-        } else {
-          // Non-standard stream
-          setImmediate(() => resolve());
-        }
+        global.__stream_module.finished(stream, options || {}, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
       });
     },
 

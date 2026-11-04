@@ -291,3 +291,9 @@ func (l *LocalFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fil
 	}
 	return &localFile{f}, nil
 }
+
+// FilesystemIsUnrestricted reports whether fs is the real filesystem with no sandbox root.
+func FilesystemIsUnrestricted(fs Filesystem) bool {
+	local, ok := fs.(*LocalFilesystem)
+	return ok && local.Root == ""
+}

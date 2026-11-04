@@ -1,26 +1,26 @@
-// tls - TLS/SSL module
+// tls - TLS/SSL module. A TLSSocket is a net.Socket whose native transport has been
+// upgraded in place.
 (function(global) {
   'use strict';
 
-  const EventEmitter = global.__events_module.EventEmitter;
   const net = global.__net_module;
   const internal = global.__tls_internal;
 
-  // TLS constants
   const DEFAULT_MIN_VERSION = 'TLSv1.2';
   const DEFAULT_MAX_VERSION = 'TLSv1.3';
-
-  // Node's default for a socket's write buffer.
-  const kHighWaterMark = 16384;
-
-  function makeError(message, code) {
-    const err = new Error(message);
-    err.code = code;
-    return err;
-  }
+  const DEFAULT_ECDH_CURVE = 'auto';
+  const DEFAULT_CIPHERS = 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:' +
+    'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384';
+  const kDefaultHandshakeTimeout = 120000;
 
   function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  function makeError(message, code) {
+    const err = new Error(message);
+    if (code) err.code = code;
+    return err;
   }
 
   function pemList(value) {
@@ -29,579 +29,305 @@
       typeof item === 'string' ? item : Buffer.from(item).toString('utf8'));
   }
 
+  // Node's ALPNProtocols takes an array of strings or buffers, or one length-prefixed buffer.
+  function alpnList(value) {
+    if (value === undefined || value === null) return [];
+    if (Array.isArray(value)) {
+      return value.map((item) => (typeof item === 'string' ? item : Buffer.from(item).toString('latin1')));
+    }
+    const buf = Buffer.from(value);
+    const out = [];
+    for (let i = 0; i < buf.length;) {
+      const len = buf[i];
+      out.push(buf.slice(i + 1, i + 1 + len).toString('latin1'));
+      i += 1 + len;
+    }
+    return out;
+  }
+
+  function linkCertificates(chain, detailed) {
+    if (!chain || chain.length === 0) return {};
+    for (const cert of chain) cert.raw = Buffer.from(cert.raw, 'base64');
+    if (detailed) {
+      for (let i = 0; i < chain.length - 1; i++) chain[i].issuerCertificate = chain[i + 1];
+      const last = chain[chain.length - 1];
+      last.issuerCertificate = last;
+    }
+    return chain[0];
+  }
+
   /**
-   * TLSSocket class - Represents a TLS-wrapped socket.
+   * TLSSocket class - a net.Socket carrying TLS.
    */
-  class TLSSocket extends EventEmitter {
+  class TLSSocket extends net.Socket {
     constructor(socket, options) {
-      super();
-      
-      options = options || {};
-      
-      this._socket = socket || new net.Socket();
-      this._id = null;
-      this._encrypted = false;
-      this._authorized = false;
-      this._authorizationError = null;
-      this._isServer = options.isServer || false;
-      this._requestCert = options.requestCert || false;
-      this._rejectUnauthorized = options.rejectUnauthorized !== false;
-      this._servername = options.servername;
-      this._ALPNProtocols = options.ALPNProtocols;
-      this._secureContext = options.secureContext;
-      this._session = options.session;
-      
-      // Mirror socket properties
-      this._connecting = false;
-      this._connected = false;
-      this._destroyed = false;
-      this._writable = true;
-      this._readable = true;
-      this._allowHalfOpen = !!options.allowHalfOpen;
+      options = { ...options };
+      if (socket && !(socket instanceof net.Socket)) {
+        throw makeError('tls: only a net.Socket can be wrapped', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
+      }
+      super({ allowHalfOpen: socket ? socket.allowHalfOpen : options.allowHalfOpen, signal: options.signal });
 
-      // Writes run one at a time, in order, once the handshake is done. end() takes
-      // effect after the last one.
-      this._writes = [];
-      this._writeLength = 0;
-      this._currentWrite = null;
-      this._needDrain = false;
-      this._ending = false;
-      this._finished = false;
-      this._readEnded = false;
-      this._shuttingDown = false;
-      this._endCallbacks = [];
+      this.encrypted = true;
+      this.authorized = false;
+      this.authorizationError = null;
+      this.alpnProtocol = null;
+      this.servername = null;
+      this.secureConnecting = true;
+      this._tlsOptions = options;
+      this._isServer = !!options.isServer;
+      this._wrapped = null;
+      // Nothing moves on this socket until the handshake finishes.
+      this._ioBlocked = true;
 
-      // Forward events from underlying socket
-      this._setupSocketEvents();
+      if (socket) this._adopt(socket);
+
+      // A server-side socket built directly, as for STARTTLS, starts straight away.
+      if (this._isServer && !options._managedByServer && this._id !== null) {
+        const server = options.server;
+        const contextId = options.secureContext ? contextIdFrom({ secureContext: options.secureContext })
+          : server ? server._contextId : contextIdFrom({});
+        this._startServerHandshake({
+          contextId,
+          ALPNProtocols: options.ALPNProtocols,
+          requestCert: options.requestCert,
+          rejectUnauthorized: options.rejectUnauthorized,
+          SNICallback: options.SNICallback,
+          contexts: server ? server._contexts : []
+        }, (err) => {
+          if (err) {
+            this.destroy(err);
+            return;
+          }
+          this.emit('secure');
+          this._flushIO();
+          this.read(0);
+        });
+      }
     }
 
-    get encrypted() { return this._encrypted; }
-    get authorized() { return this._authorized; }
-    get authorizationError() { return this._authorizationError; }
-    get connecting() { return this._socket.connecting; }
-    get destroyed() { return this._socket.destroyed; }
-    get localAddress() { return this._socket.localAddress; }
-    get localPort() { return this._socket.localPort; }
-    get remoteAddress() { return this._socket.remoteAddress; }
-    get remotePort() { return this._socket.remotePort; }
-    get remoteFamily() { return this._socket.remoteFamily; }
+    // Starts a server handshake. done(err) runs when it finishes.
+    _startServerHandshake(options, done) {
+      const requestCert = !!options.requestCert;
+      const rejectUnauthorized = requestCert && options.rejectUnauthorized !== false;
+      const sniCallback = typeof options.SNICallback === 'function' ? options.SNICallback : null;
+      const contexts = options.contexts || [];
 
-    _setupSocketEvents() {
-      // Forward key events
-      this._socket.on('error', (err) => this.emit('error', err));
-      this._socket.on('close', (hadError) => this.emit('close', hadError));
-      this._socket.on('end', () => this.emit('end'));
-      this._socket.on('timeout', () => this.emit('timeout'));
+      const chooseContext = (servername, reply) => {
+        if (!sniCallback) {
+          for (let i = contexts.length - 1; i >= 0; i--) {
+            if (contexts[i].pattern.test(servername)) {
+              reply(contexts[i].id);
+              return;
+            }
+          }
+          reply(0);
+          return;
+        }
+        sniCallback(servername, (err, context) => {
+          if (err || !context) {
+            reply(0);
+            return;
+          }
+          reply(contextIdFrom({ secureContext: context }));
+        });
+      };
+
+      internal.upgradeServer(this._id, JSON.stringify({
+        context: options.contextId,
+        ALPNProtocols: alpnList(options.ALPNProtocols),
+        requestCert,
+        rejectUnauthorized,
+        hasSNI: sniCallback !== null || contexts.length > 0
+      }), chooseContext, (encoded) => {
+        if (this.destroyed) return;
+        const result = JSON.parse(encoded);
+        if (result.message) {
+          this.authorizationError = result.authorizationError || null;
+          done(makeError(result.message, result.code));
+          return;
+        }
+        this.authorized = !!result.authorized;
+        this.authorizationError = result.authorizationError ||
+          (requestCert && !result.authorized ? 'UNABLE_TO_GET_ISSUER_CERT' : null);
+        this.alpnProtocol = result.alpn || false;
+        this.servername = result.servername || false;
+        this._finishHandshake();
+        done(null);
+      });
     }
 
-    /**
-     * Connect and perform TLS handshake.
-     */
-    connect(options, callback) {
-      if (typeof options === 'number') {
-        const port = options;
-        const host = typeof arguments[1] === 'string' ? arguments[1] : 'localhost';
-        callback = typeof arguments[1] === 'function' ? arguments[1] : arguments[2];
-        options = { port, host };
+    // Takes over the native socket of an existing net.Socket.
+    _adopt(socket) {
+      this._wrapped = socket;
+      const takeOver = () => {
+        if (socket.destroyed) return;
+        this._id = socket._id;
+        socket._id = null;
+        socket.connecting = false;
+        this._server = socket._server;
+        socket._server = null;
+        this._loadAddresses();
+        if (!socket._refed) this.unref();
+        this._onAdopted();
+      };
+      socket.on('error', (err) => {
+        if (!this.destroyed) this.destroy(err);
+      });
+      socket.on('close', () => {
+        if (!this.destroyed) this.destroy();
+      });
+      if (socket.connecting) {
+        this.connecting = true;
+        socket.once('connect', () => {
+          this.connecting = false;
+          takeOver();
+        });
+      } else {
+        takeOver();
       }
+    }
 
-      if (callback) {
-        this.once('secureConnect', callback);
-      }
+    _onAdopted() {
+      if (this._isServer) return;
+      if (this._connectOptionsReady) this._startClientHandshake();
+      else this._adoptedReady = true;
+    }
 
-      const host = options.host || 'localhost';
+    _onTransportConnected() {
+      this.emit('connect');
+      this.emit('ready');
+      this._startClientHandshake();
+    }
+
+    _closeTransport() {
+      super._closeTransport();
+      if (this._wrapped && !this._wrapped.destroyed) this._wrapped.destroy();
+    }
+
+    _startClientHandshake() {
+      const options = this._tlsOptions;
+      const host = options.host || (this._wrapped && this._wrapped._host) || 'localhost';
       const servername = options.servername || host;
       const checkIdentity = typeof options.checkServerIdentity === 'function' ? options.checkServerIdentity : null;
 
-      this._servername = servername;
-
-      // As in Node, the environment only supplies a default for an absent option.
-      const rejectUnauthorized = hasOwn(options, 'rejectUnauthorized')
-        ? options.rejectUnauthorized !== false
-        : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
-      this._rejectUnauthorized = rejectUnauthorized;
-
-      // A secure context supplies the credentials in place of the connect options.
-      const credentials = options.secureContext ? (options.secureContext.context || {}) : options;
-
-      // Bad credentials throw here, before connecting, as they do in Node.
-      const id = internal.createTLSSocket(this._isServer, host, JSON.stringify({
-        rejectUnauthorized,
-        ca: credentials.ca ? pemList(credentials.ca) : null,
-        cert: pemList(credentials.cert).join('\n'),
-        key: pemList(credentials.key).join('\n'),
-        servername: options.servername || '',
-        scriptChecksIdentity: checkIdentity !== null
-      }));
-      if (typeof id === 'string') {
-        const { message, code } = JSON.parse(id);
-        const err = new Error(message);
-        if (code) err.code = code;
-        throw err;
-      }
-      this._id = id;
-
-      internal.connect(this._id, options.port, (_, encoded) => {
-        if (this._destroyed) return;
-
+      internal.upgradeClient(this._id, host, JSON.stringify(clientNativeOptions(options, checkIdentity !== null)), (encoded) => {
+        if (this.destroyed) return;
         const result = JSON.parse(encoded);
-        this._authorized = result.authorized;
-        this._authorizationError = result.authorizationError || null;
+        this.authorized = !!result.authorized;
+        this.authorizationError = result.authorizationError || null;
 
         if (result.message) {
-          const err = new Error(result.message);
-          if (result.code) err.code = result.code;
-          this.destroy(err);
+          this.destroy(makeError(result.message, result.code));
           return;
         }
 
-        this._encrypted = true;
-        this._connected = true;
+        this.alpnProtocol = result.alpn || false;
+        this.servername = options.servername || false;
 
         if (result.scriptChecksIdentity) {
           const err = checkIdentity(servername, this.getPeerCertificate(true));
           if (err) {
-            this._authorized = false;
-            this._authorizationError = err.code || err.message;
-            if (rejectUnauthorized) {
+            this.authorized = false;
+            this.authorizationError = err.code || err.message;
+            if (options.rejectUnauthorized) {
               this.destroy(err);
               return;
             }
           }
         }
 
+        this._finishHandshake();
         this.emit('secureConnect');
-
-        this._pumpWrites();
-        this._startReading();
-      });
-
-      return this;
-    }
-
-    _startReading() {
-      if (this._destroyed || !this._connected) return;
-
-      internal.read(this._id, (err, data) => {
-        if (this._destroyed) return;
-
-        if (err) {
-          this.emit('error', new Error(err));
-          this.destroy();
-          return;
-        }
-
-        if (data === null) {
-          this._readable = false;
-          this._readEnded = true;
-          this.emit('end');
-          if (!this._allowHalfOpen) this.end();
-          this._destroyIfDone();
-          return;
-        }
-
-        this.emit('data', Buffer.from(data, 'base64'));
-
-        this._startReading();
+        this._flushIO();
+        if (!this.isPaused() || this.readableFlowing === null) this.read(0);
       });
     }
 
-    /**
-     * Write data.
-     */
-    write(data, encoding, callback) {
-      if (typeof encoding === 'function') {
-        callback = encoding;
-        encoding = undefined;
-      }
-
-      if (this._ending || this._destroyed) {
-        const err = this._ending
-          ? makeError('write after end', 'ERR_STREAM_WRITE_AFTER_END')
-          : makeError('Cannot call write after a stream was destroyed', 'ERR_STREAM_DESTROYED');
-        process.nextTick(() => {
-          if (callback) callback(err);
-          this.destroy(err);
-        });
-        return false;
-      }
-
-      // A socket that never connected has nothing to write to.
-      if (this._id === null) {
-        const err = new Error('Socket not found');
-        this.emit('error', err);
-        if (callback) callback(err);
-        return false;
-      }
-
-      let buf;
-      if (Buffer.isBuffer(data)) {
-        buf = data;
-      } else if (typeof data === 'string') {
-        buf = Buffer.from(data, encoding || 'utf8');
-      } else {
-        buf = Buffer.from(data);
-      }
-
-      this._writes.push({ buf, callback });
-      this._writeLength += buf.length;
-      const belowLimit = this._writeLength < kHighWaterMark;
-      if (!belowLimit) this._needDrain = true;
-
-      this._pumpWrites();
-      return belowLimit;
+    _finishHandshake() {
+      this.secureConnecting = false;
+      this._ioBlocked = false;
     }
 
-    _pumpWrites() {
-      if (this._currentWrite || !this._connected || this._destroyed) return;
-
-      const entry = this._writes.shift();
-      if (!entry) {
-        if (this._ending) this._shutdown();
-        return;
-      }
-
-      this._currentWrite = entry;
-      internal.write(this._id, entry.buf.toString('base64'), (err) => {
-        // destroy() has already answered this write.
-        if (this._destroyed) return;
-
-        this._currentWrite = null;
-        this._writeLength -= entry.buf.length;
-
-        if (err) {
-          const error = new Error(err);
-          if (entry.callback) entry.callback(error);
-          this.destroy(error);
-          return;
-        }
-
-        if (this._needDrain && !this._ending && this._writeLength === 0) {
-          this._needDrain = false;
-          this.emit('drain');
-        }
-        if (entry.callback) entry.callback();
-        this._pumpWrites();
-      });
-    }
-
-    _shutdown() {
-      if (this._shuttingDown) return;
-      this._shuttingDown = true;
-
-      internal.shutdown(this._id, () => {
-        if (this._destroyed) return;
-
-        this._finished = true;
-        for (const callback of this._endCallbacks.splice(0)) callback();
-        this.emit('finish');
-        this._destroyIfDone();
-      });
-    }
-
-    _destroyIfDone() {
-      if (this._readEnded && this._finished) this.destroy();
-    }
-
-    /**
-     * Finish writing. The socket closes once the peer has finished too.
-     */
-    end(data, encoding, callback) {
-      if (typeof data === 'function') {
-        callback = data;
-        data = undefined;
-        encoding = undefined;
-      } else if (typeof encoding === 'function') {
-        callback = encoding;
-        encoding = undefined;
-      }
-
-      if (data !== undefined && data !== null) {
-        this.write(data, encoding);
-      }
-
-      if (callback) {
-        if (this._finished) {
-          process.nextTick(callback, makeError('Cannot call end after a stream was finished', 'ERR_STREAM_ALREADY_FINISHED'));
-        } else if (this._destroyed) {
-          process.nextTick(callback, makeError('Cannot call end after a stream was destroyed', 'ERR_STREAM_DESTROYED'));
-        } else {
-          this._endCallbacks.push(callback);
-        }
-      }
-
-      if (!this._ending) {
-        this._ending = true;
-        this._writable = false;
-        if (this._id === null) {
-          this.destroy();
-        } else {
-          this._pumpWrites();
-        }
-      }
-
-      return this;
-    }
-
-    /**
-     * Destroy the socket.
-     */
-    destroy(error) {
-      if (this._destroyed) return this;
-
-      this._destroyed = true;
-      this._connected = false;
-
-      if (this._id !== null) {
-        internal.close(this._id);
-        this._id = null;
-      }
-
-      this._cancelPendingWrites();
-
-      if (error) {
-        this.emit('error', error);
-      }
-
-      this.emit('close', !!error);
-      return this;
-    }
-
-    // As in Node, a write already handed to the socket reports no error, and one still
-    // waiting never went out.
-    _cancelPendingWrites() {
-      const current = this._currentWrite;
-      this._currentWrite = null;
-      if (current && current.callback) current.callback(null);
-
-      const err = makeError('Cannot call write after a stream was destroyed', 'ERR_STREAM_DESTROYED');
-      for (const { callback } of this._writes.splice(0)) {
-        if (callback) callback(err);
-      }
-      for (const callback of this._endCallbacks.splice(0)) callback(err);
-    }
-
-    /**
-     * Set timeout.
-     */
-    setTimeout(timeout, callback) {
-      if (callback) {
-        this.once('timeout', callback);
-      }
-      return this;
-    }
-
-    setKeepAlive(enable, initialDelay) {
-      return this;
-    }
-
-    setNoDelay(noDelay) {
-      return this;
-    }
-
-    /**
-     * Get certificate info.
-     */
     getPeerCertificate(detailed) {
-      if (!this._id) return {};
+      if (this._id === null) return {};
       const encoded = internal.getPeerCertificate(this._id);
-      if (!encoded) return {};
-      const cert = JSON.parse(encoded);
-      cert.raw = Buffer.from(cert.raw, 'base64');
-      return cert;
+      return encoded ? linkCertificates(JSON.parse(encoded), detailed) : {};
     }
 
-    /**
-     * Get cipher info.
-     */
+    getCertificate() {
+      if (this._id === null) return null;
+      const encoded = internal.getCertificate(this._id);
+      return encoded ? linkCertificates(JSON.parse(encoded), false) : {};
+    }
+
     getCipher() {
-      if (!this._id) return null;
-      return internal.getCipher(this._id);
+      if (this._id === null) return undefined;
+      const encoded = internal.getCipher(this._id);
+      return encoded ? JSON.parse(encoded) : undefined;
     }
 
-    /**
-     * Get protocol version.
-     */
     getProtocol() {
-      if (!this._id) return null;
-      return internal.getProtocol(this._id) || 'TLSv1.3';
+      if (this._id === null) return null;
+      return internal.getProtocol(this._id);
     }
 
-    /**
-     * Get session.
-     */
-    getSession() {
-      return this._session;
+    isSessionReused() {
+      return this._id !== null && internal.isSessionReused(this._id);
     }
 
-    /**
-     * Get TLS ticket keys.
-     */
-    getTLSTicket() {
-      return null;
+    exportKeyingMaterial(length, label, context) {
+      if (this._id === null) {
+        throw makeError('TLS socket connection must be securely established', 'ERR_TLS_INVALID_STATE');
+      }
+      const encodedContext = context === undefined ? null : Buffer.from(context).toString('base64');
+      return Buffer.from(internal.exportKeyingMaterial(this._id, length, String(label), encodedContext), 'base64');
     }
 
-    /**
-     * Get ALPN protocol.
-     */
-    getALPNProtocol() {
-      return false;
-    }
+    // Session resumption tickets are not exposed.
+    getSession() { return undefined; }
+    getTLSTicket() { return undefined; }
+    setSession() {}
+    getFinished() { return undefined; }
+    getPeerFinished() { return undefined; }
+    getEphemeralKeyInfo() { return null; }
+    getSharedSigalgs() { return []; }
+    setMaxSendFragment() { return true; }
+    enableTrace() {}
+    disableRenegotiation() {}
 
-    /**
-     * Renegotiate (not typically supported).
-     */
     renegotiate(options, callback) {
       if (callback) {
-        process.nextTick(() => callback(new Error('Renegotiation not supported')));
+        process.nextTick(callback, makeError('Renegotiation is not supported', 'ERR_TLS_RENEGOTIATION_DISABLED'));
       }
       return false;
-    }
-
-    /**
-     * Disable renegotiation.
-     */
-    disableRenegotiation() {
-      // No-op
-    }
-
-    address() {
-      return this._socket.address();
-    }
-
-    ref() {
-      return this;
-    }
-
-    unref() {
-      return this;
     }
   }
 
-  /**
-   * TLS Server class.
-   */
-  class Server extends EventEmitter {
-    constructor(options, connectionListener) {
-      super();
-      
-      if (typeof options === 'function') {
-        connectionListener = options;
-        options = {};
-      }
-      
-      options = options || {};
-      
-      this._options = options;
-      this._server = null;
-      this._listening = false;
-      this._connections = 0;
-      
-      if (connectionListener) {
-        this.on('secureConnection', connectionListener);
-      }
-    }
+  // As in Node, the environment only supplies a default for an absent option.
+  function resolveRejectUnauthorized(options) {
+    return hasOwn(options, 'rejectUnauthorized')
+      ? options.rejectUnauthorized !== false
+      : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
+  }
 
-    get listening() { return this._listening; }
+  // A secure context supplies the credentials in place of the connect options.
+  function clientNativeOptions(options, scriptChecksIdentity) {
+    const credentials = options.secureContext ? (options.secureContext.context || {}) : options;
+    return {
+      rejectUnauthorized: options.rejectUnauthorized !== false,
+      ca: credentials.ca ? pemList(credentials.ca) : null,
+      cert: pemList(credentials.cert).join('\n'),
+      key: pemList(credentials.key).map(keyText).join('\n'),
+      servername: options.servername || '',
+      scriptChecksIdentity,
+      ALPNProtocols: alpnList(options.ALPNProtocols),
+      minVersion: credentials.minVersion || options.minVersion || '',
+      maxVersion: credentials.maxVersion || options.maxVersion || ''
+    };
+  }
 
-    /**
-     * Start listening.
-     */
-    listen(port, host, callback) {
-      if (typeof host === 'function') {
-        callback = host;
-        host = undefined;
-      }
-
-      if (callback) {
-        this.once('listening', callback);
-      }
-
-      // Create underlying TCP server
-      this._server = net.createServer((socket) => {
-        // Wrap with TLS
-        const tlsSocket = new TLSSocket(socket, {
-          isServer: true,
-          ...this._options
-        });
-        
-        this._connections++;
-        
-        tlsSocket.on('close', () => {
-          this._connections--;
-        });
-
-        // Emit secure connection
-        process.nextTick(() => {
-          tlsSocket._encrypted = true;
-          tlsSocket._authorized = true;
-          this.emit('secureConnection', tlsSocket);
-        });
-      });
-
-      this._server.on('error', (err) => this.emit('error', err));
-      this._server.on('listening', () => {
-        this._listening = true;
-        this.emit('listening');
-      });
-
-      this._server.listen(port, host);
-
-      return this;
-    }
-
-    /**
-     * Close the server.
-     */
-    close(callback) {
-      if (callback) {
-        this.once('close', callback);
-      }
-
-      this._listening = false;
-
-      if (this._server) {
-        this._server.close();
-        this._server = null;
-      }
-
-      this.emit('close');
-      return this;
-    }
-
-    address() {
-      return this._server ? this._server.address() : null;
-    }
-
-    getConnections(callback) {
-      process.nextTick(() => callback(null, this._connections));
-    }
-
-    ref() {
-      if (this._server) this._server.ref();
-      return this;
-    }
-
-    unref() {
-      if (this._server) this._server.unref();
-      return this;
-    }
-
-    getTicketKeys() {
-      return Buffer.alloc(48);
-    }
-
-    setTicketKeys(keys) {
-      // No-op
-    }
-
-    setSecureContext(context) {
-      // No-op
-    }
-
-    addContext(hostname, context) {
-      // No-op
-    }
+  function keyText(key) {
+    return key && typeof key === 'object' && key.pem ? pemList(key.pem)[0] : key;
   }
 
   /**
@@ -619,37 +345,182 @@
       } else if (arg) options = { ...options, ...arg };
     }
 
-    const socket = new TLSSocket(null, options);
-    return socket.connect(options, callback);
+    options = { ...options, rejectUnauthorized: resolveRejectUnauthorized(options) };
+    if (options.pfx) {
+      throw makeError('PFX credentials are not supported', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
+    }
+
+    // Bad credentials throw here, before connecting, as they do in Node.
+    const invalid = internal.validateClient(JSON.stringify(clientNativeOptions(options, false)));
+    if (invalid) {
+      const { message, code } = JSON.parse(invalid);
+      throw makeError(message, code);
+    }
+
+    const socket = new TLSSocket(options.socket || null, options);
+    if (callback) socket.once('secureConnect', callback);
+
+    if (options.socket) {
+      if (socket._adoptedReady) socket._startClientHandshake();
+      else socket._connectOptionsReady = true;
+    } else if (options.path) {
+      net.Socket.prototype.connect.call(socket, { path: options.path });
+    } else {
+      net.Socket.prototype.connect.call(socket, {
+        port: options.port,
+        host: options.host,
+        family: options.family,
+        lookup: options.lookup,
+        localAddress: options.localAddress,
+        localPort: options.localPort,
+        timeout: options.timeout,
+        noDelay: options.noDelay,
+        keepAlive: options.keepAlive
+      });
+    }
+    return socket;
+  }
+
+  function contextIdFrom(options) {
+    const memo = options.secureContext;
+    if (memo && memo._id) return memo._id;
+    const credentials = memo ? (memo.context || {}) : options;
+    if (credentials.pfx) {
+      throw makeError('PFX credentials are not supported', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
+    }
+    const encoded = {
+      cert: pemList(credentials.cert),
+      key: pemList(credentials.key).map(keyText),
+      ca: credentials.ca ? pemList(credentials.ca) : null,
+      minVersion: credentials.minVersion || '',
+      maxVersion: credentials.maxVersion || ''
+    };
+    const id = internal.createServerContext(JSON.stringify(encoded));
+    if (typeof id === 'string') {
+      const { message, code } = JSON.parse(id);
+      throw makeError(message, code);
+    }
+    if (memo) Object.defineProperty(memo, '_id', { value: id, enumerable: false });
+    return id;
+  }
+
+  function wildcardToRegExp(hostname) {
+    const text = String(hostname).replace(/([.^$+?\-\\[\]{}])/g, '\\$1').replace(/\*/g, '[^.]*');
+    return new RegExp(`^${text}$`, 'i');
   }
 
   /**
-   * Create a TLS server.
+   * TLS Server class.
    */
-  function createServer(options, connectionListener) {
-    return new Server(options, connectionListener);
+  class Server extends net.Server {
+    constructor(options, secureConnectionListener) {
+      if (typeof options === 'function') {
+        secureConnectionListener = options;
+        options = {};
+      }
+      options = { ...options };
+      super({
+        allowHalfOpen: options.allowHalfOpen,
+        pauseOnConnect: options.pauseOnConnect,
+        noDelay: options.noDelay,
+        keepAlive: options.keepAlive,
+        keepAliveInitialDelay: options.keepAliveInitialDelay,
+        highWaterMark: options.highWaterMark
+      });
+      this._tlsOptions = options;
+      this._contexts = [];
+      this._ticketKeys = Buffer.alloc(48);
+      this.handshakeTimeout = options.handshakeTimeout === undefined ? kDefaultHandshakeTimeout : options.handshakeTimeout;
+      this.setSecureContext(options);
+      if (secureConnectionListener) this.on('secureConnection', secureConnectionListener);
+    }
+
+    setSecureContext(options) {
+      this._contextId = contextIdFrom(options);
+    }
+
+    addContext(hostname, context) {
+      const id = contextIdFrom(context && context.context ? { secureContext: context } : (context || {}));
+      this._contexts.push({ pattern: wildcardToRegExp(hostname), id });
+    }
+
+    getTicketKeys() {
+      return this._ticketKeys;
+    }
+
+    setTicketKeys(keys) {
+      this._ticketKeys = Buffer.from(keys);
+    }
+
+    _onConnection(rawSocket) {
+      this.emit('connection', rawSocket);
+      const options = this._tlsOptions;
+      const socket = new TLSSocket(rawSocket, { isServer: true, _managedByServer: true });
+
+      let timer = null;
+      const clearTimer = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      };
+      if (this.handshakeTimeout > 0) {
+        timer = setTimeout(() => {
+          timer = null;
+          this.emit('tlsClientError', makeError('TLS handshake timeout', 'ERR_TLS_HANDSHAKE_TIMEOUT'), socket);
+          socket.destroy();
+        }, this.handshakeTimeout);
+        timer.unref();
+      }
+      socket.once('close', clearTimer);
+
+      socket._startServerHandshake({
+        contextId: this._contextId,
+        ALPNProtocols: options.ALPNProtocols,
+        requestCert: options.requestCert,
+        rejectUnauthorized: options.rejectUnauthorized,
+        SNICallback: options.SNICallback,
+        contexts: this._contexts
+      }, (err) => {
+        clearTimer();
+        if (err) {
+          this.emit('tlsClientError', err, socket);
+          socket.destroy();
+          return;
+        }
+        this.emit('secureConnection', socket);
+        socket._flushIO();
+        if (!this.pauseOnConnect) socket.read(0);
+      });
+    }
+  }
+
+  function createServer(options, secureConnectionListener) {
+    return new Server(options, secureConnectionListener);
   }
 
   /**
-   * Create a secure context.
+   * Create a secure context. Credentials are checked now, as in Node.
    */
   function createSecureContext(options) {
-    return {
-      context: options || {},
-      // These would be filled in by the Go side
-    };
+    options = options || {};
+    if (options.cert || options.key || options.pfx) {
+      const certs = pemList(options.cert);
+      const keys = pemList(options.key);
+      if (certs.length && keys.length) contextIdFrom(options);
+    }
+    return { context: { ...options } };
   }
 
-  /**
-   * Get supported ciphers.
-   */
   function getCiphers() {
     return [
-      'TLS_AES_256_GCM_SHA384',
-      'TLS_CHACHA20_POLY1305_SHA256',
-      'TLS_AES_128_GCM_SHA256',
-      'ECDHE-RSA-AES256-GCM-SHA384',
-      'ECDHE-RSA-AES128-GCM-SHA256'
+      'tls_aes_256_gcm_sha384',
+      'tls_chacha20_poly1305_sha256',
+      'tls_aes_128_gcm_sha256',
+      'ecdhe-rsa-aes256-gcm-sha384',
+      'ecdhe-rsa-aes128-gcm-sha256',
+      'ecdhe-ecdsa-aes256-gcm-sha384',
+      'ecdhe-ecdsa-aes128-gcm-sha256',
+      'ecdhe-rsa-chacha20-poly1305',
+      'ecdhe-ecdsa-chacha20-poly1305'
     ];
   }
 
@@ -660,7 +531,7 @@
     const host = labels(hostname);
     const want = labels(pattern);
     if (host.length !== want.length || want.includes('')) return false;
-    if (want.some((label) => /[^\u0021-\u007f]/.test(label))) return false;
+    if (want.some((label) => /[^!-\u007f]/.test(label))) return false;
     for (let i = 1; i < host.length; i++) {
       if (host[i] !== want[i]) return false;
     }
@@ -707,9 +578,7 @@
     return err;
   }
 
-  // TLS constants
   const rootCertificates = [];
-  const DEFAULT_ECDH_CURVE = 'auto';
 
   // Export module
   const tls = {
@@ -722,6 +591,9 @@
     getCiphers,
     checkServerIdentity,
     rootCertificates,
+    CLIENT_RENEG_LIMIT: 3,
+    CLIENT_RENEG_WINDOW: 600,
+    DEFAULT_CIPHERS,
     DEFAULT_ECDH_CURVE,
     DEFAULT_MIN_VERSION,
     DEFAULT_MAX_VERSION
