@@ -336,9 +336,9 @@ func (el *EventLoop) Run() {
 			go func() {
 				select {
 				case <-timer.C:
-					el.cond.Signal()
+					el.wake()
 				case <-ctx.Done():
-					el.cond.Signal()
+					el.wake()
 				case <-stop:
 				}
 			}()
@@ -354,7 +354,7 @@ func (el *EventLoop) Run() {
 			go func() {
 				select {
 				case <-ctx.Done():
-					el.cond.Signal()
+					el.wake()
 				case <-stop:
 				}
 			}()
@@ -363,6 +363,14 @@ func (el *EventLoop) Run() {
 			close(stop)
 		}
 	}
+}
+
+// wake signals a parked Run. Run holds el.mu until cond.Wait releases it, so taking the lock
+// here means the signal cannot arrive before Run is parked, where it would be lost.
+func (el *EventLoop) wake() {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	el.cond.Signal()
 }
 
 // RunOnce processes one iteration of the event loop.

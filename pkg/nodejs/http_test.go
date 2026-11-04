@@ -98,19 +98,37 @@ func TestHTTP_RejectsAmbiguousRequests(t *testing.T) {
 		"folded header":                        {request: "GET / HTTP/1.1\r\nHost: x\r\n y\r\n\r\n", code: "HPE_INVALID_HEADER_TOKEN"},
 		"NUL in value":                         {request: "GET / HTTP/1.1\r\nHost: x\x00y\r\n\r\n", code: "HPE_INVALID_HEADER_TOKEN"},
 		"unknown method":                       {request: "FOO / HTTP/1.1\r\nHost: x\r\n\r\n", code: "HPE_INVALID_METHOD"},
+		"repeated equal lengths":               {request: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc", code: "HPE_UNEXPECTED_CONTENT_LENGTH"},
+		"lengths equal only after rounding":    {request: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 9007199254740993\r\nContent-Length: 9007199254740992\r\n\r\n", code: "HPE_INVALID_CONTENT_LENGTH"},
+		"length overflow":                      {request: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 18446744073709551616\r\n\r\n", code: "HPE_INVALID_CONTENT_LENGTH"},
+		"trailing tab on length":               {request: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\t\r\n\r\nabc", code: "HPE_INVALID_CONTENT_LENGTH"},
+		"tab then space after length":          {request: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\t \r\n\r\nabc", code: "HPE_INVALID_CONTENT_LENGTH"},
+		"trailing tab on coding":               {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\t\r\n\r\n0\r\n\r\n", code: "HPE_INVALID_TRANSFER_ENCODING"},
+		"chunked twice":                        {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, chunked\r\n\r\n0\r\n\r\n", code: "HPE_INVALID_TRANSFER_ENCODING"},
+		"chunked on two lines":                 {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", code: "HPE_INVALID_TRANSFER_ENCODING"},
+		"unknown version":                      {request: "GET / HTTP/1.2\r\nHost: x\r\n\r\n", code: "HPE_INVALID_VERSION"},
+		"target without a slash":               {request: "GET x HTTP/1.1\r\nHost: x\r\n\r\n", code: "HPE_INVALID_URL"},
+		"DEL in target":                        {request: "GET /\x7f HTTP/1.1\r\nHost: x\r\n\r\n", code: "HPE_INVALID_URL"},
+		"space before chunk extension":         {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1 ;a\r\nx\r\n0\r\n\r\n", code: "HPE_INVALID_CHUNK_SIZE", headersWereValid: true},
+		"chunk extension with a space":         {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1; a\r\nx\r\n0\r\n\r\n", code: "HPE_STRICT", headersWereValid: true},
+		"chunk extension with NUL":             {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;a\x00\r\nx\r\n0\r\n\r\n", code: "HPE_STRICT", headersWereValid: true},
+		"unterminated chunk extension quote":   {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;a=\"b\r\nx\r\n0\r\n\r\n", code: "HPE_STRICT", headersWereValid: true},
+		"transfer-encoding trailer":            {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nTransfer-Encoding: chunked\r\n\r\n", code: "HPE_INVALID_TRANSFER_ENCODING", headersWereValid: true},
+		"malformed content-length trailer":     {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nContent-Length: x\r\n\r\n", code: "HPE_INVALID_CONTENT_LENGTH", headersWereValid: true},
 		"bad chunk size":                       {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n", code: "HPE_INVALID_CHUNK_SIZE", headersWereValid: true},
 		"chunk without CRLF":                   {request: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\nx\r\n0\r\n\r\n", code: "HPE_CR_EXPECTED", headersWereValid: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			result := runHTTP(t, &runtime.Config{}, fmt.Sprintf(`
-const server = await serve((q, p) => p.end('served'));
+let served = false;
+const server = await serve((q, p) => { served = true; p.end('served'); });
 const codes = [];
 server.on('clientError', (e, socket) => { codes.push(e.code); socket.destroy(); });
-const out = await raw(server, %q);
+await raw(server, %q);
 server.close();
 server.closeAllConnections();
-done({ code: codes[0], served: out.includes('served') });`, tc.request))
+done({ code: codes[0], served });`, tc.request))
 			wantJSON(t, result, map[string]any{"code": tc.code, "served": tc.headersWereValid})
 		})
 	}
@@ -151,6 +169,183 @@ for (const f of [() => http.request({ protocol: 'ftp:' }), () => http.request({ 
 }
 done({ v });`)
 		wantJSON(t, result, map[string]any{"v": []any{"ERR_INVALID_PROTOCOL", "ERR_UNESCAPED_CHARACTERS", "ERR_INVALID_HTTP_TOKEN", "ERR_INVALID_ARG_TYPE", "ERR_INVALID_HTTP_TOKEN", "ERR_INVALID_CHAR", "ERR_INVALID_CHAR", "ERR_INVALID_HTTP_TOKEN"}})
+	})
+}
+
+// Found by fuzzing against Node: where one message ends, and what follows it.
+func TestHTTP_MessageBoundaries(t *testing.T) {
+	t.Run("a rejected message is final", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const seen = [];
+const server = await serve((q, p) => { seen.push(q.url); q.resume(); p.end('ok'); });
+// This listener answers and leaves the socket open, so later bytes still arrive.
+server.on('clientError', (e, s) => { seen.push(e.code); s.write('HTTP/1.1 400 Bad\r\n\r\n'); });
+const c = net.connect(server.address().port, '127.0.0.1');
+c.on('error', () => {});
+const wait = () => new Promise((r) => setTimeout(r, 30));
+await new Promise((r) => c.once('connect', r));
+c.write('GET /a HTTP/1.1\r\nHost: x\r\nBad Header: y\r\n\r\n');
+await wait();
+c.write('GET /after HTTP/1.1\r\nHost: x\r\n\r\n');
+await wait();
+c.destroy();
+server.close();
+server.closeAllConnections();
+done({ seen });`)
+		wantJSON(t, result, map[string]any{"seen": []any{"HPE_INVALID_HEADER_TOKEN", "HPE_INVALID_HEADER_TOKEN"}})
+	})
+
+	t.Run("nothing is read after the last request", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const second = 'GET /second HTTP/1.1\r\nHost: x\r\n\r\n';
+const urls = async (first, sameWrite) => {
+  const seen = [];
+  const server = await serve((q, p) => { seen.push(q.url); q.resume(); setTimeout(() => p.end('ok'), 40); });
+  const c = net.connect(server.address().port, '127.0.0.1');
+  c.on('error', () => {});
+  await new Promise((r) => c.once('connect', r));
+  if (sameWrite) {
+    c.write(first + second);
+  } else {
+    c.write(first);
+    await new Promise((r) => setTimeout(r, 10));
+    c.write(second);
+  }
+  await new Promise((r) => setTimeout(r, 80));
+  c.destroy();
+  server.close();
+  server.closeAllConnections();
+  return seen;
+};
+const close = 'GET /first HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n';
+const old = 'GET /first HTTP/1.0\r\n\r\n';
+const oldKeepAlive = 'GET /first HTTP/1.0\r\nConnection: keep-alive\r\n\r\n';
+done({
+  closeSame: await urls(close, true), closeNext: await urls(close, false),
+  oldSame: await urls(old, true), oldNext: await urls(old, false),
+  keepAlive: await urls(oldKeepAlive, true),
+  contradictory: await urls('GET /first HTTP/1.0\r\nConnection: keep-alive, close\r\n\r\n', true),
+});`)
+		only := []any{"/first"}
+		wantJSON(t, result, map[string]any{
+			"closeSame": only, "closeNext": only, "oldSame": only, "oldNext": only,
+			"keepAlive":     []any{"/first", "/second"},
+			"contradictory": only,
+		})
+	})
+
+	t.Run("HTTP/1.1 requires Host", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const urls = async (options, text) => {
+  const seen = [];
+  const server = await serve((q, p) => { seen.push(q.url); p.end('ok'); }, options);
+  const reply = noDate(await raw(server, text));
+  server.close();
+  server.closeAllConnections();
+  return { seen, status: reply.split('\r\n')[0] };
+};
+const next = 'GET /next HTTP/1.1\r\nHost: x\r\n\r\n';
+done({
+  missing: await urls(undefined, 'GET /a HTTP/1.1\r\n\r\n' + next),
+  allowed: await urls({ requireHostHeader: false }, 'GET /a HTTP/1.1\r\nConnection: close\r\n\r\n'),
+  old: await urls(undefined, 'GET /a HTTP/1.0\r\n\r\n'),
+});`)
+		wantJSON(t, result, map[string]any{
+			"missing": map[string]any{"seen": []any{}, "status": "HTTP/1.1 400 Bad Request"},
+			"allowed": map[string]any{"seen": []any{"/a"}, "status": "HTTP/1.1 200 OK"},
+			"old":     map[string]any{"seen": []any{"/a"}, "status": "HTTP/1.1 200 OK"},
+		})
+	})
+
+	t.Run("header names cannot reach Object.prototype", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+let out;
+const server = await serve((q, p) => {
+  out = {
+    constructor: q.headers.constructor,
+    proto: Object.getPrototypeOf(q.headers) === Object.prototype,
+    distinct: q.headersDistinct.constructor,
+    distinctProto: Object.getPrototypeOf(q.headersDistinct) === Object.prototype,
+    polluted: ({}).evil === undefined,
+  };
+  p.end();
+});
+await raw(server, 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nconstructor: evil\r\n__proto__: evil\r\n\r\n');
+server.close();
+server.closeAllConnections();
+done(out);`)
+		wantJSON(t, result, map[string]any{
+			"constructor": "evil", "proto": true,
+			"distinct": []any{"evil"}, "distinctProto": true, "polluted": true,
+		})
+	})
+
+	t.Run("a message cut off by EOF is reported", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const codes = [];
+const server = await serve((q, p) => p.end('ok'));
+server.on('clientError', (e, s) => { codes.push(e.code); s.destroy(); });
+const c = net.connect(server.address().port, '127.0.0.1', () => c.end('GET / HTTP/1.1\r\nHo'));
+c.on('error', () => {});
+c.resume();
+await new Promise((r) => c.on('close', r));
+server.close();
+server.closeAllConnections();
+done({ codes });`)
+		wantJSON(t, result, map[string]any{"codes": []any{"HPE_INVALID_EOF_STATE"}})
+	})
+
+	t.Run("valid chunk extensions are accepted", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const server = await serve(async (q, p) => p.end(String(await read(q))));
+const body = async (ext) => (await raw(server, 'POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1' + ext + '\r\nx\r\n0\r\n\r\n')).split('\r\n\r\n')[1];
+const v = [await body(';a'), await body(';a=b'), await body(';a="b c;d"'), await body(';a=b;c=d'), await body(';a="\\""')];
+server.close();
+server.closeAllConnections();
+done({ v });`)
+		wantJSON(t, result, map[string]any{"v": []any{"x", "x", "x", "x", "x"}})
+	})
+
+	t.Run("long zero padding in a chunk size is still that size", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const server = await serve(async (q, p) => p.end(String(await read(q))));
+const reply = await raw(server, 'POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n00000000000001\r\nx\r\n0000000000000000\r\n\r\n');
+server.close();
+server.closeAllConnections();
+done({ body: reply.split('\r\n\r\n')[1] });`)
+		wantJSON(t, result, map[string]any{"body": "x"})
+	})
+
+	t.Run("client rejects ambiguous responses", func(t *testing.T) {
+		result := runHTTP(t, &runtime.Config{}, `
+const errors = async (text) => {
+  const server = net.createServer((s) => { s.on('error', () => {}); s.once('data', () => s.end(text)); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const seen = [];
+  await new Promise((resolve) => {
+    const q = http.get(target(server), (res) => { res.on('error', () => {}); res.resume(); });
+    q.on('error', (e) => seen.push(e.code));
+    q.on('close', () => setTimeout(resolve, 20));
+  });
+  server.close();
+  return seen;
+};
+done({
+  repeated: await errors('HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\nx'),
+  both: await errors('HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n'),
+  overflow: await errors('HTTP/1.1 200 OK\r\nContent-Length: 18446744073709551616\r\n\r\n'),
+  tab: await errors('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\t\r\n\r\n0\r\n\r\n'),
+  version: await errors('HTTP/3.1 200 OK\r\nContent-Length: 0\r\n\r\n'),
+  hangUp: await errors('HTTP/1.1 200 OK\r\nX: y'),
+});`)
+		wantJSON(t, result, map[string]any{
+			"repeated": []any{"HPE_UNEXPECTED_CONTENT_LENGTH"},
+			"both":     []any{"HPE_UNEXPECTED_CONTENT_LENGTH"},
+			"overflow": []any{"HPE_INVALID_CONTENT_LENGTH"},
+			"tab":      []any{"HPE_INVALID_TRANSFER_ENCODING"},
+			"version":  []any{"HPE_INVALID_VERSION"},
+			"hangUp":   []any{"ECONNRESET"},
+		})
 	})
 }
 
@@ -572,6 +767,35 @@ done({
   upgrade: await attempt({ host: 'internal.test', headers: { Connection: 'Upgrade', Upgrade: 'x' } }),
 });`)
 		wantJSON(t, result, map[string]any{"connect": "ERR_HTTP_TRANSPORT_UNAVAILABLE", "upgrade": "ERR_HTTP_TRANSPORT_UNAVAILABLE"})
+		if got := factory.dialed(); len(got) != 0 {
+			t.Errorf("opened sockets: %v", got)
+		}
+		if len(client.requests) != 0 {
+			t.Errorf("client saw %d requests", len(client.requests))
+		}
+	})
+
+	t.Run("cannot be bypassed by a custom connection", func(t *testing.T) {
+		client := newClient()
+		factory := &recordingFactory{}
+		result := runHTTP(t, &runtime.Config{HTTPClient: client, SocketFactory: factory}, `
+const https = require('https');
+const net = require('net');
+let created = 0;
+const createConnection = (o) => { created++; return net.connect(80, 'internal.test'); };
+const attempt = (mod, options) => new Promise((resolve) => {
+  const q = mod.request({ host: 'internal.test', createConnection, ...options }, () => resolve('response'));
+  q.on('error', (e) => resolve(e.code));
+  q.end();
+});
+done({
+  http: await attempt(http, {}),
+  noAgent: await attempt(http, { agent: false }),
+  https: await attempt(https, {}),
+  created,
+});`)
+		const code = "ERR_HTTP_TRANSPORT_UNAVAILABLE"
+		wantJSON(t, result, map[string]any{"http": code, "noAgent": code, "https": code, "created": float64(0)})
 		if got := factory.dialed(); len(got) != 0 {
 			t.Errorf("opened sockets: %v", got)
 		}
