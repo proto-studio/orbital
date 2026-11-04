@@ -24,7 +24,7 @@ type Runtime struct {
 	environment       Environment
 	dnsResolver       Resolver
 	socketFactory     SocketFactory
-	http2TLSConfig    *tls.Config
+	clientTLSConfig   *tls.Config
 	processSpawner    ProcessSpawner
 	documentRoot      string
 	resourceTracker   *ResourceTracker
@@ -65,13 +65,14 @@ type Config struct {
 	// SocketFactory creates TCP/UDP sockets.
 	// If nil, real sockets with no restrictions are used.
 	SocketFactory SocketFactory
-	// HTTP2TLSConfig, when non-nil, is the authoritative client TLS configuration
-	// for the node:http2 module: JavaScript options such as rejectUnauthorized,
-	// ca, cert and servername, and NODE_TLS_REJECT_UNAUTHORIZED, are ignored so
-	// guest code cannot weaken it. Set &tls.Config{} to lock verification to the
-	// system roots. When nil, those JavaScript options apply as they do in Node,
-	// and certificates are verified against the system roots by default.
-	HTTP2TLSConfig *tls.Config
+	// ClientTLSConfig, when non-nil, is the authoritative client TLS configuration
+	// for node:tls and node:http2: JavaScript options such as rejectUnauthorized,
+	// ca, cert, servername and checkServerIdentity, and
+	// NODE_TLS_REJECT_UNAUTHORIZED, are ignored so guest code cannot weaken it. Set
+	// &tls.Config{} to lock verification to the system roots. When nil, those
+	// JavaScript options apply as they do in Node, and certificates are verified
+	// against the system roots by default.
+	ClientTLSConfig *tls.Config
 	// ProcessSpawner spawns child processes.
 	// If nil, real process spawning with no restrictions is used.
 	ProcessSpawner ProcessSpawner
@@ -189,7 +190,7 @@ func New(cfg *Config) (*Runtime, error) {
 		environment:     env,
 		dnsResolver:     dnsResolver,
 		socketFactory:   socketFactory,
-		http2TLSConfig:  cfg.HTTP2TLSConfig,
+		clientTLSConfig: cfg.ClientTLSConfig,
 		processSpawner:  processSpawner,
 		documentRoot:    cfg.DocumentRoot,
 		resourceTracker: resourceTracker,
@@ -234,10 +235,10 @@ func (rt *Runtime) SocketFactory() SocketFactory {
 	return rt.socketFactory
 }
 
-// HTTP2TLSConfig returns the embedder's authoritative HTTP/2 client TLS
-// configuration, or nil if none was set. Callers must Clone it before use.
-func (rt *Runtime) HTTP2TLSConfig() *tls.Config {
-	return rt.http2TLSConfig
+// ClientTLSConfig returns the embedder's authoritative client TLS configuration, or
+// nil if none was set. Callers must Clone it before use.
+func (rt *Runtime) ClientTLSConfig() *tls.Config {
+	return rt.clientTLSConfig
 }
 
 // ProcessSpawner returns the process spawner for this runtime.

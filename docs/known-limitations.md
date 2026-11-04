@@ -95,6 +95,23 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ---
 
+## tls (`pkg/nodejs/tls/`)
+
+- **`tls.createServer` does not encrypt.** It wraps a plain `net` server and reports
+  `encrypted` and `authorized` as true. Client verification in `tls.connect` is real.
+- **Binary data is corrupted.** `write` and `data` pass bytes through strings, so a NUL
+  truncates a write and other non-ASCII bytes change.
+- **`end(data)` can lose `data`,** because it closes the socket without waiting for the write.
+- **Hostname checks follow Go, not Node, unless a script passes `checkServerIdentity`.** A
+  certificate with only a Common Name and no SAN fails where Node accepts it, and only a
+  whole-label `*.` wildcard matches, not `f*.example.com`. `tls.checkServerIdentity` itself
+  follows Node.
+- **Reported values are partly fixed.** `getCipher` and `getProtocol` return constants,
+  `ALPNProtocols` is ignored, and `getPeerCertificate(true)` omits `issuerCertificate`.
+- **`options.socket` and the `connect` event are not implemented.** Only `secureConnect` fires.
+- **Names are not pinned.** `tls.connect` passes the hostname to `SocketFactory`, so the OS
+  resolves it and a network policy sees only the name.
+
 ## Node features found missing during development
 
 Surfaced while running real packages (jose, yargs, tsc, mocha, express, axios).

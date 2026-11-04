@@ -10,6 +10,16 @@
   const DEFAULT_MIN_VERSION = 'TLSv1.2';
   const DEFAULT_MAX_VERSION = 'TLSv1.3';
 
+  function hasOwn(object, key) {
+    return Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  function pemList(value) {
+    if (value === undefined || value === null) return [];
+    return (Array.isArray(value) ? value : [value]).map((item) =>
+      typeof item === 'string' ? item : Buffer.from(item).toString('utf8'));
+  }
+
   /**
    * TLSSocket class - Represents a TLS-wrapped socket.
    */
@@ -77,26 +87,66 @@
         this.once('secureConnect', callback);
       }
 
-      const host = options.host || options.hostname || 'localhost';
-      const port = options.port;
-      const servername = options.servername || options.host || host;
+      const host = options.host || 'localhost';
+      const servername = options.servername || host;
+      const checkIdentity = typeof options.checkServerIdentity === 'function' ? options.checkServerIdentity : null;
 
       this._servername = servername;
 
-      // Create TLS socket
-      this._id = internal.createTLSSocket(this._isServer);
+      // As in Node, the environment only supplies a default for an absent option.
+      const rejectUnauthorized = hasOwn(options, 'rejectUnauthorized')
+        ? options.rejectUnauthorized !== false
+        : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
+      this._rejectUnauthorized = rejectUnauthorized;
 
-      // First connect TCP
-      internal.connect(this._id, host, port, servername, (err) => {
-        if (err) {
-          this.emit('error', new Error(err));
-          this.emit('close', true);
+      // A secure context supplies the credentials in place of the connect options.
+      const credentials = options.secureContext ? (options.secureContext.context || {}) : options;
+
+      // Bad credentials throw here, before connecting, as they do in Node.
+      const id = internal.createTLSSocket(this._isServer, host, JSON.stringify({
+        rejectUnauthorized,
+        ca: credentials.ca ? pemList(credentials.ca) : null,
+        cert: pemList(credentials.cert).join('\n'),
+        key: pemList(credentials.key).join('\n'),
+        servername: options.servername || '',
+        scriptChecksIdentity: checkIdentity !== null
+      }));
+      if (typeof id === 'string') {
+        const { message, code } = JSON.parse(id);
+        const err = new Error(message);
+        if (code) err.code = code;
+        throw err;
+      }
+      this._id = id;
+
+      internal.connect(this._id, options.port, (_, encoded) => {
+        if (this._destroyed) return;
+
+        const result = JSON.parse(encoded);
+        this._authorized = result.authorized;
+        this._authorizationError = result.authorizationError || null;
+
+        if (result.message) {
+          const err = new Error(result.message);
+          if (result.code) err.code = result.code;
+          this.destroy(err);
           return;
         }
 
         this._encrypted = true;
         this._connected = true;
-        this._authorized = true; // Simplified - would check cert
+
+        if (result.scriptChecksIdentity) {
+          const err = checkIdentity(servername, this.getPeerCertificate(true));
+          if (err) {
+            this._authorized = false;
+            this._authorizationError = err.code || err.message;
+            if (rejectUnauthorized) {
+              this.destroy(err);
+              return;
+            }
+          }
+        }
 
         this.emit('secureConnect');
 
@@ -237,7 +287,11 @@
      */
     getPeerCertificate(detailed) {
       if (!this._id) return {};
-      return internal.getPeerCertificate(this._id, detailed) || {};
+      const encoded = internal.getPeerCertificate(this._id);
+      if (!encoded) return {};
+      const cert = JSON.parse(encoded);
+      cert.raw = Buffer.from(cert.raw, 'base64');
+      return cert;
     }
 
     /**
@@ -436,12 +490,16 @@
   /**
    * Create a TLS connection.
    */
-  function connect(options, callback) {
-    if (typeof options === 'number') {
-      const port = options;
-      const host = typeof arguments[1] === 'string' ? arguments[1] : undefined;
-      callback = typeof arguments[arguments.length - 1] === 'function' ? arguments[arguments.length - 1] : undefined;
-      options = { port, host };
+  function connect(...args) {
+    let options = {};
+    let callback;
+    for (const arg of args) {
+      if (typeof arg === 'function') callback = arg;
+      else if (typeof arg === 'number') options.port = arg;
+      else if (typeof arg === 'string') {
+        if (options.port === undefined) options.port = Number(arg);
+        else options.host = arg;
+      } else if (arg) options = { ...options, ...arg };
     }
 
     const socket = new TLSSocket(null, options);
@@ -478,23 +536,58 @@
     ];
   }
 
+  // Whether a hostname matches a certificate name. A wildcard covers part or all of the
+  // leftmost label only, and needs at least three labels, as in Node.
+  function hostMatches(hostname, pattern, allowWildcard) {
+    const labels = (name) => name.replace(/\.$/, '').toLowerCase().split('.');
+    const host = labels(hostname);
+    const want = labels(pattern);
+    if (host.length !== want.length || want.includes('')) return false;
+    if (want.some((label) => /[^\u0021-\u007f]/.test(label))) return false;
+    for (let i = 1; i < host.length; i++) {
+      if (host[i] !== want[i]) return false;
+    }
+    const parts = want[0].split('*');
+    if (parts.length === 1 || want[0].includes('xn--')) return host[0] === want[0];
+    if (!allowWildcard || parts.length > 2 || want.length <= 2) return false;
+    return host[0].length >= parts[0].length + parts[1].length &&
+      host[0].startsWith(parts[0]) && host[0].endsWith(parts[1]);
+  }
+
   /**
-   * Check if name matches certificate.
+   * Check if name matches certificate. Returns an Error if it does not.
    */
   function checkServerIdentity(hostname, cert) {
-    // Simplified check
-    if (cert.subject && cert.subject.CN === hostname) {
-      return undefined; // No error
+    hostname = String(hostname);
+    const subject = cert.subject;
+    const altNames = cert.subjectaltname;
+    const names = altNames ? altNames.split(', ') : [];
+    const dnsNames = names.filter((n) => n.startsWith('DNS:')).map((n) => n.slice(4));
+    const ips = names.filter((n) => n.startsWith('IP Address:')).map((n) => n.slice(11));
+
+    let valid = false;
+    let reason = 'Cert does not contain a DNS name';
+    if (net.isIP(hostname)) {
+      valid = ips.includes(hostname);
+      reason = `IP: ${hostname} is not in the cert's list: ${ips.join(', ')}`;
+    } else if (dnsNames.length > 0) {
+      valid = dnsNames.some((name) => hostMatches(hostname, name, true));
+      reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
+    } else if (subject) {
+      const cn = subject.CN;
+      valid = Array.isArray(cn)
+        ? cn.some((name) => hostMatches(hostname, name, false))
+        : !!cn && hostMatches(hostname, cn, false);
+      reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
     }
-    if (cert.subjectaltname) {
-      const altNames = cert.subjectaltname.split(', ');
-      for (const name of altNames) {
-        if (name.replace('DNS:', '') === hostname) {
-          return undefined;
-        }
-      }
-    }
-    return new Error('Hostname/IP does not match certificate');
+    if (valid) return undefined;
+
+    const err = new Error(`Hostname/IP does not match certificate's altnames: ${reason}`);
+    err.code = 'ERR_TLS_CERT_ALTNAME_INVALID';
+    err.reason = reason;
+    err.host = hostname;
+    err.cert = cert;
+    return err;
   }
 
   // TLS constants
