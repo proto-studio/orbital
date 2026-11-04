@@ -412,6 +412,6 @@ MIT
 
 ## Pull requests
 
-Each pull request into `main` needs a linked issue that a maintainer has accepted with the `change-control` label. Add `Closes #123` to the description, using the number of that issue. The `Change link` check confirms this, and can be re-run once the issue is accepted.
+Each pull request into `main` needs a linked issue. Add `Closes #123` to the description, using the number of that issue. The `Change link` check confirms this.
 
 Please report security problems privately to security@proto.studio rather than in an issue. For more details, visit https://proto.studio/security/
