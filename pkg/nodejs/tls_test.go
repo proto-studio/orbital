@@ -7,7 +7,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"reflect"
@@ -499,4 +501,413 @@ socket.on('error', (e) => done({ error: e.code }));`, port, ca.pem))
 	if result["body"] != "hello" {
 		t.Fatalf("result = %v", result)
 	}
+}
+
+// newTLSReplyServer starts a TLS server that reads until the client finishes sending,
+// waits, then sends back reply, or what it read if reply is nil, and closes. The wait
+// orders the client's finish before its data and end. Each connection's input arrives
+// on the returned channel.
+func newTLSReplyServer(t *testing.T, cert tls.Certificate, reply []byte) (int, <-chan []byte) {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	received := make(chan []byte, 16)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				input, _ := io.ReadAll(conn)
+				received <- input
+				time.Sleep(100 * time.Millisecond)
+				if reply != nil {
+					conn.Write(reply)
+				} else {
+					conn.Write(input)
+				}
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, received
+}
+
+// tlsDataScript runs body with socket s once connected, or straight away if body
+// declares early. It reports events other than data, and the bytes received as hex.
+func tlsDataScript(port int, ca, setup, body string) string {
+	return fmt.Sprintf(`
+const ev = [];
+const chunks = [];
+const s = require('tls').connect({host: 'localhost', port: %d, ca: %q}, () => {
+  ev.push('secureConnect');
+  %s
+});
+s.on('data', (d) => chunks.push(d));
+for (const name of ['end', 'finish', 'drain']) s.on(name, () => ev.push(name));
+s.on('error', (e) => ev.push('error:' + e.code));
+s.on('close', (hadError) => {
+  ev.push('close:' + hadError);
+  done({ ev, hex: Buffer.concat(chunks).toString('hex') });
+});
+%s`, port, ca, body, setup)
+}
+
+func TestTLSSocket_BinaryDataIsUnchanged(t *testing.T) {
+	every := make([]byte, 256)
+	for i := range every {
+		every[i] = byte(i)
+	}
+	cases := []struct {
+		name  string
+		bytes []byte
+	}{
+		{"NUL and high bytes", []byte{0x00, 0x01, 0xff, 0xfe, 0x80, 0x41}},
+		{"leading NUL", []byte{0x00, 0x41}},
+		{"every byte value", every},
+		{"invalid UTF-8", []byte{0xc3, 0x28, 0xed, 0xa0, 0x80}},
+	}
+	ca := newTestCA(t)
+	for _, tc := range cases {
+		want := hex.EncodeToString(tc.bytes)
+		t.Run(tc.name+" echoed", func(t *testing.T) {
+			port := newTLSServer(t, ca.issue(t, "localhost"))
+			result := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const expected = %d;
+const chunks = [];
+const s = require('tls').connect({host: 'localhost', port: %d, ca: %q}, () => s.write(Buffer.from(%q, 'hex')));
+s.on('data', (d) => {
+  chunks.push(d);
+  if (Buffer.concat(chunks).length >= expected) s.destroy();
+});
+s.on('error', (e) => done({ error: e.code }));
+s.on('close', () => done({ hex: Buffer.concat(chunks).toString('hex') }));
+setTimeout(() => s.destroy(), 5000);`, len(tc.bytes), port, ca.pem, want))
+			if result["hex"] != want {
+				t.Fatalf("result = %v, want %s", result, want)
+			}
+		})
+		t.Run(tc.name+" each direction", func(t *testing.T) {
+			// The fixed reply shows that neither direction undoes the other's damage.
+			reply := append([]byte{0xee}, tc.bytes...)
+			port, received := newTLSReplyServer(t, ca.issue(t, "localhost"), reply)
+			result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", fmt.Sprintf(`s.end(Buffer.from(%q, 'hex'));`, want)))
+			if got := hex.EncodeToString(<-received); got != want {
+				t.Errorf("server received %s, want %s", got, want)
+			}
+			if result["hex"] != hex.EncodeToString(reply) {
+				t.Errorf("client received %v, want %x", result["hex"], reply)
+			}
+		})
+	}
+}
+
+func TestTLSSocket_DataTypes(t *testing.T) {
+	ca := newTestCA(t)
+	port, received := newTLSReplyServer(t, ca.issue(t, "localhost"), nil)
+	cases := []struct{ name, call, want string }{
+		{"Uint8Array", `s.end(new Uint8Array([0, 200, 255]));`, "00c8ff"},
+		{"latin1 string", `s.end('ÿ\u0080', 'latin1');`, "ff80"},
+		{"utf8 string", `s.end('héllo €');`, "68c3a96c6c6f20e282ac"},
+		{"hex string", `s.write('6869', 'hex'); s.end();`, "6869"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", tc.call))
+			if got := hex.EncodeToString(<-received); got != tc.want {
+				t.Errorf("server received %s, want %s", got, tc.want)
+			}
+			if result["hex"] != tc.want {
+				t.Errorf("client received %v, want %s", result["hex"], tc.want)
+			}
+		})
+	}
+}
+
+// The events and data in this test are what Node 20.18 produces with the same script.
+func TestTLSSocket_End(t *testing.T) {
+	ca := newTestCA(t)
+	port, _ := newTLSReplyServer(t, ca.issue(t, "localhost"), nil)
+	clean := []any{"secureConnect", "finish", "end", "close:false"}
+	bye := hex.EncodeToString([]byte("bye"))
+
+	cases := []struct {
+		name   string
+		setup  string
+		body   string
+		events []any
+		data   string
+	}{
+		{name: "data is delivered", body: `s.end('bye');`, events: clean, data: bye},
+		{name: "no data", body: `s.end();`, events: clean},
+		{name: "null data", body: `s.end(null);`, events: clean},
+		{name: "before the handshake", setup: `s.end('bye');`, events: clean, data: bye},
+		{name: "writes before the handshake", setup: `s.write('b'); s.write('y'); s.end('e');`, events: clean, data: bye},
+		{name: "twice", body: `s.end('bye'); s.end();`, events: clean, data: bye},
+		{
+			name:   "callbacks run in order",
+			body:   `s.write('b', () => ev.push('writeCb')); s.end('ye', () => ev.push('endCb'));`,
+			events: []any{"secureConnect", "writeCb", "endCb", "finish", "end", "close:false"},
+			data:   bye,
+		},
+		{
+			name:   "callback alone",
+			body:   `s.end(() => ev.push('endCb'));`,
+			events: []any{"secureConnect", "endCb", "finish", "end", "close:false"},
+		},
+		{
+			name:   "encoding and callback",
+			body:   `s.end('627965', 'hex', () => ev.push('endCb'));`,
+			events: []any{"secureConnect", "endCb", "finish", "end", "close:false"},
+			data:   bye,
+		},
+		{
+			name:   "data and callback",
+			body:   `s.end('bye', () => ev.push('endCb'));`,
+			events: []any{"secureConnect", "endCb", "finish", "end", "close:false"},
+			data:   bye,
+		},
+		{
+			name: "write after end",
+			body: `s.end('a'); ev.push('returned:' + s.write('b', (e) => ev.push('writeCb:' + e.code)));`,
+			events: []any{"secureConnect", "returned:false", "writeCb:ERR_STREAM_WRITE_AFTER_END",
+				"error:ERR_STREAM_WRITE_AFTER_END", "close:true"},
+		},
+		{
+			name:   "destroy answers the write in progress",
+			body:   `s.write('z', (e) => ev.push('writeCb:' + e)); s.destroy();`,
+			events: []any{"secureConnect", "writeCb:null", "close:false"},
+		},
+		{
+			name: "destroy cancels what has not started",
+			body: `s.write('a', (e) => ev.push('a:' + e));
+s.write('b', (e) => ev.push('b:' + e.code));
+s.end(() => {});
+s.destroy();`,
+			events: []any{"secureConnect", "a:null", "b:ERR_STREAM_DESTROYED", "close:false"},
+		},
+		{
+			name:   "write after destroy",
+			body:   `s.destroy(); s.write('z', (e) => { ev.push('writeCb:' + e.code); done({ ev, hex: '' }); });`,
+			events: []any{"secureConnect", "close:false", "writeCb:ERR_STREAM_DESTROYED"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, tc.setup, tc.body))
+			if !reflect.DeepEqual(result["ev"], tc.events) {
+				t.Errorf("events = %v, want %v", result["ev"], tc.events)
+			}
+			if result["hex"] != tc.data {
+				t.Errorf("data = %v, want %q", result["hex"], tc.data)
+			}
+		})
+	}
+}
+
+func TestTLSSocket_WritesStayInOrder(t *testing.T) {
+	ca := newTestCA(t)
+	port, received := newTLSReplyServer(t, ca.issue(t, "localhost"), []byte{})
+	runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", `
+for (let i = 0; i < 200; i++) s.write(String(i % 10).repeat(100));
+s.end();`))
+	input := <-received
+	if len(input) != 20000 {
+		t.Fatalf("server received %d bytes", len(input))
+	}
+	for i, b := range input {
+		if want := byte('0' + (i/100)%10); b != want {
+			t.Fatalf("byte %d = %c, want %c", i, b, want)
+		}
+	}
+}
+
+func TestTLSSocket_Backpressure(t *testing.T) {
+	ca := newTestCA(t)
+	port, received := newTLSReplyServer(t, ca.issue(t, "localhost"), []byte{})
+
+	t.Run("small write", func(t *testing.T) {
+		result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", `ev.push('returned:' + s.write('x')); s.end();`))
+		if want := []any{"secureConnect", "returned:true", "finish", "end", "close:false"}; !reflect.DeepEqual(result["ev"], want) {
+			t.Errorf("events = %v", result["ev"])
+		}
+		<-received
+	})
+	t.Run("large write", func(t *testing.T) {
+		result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", `
+ev.push('returned:' + s.write(Buffer.alloc(1 << 20, 0xab)));
+s.once('drain', () => s.end());`))
+		if want := []any{"secureConnect", "returned:false", "drain", "finish", "end", "close:false"}; !reflect.DeepEqual(result["ev"], want) {
+			t.Errorf("events = %v", result["ev"])
+		}
+		input := <-received
+		if len(input) != 1<<20 || input[0] != 0xab || input[len(input)-1] != 0xab {
+			t.Errorf("server received %d bytes", len(input))
+		}
+	})
+}
+
+func TestTLSSocket_LargeEcho(t *testing.T) {
+	ca := newTestCA(t)
+	port := newTLSServer(t, ca.issue(t, "localhost"))
+	result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", `
+const big = Buffer.alloc(1 << 20);
+for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 0xff;
+s.end(big);
+s.on('close', () => { done({ ev, match: Buffer.concat(chunks).equals(big) }); });`))
+	if result["match"] != true {
+		t.Fatalf("result = %v", result)
+	}
+}
+
+func TestTLSSocket_PeerEndsFirst(t *testing.T) {
+	ca := newTestCA(t)
+	cert := ca.issue(t, "localhost")
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	received := make(chan []byte, 2)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.Write([]byte("hi"))
+				conn.(*tls.Conn).CloseWrite()
+				input, _ := io.ReadAll(conn)
+				received <- input
+			}()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+	hi := hex.EncodeToString([]byte("hi"))
+
+	t.Run("closes by default", func(t *testing.T) {
+		result := runJS(t, &runtime.Config{}, tlsDataScript(port, ca.pem, "", ``))
+		if want := []any{"secureConnect", "end", "finish", "close:false"}; !reflect.DeepEqual(result["ev"], want) {
+			t.Errorf("events = %v", result["ev"])
+		}
+		if result["hex"] != hi {
+			t.Errorf("data = %v", result["hex"])
+		}
+		<-received
+	})
+	t.Run("allowHalfOpen keeps the sending side", func(t *testing.T) {
+		result := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const ev = [];
+const s = require('tls').connect({host: 'localhost', port: %d, ca: %q, allowHalfOpen: true});
+for (const name of ['end', 'finish']) s.on(name, () => ev.push(name));
+s.on('end', () => setTimeout(() => s.end('late'), 50));
+s.on('error', (e) => ev.push('error:' + e.code));
+s.on('close', (hadError) => { ev.push('close:' + hadError); done({ ev }); });`, port, ca.pem))
+		if want := []any{"end", "finish", "close:false"}; !reflect.DeepEqual(result["ev"], want) {
+			t.Errorf("events = %v", result["ev"])
+		}
+		if got := string(<-received); got != "late" {
+			t.Errorf("server received %q", got)
+		}
+	})
+}
+
+// As in Node, end leaves the socket open until the peer finishes too.
+func TestTLSSocket_EndWaitsForPeer(t *testing.T) {
+	ca := newTestCA(t)
+	cert := ca.issue(t, "localhost")
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.Copy(io.Discard, conn)
+		<-release
+	}()
+	result := runJS(t, &runtime.Config{}, tlsDataScript(ln.Addr().(*net.TCPAddr).Port, ca.pem, "", `
+s.end('bye');
+setTimeout(() => { ev.push('destroy'); s.destroy(); }, 200);`))
+	if want := []any{"secureConnect", "finish", "destroy", "close:false"}; !reflect.DeepEqual(result["ev"], want) {
+		t.Errorf("events = %v", result["ev"])
+	}
+}
+
+// hidingFactory gives out sockets without their CloseWrite method.
+type hidingFactory struct {
+	runtime.RealSocketFactory
+	hideTCP, hideTLS bool
+}
+
+func (f *hidingFactory) CreateTCPSocket() runtime.TCPSocket {
+	socket := f.RealSocketFactory.CreateTCPSocket()
+	if f.hideTCP {
+		return struct{ runtime.TCPSocket }{socket}
+	}
+	return socket
+}
+
+func (f *hidingFactory) CreateTLSSocket(socket runtime.TCPSocket, config *tls.Config, isServer bool) runtime.TCPSocket {
+	wrapped := f.RealSocketFactory.CreateTLSSocket(socket, config, isServer)
+	if f.hideTLS {
+		return struct{ runtime.TCPSocket }{wrapped}
+	}
+	return wrapped
+}
+
+func TestTLSSocket_EndThroughInjectedSockets(t *testing.T) {
+	ca := newTestCA(t)
+	port, received := newTLSReplyServer(t, ca.issue(t, "api.test", "localhost"), nil)
+	target := "127.0.0.1:" + strconv.Itoa(port)
+	redirect := func() *recordingFactory { return &recordingFactory{redirect: map[string]string{"localhost": target}} }
+	bye := hex.EncodeToString([]byte("bye"))
+	clean := []any{"secureConnect", "finish", "end", "close:false"}
+
+	cases := []struct {
+		name    string
+		factory runtime.SocketFactory
+	}{
+		{"custom factory", redirect()},
+		{"filtered factory", runtime.NewFilteredSocketFactory(redirect(), runtime.NewAllowAllPolicy())},
+		{"close_notify alone when TCP cannot half-close", &hidingFactory{hideTCP: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runJS(t, &runtime.Config{SocketFactory: tc.factory}, tlsDataScript(port, ca.pem, "", `s.end('bye');`))
+			if !reflect.DeepEqual(result["ev"], clean) {
+				t.Errorf("events = %v", result["ev"])
+			}
+			if result["hex"] != bye {
+				t.Errorf("data = %v", result["hex"])
+			}
+			if got := string(<-received); got != "bye" {
+				t.Errorf("server received %q", got)
+			}
+		})
+	}
+
+	// The written data still arrives, but a socket that cannot half-close has to close,
+	// so no reply can come back.
+	t.Run("falls back to closing when TLS cannot half-close", func(t *testing.T) {
+		result := runJS(t, &runtime.Config{SocketFactory: &hidingFactory{hideTLS: true}}, tlsDataScript(port, ca.pem, "", `s.end('bye');`))
+		if events := result["ev"].([]any); len(events) == 0 || events[len(events)-1] != "close:false" {
+			t.Errorf("events = %v", result["ev"])
+		}
+		if got := string(<-received); got != "bye" {
+			t.Errorf("server received %q", got)
+		}
+	})
 }

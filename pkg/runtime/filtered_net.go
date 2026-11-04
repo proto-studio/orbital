@@ -127,6 +127,11 @@ func (s *FilteredTCPSocket) Close() error {
 	return s.underlying.Close()
 }
 
+// CloseWrite delegates to the underlying socket.
+func (s *FilteredTCPSocket) CloseWrite() error {
+	return CloseWrite(s.underlying)
+}
+
 // SetTimeout delegates to the underlying socket.
 func (s *FilteredTCPSocket) SetTimeout(d time.Duration) error {
 	return s.underlying.SetTimeout(d)

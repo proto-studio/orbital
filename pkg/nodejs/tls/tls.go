@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,7 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 		"connect":            t.connectFunc,
 		"write":              t.writeFunc,
 		"read":               t.readFunc,
+		"shutdown":           t.shutdownFunc,
 		"close":              t.closeFunc,
 		"getPeerCertificate": t.getPeerCertificateFunc,
 		"getCipher":          t.getCipherFunc,
@@ -224,6 +226,8 @@ func (t *TLS) jsonString(encoded []byte) *v8.Value {
 	return val
 }
 
+// writeFunc is write(id, base64Data, callback). Bytes cross the boundary as base64
+// because a JavaScript string cannot carry them unchanged.
 func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
@@ -231,8 +235,12 @@ func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	id := int64(args[0].Integer())
-	data := args[1].String()
 	callback := args[2]
+	data, err := base64.StdEncoding.DecodeString(args[1].String())
+	if err != nil {
+		t.callCallback(callback, "tls: invalid write data", nil)
+		return nil
+	}
 
 	t.mu.Lock()
 	conn, ok := t.sockets[id]
@@ -248,7 +256,7 @@ func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer t.rt.EventLoop().DonePendingWork()
 
-		_, err := socket.Write([]byte(data))
+		_, err := socket.Write(data)
 
 		t.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -262,6 +270,8 @@ func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
+// readFunc is read(id, callback). The callback receives base64 data, or null at the
+// end of the stream.
 func (t *TLS) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -286,22 +296,61 @@ func (t *TLS) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer t.rt.EventLoop().DonePendingWork()
 
 		buf := make([]byte, 65536)
-		n, err := socket.Read(buf)
+		n, _ := socket.Read(buf)
+
+		// crypto/tls can return data and EOF together when close_notify follows the last
+		// record. The data comes first; the next read reports the end again.
+		var encoded string
+		if n > 0 {
+			encoded = base64.StdEncoding.EncodeToString(buf[:n])
+		}
 
 		t.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			if err != nil {
-				if err.Error() == "EOF" || n == 0 {
-					t.callCallback(callback, "", ctx.Null())
-				} else {
-					t.callCallback(callback, err.Error(), nil)
-				}
-			} else if n == 0 {
+			ctx := t.rt.Context()
+			if n == 0 {
 				t.callCallback(callback, "", ctx.Null())
-			} else {
-				dataStr, _ := ctx.NewString(string(buf[:n]))
-				t.callCallback(callback, "", dataStr)
+				return
 			}
+			dataStr, _ := ctx.NewString(encoded)
+			t.callCallback(callback, "", dataStr)
+		})
+	}()
+
+	return nil
+}
+
+// shutdownFunc is shutdown(id, callback). It finishes the sending side and leaves the
+// receiving side open. A socket from a factory that cannot half-close is closed
+// outright, which still delivers what was written but ends the read side too. The
+// peer being gone already is not an error, as in Node.
+func (t *TLS) shutdownFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
+		return nil
+	}
+
+	callback := args[1]
+
+	t.mu.Lock()
+	conn, ok := t.sockets[int64(args[0].Integer())]
+	t.mu.Unlock()
+
+	if !ok {
+		t.callCallback(callback, "", nil)
+		return nil
+	}
+	socket := conn.socket
+
+	t.rt.EventLoop().AddPendingWork()
+	go func() {
+		defer t.rt.EventLoop().DonePendingWork()
+
+		if errors.Is(runtime.CloseWrite(socket), errors.ErrUnsupported) {
+			socket.Close()
+		}
+
+		t.rt.EventLoop().EnqueueMicrotask(func() {
+			t.callCallback(callback, "", nil)
 		})
 	}()
 
