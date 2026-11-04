@@ -1,0 +1,34 @@
+# Every pull request into main must link an accepted issue, or be labeled as a standard change.
+#
+# This uses pull_request_target so that a pull request can't edit this check to pass itself: the workflow
+# and script both come from the base branch. That's only safe because this job never checks out or runs
+# code from the pull request, and its token can only read.
+name: Change link
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions: {}
+
+jobs:
+  change-link:
+    name: Change link
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Check out the base branch only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Check the pull request's link
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/change-link.mjs
