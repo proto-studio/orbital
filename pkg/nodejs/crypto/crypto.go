@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"hash"
 	"sync"
@@ -54,13 +55,13 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// Register functions
 	funcs := map[string]v8.FunctionCallback{
-		"randomBytes":     c.randomBytesFunc,
-		"randomUUID":      c.randomUUIDFunc,
-		"randomInt":       c.randomIntFunc,
-		"createHash":      c.createHashFunc,
-		"createHmac":      c.createHmacFunc,
-		"getHashes":       c.getHashesFunc,
-		"timingSafeEqual": c.timingSafeEqualFunc,
+		"randomBytes":      c.randomBytesFunc,
+		"randomUUID":       c.randomUUIDFunc,
+		"randomInt":        c.randomIntFunc,
+		"createHash":       c.createHashFunc,
+		"createHmac":       c.createHmacFunc,
+		"getHashes":        c.getHashesFunc,
+		"_timingSafeEqual": c.timingSafeEqualFunc,
 		// KeyObject API (native Go; see keyobject.go). These low-level helpers
 		// take/return strings + integer handles and are wrapped by the JS
 		// KeyObject class installed in keyObjectJS below.
@@ -102,6 +103,41 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 (function() {
 	const crypto = __crypto_module;
 
+	// Bytes cross into Go as base64. A latin1 "wire-string" cannot carry them:
+	// Value.String() reads a C string, so it stops at the first NUL byte.
+
+	// viewBytes copies the bytes a TypedArray or DataView actually spans.
+	// Buffer.from(view) is not equivalent: it narrows each element of a wider
+	// TypedArray to one byte and reads a DataView as zeros. The copy also means
+	// later changes to the caller's buffer cannot alter the digest.
+	function viewBytes(view) {
+		return Buffer.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+	}
+
+	function dataBytes(data, inputEncoding) {
+		if (typeof data === 'string') {
+			return Buffer.from(data, inputEncoding || 'utf8');
+		}
+		if (ArrayBuffer.isView(data)) {
+			return viewBytes(data);
+		}
+		const err = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+		err.code = 'ERR_INVALID_ARG_TYPE';
+		throw err;
+	}
+
+	function keyBytes(key) {
+		if (typeof key === 'string') {
+			return Buffer.from(key, 'utf8');
+		}
+		return ArrayBuffer.isView(key) ? viewBytes(key) : Buffer.from(key);
+	}
+
+	function encodeDigest(hexDigest, encoding) {
+		const digest = Buffer.from(hexDigest, 'hex');
+		return encoding && Buffer.isEncoding(encoding) ? digest.toString(encoding) : digest;
+	}
+
 	// Hash class
 	class Hash {
 		constructor(algorithm) {
@@ -110,32 +146,13 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		}
 
 		update(data, inputEncoding) {
-			// Normalize every chunk to a latin1 wire-string (one character per
-			// byte) so binary content survives the crossing into Go intact. String
-			// inputs are encoded with their declared encoding (default utf8, as in
-			// Node); Buffers/typed arrays are already bytes. Pushing raw strings or
-			// UTF-8 code points here would let the Go side re-encode bytes >= 0x80
-			// and corrupt the hash (e.g. utf8 etags over multibyte input).
-			if (typeof data === 'string') {
-				this._data.push(Buffer.from(data, inputEncoding || 'utf8').toString('latin1'));
-			} else if (data instanceof Uint8Array || data instanceof Buffer) {
-				this._data.push(Buffer.from(data).toString('latin1'));
-			}
+			this._data.push(dataBytes(data, inputEncoding));
 			return this;
 		}
 
 		digest(encoding) {
-			const result = crypto._hashDigest(this._algorithm, this._data.join(''));
-			if (!encoding || encoding === 'buffer') {
-				return Buffer.from(result, 'hex');
-			}
-			if (encoding === 'hex') {
-				return result;
-			}
-			if (encoding === 'base64') {
-				return Buffer.from(result, 'hex').toString('base64');
-			}
-			return result;
+			const data = Buffer.concat(this._data).toString('base64');
+			return encodeDigest(crypto._hashDigest(this._algorithm, data), encoding);
 		}
 
 		copy() {
@@ -149,37 +166,44 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	class Hmac {
 		constructor(algorithm, key) {
 			this._algorithm = algorithm;
-			// Keep the key as a latin1 wire-string (byte-per-character) so the Go
-			// side can recover the exact key bytes.
-			this._key = typeof key === 'string'
-				? Buffer.from(key, 'utf8').toString('latin1')
-				: Buffer.from(key).toString('latin1');
+			this._key = keyBytes(key);
 			this._data = [];
 		}
 
 		update(data, inputEncoding) {
-			if (typeof data === 'string') {
-				this._data.push(Buffer.from(data, inputEncoding || 'utf8').toString('latin1'));
-			} else if (data instanceof Uint8Array || data instanceof Buffer) {
-				this._data.push(Buffer.from(data).toString('latin1'));
-			}
+			this._data.push(dataBytes(data, inputEncoding));
 			return this;
 		}
 
 		digest(encoding) {
-			const result = crypto._hmacDigest(this._algorithm, this._key, this._data.join(''));
-			if (!encoding || encoding === 'buffer') {
-				return Buffer.from(result, 'hex');
-			}
-			if (encoding === 'hex') {
-				return result;
-			}
-			if (encoding === 'base64') {
-				return Buffer.from(result, 'hex').toString('base64');
-			}
-			return result;
+			const key = this._key.toString('base64');
+			const data = Buffer.concat(this._data).toString('base64');
+			return encodeDigest(crypto._hmacDigest(this._algorithm, key, data), encoding);
 		}
 	}
+
+	function timingSafeBytes(value, name) {
+		if (ArrayBuffer.isView(value)) {
+			return viewBytes(value);
+		}
+		if (value instanceof ArrayBuffer) {
+			return Buffer.from(value);
+		}
+		const err = new TypeError('The "' + name + '" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.');
+		err.code = 'ERR_INVALID_ARG_TYPE';
+		throw err;
+	}
+
+	crypto.timingSafeEqual = function(a, b) {
+		const bytesA = timingSafeBytes(a, 'buf1');
+		const bytesB = timingSafeBytes(b, 'buf2');
+		if (bytesA.length !== bytesB.length) {
+			const err = new RangeError('Input buffers must have the same byte length');
+			err.code = 'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH';
+			throw err;
+		}
+		return crypto._timingSafeEqual(bytesA.toString('base64'), bytesB.toString('base64'));
+	};
 
 	// Wrap createHash to return Hash instance
 	const originalCreateHash = crypto.createHash;
@@ -356,7 +380,10 @@ func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	algorithm := args[0].String()
-	data := args[1].String()
+	data, err := base64.StdEncoding.DecodeString(args[1].String())
+	if err != nil {
+		return ctx.Throw("crypto: invalid digest input: " + err.Error())
+	}
 
 	var h hash.Hash
 	switch algorithm {
@@ -374,9 +401,7 @@ func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	// data is a latin1 wire-string (one code point per byte); recover the exact
-	// bytes rather than re-encoding as UTF-8, which would corrupt any byte >= 0x80.
-	h.Write(latin1Bytes(data))
+	h.Write(data)
 	result := hex.EncodeToString(h.Sum(nil))
 
 	val, _ := ctx.NewString(result)
@@ -392,8 +417,14 @@ func (c *Crypto) hmacDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	algorithm := args[0].String()
-	key := args[1].String()
-	data := args[2].String()
+	key, err := base64.StdEncoding.DecodeString(args[1].String())
+	if err != nil {
+		return ctx.Throw("crypto: invalid hmac key: " + err.Error())
+	}
+	data, err := base64.StdEncoding.DecodeString(args[2].String())
+	if err != nil {
+		return ctx.Throw("crypto: invalid digest input: " + err.Error())
+	}
 
 	var h func() hash.Hash
 	switch algorithm {
@@ -411,15 +442,16 @@ func (c *Crypto) hmacDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	// key and data are latin1 wire-strings; decode to exact bytes.
-	mac := hmac.New(h, latin1Bytes(key))
-	mac.Write(latin1Bytes(data))
+	mac := hmac.New(h, key)
+	mac.Write(data)
 	result := hex.EncodeToString(mac.Sum(nil))
 
 	val, _ := ctx.NewString(result)
 	return val
 }
 
+// timingSafeEqualFunc compares two base64-encoded byte strings. The JS wrapper
+// validates the arguments, including that their lengths match.
 func (c *Crypto) timingSafeEqualFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -428,60 +460,17 @@ func (c *Crypto) timingSafeEqualFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.False()
 	}
 
-	// Get data from both arguments
-	var a, b []byte
-
-	if args[0].IsString() {
-		a = []byte(args[0].String())
-	} else {
-		// Assume Buffer/Uint8Array - get as hex string
-		hexA, _ := args[0].Get("toString")
-		if hexA != nil && hexA.IsFunction() {
-			hexArg, _ := ctx.NewString("hex")
-			hexVal, _ := hexA.Call(args[0], hexArg)
-			if hexVal != nil {
-				a, _ = hex.DecodeString(hexVal.String())
-			}
-		}
+	a, err := base64.StdEncoding.DecodeString(args[0].String())
+	if err != nil {
+		return ctx.Throw("timingSafeEqual: " + err.Error())
+	}
+	b, err := base64.StdEncoding.DecodeString(args[1].String())
+	if err != nil {
+		return ctx.Throw("timingSafeEqual: " + err.Error())
 	}
 
-	if args[1].IsString() {
-		b = []byte(args[1].String())
-	} else {
-		hexB, _ := args[1].Get("toString")
-		if hexB != nil && hexB.IsFunction() {
-			hexArg, _ := ctx.NewString("hex")
-			hexVal, _ := hexB.Call(args[1], hexArg)
-			if hexVal != nil {
-				b, _ = hex.DecodeString(hexVal.String())
-			}
-		}
-	}
-
-	if len(a) != len(b) {
-		return ctx.False()
-	}
-
-	// Constant-time comparison
-	var diff byte
-	for i := 0; i < len(a); i++ {
-		diff |= a[i] ^ b[i]
-	}
-
-	if diff == 0 {
+	if subtleConstEq(a, b) {
 		return ctx.True()
 	}
 	return ctx.False()
-}
-
-// latin1Bytes recovers raw bytes from a latin1 wire-string that arrived from V8
-// (decoded as UTF-8 runes) by taking the low byte of each code point. It is the
-// inverse of the JS-side Buffer.toString('latin1') convention used to carry
-// arbitrary bytes across the Go/JS boundary without UTF-8 mangling.
-func latin1Bytes(s string) []byte {
-	out := make([]byte, 0, len(s))
-	for _, r := range s {
-		out = append(out, byte(r))
-	}
-	return out
 }
