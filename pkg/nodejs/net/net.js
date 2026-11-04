@@ -422,7 +422,8 @@
     _destroy(exception, cb) {
       this.connecting = false;
       this._clearTimeoutTimer();
-      this._hadError = !!exception;
+      // http marks this too, to report a connection's failure only once.
+      if (exception) this._hadError = true;
       this._closeTransport();
 
       const inFlight = this._writeInFlight;
@@ -435,7 +436,7 @@
 
       cb(exception);
       process.nextTick(() => {
-        this.emit('close', this._hadError);
+        this.emit('close', !!exception);
         if (this._server) {
           this._server._connections--;
           this._server._emitCloseIfDrained();

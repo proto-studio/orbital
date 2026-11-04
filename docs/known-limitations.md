@@ -109,8 +109,25 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no
   `session` event fires. `tls.rootCertificates` is empty.
 - **`TLSSocket` can only wrap a `net.Socket`,** not an arbitrary stream.
-- **The HTTP parser is stricter than Node in places.** A request with a non-chunked final
-  `Transfer-Encoding` is refused before the handler runs, where Node runs the handler first.
+- **The HTTP parser is stricter than Node in places.** All of these are refused, because
+  another hop could read the same bytes differently:
+  - a non-chunked final `Transfer-Encoding`, before the handler runs, where Node runs the
+    handler first
+  - bare LF or bare CR line endings, including in responses
+  - a space before a header's colon, or a space inside its name, where Node accepts both on
+    headers that don't decide framing
+  - extra spaces in the start line, and HTTP/0.9 requests with no version
+  - an empty `Transfer-Encoding`
+  - a `Content-Length` above 2^53 - 1
+  - a trailing tab on `Transfer-Encoding` in a response, where Node reads to EOF
+  - chunk extensions with no name or value (`;=b`, `;a=`)
+- **The HTTP parser follows the spec where Node is stricter on things that can't move a
+  message's end.** Several chunk extensions on one line and escapes inside a quoted one are
+  accepted. A `Connection: close` trailer is ignored rather than closing the connection.
+- **A request followed by garbage in the same packet** gets `'aborted'` rather than `'end'`,
+  because the rejection tears the connection down before `'end'` is delivered.
+- **A 204 or 304 response never has a body,** as the HTTP spec says. Node reads one if it
+  has a `Content-Length`.
 - **`'finish'` on a response can come after the request's `'end'`,** because it waits for
   the write to complete on another thread.
 - **Sockets cannot be made from file descriptors,** and `server.listen` cannot take a handle.
