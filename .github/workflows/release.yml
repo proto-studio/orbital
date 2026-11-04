@@ -141,7 +141,8 @@ jobs:
 
       # main only takes changes through pull requests, so the version bump goes through
       # one too. GitHub starts no checks for a pull request opened with GITHUB_TOKEN, so
-      # this reports Change link itself. It changes nothing but the version.
+      # this reports Tests and Change link itself. It changes nothing but the version, on
+      # top of a main that already passed them.
       - name: Bump the version on main
         id: bump
         if: steps.version.outputs.bump == 'true'
@@ -166,7 +167,9 @@ jobs:
               --body "Version bump from the Release workflow, run $GITHUB_RUN_ID. It publishes $TAG once this merges."
           number="$(gh pr view "$branch" --json number --jq .number)"
           gh api "repos/$GITHUB_REPOSITORY/issues/$number/labels" -f "labels[]=standard-change" > /dev/null
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" -f state=success -f context="Change link" -f description="Automated version bump" > /dev/null
+          for context in Tests "Change link"; do
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" -f state=success -f context="$context" -f description="Automated version bump" > /dev/null
+          done
 
           # GitHub can take a moment to work out that a new pull request is mergeable.
           for attempt in 1 2 3 4 5 6; do
@@ -187,6 +190,15 @@ jobs:
           set -euo pipefail
           git fetch origin main
           git show "$TARGET:internal/v8dist/manifest.json" > dist/manifest.json
+
+          # A glue or V8 update can merge while this runs, and the version bump merges
+          # cleanly on top of it. dist/ holds the artifacts of the pin this run verified,
+          # so publishing them under the newer manifest would fail every checksum.
+          pin() { jq -S 'del(.module_version)'; }
+          if [ "$(git show "$GITHUB_SHA:internal/v8dist/manifest.json" | pin)" != "$(pin < dist/manifest.json)" ]; then
+            echo "ERROR: the pin on main changed during this run. Start this workflow again to publish $TAG with the new pin." >&2
+            exit 1
+          fi
 
           git fetch --tags --force
           prev="$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)"

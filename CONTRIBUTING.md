@@ -365,7 +365,7 @@ A Release is a separate step that publishes whatever `main` pins at that point.
   against the pinned libraries, and if the glue changed, rebuilds it first:
   - **"Changed"** means `glue_inputs` in `internal/v8dist/manifest.json` no longer matches
     the hash from `scripts/glue-inputs.sh`, which covers the glue's sources, the script
-    that compiles it, and the V8 version.
+    that compiles it, and the Makefile. Any Makefile change rebuilds the glue.
   - **The rebuild** calls `glue.yml`, which commits a re-pinned manifest to the pull
     request's branch, so **pull before pushing again**. The tests then run against those
     exact artifacts, and the results are reported on that new commit.
@@ -373,6 +373,10 @@ A Release is a separate step that publishes whatever `main` pins at that point.
     it either way and push; the hash won't match, so CI rebuilds and re-pins.
   - **Forks** can't be committed to, so the `Check glue` job fails if a fork changes the
     glue. A maintainer needs to push the branch to this repository instead.
+  - **Changing V8** isn't something a glue rebuild can do, because it reuses the pinned V8
+    libraries. `Check glue` fails if the Makefile's `V8_VERSION` differs from the manifest.
+    GN args have the same limit but no such check: change them on an
+    `automated/update-v8-*` branch, which does a full build.
 - `.github/workflows/update-v8.yml` — Weekly or by hand, detects a newer stable V8 and
   (create-only) opens a **draft** PR early, so a PR exists no matter what happens next.
   It builds the V8 libraries for every target, calls `glue.yml` to compile the glue
@@ -384,8 +388,9 @@ A Release is a separate step that publishes whatever `main` pins at that point.
   belongs to this repo, `source_commit` matches, checksums match, the pin matches the
   glue and V8 version on `main`), re-downloads the **same** artifacts by run id (platform
   libs + `v8-headers`), merges a pull request that bumps the version, then tags and
-  publishes. Never rebuilds. If it fails after the bump merges, run it again and it
-  publishes that version rather than bumping again.
+  publishes. Never rebuilds. If it fails after the bump merges, including because a new
+  pin merged during the run, run it again and it publishes that version rather than
+  bumping again.
 
 Actions artifacts expire after 90 days. Publish a pin before then, or rebuild it.
 

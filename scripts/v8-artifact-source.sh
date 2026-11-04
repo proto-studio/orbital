@@ -17,4 +17,6 @@ if [ "$published" = "$(grep '"sha256"' "$manifest")" ]; then
 else
   echo "V8_ARTIFACT_SOURCE=actions"
   echo "V8_ACTIONS_RUN_ID=$(field source_run_id)"
+  # The run belongs to the manifest's repo, which may not be this clone's remote.
+  echo "GH_REPO=$(field owner)/$(field repo)"
 fi

@@ -8,8 +8,9 @@ name: CI
 # and two pull requests that both rebuild it conflict in the manifest rather than
 # one silently overwriting the other.
 #
-# update-v8.yml does all this itself for automated/update-v8-* branches, and its
-# runs pin to the same branch, so this stays out of the way there.
+# update-v8.yml does all this itself for automated/update-v8-* branches in this repo,
+# and its runs pin to the same branch, so this stays out of the way there. It doesn't
+# run for forks, so a fork's branch with that name gets checked here like any other.
 on:
   pull_request:
     branches: [main]
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   check-glue:
     name: Check glue
-    if: ${{ !startsWith(github.head_ref, 'automated/update-v8-') }}
+    if: ${{ github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'automated/update-v8-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,6 +41,14 @@ jobs:
         env:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
+          # A glue rebuild reuses the pinned V8 libraries, so it can't move to another V8.
+          makefile_v8="$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
+          manifest_v8="$(jq -r .v8_version internal/v8dist/manifest.json)"
+          if [ "$makefile_v8" != "$manifest_v8" ]; then
+            echo "::error::The Makefile pins V8 $makefile_v8 but the manifest has $manifest_v8. Changing V8 needs a full build, so use the Update V8 workflow."
+            exit 1
+          fi
+
           if [ "$(bash scripts/glue-inputs.sh)" = "$(jq -r '.glue_inputs // ""' internal/v8dist/manifest.json)" ]; then
             echo "stale=false" >> "$GITHUB_OUTPUT"
             echo "The pinned glue is up to date."
@@ -82,7 +91,7 @@ jobs:
   tests:
     name: Tests
     needs: [check-glue, glue, test]
-    if: ${{ always() && !startsWith(github.head_ref, 'automated/update-v8-') }}
+    if: ${{ always() && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'automated/update-v8-')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
