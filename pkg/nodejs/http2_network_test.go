@@ -136,9 +136,9 @@ func TestHTTP2UsesInjectedControls(t *testing.T) {
 	factory := &recordingFactory{redirect: map[string]string{"203.0.113.10": srv.addr}}
 
 	result := runJS(t, &runtime.Config{
-		DNSResolver:    resolver,
-		SocketFactory:  factory,
-		HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool},
+		DNSResolver:     resolver,
+		SocketFactory:   factory,
+		ClientTLSConfig: &tls.Config{RootCAs: ca.pool},
 	}, getScript(fmt.Sprintf("https://api.test:%d", srv.port), "{}"))
 
 	if result["body"] != "hello" || result["proto"] != "HTTP/2.0" {
@@ -279,9 +279,9 @@ func TestHTTP2SkipsDeniedAddressesOfAName(t *testing.T) {
 	srv := newH2Server(t, ca.issue(t, "mixed.test"))
 	underlying := &recordingFactory{redirect: map[string]string{"203.0.113.20": srv.addr}}
 	result := runJS(t, &runtime.Config{
-		DNSResolver:    &recordingResolver{hosts: map[string][]string{"mixed.test": {"127.0.0.1", "203.0.113.20"}}},
-		SocketFactory:  runtime.NewFilteredSocketFactory(underlying, runtime.CommonPolicies.NoPrivateNetworks()),
-		HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool},
+		DNSResolver:     &recordingResolver{hosts: map[string][]string{"mixed.test": {"127.0.0.1", "203.0.113.20"}}},
+		SocketFactory:   runtime.NewFilteredSocketFactory(underlying, runtime.CommonPolicies.NoPrivateNetworks()),
+		ClientTLSConfig: &tls.Config{RootCAs: ca.pool},
 	}, getScript(fmt.Sprintf("https://mixed.test:%d", srv.port), "{}"))
 	if result["body"] != "hello" {
 		t.Fatalf("result = %v", result)
@@ -311,9 +311,9 @@ func TestHTTP2AllowedPublicDestinationsWork(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			underlying := &recordingFactory{redirect: map[string]string{"203.0.113.30": srv.addr}}
 			result := runJS(t, &runtime.Config{
-				DNSResolver:    &recordingResolver{hosts: map[string][]string{"public.test": {"203.0.113.30"}}},
-				SocketFactory:  runtime.NewFilteredSocketFactory(underlying, policy),
-				HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool},
+				DNSResolver:     &recordingResolver{hosts: map[string][]string{"public.test": {"203.0.113.30"}}},
+				SocketFactory:   runtime.NewFilteredSocketFactory(underlying, policy),
+				ClientTLSConfig: &tls.Config{RootCAs: ca.pool},
 			}, getScript(fmt.Sprintf("https://public.test:%d", srv.port), "{}"))
 			if result["body"] != "hello" || result["status"] != float64(200) {
 				t.Fatalf("result = %v", result)
@@ -431,7 +431,7 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 		}
 	})
 	t.Run("embedder roots work", func(t *testing.T) {
-		result := runJS(t, &runtime.Config{HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool}},
+		result := runJS(t, &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}},
 			getScript(fmt.Sprintf("https://localhost:%d", good.port), "{}"))
 		if result["body"] != "hello" {
 			t.Fatalf("result = %v", result)
@@ -451,7 +451,7 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 		"guest servername":   fmt.Sprintf("{ ca: %q, servername: 'wrong.example' }", ca.pem),
 	} {
 		t.Run("locked config ignores "+name, func(t *testing.T) {
-			result := runJS(t, &runtime.Config{HTTP2TLSConfig: &tls.Config{RootCAs: newTestCA(t).pool}},
+			result := runJS(t, &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: newTestCA(t).pool}},
 				getScript(fmt.Sprintf("https://localhost:%d", wrong.port), option))
 			if _, ok := result["sessionError"]; !ok {
 				t.Fatalf("expected a certificate failure, result = %v", result)
@@ -460,8 +460,8 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 	}
 	t.Run("locked config ignores env override", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{
-			HTTP2TLSConfig: &tls.Config{RootCAs: newTestCA(t).pool},
-			Environment:    runtime.NewSandboxedEnvironment(map[string]string{"NODE_TLS_REJECT_UNAUTHORIZED": "0"}),
+			ClientTLSConfig: &tls.Config{RootCAs: newTestCA(t).pool},
+			Environment:     runtime.NewSandboxedEnvironment(map[string]string{"NODE_TLS_REJECT_UNAUTHORIZED": "0"}),
 		}, getScript(fmt.Sprintf("https://localhost:%d", wrong.port), "{}"))
 		if _, ok := result["sessionError"]; !ok {
 			t.Fatalf("expected a certificate failure, result = %v", result)
@@ -502,7 +502,7 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 }
 
 func secureConfig(ca *testCA) *runtime.Config {
-	return &runtime.Config{HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool}}
+	return &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}}
 }
 
 func waitCancelled(t *testing.T, srv *h2Server) {
@@ -759,9 +759,9 @@ func TestHTTP2ConnectionReuse(t *testing.T) {
 	srv := newH2Server(t, ca.issue(t, "reuse.test"))
 	factory := &recordingFactory{redirect: map[string]string{"203.0.113.40": srv.addr}}
 	cfg := &runtime.Config{
-		DNSResolver:    &recordingResolver{hosts: map[string][]string{"reuse.test": {"203.0.113.40"}}},
-		SocketFactory:  factory,
-		HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool},
+		DNSResolver:     &recordingResolver{hosts: map[string][]string{"reuse.test": {"203.0.113.40"}}},
+		SocketFactory:   factory,
+		ClientTLSConfig: &tls.Config{RootCAs: ca.pool},
 	}
 	result := runJS(t, cfg, fmt.Sprintf(`
 const http2 = require('http2');
@@ -798,9 +798,9 @@ func TestHTTP2AuthorityHeaderCannotChangeDestination(t *testing.T) {
 	srv := newH2Server(t, ca.issue(t, "localhost"))
 	factory := &recordingFactory{redirect: map[string]string{"203.0.113.50": srv.addr}}
 	result := runJS(t, &runtime.Config{
-		DNSResolver:    &recordingResolver{hosts: map[string][]string{"localhost": {"203.0.113.50"}}},
-		SocketFactory:  factory,
-		HTTP2TLSConfig: &tls.Config{RootCAs: ca.pool},
+		DNSResolver:     &recordingResolver{hosts: map[string][]string{"localhost": {"203.0.113.50"}}},
+		SocketFactory:   factory,
+		ClientTLSConfig: &tls.Config{RootCAs: ca.pool},
 	}, fmt.Sprintf(`
 const http2 = require('http2');
 const session = http2.connect('https://localhost:%d');

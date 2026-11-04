@@ -177,7 +177,9 @@ type SocketFactory interface {
 	// CreateUDPSocket creates a new UDP socket.
 	CreateUDPSocket(socketType string) UDPSocket
 
-	// CreateTLSSocket wraps a TCP socket with TLS.
+	// CreateTLSSocket wraps a TCP socket with TLS. Connect must perform the handshake
+	// with config: node:tls verifies certificates through it, and refuses a connection
+	// made without it.
 	CreateTLSSocket(socket TCPSocket, config *tls.Config, isServer bool) TCPSocket
 }
 
@@ -420,47 +422,54 @@ type RealTLSSocket struct {
 	tlsConn    *tls.Conn
 	config     *tls.Config
 	isServer   bool
+	closed     bool
 	mu         sync.Mutex
 }
 
-// Connect establishes a TLS connection by first connecting the underlying socket then performing the TLS handshake.
+// Connect establishes a TLS connection by first connecting the underlying socket then
+// performing the TLS handshake. The lock is not held across the handshake, so a peer
+// that never answers cannot prevent Close from interrupting it.
 func (s *RealTLSSocket) Connect(ctx context.Context, address string, port int) error {
-	// First connect the underlying socket
 	if err := s.underlying.Connect(ctx, address, port); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Get the underlying connection
-	realSocket, ok := s.underlying.(*RealTCPSocket)
-	if !ok {
-		return errors.New("TLS requires real TCP socket")
+	if s.closed {
+		s.mu.Unlock()
+		s.underlying.Close()
+		return ErrSocketClosed
 	}
 
-	realSocket.mu.Lock()
-	conn := realSocket.conn
-	realSocket.mu.Unlock()
+	// A real socket's connection keeps the deadlines tls.Conn sets when closing.
+	conn := NewSocketConn(s.underlying)
+	if realSocket, ok := s.underlying.(*RealTCPSocket); ok {
+		realSocket.mu.Lock()
+		conn = realSocket.conn
+		realSocket.mu.Unlock()
+	}
 
-	// Wrap with TLS
 	if s.isServer {
 		s.tlsConn = tls.Server(conn, s.config)
 	} else {
 		s.tlsConn = tls.Client(conn, s.config)
 	}
+	tlsConn := s.tlsConn
+	s.mu.Unlock()
 
-	return s.tlsConn.Handshake()
+	return tlsConn.HandshakeContext(ctx)
 }
 
 // Write sends encrypted data over the TLS connection.
 func (s *RealTLSSocket) Write(data []byte) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.tlsConn == nil {
+	tlsConn := s.tlsConn
+	s.mu.Unlock()
+
+	if tlsConn == nil {
 		return 0, ErrSocketClosed
 	}
-	return s.tlsConn.Write(data)
+	return tlsConn.Write(data)
 }
 
 // Read receives and decrypts data from the TLS connection.
@@ -480,6 +489,7 @@ func (s *RealTLSSocket) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.closed = true
 	if s.tlsConn != nil {
 		s.tlsConn.Close()
 		s.tlsConn = nil

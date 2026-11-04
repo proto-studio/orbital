@@ -3,11 +3,21 @@ package tls
 
 import (
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	_ "embed"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/tlsclient"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -18,15 +28,33 @@ var tlsJS string
 // TLS provides TLS/SSL functionality.
 type TLS struct {
 	rt       *runtime.Runtime
-	sockets  map[int64]runtime.TCPSocket
+	sockets  map[int64]*connection
 	socketID int64
 	mu       sync.Mutex
+}
+
+// connection is one tls.connect socket. verifier is nil for a server-side socket.
+type connection struct {
+	socket   runtime.TCPSocket
+	verifier *tlsclient.Verifier
+	host     string
+	ctx      context.Context
+	cancel   context.CancelFunc
+}
+
+// connectResult is what the JavaScript connect callback receives.
+type connectResult struct {
+	Message              string `json:"message,omitempty"`
+	Code                 string `json:"code,omitempty"`
+	Authorized           bool   `json:"authorized"`
+	AuthorizationError   string `json:"authorizationError,omitempty"`
+	ScriptChecksIdentity bool   `json:"scriptChecksIdentity"`
 }
 
 // New creates a new TLS module.
 func New() *TLS {
 	return &TLS{
-		sockets: make(map[int64]runtime.TCPSocket),
+		sockets: make(map[int64]*connection),
 	}
 }
 
@@ -88,26 +116,43 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 func (t *TLS) createTLSSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
+	if len(args) < 3 {
+		return ctx.Throw("tls: invalid connect options")
+	}
 
-	isServer := false
-	if len(args) > 0 {
-		isServer = args[0].Boolean()
+	isServer := args[0].Boolean()
+	host := args[1].String()
+
+	var opts tlsclient.Options
+	if err := json.Unmarshal([]byte(args[2].String()), &opts); err != nil {
+		return ctx.Throw("tls: invalid connect options")
+	}
+
+	config := &tls.Config{}
+	var verifier *tlsclient.Verifier
+	if !isServer {
+		var err error
+		if verifier, err = tlsclient.New(t.rt.ClientTLSConfig(), host, opts); err != nil {
+			// Returned rather than thrown so JavaScript can attach the code.
+			msg, code := tlsclient.Describe(err, host, 0)
+			encoded, _ := json.Marshal(connectResult{Message: strings.TrimPrefix(msg, code+": "), Code: code})
+			return t.jsonString(encoded)
+		}
+		config = verifier.Config
 	}
 
 	// Create underlying TCP socket first
 	tcpSocket := t.rt.SocketFactory().CreateTCPSocket()
 
-	// Create TLS config
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // For demo - should be configurable
-	}
-
 	// Wrap with TLS
-	tlsSocket := t.rt.SocketFactory().CreateTLSSocket(tcpSocket, tlsConfig, isServer)
+	tlsSocket := t.rt.SocketFactory().CreateTLSSocket(tcpSocket, config, isServer)
+
+	conn := &connection{socket: tlsSocket, verifier: verifier, host: host}
+	conn.ctx, conn.cancel = context.WithCancel(t.rt.ExecutionContext())
 
 	t.mu.Lock()
 	id := atomic.AddInt64(&t.socketID, 1)
-	t.sockets[id] = tlsSocket
+	t.sockets[id] = conn
 	t.mu.Unlock()
 
 	return ctx.NewNumber(float64(id))
@@ -115,22 +160,20 @@ func (t *TLS) createTLSSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 func (t *TLS) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 5 {
+	if len(args) < 3 {
 		return nil
 	}
 
 	id := int64(args[0].Integer())
-	host := args[1].String()
-	port := int(args[2].Integer())
-	// servername is args[3] - used for SNI
-	callback := args[4]
+	port := int(args[1].Integer())
+	callback := args[2]
 
 	t.mu.Lock()
-	socket, ok := t.sockets[id]
+	conn, ok := t.sockets[id]
 	t.mu.Unlock()
 
 	if !ok {
-		t.callCallback(callback, "Socket not found", nil)
+		t.deliverConnect(callback, connectResult{Message: "Socket not found"})
 		return nil
 	}
 
@@ -138,18 +181,47 @@ func (t *TLS) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer t.rt.EventLoop().DonePendingWork()
 
-		err := socket.Connect(context.Background(), host, port)
+		err := conn.socket.Connect(conn.ctx, conn.host, port)
+		if err == nil && conn.verifier != nil {
+			err = conn.verifier.Check()
+		}
+		result := resultOf(conn, port, err)
 
 		t.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
-				t.callCallback(callback, err.Error(), nil)
-			} else {
-				t.callCallback(callback, "", nil)
-			}
+			t.deliverConnect(callback, result)
 		})
 	}()
 
 	return nil
+}
+
+func resultOf(conn *connection, port int, err error) connectResult {
+	var result connectResult
+	if err != nil {
+		result.Message, result.Code = tlsclient.Describe(err, conn.host, port)
+	}
+	if conn.verifier == nil {
+		return result
+	}
+	result.Authorized = conn.verifier.Authorized()
+	result.ScriptChecksIdentity = conn.verifier.ScriptChecksIdentity()
+	if authErr := conn.verifier.AuthorizationError(); authErr != nil {
+		_, result.AuthorizationError = tlsclient.Describe(authErr, conn.host, port)
+	}
+	return result
+}
+
+func (t *TLS) deliverConnect(callback *v8.Value, result connectResult) {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		encoded = []byte(`{"message":"tls: internal error"}`)
+	}
+	t.callCallback(callback, "", t.jsonString(encoded))
+}
+
+func (t *TLS) jsonString(encoded []byte) *v8.Value {
+	val, _ := t.rt.Context().NewString(string(encoded))
+	return val
 }
 
 func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -163,13 +235,14 @@ func (t *TLS) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	callback := args[2]
 
 	t.mu.Lock()
-	socket, ok := t.sockets[id]
+	conn, ok := t.sockets[id]
 	t.mu.Unlock()
 
 	if !ok {
 		t.callCallback(callback, "Socket not found", nil)
 		return nil
 	}
+	socket := conn.socket
 
 	t.rt.EventLoop().AddPendingWork()
 	go func() {
@@ -199,13 +272,14 @@ func (t *TLS) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	callback := args[1]
 
 	t.mu.Lock()
-	socket, ok := t.sockets[id]
+	conn, ok := t.sockets[id]
 	t.mu.Unlock()
 
 	if !ok {
 		t.callCallback(callback, "Socket not found", nil)
 		return nil
 	}
+	socket := conn.socket
 
 	t.rt.EventLoop().AddPendingWork()
 	go func() {
@@ -243,24 +317,117 @@ func (t *TLS) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	id := int64(args[0].Integer())
 
 	t.mu.Lock()
-	socket, ok := t.sockets[id]
+	conn, ok := t.sockets[id]
 	if ok {
 		delete(t.sockets, id)
 	}
 	t.mu.Unlock()
 
-	if ok && socket != nil {
-		socket.Close()
+	if ok {
+		conn.cancel()
+		conn.socket.Close()
 	}
 
 	return nil
 }
 
+// getPeerCertificateFunc returns the peer's certificate as JSON, or undefined if the
+// handshake has not received one.
 func (t *TLS) getPeerCertificateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
-	// Return empty object - would need actual cert parsing
-	obj, _ := ctx.NewObject()
-	return obj
+	args := info.Args()
+	if len(args) < 1 {
+		return ctx.Undefined()
+	}
+
+	t.mu.Lock()
+	conn, ok := t.sockets[int64(args[0].Integer())]
+	t.mu.Unlock()
+	if !ok || conn.verifier == nil {
+		return ctx.Undefined()
+	}
+	peer := conn.verifier.PeerCertificates()
+	if len(peer) == 0 {
+		return ctx.Undefined()
+	}
+	encoded, err := json.Marshal(describeCertificate(peer[0]))
+	if err != nil {
+		return ctx.Undefined()
+	}
+	return t.jsonString(encoded)
+}
+
+// describeCertificate builds the object Node's getPeerCertificate returns. raw is
+// base64 here and becomes a Buffer in JavaScript.
+func describeCertificate(cert *x509.Certificate) map[string]any {
+	sum1 := sha1.Sum(cert.Raw)
+	sum256 := sha256.Sum256(cert.Raw)
+	sum512 := sha512.Sum512(cert.Raw)
+	const validity = "Jan _2 15:04:05 2006 GMT"
+	out := map[string]any{
+		"subject":        describeName(cert.Subject),
+		"issuer":         describeName(cert.Issuer),
+		"ca":             cert.IsCA,
+		"valid_from":     cert.NotBefore.UTC().Format(validity),
+		"valid_to":       cert.NotAfter.UTC().Format(validity),
+		"fingerprint":    fingerprint(sum1[:]),
+		"fingerprint256": fingerprint(sum256[:]),
+		"fingerprint512": fingerprint(sum512[:]),
+		"serialNumber":   strings.ToUpper(hex.EncodeToString(cert.SerialNumber.Bytes())),
+		"raw":            base64.StdEncoding.EncodeToString(cert.Raw),
+	}
+	if names := altNames(cert); len(names) > 0 {
+		out["subjectaltname"] = strings.Join(names, ", ")
+	}
+	return out
+}
+
+func altNames(cert *x509.Certificate) []string {
+	var names []string
+	for _, name := range cert.DNSNames {
+		names = append(names, "DNS:"+name)
+	}
+	for _, ip := range cert.IPAddresses {
+		names = append(names, "IP Address:"+ip.String())
+	}
+	for _, uri := range cert.URIs {
+		names = append(names, "URI:"+uri.String())
+	}
+	for _, email := range cert.EmailAddresses {
+		names = append(names, "email:"+email)
+	}
+	return names
+}
+
+// describeName lists a field once as a string, or as an array if it repeats, as Node does.
+func describeName(name pkix.Name) map[string]any {
+	out := map[string]any{}
+	add := func(key string, values []string) {
+		switch len(values) {
+		case 0:
+		case 1:
+			out[key] = values[0]
+		default:
+			out[key] = values
+		}
+	}
+	add("C", name.Country)
+	add("ST", name.Province)
+	add("L", name.Locality)
+	add("O", name.Organization)
+	add("OU", name.OrganizationalUnit)
+	if name.CommonName != "" {
+		out["CN"] = name.CommonName
+	}
+	return out
+}
+
+func fingerprint(sum []byte) string {
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = strings.ToUpper(hex.EncodeToString([]byte{b}))
+	}
+	return strings.Join(parts, ":")
 }
 
 func (t *TLS) getCipherFunc(info *v8.FunctionCallbackInfo) *v8.Value {

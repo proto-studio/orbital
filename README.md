@@ -138,11 +138,29 @@ configuration, so one process can host parents with different sandboxes.
   `ResolvedTCPSocket`; otherwise it receives only the IP.
 - Certificates are verified. As in Node, scripts may opt out for a connection with
   `rejectUnauthorized`, `ca` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set
-  `Config.HTTP2TLSConfig` (`&tls.Config{}` for the system roots) to make your TLS
+  `Config.ClientTLSConfig` (`&tls.Config{}` for the system roots) to make your TLS
   configuration authoritative so scripts cannot change it.
 - `HTTPClient` cannot carry HTTP/2. If you inject one but leave `SocketFactory` as real
   sockets, `http2.connect` fails with `ERR_HTTP2_TRANSPORT_UNAVAILABLE` rather than
   connecting around your restrictions.
+
+### TLS
+
+`tls.connect` verifies certificates as Node does: the chain, then the hostname. A failure
+closes the connection with Node's error code, such as `DEPTH_ZERO_SELF_SIGNED_CERT` or
+`ERR_TLS_CERT_ALTNAME_INVALID`.
+
+- As in Node, scripts may change or skip this with `rejectUnauthorized`, `ca`,
+  `checkServerIdentity` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set `Config.ClientTLSConfig`
+  (`&tls.Config{}` for the system roots) to make your TLS configuration authoritative for
+  both `node:tls` and `node:http2`.
+- A custom `SocketFactory` must run the `*tls.Config` given to `CreateTLSSocket` during
+  `Connect`. A connection made without it fails with `ERR_TLS_CERT_NOT_VERIFIED`, unless
+  `ClientTLSConfig` has set `InsecureSkipVerify`.
+- `tls.connect` connects by name through `SocketFactory`, so unlike HTTP/2 it does not use
+  `Config.DNSResolver` and a policy checks only the name.
+- `tls.createServer` does not encrypt yet. See
+  [`docs/known-limitations.md`](docs/known-limitations.md).
 
 ## Packages
 

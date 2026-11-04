@@ -1206,16 +1206,15 @@
       session.once('connect', listener);
     }
 
-    let rejectUnauthorized = options.rejectUnauthorized;
-    if (rejectUnauthorized === undefined) {
-      const env = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-      rejectUnauthorized = env !== '0';
-    }
+    // As in Node, the environment only supplies a default for an absent option.
+    const rejectUnauthorized = Object.prototype.hasOwnProperty.call(options, 'rejectUnauthorized')
+      ? options.rejectUnauthorized
+      : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
 
     const nativeOptions = {
       scheme: session._scheme,
       rejectUnauthorized: rejectUnauthorized !== false,
-      ca: pemList(options.ca),
+      ca: options.ca ? pemList(options.ca) : null,
       cert: pemText(options.cert),
       key: pemText(options.key),
       servername: options.servername || ''
