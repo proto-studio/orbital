@@ -23,7 +23,11 @@
 
   const tokenRe = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
   const invalidHeaderValueRe = /[^\t\x20-\x7e\x80-\xff]/;
-  const invalidPathRe = /[^!-ÿ]/;
+  const invalidPathRe = /[^!-~\x80-\xff]/;
+  const requestTargetRe = /^(?:\/|\*|[a-zA-Z]+:\/\/)/;
+  const validVersions = new Set(['0.9', '1.0', '1.1', '2.0']);
+  // RFC 9112 chunk-ext, with no whitespace around its separators.
+  const chunkExtRe = /^(?:;[!#$%&'*+\-.^_`|~0-9A-Za-z]+(?:=(?:[!#$%&'*+\-.^_`|~0-9A-Za-z]+|"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*"))?)*$/;
 
   function isToken(s) {
     return typeof s === 'string' && tokenRe.test(s);
@@ -72,6 +76,7 @@
       this.handlers = handlers;
       this.maxHeaderSize = (options && options.maxHeaderSize) || kMaxHeaderSize;
       this.pending = null;
+      this.failed = null;
       this.reset();
     }
 
@@ -80,11 +85,23 @@
       this.remaining = 0;
       this.chunked = false;
       this.untilClose = false;
+      this.closeAfter = false;
       this.paused = false;
     }
 
-    // Consumes data, and returns any bytes left over after a protocol switch.
+    // Consumes data, and returns any bytes left over after a protocol switch. Once a message
+    // has been rejected nothing after it can be trusted, so the rejection is final.
     execute(data) {
+      if (this.failed) throw this.failed;
+      try {
+        return this.consume(data);
+      } catch (err) {
+        if (isParseError(err)) this.failed = err;
+        throw err;
+      }
+    }
+
+    consume(data) {
       this.pending = this.pending && this.pending.length ? Buffer.concat([this.pending, data]) : data;
       while (this.pending && this.pending.length > 0) {
         if (this.state === 'head') {
@@ -104,7 +121,8 @@
           this.pending = null;
           return rest;
         } else if (this.state === 'closed') {
-          throw parseError('HPE_CLOSED_CONNECTION', 'Data after Connection: close');
+          // The last request has been read. Whatever follows is not a request.
+          this.pending = null;
         }
       }
       return this.state === 'upgraded' ? Buffer.alloc(0) : null;
@@ -112,6 +130,7 @@
 
     // The peer has closed. A body with no framing ends here.
     finish() {
+      if (this.failed) return null;
       if (this.state === 'body' && this.untilClose) {
         this.complete();
         return null;
@@ -191,7 +210,10 @@
       if (invalidPathRe.test(m[2])) {
         throw parseError('HPE_INVALID_URL', 'Invalid characters in url');
       }
-      if (m[3] !== '1' && m[3] !== '0' && m[3] !== '2') {
+      if (m[1] !== 'CONNECT' && !requestTargetRe.test(m[2])) {
+        throw parseError('HPE_INVALID_URL', 'Unexpected start char in url');
+      }
+      if (!validVersions.has(`${m[3]}.${m[4]}`)) {
         throw parseError('HPE_INVALID_VERSION', 'Invalid HTTP version');
       }
       return { method: m[1], url: m[2], major: +m[3], minor: +m[4] };
@@ -200,6 +222,9 @@
     parseStatusLine(line) {
       const m = /^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/.exec(line);
       if (!m) throw parseError('HPE_INVALID_CONSTANT', 'Expected HTTP/');
+      if (!validVersions.has(`${m[1]}.${m[2]}`)) {
+        throw parseError('HPE_INVALID_VERSION', 'Invalid HTTP version');
+      }
       return { statusCode: +m[3], statusMessage: m[4] || '', major: +m[1], minor: +m[2] };
     }
 
@@ -218,6 +243,16 @@
         const value = line.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/g, '');
         if (invalidHeaderValueRe.test(value)) {
           throw parseError('HPE_INVALID_HEADER_TOKEN', 'Invalid header value char');
+        }
+        // Hops disagree about a trailing tab on the headers that decide where a message ends.
+        if (/\t[ \t]*$/.test(line)) {
+          const lower = name.toLowerCase();
+          if (lower === 'content-length') {
+            throw parseError('HPE_INVALID_CONTENT_LENGTH', 'Invalid character in Content-Length');
+          }
+          if (lower === 'transfer-encoding') {
+            throw parseError('HPE_INVALID_TRANSFER_ENCODING', 'Invalid `Transfer-Encoding` header value');
+          }
         }
         raw.push(name, value);
       }
@@ -238,10 +273,14 @@
           if (!/^\d+$/.test(value)) {
             throw parseError('HPE_INVALID_CONTENT_LENGTH', 'Invalid character in Content-Length');
           }
-          if (contentLength !== null && contentLength !== Number(value)) {
-            throw parseError('HPE_UNEXPECTED_CONTENT_LENGTH', 'Content-Length can\'t be present with different values');
+          if (contentLength !== null) {
+            throw parseError('HPE_UNEXPECTED_CONTENT_LENGTH', 'Content-Length can\'t be present more than once');
           }
           contentLength = Number(value);
+          // Past this, two different lengths could look equal and a body could not be counted.
+          if (!Number.isSafeInteger(contentLength)) {
+            throw parseError('HPE_INVALID_CONTENT_LENGTH', 'Content-Length overflow');
+          }
         } else if (name === 'transfer-encoding') {
           transferEncoding = transferEncoding === null ? value : `${transferEncoding}, ${value}`;
         } else if (name === 'connection') {
@@ -252,9 +291,9 @@
       }
 
       const connectionTokens = connection.toLowerCase().split(',').map((t) => t.trim());
-      info.shouldKeepAlive = info.major === 1 && info.minor >= 1
-        ? !connectionTokens.includes('close')
-        : connectionTokens.includes('keep-alive');
+      // Asked for both, close wins: the safe reading if another hop saw only that.
+      info.shouldKeepAlive = !connectionTokens.includes('close')
+        && ((info.major === 1 && info.minor >= 1) || connectionTokens.includes('keep-alive'));
       const wantsUpgrade = upgradeHeader && connectionTokens.includes('upgrade');
 
       let chunked = false;
@@ -262,21 +301,14 @@
       if (transferEncoding !== null) {
         const codings = transferEncoding.toLowerCase().split(',').map((t) => t.trim());
         const lastIsChunked = codings[codings.length - 1] === 'chunked';
-        if (this.type === 'request') {
-          if (!lastIsChunked) {
-            throw parseError('HPE_INVALID_TRANSFER_ENCODING', 'Request has invalid `Transfer-Encoding`');
-          }
-          if (contentLength !== null) {
-            throw parseError('HPE_UNEXPECTED_CONTENT_LENGTH', 'Content-Length can\'t be present with Transfer-Encoding');
-          }
-          chunked = true;
-        } else if (lastIsChunked) {
-          chunked = true;
-          contentLength = null;
-        } else {
-          unframedResponse = true;
-          contentLength = null;
+        if (this.type === 'request' && (!lastIsChunked || codings.indexOf('chunked') !== codings.length - 1)) {
+          throw parseError('HPE_INVALID_TRANSFER_ENCODING', 'Request has invalid `Transfer-Encoding`');
         }
+        if (contentLength !== null) {
+          throw parseError('HPE_UNEXPECTED_CONTENT_LENGTH', 'Content-Length can\'t be present with Transfer-Encoding');
+        }
+        chunked = lastIsChunked;
+        unframedResponse = !lastIsChunked;
       }
 
       if (this.type === 'request') {
@@ -290,6 +322,7 @@
         this.state = 'upgraded';
         return;
       }
+      this.closeAfter = this.type === 'request' && !info.shouldKeepAlive;
       if (info.statusCode >= 100 && info.statusCode < 200 && info.statusCode !== 101) {
         this.state = 'head';
         return;
@@ -339,9 +372,10 @@
       let line = this.pending.slice(0, end).toString('latin1');
       if (!line.endsWith('\r')) throw parseError('HPE_CR_EXPECTED', 'Expected CRLF after chunk size');
       line = line.slice(0, -1);
-      const m = /^([0-9a-fA-F]+)(?:[ \t]*;.*)?$/.exec(line);
+      const m = /^0*([0-9a-fA-F]+)(;.*)?$/.exec(line);
       if (!m) throw parseError('HPE_INVALID_CHUNK_SIZE', 'Invalid character in chunk size');
       if (m[1].length > 12) throw parseError('HPE_INVALID_CHUNK_SIZE', 'Chunk size overflow');
+      if (m[2] && !chunkExtRe.test(m[2])) throw parseError('HPE_STRICT', 'Invalid character in chunk extensions');
       this.remaining = parseInt(m[1], 16);
       this.pending = this.pending.slice(end + 1);
       this.state = this.remaining === 0 ? 'trailers' : 'chunk-data';
@@ -383,7 +417,9 @@
         line = line.slice(0, -1);
         this.pending = this.pending.slice(end + 1);
         if (line === '') {
-          this.handlers.onTrailers(this.parseHeaderLines(this.trailerText));
+          const raw = this.parseHeaderLines(this.trailerText);
+          this.checkTrailers(raw);
+          this.handlers.onTrailers(raw);
           this.complete();
           return true;
         }
@@ -392,9 +428,22 @@
       }
     }
 
+    // A trailer must not frame a message, and whatever reads these later might believe one.
+    checkTrailers(raw) {
+      for (let i = 0; i < raw.length; i += 2) {
+        const name = raw[i].toLowerCase();
+        if (name === 'transfer-encoding') {
+          throw parseError('HPE_INVALID_TRANSFER_ENCODING', 'Transfer-Encoding can\'t be a trailer');
+        }
+        if (name === 'content-length' && !/^\d+$/.test(raw[i + 1])) {
+          throw parseError('HPE_INVALID_CONTENT_LENGTH', 'Invalid character in Content-Length');
+        }
+      }
+    }
+
     complete() {
       const wasUpgraded = this.state === 'upgraded';
-      this.state = 'head';
+      this.state = this.closeAfter ? 'closed' : 'head';
       this.remaining = 0;
       this.chunked = false;
       this.untilClose = false;
@@ -411,17 +460,23 @@
     'max-forwards', 'proxy-authorization', 'referer', 'retry-after', 'server', 'user-agent'
   ]);
 
+  function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
   function headersFromRaw(raw, joinDuplicates) {
     const headers = {};
     for (let i = 0; i < raw.length; i += 2) {
       const name = raw[i].toLowerCase();
       const value = raw[i + 1];
+      // A peer picks these names, and 'constructor' must not find Object.prototype's.
+      const seen = hasOwn(headers, name);
       if (joinDuplicates) {
-        headers[name] = headers[name] === undefined ? value : `${headers[name]},${value}`;
+        headers[name] = seen ? `${headers[name]},${value}` : value;
       } else if (name === 'set-cookie') {
-        if (headers[name] === undefined) headers[name] = [value];
-        else headers[name].push(value);
-      } else if (headers[name] === undefined) {
+        if (seen) headers[name].push(value);
+        else headers[name] = [value];
+      } else if (!seen) {
         headers[name] = value;
       } else if (singleValueHeaders.has(name)) {
         continue;
@@ -438,8 +493,10 @@
     const out = {};
     for (let i = 0; i < raw.length; i += 2) {
       const name = raw[i].toLowerCase();
-      if (out[name] === undefined) out[name] = [raw[i + 1]];
-      else out[name].push(raw[i + 1]);
+      // Assigning an array here would replace the object's prototype.
+      if (name === '__proto__') continue;
+      if (hasOwn(out, name)) out[name].push(raw[i + 1]);
+      else out[name] = [raw[i + 1]];
     }
     return out;
   }
@@ -2078,6 +2135,7 @@
     server.ServerResponse = options.ServerResponse || ServerResponse;
     server.maxHeaderSize = options.maxHeaderSize;
     server.joinDuplicateHeaders = options.joinDuplicateHeaders;
+    server.requireHostHeader = options.requireHostHeader === undefined ? true : !!options.requireHostHeader;
     server.timeout = 0;
     server.maxHeadersCount = null;
     server.maxRequestsPerSocket = options.maxRequestsPerSocket || 0;
@@ -2234,6 +2292,13 @@
         res.assignSocket(socket);
       }
 
+      if (info.major === 1 && info.minor === 1 && server.requireHostHeader && !hasOwn(req.headers, 'host')) {
+        info.shouldKeepAlive = false;
+        res.writeHead(400, ['Connection', 'close']);
+        res.end();
+        return false;
+      }
+
       const expect = req.headers.expect;
       let handled = false;
       if (expect !== undefined && info.minor >= 1) {
@@ -2349,7 +2414,11 @@
     });
 
     socket.on('end', () => {
-      parser.finish();
+      const finishErr = parser.finish();
+      if (finishErr) {
+        conn.parserError(finishErr, 400);
+        return;
+      }
       if (!server.httpAllowHalfOpen) {
         abortActive();
         if (socket.writable) socket.end();
