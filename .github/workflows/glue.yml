@@ -1,0 +1,210 @@
+name: Build glue
+
+# Compiles libv8go_glue.a for every target, packages it with the V8 libraries into
+# the v8-<goos>-<goarch>.tar.gz artifacts, and commits a manifest that pins them.
+# release.yml later publishes whatever the manifest on main pins.
+#
+# ci.yml calls this for a pull request that changes the glue. update-v8.yml calls it
+# for a new V8 version, since the glue has to compile against the new headers; it
+# can't leave that to ci.yml because a pull request opened with GITHUB_TOKEN doesn't
+# start other workflows.
+#
+# The glue needs V8's headers, compile flags and clang but not its compiled
+# libraries, so this takes minutes rather than the hours of a full V8 build.
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: Branch to build, and to commit the pinned manifest to
+        type: string
+        required: true
+      base_run_id:
+        description: Run with base-v8-<platform> artifacts to use instead of the V8 libraries the manifest pins
+        type: string
+        default: ""
+    outputs:
+      sha:
+        description: The commit with the pinned manifest
+        value: ${{ jobs.pin.outputs.sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    name: Fetch V8 source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Read the pinned V8 version
+        id: v8
+        run: echo "version=$(sed -nE 's/^V8_VERSION := *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      # The same rolling cache as update-v8.yml. Pull requests can restore what main
+      # saved, so this is normally an exact hit.
+      - name: Cache V8 source (shared across platforms)
+        uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ steps.v8.outputs.version }}
+          restore-keys: |
+            v8-src-
+
+      - name: Install fetch dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 curl
+
+      - name: Fetch V8 source
+        run: make v8-fetch V8_VERSION="${{ steps.v8.outputs.version }}" NUM_JOBS=4
+
+  build:
+    name: Build glue (${{ matrix.platform }})
+    needs: fetch
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runs-on: ubuntu-latest
+          - platform: linux-arm64
+            runs-on: ubuntu-latest        # cross-compiled from x64
+          - platform: darwin-arm64
+            runs-on: macos-15
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Derive target
+        id: t
+        run: |
+          platform="${{ matrix.platform }}"
+          {
+            echo "os=${platform%-*}"
+            echo "arch=${platform##*-}"
+            echo "v8=$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore shared V8 source
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ steps.t.outputs.v8 }}
+          restore-keys: |
+            v8-src-
+
+      - name: Install V8 build toolchain (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: bash scripts/ci-install-linux-toolchain.sh
+
+      # A stale out.gn would make V8's landmines gclient hook clobber on sync.
+      - name: Drop any build dir carried in the source cache
+        run: rm -rf v8-build/v8/out.gn
+
+      - name: Fetch + sync V8 (runs hooks)
+        run: make v8-fetch V8_VERSION="${{ steps.t.outputs.v8 }}" NUM_JOBS=4
+
+      - name: Build glue
+        run: |
+          target=(V8_VERSION="${{ steps.t.outputs.v8 }}" TARGET_OS="${{ steps.t.outputs.os }}" TARGET_ARCH="${{ steps.t.outputs.arch }}")
+          make v8-gn-gen "${target[@]}"
+          make package-v8-headers "${target[@]}"
+          make v8-glue "${target[@]}"
+
+      - name: Package with the V8 libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci-package-glue.sh "${{ matrix.platform }}" "${{ inputs.base_run_id }}"
+
+      - name: Upload packaged artifact
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: v8-${{ matrix.platform }}
+          path: |
+            dist/v8-${{ matrix.platform }}.tar.gz
+            dist/v8-${{ matrix.platform }}.tar.gz.sha256
+
+      # Public headers for local glue rebuilds. The same on every platform.
+      - name: Upload V8 headers
+        if: matrix.platform == 'linux-amd64'
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: v8-headers
+          path: |
+            dist/v8-headers.tar.gz
+            dist/v8-headers.tar.gz.sha256
+
+  pin:
+    name: Pin artifacts in manifest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Download packaged artifacts
+        run: |
+          for platform in linux-amd64 linux-arm64 darwin-arm64; do
+            gh run download "$GITHUB_RUN_ID" -n "v8-$platform" -D dist
+          done
+          cd dist
+          for f in *.tar.gz.sha256; do
+            shasum -a 256 -c "$f"
+          done
+
+      # release.yml checks source_commit against the run's head commit. On a pull
+      # request that isn't GITHUB_SHA, which is a temporary merge commit.
+      - name: Assemble manifest
+        run: |
+          make v8-manifest \
+            V8_VERSION="$(sed -nE 's/^V8_VERSION := *//p' Makefile)" \
+            MODULE_VERSION="$(jq -r .module_version internal/v8dist/manifest.json)" \
+            SOURCE_COMMIT="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .head_sha)" \
+            SOURCE_RUN_ID="$GITHUB_RUN_ID" \
+            OWNER="${GITHUB_REPOSITORY%/*}" \
+            REPO="${GITHUB_REPOSITORY#*/}"
+          cat internal/v8dist/manifest.json
+
+      # Pushed with GITHUB_TOKEN, which starts no other workflows, so this never
+      # triggers another build. Callers test and report on this commit themselves.
+      - name: Commit manifest to branch
+        id: commit
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add internal/v8dist/manifest.json
+          if git diff --staged --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "Pin V8 artifacts (run $GITHUB_RUN_ID) in manifest"
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

@@ -3,7 +3,7 @@
 
 Reads every ``v8-<goos>-<goarch>.tar.gz.sha256`` in the dist directory, extracts
 the checksum, and writes a manifest pinning the V8 version, module version, source
-commit/run id, and per-target {filename, sha256}. Consumers embed this manifest to
+commit/run id, glue input hash, and per-target {filename, sha256}. Consumers embed this manifest to
 download the exact, checksum-verified Release asset for their platform.
 """
 import argparse
@@ -42,6 +42,7 @@ def main():
     ap.add_argument("--module-version", required=True)
     ap.add_argument("--commit", default="")
     ap.add_argument("--run-id", default="")
+    ap.add_argument("--glue-inputs", default="")
     ap.add_argument("--owner", required=True)
     ap.add_argument("--repo", required=True)
     ap.add_argument("--output", required=True)
@@ -75,6 +76,7 @@ def main():
         "module_version": args.module_version,
         "source_commit": args.commit,
         "source_run_id": args.run_id,
+        "glue_inputs": args.glue_inputs,
         "owner": args.owner,
         "repo": args.repo,
         "targets": targets,

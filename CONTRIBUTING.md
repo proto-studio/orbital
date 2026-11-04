@@ -57,13 +57,15 @@ You do not need to recompile `libv8_monolith.a` for glue changes.
 | `pkg/v8/csrc/v8go.cc` (C++ glue) | `make v8-glue` then `make build-native` |
 | V8 version, GN flags, or ICU/sandbox/etc. | Full `make v8-native` (30–60+ min) |
 
-GitHub Actions (`.github/workflows/update-v8.yml`) does the multi-platform
-equivalent. Locally, run the same steps for **your host OS/arch only**.
+GitHub Actions does the multi-platform equivalent (see [CI](#ci)). Locally, run the
+same steps for **your host OS/arch only**. A pull request that changes the glue gets
+it rebuilt and pinned by CI, so you only need `make v8-glue` to try it locally.
 
 ### 1. Install a V8 runtime (once)
 
 ```bash
-# Preferred: pinned libs from the published Release (same bits CI validates)
+# Preferred: the libs this commit pins (same bits CI tests). They come from the
+# Release, or from the pinning run's artifacts (needs gh) if they aren't released yet.
 make v8-setup
 
 # Or: build V8 yourself for this machine, then install from dist/
@@ -73,7 +75,7 @@ make v8-setup-local
 
 ### 2. Day-to-day Orbital build / test
 
-Same commands as the CI **validate** job (Release fetch instead of Actions artifacts):
+Same commands as the CI **test** job:
 
 ```bash
 # Linux: sudo apt-get update && sudo apt-get install -y build-essential
@@ -122,8 +124,7 @@ for glue-only work if you have:
 - headers installed under `deps/v8/include`, and
 - a leftover `out.gn` (or another dir with `compile_commands.json` + a working clang)
 
-CI uploads a **`v8-headers`** artifact from every `update-v8` build, and
-`release.yml` publishes the same `v8-headers.tar.gz` (+ `.sha256`) onto the
+CI uploads a **`v8-headers`** artifact from every glue build, and `release.yml` publishes the same `v8-headers.tar.gz` (+ `.sha256`) onto the
 GitHub Release alongside the platform lib tarballs. Install with:
 
 ```bash
@@ -227,10 +228,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make build-native
 |------|---------------|
 | V8 compile (`libv8_monolith.a`) | Per target platform (native, or Linux cross-compiled on x64 in CI) |
 | libc++ archive (`libv8_libcxx.a`) | Alongside the V8 build (Chromium libc++ + libc++abi) |
-| C++ glue compile (`libv8go_glue.a`) | Alongside the V8 build **or** later via `make v8-glue` |
-| Package `v8-<goos>-<goarch>.tar.gz` + sha256 | Alongside the V8 build (into `dist/`) |
-| Package `v8-headers.tar.gz` | Alongside the V8 build; CI uploads as `v8-headers`; published on the Release |
-| Publish Release assets (libs + headers) | CI (`release.yml` on merge) |
+| C++ glue compile (`libv8go_glue.a`) | CI (`glue.yml`), for pull requests and V8 updates; locally via `make v8-native` or `make v8-glue` |
+| Package `v8-<goos>-<goarch>.tar.gz` + sha256 | CI (`glue.yml`); locally alongside the V8 build (into `dist/`) |
+| Package `v8-headers.tar.gz` | CI (`glue.yml`), as `v8-headers`; locally alongside the V8 build; published on the Release |
+| Publish Release assets (libs + headers) | CI (`release.yml`, run by hand) |
 | Fetch into `.v8/` + write cgo link file | Consumer/CI via `cmd/v8setup` (`go generate`) |
 | Go compile + CGO link | Native platform (this host, or a native CI runner) |
 
@@ -279,13 +280,14 @@ make build
 make release
 
 # V8 runtime setup
-make v8-setup              # Fetch pinned libs from the Release into .v8/ + link file
+make v8-setup              # Fetch pinned libs into .v8/ + link file
 make v8-setup-local        # Install a locally built dist/ asset + link file
 make v8-list               # List installed runtimes under .v8/
 
 # V8 build / glue (maintainers + local custom V8)
 make v8-latest             # Latest stable V8 for this platform
 make v8-native             # Full monolith + glue + package libs/headers
+make v8-gn-gen             # Generate the GN output dir (no compile)
 make v8-glue               # Rebuild ONLY libv8go_glue.a
 make v8-headers-setup      # Install headers → deps/v8/include (RUN_ID=… to download)
 make package-v8            # Package libs into dist/
@@ -317,6 +319,7 @@ make clean-all
 | `TARGET_OS` | `darwin` or `linux` | Host OS |
 | `TARGET_ARCH` | `arm64` or `amd64` | Host arch |
 | `V8_VERSION` | V8 version to build | (Makefile pin) |
+| `V8_BUILD_GLUE` | Set to `0` for `v8-build` to skip the glue | `1` |
 | `V8_INCLUDE` | Public headers dir for `v8-glue` | auto-discovered |
 | `V8_OUT_DIR` | GN out dir (`compile_commands.json`) | `v8-build/v8/out.gn/<os>-<arch>` |
 | `RUN_ID` | Actions run id for `v8-headers-setup` | (none) |
@@ -328,7 +331,7 @@ make clean-all
 
 ## Testing
 
-Same commands as the CI **validate** job (after `make v8-setup`):
+Same commands as the CI **test** job (after `make v8-setup`):
 
 ```bash
 make test
@@ -355,54 +358,50 @@ No Docker, no emulation. Linux libraries are cross-compiled on x64 runners
 matching runners. Tests always run on a **native** runner per architecture
 against the exact packaged artifacts — never a rebuild.
 
-- `.github/workflows/update-v8.yml` — The whole update flow in one workflow, with
-  two entry points feeding a shared `build -> manifest -> validate -> ready` chain:
-  - **Dispatch/schedule:** detect a newer stable V8, and (create-only) open a
-    **draft** PR early — bumping `V8_VERSION` + `ModuleVersion` — so a PR exists no
-    matter what happens next. The first build runs in this same run.
-  - **Push to `automated/update-v8-**`:** the developer loop. If the build or tests
-    fail, clone the PR branch, fix it, and push; that reruns build + validate,
-    uploads fresh artifacts, and re-pins the manifest on the same PR. Opening the
-    PR is skipped when the branch already exists, so pushed fixes are never reset.
+The glue and the V8 libraries are updated separately, and neither publishes anything.
+A Release is a separate step that publishes whatever `main` pins at that point.
 
-  Each build packages every target into `v8-<target>.tar.gz`, uploads them as
-  Actions artifacts (plus a shared `v8-headers` artifact for glue-only local
-  rebuilds), commits `internal/v8dist/manifest.json` (pinning **this run's**
-  id + sha256), then `validate` installs those exact artifacts into `.v8/` (the
-  `go generate` flow) and runs `make test`/`make coverage` on a native runner per
-  arch, and finally marks the PR ready. A failure leaves the PR a draft. Because the
-  manifest is re-pinned on every build, it always names the most recent run.
-- `.github/workflows/release.yml` — On merge to `main` (when `manifest.json` changes
-  and the `module_version` tag does not yet exist), verifies provenance (run
-  succeeded, belongs to this repo, `source_commit` matches, checksums match,
-  tag/release absent), re-downloads the **same** artifacts by run id (platform
-  libs + `v8-headers`), then tags and publishes them as a GitHub Release.
-  Never rebuilds.
+- `.github/workflows/ci.yml` — Runs on every pull request into `main`. It runs the tests
+  against the pinned libraries, and if the glue changed, rebuilds it first:
+  - **"Changed"** means `glue_inputs` in `internal/v8dist/manifest.json` no longer matches
+    the hash from `scripts/glue-inputs.sh`, which covers the glue's sources, the script
+    that compiles it, and the V8 version.
+  - **The rebuild** calls `glue.yml`, which commits a re-pinned manifest to the pull
+    request's branch, so **pull before pushing again**. The tests then run against those
+    exact artifacts, and the results are reported on that new commit.
+  - **Two pull requests that both change the glue** conflict in the manifest. Resolve
+    it either way and push; the hash won't match, so CI rebuilds and re-pins.
+  - **Forks** can't be committed to, so the `Check glue` job fails if a fork changes the
+    glue. A maintainer needs to push the branch to this repository instead.
+- `.github/workflows/update-v8.yml` — Weekly or by hand, detects a newer stable V8 and
+  (create-only) opens a **draft** PR early, so a PR exists no matter what happens next.
+  It builds the V8 libraries for every target, calls `glue.yml` to compile the glue
+  against the new headers, and calls `test.yml`, then marks the PR ready. A failure leaves
+  it a draft. If the build or tests fail, clone the `automated/update-v8-*` branch, fix it,
+  and push; that reruns everything and re-pins the manifest on the same PR.
+- `.github/workflows/release.yml` — Run by hand: Actions → Release → Run workflow, or
+  `gh workflow run release.yml -f bump=patch`. It verifies provenance (pin job succeeded,
+  belongs to this repo, `source_commit` matches, checksums match, the pin matches the
+  glue and V8 version on `main`), re-downloads the **same** artifacts by run id (platform
+  libs + `v8-headers`), merges a pull request that bumps the version, then tags and
+  publishes. Never rebuilds. If it fails after the bump merges, run it again and it
+  publishes that version rather than bumping again.
 
-### Go/JS-only release (no V8 rebuild)
+Actions artifacts expire after 90 days. Publish a pin before then, or rebuild it.
 
-`update-v8.yml` compiles V8. Do not dispatch it for a Go or JS change; it also
-no-ops unless upstream V8 has moved.
+### Between releases
 
-A GitHub Release is still required because `cmd/v8setup` downloads libs by
-`module_version` tag. `release.yml` never compiles V8 — it copies the tarballs
-already pinned in `internal/v8dist/manifest.json`.
+`main` can pin libraries that aren't in any Release yet. `module_version` stays at the
+last published version until the next Release, so `go generate` on such a commit fails
+with a checksum error. Consumers should use a tagged version. Inside this repo,
+`make v8-setup` handles it by using the pinning run's artifacts, which needs `gh`.
 
-1. Bump `ModuleVersion` in `internal/v8dist/version.go` and `module_version` in
-   `internal/v8dist/manifest.json`. Leave `v8_version`, `source_run_id`,
-   `source_commit`, and the target sha256s alone. Commit subject: `Cut vX.Y.Z
-   from the existing V8 artifacts.`
-2. Merge to `main`. Release sees a new tag, copies the existing artifacts, and
-   publishes.
+### Release notes
 
-Release notes are the other commits since the previous tag (subject plus body).
-The version-bump commit and `Pin V8 artifacts` commits are left out, and the
-title omits the V8 version when it did not change. Write the note you want
-published in the commit that lands the change, before the version bump.
-
-To retry a publish after fixing the Release workflow itself (no version bump):
-Actions → Release → Run workflow, or `gh workflow run release.yml`. That fails
-if the tag already exists (releases are immutable).
+Release notes are the other commits since the previous tag (subject plus body). The
+`Cut vX.Y.Z` and `Pin V8 artifacts` commits are left out, and the title omits the V8
+version when it did not change. Write the note you want published in the commit that
+lands the change.
 
 The GitHub repository that hosts the Releases is `proto-studio/orbital` (distinct
 from the vanity module path `proto.zip/studio/orbital`).

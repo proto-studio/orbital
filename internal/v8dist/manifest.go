@@ -30,13 +30,17 @@ type Manifest struct {
 	// V8Version is the upstream V8 tag the libraries were built from.
 	V8Version string `json:"v8_version"`
 	// ModuleVersion is the semantic version tag (e.g. "v1.4.2") of this module
-	// and of the GitHub Release that hosts the artifacts.
+	// and of the GitHub Release that hosts the artifacts. Between releases the
+	// targets can be newer than this Release; see scripts/v8-artifact-source.sh.
 	ModuleVersion string `json:"module_version"`
 	// SourceCommit is the commit the artifacts were built from.
 	SourceCommit string `json:"source_commit"`
 	// SourceRunID is the GitHub Actions run id that produced the artifacts.
 	// It lets PR validation download the exact artifacts before a Release exists.
 	SourceRunID string `json:"source_run_id"`
+	// GlueInputs is the hash from scripts/glue-inputs.sh of what the pinned glue
+	// was compiled from. CI rebuilds the glue when it no longer matches.
+	GlueInputs string `json:"glue_inputs"`
 	// Owner/Repo identify the GitHub repository hosting the Releases (this can
 	// differ from the vanity module path).
 	Owner string `json:"owner"`

@@ -1,0 +1,85 @@
+name: Test
+
+# Installs the V8 libraries the way a consumer does (the go generate flow), then
+# runs the tests on a native runner per architecture. Called by ci.yml for pull
+# requests and by update-v8.yml for new V8 builds.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to test
+        type: string
+        required: true
+      run_id:
+        description: Run with the v8-<platform> artifacts to test, if the libraries were just built
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runs-on: ubuntu-latest
+          - platform: linux-arm64
+            runs-on: ubuntu-24.04-arm
+          - platform: darwin-arm64
+            runs-on: macos-15
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Install build dependencies (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # v8setup reads its source from these variables.
+      - name: Choose where to install V8 from
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -n "$RUN_ID" ]; then
+            printf 'V8_ARTIFACT_SOURCE=actions\nV8_ACTIONS_RUN_ID=%s\n' "$RUN_ID" >> "$GITHUB_ENV"
+          else
+            bash scripts/v8-artifact-source.sh >> "$GITHUB_ENV"
+          fi
+
+      - name: Install V8 + generate link file
+        run: go run ./cmd/v8setup -link-out pkg/v8 -link-pkg v8
+
+      - name: Run tests
+        run: make test
+
+      - name: Run coverage
+        run: make coverage
+
+      # Compile every Go example so a consumer-facing break (bad link flags, API
+      # drift) fails the build on each platform, not just the unit tests.
+      - name: Build in-repo Go examples
+        run: bash scripts/build-examples.sh
+
+      # The standalone consumer module (its own go.mod, replace -> repo root) runs
+      # the full `go generate` -> build flow exactly as an external consumer would.
+      - name: Build standalone example module (hellov8)
+        working-directory: examples/hellov8
+        run: |
+          go run proto.zip/studio/orbital/cmd/v8setup -link-out . -link-pkg main
+          CGO_ENABLED=1 go build -o /dev/null .
