@@ -99,19 +99,39 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 	// failure. Node reports the chain first and can continue with the failure recorded,
 	// so verification runs below instead. It covers every handshake, resumed ones included.
 	cfg.InsecureSkipVerify = true
+	nextPeer := cfg.VerifyPeerCertificate
+	cfg.VerifyPeerCertificate = nil
 	next := cfg.VerifyConnection
 	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
-		chain, err := v.verify(cfg, name, cs)
+		chains, err := v.verify(cfg, name, cs)
 		v.mu.Lock()
 		v.ran = true
 		v.authErr = err
 		v.peer = cs.PeerCertificates
-		v.chain = chain
+		v.chain = nil
+		if len(chains) > 0 {
+			v.chain = chains[0]
+		}
 		v.mu.Unlock()
 		if err != nil && v.reject {
 			return err
 		}
+		// The embedder's callbacks see what crypto/tls would have given them: they run
+		// after verification, with its chains unless the embedder itself turned it off.
+		if !v.reject {
+			chains = nil
+		}
+		if nextPeer != nil && !cs.DidResume {
+			raw := make([][]byte, len(cs.PeerCertificates))
+			for i, cert := range cs.PeerCertificates {
+				raw[i] = cert.Raw
+			}
+			if err := nextPeer(raw, chains); err != nil {
+				return err
+			}
+		}
 		if next != nil {
+			cs.VerifiedChains = chains
 			return next(cs)
 		}
 		return nil
@@ -120,7 +140,7 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 	return v, nil
 }
 
-func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) ([]*x509.Certificate, error) {
+func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) ([][]*x509.Certificate, error) {
 	if len(cs.PeerCertificates) == 0 {
 		return nil, errors.New("tls: server provided no certificate")
 	}
@@ -139,10 +159,7 @@ func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) 
 	if err != nil {
 		return nil, &tls.CertificateVerificationError{UnverifiedCertificates: cs.PeerCertificates, Err: err}
 	}
-	if len(chains) > 0 {
-		return chains[0], nil
-	}
-	return nil, nil
+	return chains, nil
 }
 
 // Authorized reports whether the peer's certificate was verified successfully.
