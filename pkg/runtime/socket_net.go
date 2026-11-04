@@ -8,7 +8,11 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 var (
@@ -93,8 +97,8 @@ func CloseWrite(socket TCPSocket) error {
 // NewSocketConn adapts a connected TCPSocket to a net.Conn so protocol stacks
 // such as crypto/tls can run on top of an injected SocketFactory.
 //
-// TCPSocket has no per-call deadlines, so the deadline methods are no-ops;
-// callers interrupt blocked I/O by closing the connection.
+// Deadlines reach the socket if it implements DeadlineSetter and are otherwise no-ops,
+// in which case callers interrupt blocked I/O by closing the connection.
 func NewSocketConn(socket TCPSocket) net.Conn {
 	return &socketConn{socket: socket}
 }
@@ -115,9 +119,26 @@ func (c *socketConn) Close() error {
 	return c.closeErr
 }
 
-func (c *socketConn) SetDeadline(time.Time) error      { return nil }
-func (c *socketConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *socketConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *socketConn) SetDeadline(t time.Time) error {
+	if d, ok := c.socket.(DeadlineSetter); ok {
+		return d.SetDeadline(t)
+	}
+	return nil
+}
+
+func (c *socketConn) SetReadDeadline(t time.Time) error {
+	if d, ok := c.socket.(DeadlineSetter); ok {
+		return d.SetReadDeadline(t)
+	}
+	return nil
+}
+
+func (c *socketConn) SetWriteDeadline(t time.Time) error {
+	if d, ok := c.socket.(DeadlineSetter); ok {
+		return d.SetWriteDeadline(t)
+	}
+	return nil
+}
 
 // socketAddr substitutes a placeholder for sockets that report no address, since
 // net.Conn callers do not expect a nil Addr.
@@ -196,9 +217,9 @@ type SocketFactory interface {
 	// CreateUDPSocket creates a new UDP socket.
 	CreateUDPSocket(socketType string) UDPSocket
 
-	// CreateTLSSocket wraps a TCP socket with TLS. Connect must perform the handshake
-	// with config: node:tls verifies certificates through it, and refuses a connection
-	// made without it.
+	// CreateTLSSocket wraps a TCP socket with TLS. The Node modules do not call this: they
+	// run TLS themselves on a socket from CreateTCPSocket, so certificate verification
+	// does not depend on the factory.
 	CreateTLSSocket(socket TCPSocket, config *tls.Config, isServer bool) TCPSocket
 }
 
@@ -236,10 +257,12 @@ func (f *RealSocketFactory) CreateTLSSocket(socket TCPSocket, config *tls.Config
 
 // RealTCPSocket implements TCPSocket using real network.
 type RealTCPSocket struct {
-	conn    net.Conn
-	mu      sync.Mutex
-	timeout time.Duration
-	ref     bool
+	conn      net.Conn
+	mu        sync.Mutex
+	timeout   time.Duration
+	ref       bool
+	network   string // "" means TCP
+	localAddr net.Addr
 }
 
 // Connect establishes a TCP connection to the specified address and port.
@@ -247,10 +270,19 @@ func (s *RealTCPSocket) Connect(ctx context.Context, address string, port int) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	addr := net.JoinHostPort(address, strconv.Itoa(port))
-
 	dialer := net.Dialer{Timeout: 30 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	var (
+		conn net.Conn
+		err  error
+	)
+	if s.network == "unix" {
+		conn, err = dialer.DialContext(ctx, "unix", address)
+	} else {
+		if s.localAddr != nil {
+			dialer.LocalAddr = s.localAddr
+		}
+		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, strconv.Itoa(port)))
+	}
 	if err != nil {
 		return err
 	}
@@ -314,8 +346,8 @@ func (s *RealTCPSocket) CloseWrite() error {
 	if conn == nil {
 		return ErrSocketClosed
 	}
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		return tcpConn.CloseWrite()
+	if closer, ok := conn.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
 	}
 	return errors.ErrUnsupported
 }
@@ -387,6 +419,7 @@ type RealTCPServer struct {
 	listener net.Listener
 	mu       sync.Mutex
 	ref      bool
+	network  string // "" means TCP
 }
 
 // Listen starts the server listening on the specified address and port.
@@ -394,8 +427,21 @@ func (s *RealTCPServer) Listen(ctx context.Context, address string, port int) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	addr := net.JoinHostPort(address, strconv.Itoa(port))
-	listener, err := net.Listen("tcp", addr)
+	var (
+		listener net.Listener
+		err      error
+	)
+	if s.network == "unix" {
+		listener, err = net.Listen("unix", address)
+	} else {
+		// "tcp" would make 0.0.0.0 a dual-stack wildcard, which also takes IPv6 traffic and
+		// misses a conflict with another listener. "::" stays dual-stack, as in Node.
+		network := "tcp"
+		if ip := net.ParseIP(address); ip != nil && ip.To4() != nil {
+			network = "tcp4"
+		}
+		listener, err = net.Listen(network, net.JoinHostPort(address, strconv.Itoa(port)))
+	}
 	if err != nil {
 		return err
 	}
@@ -866,3 +912,261 @@ func (s *NoOpUDPSocket) Ref() {}
 
 // Unref is a no-op.
 func (s *NoOpUDPSocket) Unref() {}
+
+// DeadlineSetter is an optional extension of TCPSocket for sockets whose blocked reads
+// and writes can be interrupted by a deadline. crypto/tls relies on deadlines to bound
+// the close_notify it sends when closing.
+type DeadlineSetter interface {
+	SetDeadline(t time.Time) error
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+}
+
+// SetDeadline sets the read and write deadlines of the connection.
+func (s *RealTCPSocket) SetDeadline(t time.Time) error {
+	if conn := s.currentConn(); conn != nil {
+		return conn.SetDeadline(t)
+	}
+	return ErrSocketClosed
+}
+
+// SetReadDeadline sets the read deadline of the connection.
+func (s *RealTCPSocket) SetReadDeadline(t time.Time) error {
+	if conn := s.currentConn(); conn != nil {
+		return conn.SetReadDeadline(t)
+	}
+	return ErrSocketClosed
+}
+
+// SetWriteDeadline sets the write deadline of the connection.
+func (s *RealTCPSocket) SetWriteDeadline(t time.Time) error {
+	if conn := s.currentConn(); conn != nil {
+		return conn.SetWriteDeadline(t)
+	}
+	return ErrSocketClosed
+}
+
+func (s *RealTCPSocket) currentConn() net.Conn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn
+}
+
+// LocalBindableTCPSocket is an optional extension of TCPSocket for sockets that can
+// choose their local address before connecting, as Node's localAddress and localPort
+// options need.
+type LocalBindableTCPSocket interface {
+	TCPSocket
+
+	// SetLocalAddr sets the address to connect from.
+	SetLocalAddr(ip string, port int)
+}
+
+// SetLocalAddr sets the address to connect from.
+func (s *RealTCPSocket) SetLocalAddr(ip string, port int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.localAddr = &net.TCPAddr{IP: net.ParseIP(ip), Port: port}
+}
+
+// LingerSetter is an optional extension of TCPSocket for sockets that can discard
+// unsent data on close, as Node's resetAndDestroy needs.
+type LingerSetter interface {
+	SetLinger(seconds int) error
+}
+
+// SetLinger sets SO_LINGER. Zero makes Close send a reset.
+func (s *RealTCPSocket) SetLinger(seconds int) error {
+	if tcpConn, ok := s.currentConn().(*net.TCPConn); ok {
+		return tcpConn.SetLinger(seconds)
+	}
+	return errors.ErrUnsupported
+}
+
+// UnixSocketFactory is an optional extension of SocketFactory for Unix domain sockets.
+// A unix socket's address is a filesystem path and it can reach local services a network
+// policy knows nothing about, so a factory must opt in by implementing this itself.
+type UnixSocketFactory interface {
+	// CreateUnixSocket creates a socket whose Connect takes a path and ignores the port.
+	CreateUnixSocket() TCPSocket
+	// CreateUnixServer creates a server whose Listen takes a path and ignores the port.
+	CreateUnixServer() TCPServer
+}
+
+type realUnixSockets struct{}
+
+func (realUnixSockets) CreateUnixSocket() TCPSocket { return &RealTCPSocket{network: "unix"} }
+func (realUnixSockets) CreateUnixServer() TCPServer { return &RealTCPServer{network: "unix"} }
+
+// UnixSocketsFor returns how factory opens Unix domain sockets, or nil if it does not.
+// RealSocketFactory offers them only as itself: a type that embeds it to restrict TCP must
+// not inherit a way around those restrictions.
+func UnixSocketsFor(factory SocketFactory) UnixSocketFactory {
+	if _, real := factory.(*RealSocketFactory); real {
+		return realUnixSockets{}
+	}
+	if unix, ok := factory.(UnixSocketFactory); ok {
+		return unix
+	}
+	return nil
+}
+
+// ResolvedUDPSocket is an optional extension of UDPSocket for sockets whose policy decides
+// by the requested name as well as the address the name resolved to.
+type ResolvedUDPSocket interface {
+	UDPSocket
+
+	// SendResolved sends to ip, which hostname was resolved to.
+	SendResolved(data []byte, hostname, ip string, port int) (int, error)
+}
+
+// UDPSocketOptions is an optional extension of UDPSocket for the socket options Node's dgram
+// exposes.
+type UDPSocketOptions interface {
+	SetTTL(ttl int) error
+	SetMulticastLoopback(enable bool) error
+	SetMulticastInterface(address string) error
+	JoinSourceGroup(source, group, iface string) error
+	LeaveSourceGroup(source, group, iface string) error
+	SetReadBuffer(size int) error
+	SetWriteBuffer(size int) error
+}
+
+func (s *RealUDPSocket) udpConn() (*net.UDPConn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return nil, ErrSocketClosed
+	}
+	return s.conn, nil
+}
+
+// SetTTL sets the unicast TTL or hop limit.
+func (s *RealUDPSocket) SetTTL(ttl int) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	if s.isIPv6Socket(conn) {
+		return ipv6.NewPacketConn(conn).SetHopLimit(ttl)
+	}
+	return ipv4.NewPacketConn(conn).SetTTL(ttl)
+}
+
+// SetMulticastLoopback sets whether multicast packets return to the local host.
+func (s *RealUDPSocket) SetMulticastLoopback(enable bool) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	if s.isIPv6Socket(conn) {
+		return ipv6.NewPacketConn(conn).SetMulticastLoopback(enable)
+	}
+	return ipv4.NewPacketConn(conn).SetMulticastLoopback(enable)
+}
+
+// SetMulticastInterface chooses the interface multicast packets leave from.
+func (s *RealUDPSocket) SetMulticastInterface(address string) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	iface, err := interfaceForAddress(address)
+	if err != nil {
+		return err
+	}
+	if s.isIPv6Socket(conn) {
+		return ipv6.NewPacketConn(conn).SetMulticastInterface(iface)
+	}
+	return ipv4.NewPacketConn(conn).SetMulticastInterface(iface)
+}
+
+// JoinSourceGroup joins a source-specific multicast group.
+func (s *RealUDPSocket) JoinSourceGroup(source, group, ifaceAddr string) error {
+	return s.sourceGroup(source, group, ifaceAddr, true)
+}
+
+// LeaveSourceGroup leaves a source-specific multicast group.
+func (s *RealUDPSocket) LeaveSourceGroup(source, group, ifaceAddr string) error {
+	return s.sourceGroup(source, group, ifaceAddr, false)
+}
+
+func (s *RealUDPSocket) sourceGroup(source, group, ifaceAddr string, join bool) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	iface, err := interfaceForAddress(ifaceAddr)
+	if err != nil {
+		return err
+	}
+	groupAddr := &net.UDPAddr{IP: net.ParseIP(group)}
+	sourceAddr := &net.UDPAddr{IP: net.ParseIP(source)}
+	if groupAddr.IP == nil || sourceAddr.IP == nil {
+		return syscall.EINVAL
+	}
+	if s.isIPv6Socket(conn) {
+		pc := ipv6.NewPacketConn(conn)
+		if join {
+			return pc.JoinSourceSpecificGroup(iface, groupAddr, sourceAddr)
+		}
+		return pc.LeaveSourceSpecificGroup(iface, groupAddr, sourceAddr)
+	}
+	pc := ipv4.NewPacketConn(conn)
+	if join {
+		return pc.JoinSourceSpecificGroup(iface, groupAddr, sourceAddr)
+	}
+	return pc.LeaveSourceSpecificGroup(iface, groupAddr, sourceAddr)
+}
+
+func (s *RealUDPSocket) isIPv6Socket(conn *net.UDPConn) bool {
+	if s.socketType == "udp6" {
+		return true
+	}
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	return ok && addr.IP.To4() == nil && s.socketType != "udp4"
+}
+
+func interfaceForAddress(address string) (*net.Interface, error) {
+	if address == "" {
+		return nil, nil
+	}
+	ip := net.ParseIP(address)
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	for i := range interfaces {
+		if interfaces[i].Name == address {
+			return &interfaces[i], nil
+		}
+		addrs, err := interfaces[i].Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && ip != nil && ipNet.IP.Equal(ip) {
+				return &interfaces[i], nil
+			}
+		}
+	}
+	return nil, syscall.EADDRNOTAVAIL
+}
+
+// SetReadBuffer sets the size of the receive buffer.
+func (s *RealUDPSocket) SetReadBuffer(size int) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	return conn.SetReadBuffer(size)
+}
+
+// SetWriteBuffer sets the size of the send buffer.
+func (s *RealUDPSocket) SetWriteBuffer(size int) error {
+	conn, err := s.udpConn()
+	if err != nil {
+		return err
+	}
+	return conn.SetWriteBuffer(size)
+}

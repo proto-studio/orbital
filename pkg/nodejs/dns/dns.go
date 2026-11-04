@@ -1,12 +1,16 @@
-// Package dns implements the Node.js dns module.
+// Package dns implements the Node.js dns module on top of the runtime's injected resolver.
 package dns
 
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net"
+	"sort"
 	"strings"
-	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -35,457 +39,357 @@ func (d *DNS) Register(rt *runtime.Runtime) error {
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
-	// Create dns internal object for Go functions
-	dnsInternal, err := ctx.NewObject()
+	internal, err := ctx.NewObject()
 	if err != nil {
 		return err
 	}
+	funcs := map[string]v8.FunctionCallback{
+		"lookup":        d.lookupFunc,
+		"query":         d.queryFunc,
+		"reverse":       d.reverseFunc,
+		"lookupService": d.lookupServiceFunc,
+		"systemServers": d.systemServersFunc,
+	}
+	for name, fn := range funcs {
+		tmpl, err := iso.NewFunctionTemplate(fn)
+		if err != nil {
+			return err
+		}
+		val, err := tmpl.GetFunction(ctx)
+		if err != nil {
+			return err
+		}
+		if err := internal.Set(name, val); err != nil {
+			return err
+		}
+	}
+	if err := rt.SetGlobal("__dns_internal", internal); err != nil {
+		return err
+	}
+	_, err = rt.RunScript(dnsJS, "dns.js")
+	return err
+}
 
-	// lookup
-	lookupFn, err := iso.NewFunctionTemplate(d.lookupFunc)
+func jsString(ctx *v8.Context, s string) *v8.Value {
+	v, err := ctx.NewString(s)
 	if err != nil {
-		return err
+		return ctx.Null()
 	}
-	lookupVal, err := lookupFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("lookup", lookupVal); err != nil {
-		return err
-	}
+	return v
+}
 
-	// resolve
-	resolveFn, err := iso.NewFunctionTemplate(d.resolveFunc)
-	if err != nil {
-		return err
-	}
-	resolveVal, err := resolveFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolve", resolveVal); err != nil {
-		return err
-	}
+// finish delivers a result as (jsonError, jsonResult).
+func (d *DNS) finish(callback *v8.Value, code string, result any) {
+	d.rt.EventLoop().EnqueueMicrotask(func() {
+		ctx := d.rt.Context()
+		errVal := ctx.Null()
+		resultVal := ctx.Null()
+		if code != "" {
+			errVal = jsString(ctx, code)
+		} else if encoded, err := json.Marshal(result); err == nil {
+			resultVal = jsString(ctx, string(encoded))
+		}
+		callback.Call(ctx.Undefined(), errVal, resultVal)
+		ctx.PerformMicrotaskCheckpoint()
+	})
+}
 
-	// resolve4
-	resolve4Fn, err := iso.NewFunctionTemplate(d.resolve4Func)
-	if err != nil {
-		return err
-	}
-	resolve4Val, err := resolve4Fn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolve4", resolve4Val); err != nil {
-		return err
-	}
+func (d *DNS) async(work func()) {
+	d.rt.EventLoop().AddPendingWork()
+	go func() {
+		defer d.rt.EventLoop().DonePendingWork()
+		work()
+	}()
+}
 
-	// resolve6
-	resolve6Fn, err := iso.NewFunctionTemplate(d.resolve6Func)
-	if err != nil {
-		return err
+func (d *DNS) context() context.Context {
+	if ctx := d.rt.ExecutionContext(); ctx != nil {
+		return ctx
 	}
-	resolve6Val, err := resolve6Fn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolve6", resolve6Val); err != nil {
-		return err
-	}
+	return context.Background()
+}
 
-	// resolveMx
-	resolveMxFn, err := iso.NewFunctionTemplate(d.resolveMxFunc)
-	if err != nil {
-		return err
+func errorCode(err error) string {
+	var queryErr *runtime.DNSQueryError
+	if asQuery(err, &queryErr) {
+		return queryErr.Code
 	}
-	resolveMxVal, err := resolveMxFn.GetFunction(ctx)
-	if err != nil {
-		return err
+	if err == context.Canceled {
+		return "ECANCELLED"
 	}
-	if err := dnsInternal.Set("resolveMx", resolveMxVal); err != nil {
-		return err
+	desc := netdial.Describe(err, "getaddrinfo", "", 0)
+	if desc.Code != "" {
+		return desc.Code
 	}
+	return "ENOTFOUND"
+}
 
-	// resolveTxt
-	resolveTxtFn, err := iso.NewFunctionTemplate(d.resolveTxtFunc)
-	if err != nil {
-		return err
+func asQuery(err error, target **runtime.DNSQueryError) bool {
+	if q, ok := err.(*runtime.DNSQueryError); ok {
+		*target = q
+		return true
 	}
-	resolveTxtVal, err := resolveTxtFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolveTxt", resolveTxtVal); err != nil {
-		return err
-	}
+	return false
+}
 
-	// resolveNs
-	resolveNsFn, err := iso.NewFunctionTemplate(d.resolveNsFunc)
-	if err != nil {
-		return err
+// lookup(host, family, callback) resolves a name as getaddrinfo would. callback receives
+// (code, jsonAddresses) with entries of {address, family}.
+func (d *DNS) lookupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 3 {
+		return nil
 	}
-	resolveNsVal, err := resolveNsFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolveNs", resolveNsVal); err != nil {
-		return err
-	}
+	host := args[0].String()
+	family := int(args[1].Integer())
+	callback := args[2]
 
-	// resolveCname
-	resolveCnameFn, err := iso.NewFunctionTemplate(d.resolveCnameFunc)
-	if err != nil {
-		return err
-	}
-	resolveCnameVal, err := resolveCnameFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("resolveCname", resolveCnameVal); err != nil {
-		return err
-	}
-
-	// reverse
-	reverseFn, err := iso.NewFunctionTemplate(d.reverseFunc)
-	if err != nil {
-		return err
-	}
-	reverseVal, err := reverseFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := dnsInternal.Set("reverse", reverseVal); err != nil {
-		return err
-	}
-
-	// Set as global
-	if err := rt.SetGlobal("__dns_internal", dnsInternal); err != nil {
-		return err
-	}
-
-	// Initialize JS wrapper
-	if _, err := rt.RunScript(dnsJS, "dns.js"); err != nil {
-		return err
-	}
-
+	d.async(func() {
+		network := "ip"
+		switch family {
+		case 4:
+			network = "ip4"
+		case 6:
+			network = "ip6"
+		}
+		ips, err := d.rt.DNSResolver().LookupIP(d.context(), network, host)
+		if err != nil {
+			d.finish(callback, errorCode(err), nil)
+			return
+		}
+		type address struct {
+			Address string `json:"address"`
+			Family  int    `json:"family"`
+		}
+		out := make([]address, 0, len(ips))
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				if family != 6 {
+					out = append(out, address{v4.String(), 4})
+				}
+			} else if family != 4 {
+				out = append(out, address{ip.String(), 6})
+			}
+		}
+		if len(out) == 0 {
+			d.finish(callback, "ENOTFOUND", nil)
+			return
+		}
+		d.finish(callback, "", out)
+	})
 	return nil
 }
 
-func (d *DNS) createContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+// query(rrtype, name, jsonServers, callback) asks for records. callback receives (code,
+// jsonRecords). Script-chosen servers are honored only with both the real resolver and
+// real sockets: elsewhere a query to a server of the script's choosing would be traffic
+// the embedder's controls never saw.
+func (d *DNS) queryFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 4 {
+		return nil
+	}
+	rrtype := args[0].String()
+	name := args[1].String()
+	var servers []string
+	if err := json.Unmarshal([]byte(args[2].String()), &servers); err != nil {
+		return info.Context().Throw("dns: invalid servers")
+	}
+	callback := args[3]
+
+	d.async(func() {
+		resolver := d.rt.DNSResolver()
+		if records := runtime.RecordsFor(resolver); records != nil {
+			if _, real := d.rt.SocketFactory().(*runtime.RealSocketFactory); !real {
+				servers = nil
+			}
+			result, err := records.LookupRecords(d.context(), name, rrtype, servers)
+			if err != nil {
+				d.finish(callback, errorCode(err), nil)
+				return
+			}
+			d.finish(callback, "", result)
+			return
+		}
+		result, err := d.queryResolver(resolver, name, rrtype)
+		if err != nil {
+			d.finish(callback, errorCode(err), nil)
+			return
+		}
+		d.finish(callback, "", result)
+	})
+	return nil
 }
 
-// lookupFunc implements runtime.lookup
-func (d *DNS) lookupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	addrs, err := resolver.LookupHost(lookupCtx, hostname)
-	if err != nil || len(addrs) == 0 {
-		return nil
-	}
-
-	// Return first address
-	val, _ := ctx.NewString(addrs[0])
-	return val
-}
-
-// resolveFunc implements runtime.resolve
-func (d *DNS) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	rrtype := "A"
-	if len(args) >= 2 && args[1].IsString() {
-		rrtype = strings.ToUpper(args[1].String())
-	}
-
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	var result *v8.Value
-
+// queryResolver answers from a Resolver without direct record access.
+func (d *DNS) queryResolver(resolver runtime.Resolver, name, rrtype string) ([]map[string]any, error) {
+	ctx := d.context()
+	var out []map[string]any
 	switch rrtype {
-	case "A":
-		ips, err := resolver.LookupIP(lookupCtx, "ip4", hostname)
+	case "A", "AAAA":
+		network := "ip4"
+		if rrtype == "AAAA" {
+			network = "ip6"
+		}
+		ips, err := resolver.LookupIP(ctx, network, name)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		arr, _ := ctx.NewArray(len(ips))
-		for i, ip := range ips {
-			val, _ := ctx.NewString(ip.String())
-			arr.SetIndex(i, val)
+		for _, ip := range ips {
+			if (ip.To4() != nil) == (rrtype == "A") {
+				out = append(out, map[string]any{"type": rrtype, "address": ip.String(), "ttl": 0})
+			}
 		}
-		result = arr
-	case "AAAA":
-		ips, err := resolver.LookupIP(lookupCtx, "ip6", hostname)
-		if err != nil {
-			return nil
-		}
-		arr, _ := ctx.NewArray(len(ips))
-		for i, ip := range ips {
-			val, _ := ctx.NewString(ip.String())
-			arr.SetIndex(i, val)
-		}
-		result = arr
-	case "MX":
-		mxs, err := resolver.LookupMX(lookupCtx, hostname)
-		if err != nil {
-			return nil
-		}
-		arr, _ := ctx.NewArray(len(mxs))
-		for i, mx := range mxs {
-			obj, _ := ctx.NewObject()
-			exchangeVal, _ := ctx.NewString(mx.Host)
-			obj.Set("exchange", exchangeVal)
-			obj.Set("priority", ctx.NewNumber(float64(mx.Pref)))
-			arr.SetIndex(i, obj)
-		}
-		result = arr
-	case "TXT":
-		txts, err := resolver.LookupTXT(lookupCtx, hostname)
-		if err != nil {
-			return nil
-		}
-		arr, _ := ctx.NewArray(len(txts))
-		for i, txt := range txts {
-			// TXT records are arrays of strings
-			innerArr, _ := ctx.NewArray(1)
-			val, _ := ctx.NewString(txt)
-			innerArr.SetIndex(0, val)
-			arr.SetIndex(i, innerArr)
-		}
-		result = arr
-	case "NS":
-		nss, err := resolver.LookupNS(lookupCtx, hostname)
-		if err != nil {
-			return nil
-		}
-		arr, _ := ctx.NewArray(len(nss))
-		for i, ns := range nss {
-			val, _ := ctx.NewString(ns.Host)
-			arr.SetIndex(i, val)
-		}
-		result = arr
 	case "CNAME":
-		cname, err := resolver.LookupCNAME(lookupCtx, hostname)
+		cname, err := resolver.LookupCNAME(ctx, name)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		arr, _ := ctx.NewArray(1)
-		val, _ := ctx.NewString(cname)
-		arr.SetIndex(0, val)
-		result = arr
+		cname = strings.TrimSuffix(cname, ".")
+		if strings.EqualFold(cname, strings.TrimSuffix(name, ".")) {
+			return nil, &runtime.DNSQueryError{Code: "ENODATA"}
+		}
+		out = append(out, map[string]any{"type": "CNAME", "value": cname})
+	case "MX":
+		records, err := resolver.LookupMX(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, mx := range records {
+			out = append(out, map[string]any{"type": "MX", "exchange": strings.TrimSuffix(mx.Host, "."), "priority": int(mx.Pref)})
+		}
+	case "NS":
+		records, err := resolver.LookupNS(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, ns := range records {
+			out = append(out, map[string]any{"type": "NS", "value": strings.TrimSuffix(ns.Host, ".")})
+		}
+	case "TXT":
+		records, err := resolver.LookupTXT(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, txt := range records {
+			out = append(out, map[string]any{"type": "TXT", "entries": []string{txt}})
+		}
+	case "SRV":
+		_, records, err := resolver.LookupSRV(ctx, "", "", name)
+		if err != nil {
+			return nil, err
+		}
+		for _, srv := range records {
+			out = append(out, map[string]any{"type": "SRV", "name": strings.TrimSuffix(srv.Target, "."),
+				"port": int(srv.Port), "priority": int(srv.Priority), "weight": int(srv.Weight)})
+		}
 	default:
-		return nil
+		return nil, &runtime.DNSQueryError{Code: "ENOTIMP"}
 	}
-
-	return result
+	if len(out) == 0 {
+		return nil, &runtime.DNSQueryError{Code: "ENODATA"}
+	}
+	return out, nil
 }
 
-// resolve4Func implements runtime.resolve4
-func (d *DNS) resolve4Func(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	ips, err := resolver.LookupIP(lookupCtx, "ip4", hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(len(ips))
-	for i, ip := range ips {
-		val, _ := ctx.NewString(ip.String())
-		arr.SetIndex(i, val)
-	}
-	return arr
-}
-
-// resolve6Func implements runtime.resolve6
-func (d *DNS) resolve6Func(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	ips, err := resolver.LookupIP(lookupCtx, "ip6", hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(len(ips))
-	for i, ip := range ips {
-		val, _ := ctx.NewString(ip.String())
-		arr.SetIndex(i, val)
-	}
-	return arr
-}
-
-// resolveMxFunc implements runtime.resolveMx
-func (d *DNS) resolveMxFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	mxs, err := resolver.LookupMX(lookupCtx, hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(len(mxs))
-	for i, mx := range mxs {
-		obj, _ := ctx.NewObject()
-		exchangeVal, _ := ctx.NewString(mx.Host)
-		obj.Set("exchange", exchangeVal)
-		obj.Set("priority", ctx.NewNumber(float64(mx.Pref)))
-		arr.SetIndex(i, obj)
-	}
-	return arr
-}
-
-// resolveTxtFunc implements runtime.resolveTxt
-func (d *DNS) resolveTxtFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	txts, err := resolver.LookupTXT(lookupCtx, hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(len(txts))
-	for i, txt := range txts {
-		innerArr, _ := ctx.NewArray(1)
-		val, _ := ctx.NewString(txt)
-		innerArr.SetIndex(0, val)
-		arr.SetIndex(i, innerArr)
-	}
-	return arr
-}
-
-// resolveNsFunc implements runtime.resolveNs
-func (d *DNS) resolveNsFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	nss, err := resolver.LookupNS(lookupCtx, hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(len(nss))
-	for i, ns := range nss {
-		val, _ := ctx.NewString(ns.Host)
-		arr.SetIndex(i, val)
-	}
-	return arr
-}
-
-// resolveCnameFunc implements runtime.resolveCname
-func (d *DNS) resolveCnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	hostname := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
-
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
-
-	cname, err := resolver.LookupCNAME(lookupCtx, hostname)
-	if err != nil {
-		return nil
-	}
-
-	arr, _ := ctx.NewArray(1)
-	val, _ := ctx.NewString(cname)
-	arr.SetIndex(0, val)
-	return arr
-}
-
-// reverseFunc implements runtime.reverse
+// reverse(ip, jsonServers, callback) returns the names of an address. callback receives
+// (code, jsonNames).
 func (d *DNS) reverseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 1 {
+	if len(args) < 3 {
 		return nil
 	}
-
 	ip := args[0].String()
-	ctx := info.Context()
-	resolver := d.rt.DNSResolver()
+	var servers []string
+	if err := json.Unmarshal([]byte(args[1].String()), &servers); err != nil {
+		return info.Context().Throw("dns: invalid servers")
+	}
+	callback := args[2]
+	d.async(func() {
+		resolver := d.rt.DNSResolver()
+		if records := runtime.RecordsFor(resolver); records != nil {
+			if _, real := d.rt.SocketFactory().(*runtime.RealSocketFactory); !real {
+				servers = nil
+			}
+			name := reverseName(ip)
+			if name == "" {
+				d.finish(callback, "EINVAL", nil)
+				return
+			}
+			result, err := records.LookupRecords(d.context(), name, "PTR", servers)
+			if err != nil {
+				d.finish(callback, errorCode(err), nil)
+				return
+			}
+			names := make([]string, 0, len(result))
+			for _, record := range result {
+				if value, ok := record["value"].(string); ok {
+					names = append(names, value)
+				}
+			}
+			d.finish(callback, "", names)
+			return
+		}
+		names, err := resolver.LookupAddr(d.context(), ip)
+		if err != nil {
+			d.finish(callback, errorCode(err), nil)
+			return
+		}
+		for i, name := range names {
+			names[i] = strings.TrimSuffix(name, ".")
+		}
+		sort.Strings(names)
+		d.finish(callback, "", names)
+	})
+	return nil
+}
 
-	lookupCtx, cancel := d.createContext()
-	defer cancel()
+// reverseName returns the name PTR records for ip live under.
+func reverseName(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return fmt.Sprintf("%d.%d.%d.%d.in-addr.arpa", v4[3], v4[2], v4[1], v4[0])
+	}
+	var name strings.Builder
+	for i := len(parsed) - 1; i >= 0; i-- {
+		fmt.Fprintf(&name, "%x.%x.", parsed[i]&0xf, parsed[i]>>4)
+	}
+	return name.String() + "ip6.arpa"
+}
 
-	names, err := resolver.LookupAddr(lookupCtx, ip)
-	if err != nil {
+// lookupService(ip, port, callback) gives a host and service name for an address.
+func (d *DNS) lookupServiceFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 3 {
 		return nil
 	}
+	ip := args[0].String()
+	port := int(args[1].Integer())
+	callback := args[2]
+	d.async(func() {
+		host := ip
+		if names, err := d.rt.DNSResolver().LookupAddr(d.context(), ip); err == nil && len(names) > 0 {
+			host = strings.TrimSuffix(names[0], ".")
+		}
+		d.finish(callback, "", map[string]string{"hostname": host, "service": runtime.LookupServiceName(port, "tcp")})
+	})
+	return nil
+}
 
-	arr, _ := ctx.NewArray(len(names))
-	for i, name := range names {
-		val, _ := ctx.NewString(name)
-		arr.SetIndex(i, val)
+// systemServers() returns the DNS servers in use, as JSON.
+func (d *DNS) systemServersFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	servers := []string{}
+	if _, real := d.rt.DNSResolver().(*runtime.RealResolver); real {
+		for _, server := range runtime.SystemDNSServers() {
+			host, _, err := net.SplitHostPort(server)
+			if err == nil {
+				servers = append(servers, host)
+			}
+		}
 	}
-	return arr
+	encoded, _ := json.Marshal(servers)
+	return jsString(ctx, string(encoded))
 }

@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"strings"
 	"time"
@@ -132,6 +133,46 @@ func (s *FilteredTCPSocket) CloseWrite() error {
 	return CloseWrite(s.underlying)
 }
 
+// SetDeadline delegates to the underlying socket if it supports deadlines.
+func (s *FilteredTCPSocket) SetDeadline(t time.Time) error {
+	if d, ok := s.underlying.(DeadlineSetter); ok {
+		return d.SetDeadline(t)
+	}
+	return nil
+}
+
+// SetReadDeadline delegates to the underlying socket if it supports deadlines.
+func (s *FilteredTCPSocket) SetReadDeadline(t time.Time) error {
+	if d, ok := s.underlying.(DeadlineSetter); ok {
+		return d.SetReadDeadline(t)
+	}
+	return nil
+}
+
+// SetWriteDeadline delegates to the underlying socket if it supports deadlines.
+func (s *FilteredTCPSocket) SetWriteDeadline(t time.Time) error {
+	if d, ok := s.underlying.(DeadlineSetter); ok {
+		return d.SetWriteDeadline(t)
+	}
+	return nil
+}
+
+// SetLocalAddr delegates to the underlying socket if it can choose its local address.
+// The policy applies to the destination, which this does not change.
+func (s *FilteredTCPSocket) SetLocalAddr(ip string, port int) {
+	if b, ok := s.underlying.(LocalBindableTCPSocket); ok {
+		b.SetLocalAddr(ip, port)
+	}
+}
+
+// SetLinger delegates to the underlying socket if it supports linger.
+func (s *FilteredTCPSocket) SetLinger(seconds int) error {
+	if l, ok := s.underlying.(LingerSetter); ok {
+		return l.SetLinger(seconds)
+	}
+	return errors.ErrUnsupported
+}
+
 // SetTimeout delegates to the underlying socket.
 func (s *FilteredTCPSocket) SetTimeout(d time.Duration) error {
 	return s.underlying.SetTimeout(d)
@@ -245,13 +286,8 @@ func (s *FilteredUDPSocket) Send(data []byte, address string, port int) (int, er
 	if err := s.policy.CheckConnection(ProtocolUDP, DirectionOutbound, address, port); err != nil {
 		return 0, err
 	}
-	// A real socket binds on first send, which is subject to the same policy as an
-	// explicit Bind.
-	if real, ok := s.underlying.(*RealUDPSocket); ok && !s.bound {
-		if err := s.policy.CheckConnection(ProtocolUDP, DirectionInbound, real.wildcardAddress(), 0); err != nil {
-			return 0, err
-		}
-		s.bound = true
+	if err := s.checkImplicitBind(); err != nil {
+		return 0, err
 	}
 	return s.underlying.Send(data, address, port)
 }
@@ -299,6 +335,103 @@ func (s *FilteredUDPSocket) Ref() {
 // Unref delegates to the underlying socket.
 func (s *FilteredUDPSocket) Unref() {
 	s.underlying.Unref()
+}
+
+// SendResolved checks the requested name and the resolved IP against the policy, then
+// sends to that same IP.
+func (s *FilteredUDPSocket) SendResolved(data []byte, hostname, ip string, port int) (int, error) {
+	if err := checkResolvedConnection(s.policy, ProtocolUDP, DirectionOutbound, hostname, ip, port); err != nil {
+		return 0, err
+	}
+	if err := s.checkImplicitBind(); err != nil {
+		return 0, err
+	}
+	if resolved, ok := s.underlying.(ResolvedUDPSocket); ok {
+		return resolved.SendResolved(data, hostname, ip, port)
+	}
+	return s.underlying.Send(data, ip, port)
+}
+
+// checkImplicitBind applies the policy of an explicit Bind to the bind a real socket makes
+// on its first send.
+func (s *FilteredUDPSocket) checkImplicitBind() error {
+	if real, ok := s.underlying.(*RealUDPSocket); ok && !s.bound {
+		if err := s.policy.CheckConnection(ProtocolUDP, DirectionInbound, real.wildcardAddress(), 0); err != nil {
+			return err
+		}
+		s.bound = true
+	}
+	return nil
+}
+
+func (s *FilteredUDPSocket) options() (UDPSocketOptions, error) {
+	if o, ok := s.underlying.(UDPSocketOptions); ok {
+		return o, nil
+	}
+	return nil, errors.ErrUnsupported
+}
+
+// SetTTL delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) SetTTL(ttl int) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.SetTTL(ttl)
+}
+
+// SetMulticastLoopback delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) SetMulticastLoopback(enable bool) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.SetMulticastLoopback(enable)
+}
+
+// SetMulticastInterface delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) SetMulticastInterface(address string) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.SetMulticastInterface(address)
+}
+
+// JoinSourceGroup delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) JoinSourceGroup(source, group, iface string) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.JoinSourceGroup(source, group, iface)
+}
+
+// LeaveSourceGroup delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) LeaveSourceGroup(source, group, iface string) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.LeaveSourceGroup(source, group, iface)
+}
+
+// SetReadBuffer delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) SetReadBuffer(size int) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.SetReadBuffer(size)
+}
+
+// SetWriteBuffer delegates to the underlying socket if it supports the option.
+func (s *FilteredUDPSocket) SetWriteBuffer(size int) error {
+	o, err := s.options()
+	if err != nil {
+		return err
+	}
+	return o.SetWriteBuffer(size)
 }
 
 // FilteredHTTPClient wraps an HTTPClient with policy enforcement.
@@ -401,4 +534,32 @@ func parseURLHostPort(urlStr string) (string, int, error) {
 	host = strings.Trim(host, "[]")
 
 	return host, port, nil
+}
+
+// HTTPOverSockets reports whether node:http may open its own connections rather than send
+// whole requests through HTTPClient. It may when the client is the real one, because the
+// socket factory is then the boundary, or when the client only applies a built-in policy
+// that the socket factory applies too. A built-in policy decides an HTTP request as it
+// does the connection carrying it, so the sockets lose nothing. Any other client is the
+// embedder's own and must see every request.
+func (rt *Runtime) HTTPOverSockets() bool {
+	switch client := rt.httpClient.(type) {
+	case *RealHTTPClient:
+		return true
+	case *FilteredHTTPClient:
+		if _, real := client.underlying.(*RealHTTPClient); !real {
+			return false
+		}
+		factory, ok := rt.socketFactory.(*FilteredSocketFactory)
+		return ok && samePolicy(client.policy, factory.policy)
+	}
+	return false
+}
+
+func samePolicy(a, b NetworkPolicy) bool {
+	switch a.(type) {
+	case *AllowAllPolicy, *DenyAllPolicy, *HostListPolicy, *RuleBasedPolicy:
+		return a == b
+	}
+	return false
 }

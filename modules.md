@@ -29,7 +29,7 @@ Tracks every module in the current Node.js distribution (v26 `module.builtinModu
 - [ ] inspector/promises — Promise-based inspector API
 
 ## Networking & IPC
-- [x] http — client plus a real HTTP/1.1 server (createServer) built on the net TCP server
+- [x] http — HTTP/1.1 client and server over net sockets
 - [x] https
 - [x] http2
 - [x] net

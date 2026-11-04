@@ -403,7 +403,7 @@
     }
 
     async formData() {
-      throw new TypeError('Request.formData() not supported');
+      return parseFormData(this);
     }
 
     get [Symbol.toStringTag]() {
@@ -515,7 +515,7 @@
     }
 
     async formData() {
-      throw new TypeError('Response.formData() not supported');
+      return parseFormData(this);
     }
 
     static error() {
@@ -622,19 +622,19 @@
     if (request._body) {
       if (request._body instanceof FormData) {
         const { body: formBody, boundary } = request._body._toString();
-        body = formBody;
+        body = Buffer.from(formBody, 'latin1');
         if (!request.headers.has('content-type')) {
           request.headers.set('content-type', 'multipart/form-data; boundary=' + boundary);
         }
       } else if (typeof request._body === 'string') {
-        body = request._body;
+        body = Buffer.from(request._body, 'utf8');
       } else if (request._body instanceof URLSearchParams) {
-        body = request._body.toString();
+        body = Buffer.from(request._body.toString(), 'utf8');
         if (!request.headers.has('content-type')) {
           request.headers.set('content-type', 'application/x-www-form-urlencoded');
         }
       } else {
-        body = bodyToText(request._body);
+        body = Buffer.from(await bodyToArrayBuffer(request._body));
       }
     }
 
@@ -674,7 +674,8 @@
         request.url,
         request.method,
         JSON.stringify(headersObj),
-        body || '',
+        body ? body.toString('base64') : '',
+        request.redirect || 'follow',
         (error, statusCode, statusText, responseHeaders, responseBody, streamId) => {
           if (settled) {
             if (streamId && typeof __http_fetch_cancel === 'function') {
@@ -684,7 +685,7 @@
           }
           if (error) {
             if (error === 'AbortError') fail(abortError());
-            else fail(new TypeError('Failed to fetch: ' + error));
+            else fail(fetchFailed(error));
             return;
           }
 
@@ -706,7 +707,7 @@
       );
 
       if (typeof requestId !== 'number') {
-        fail(new TypeError('Failed to fetch'));
+        fail(fetchFailed('{"message":"fetch failed"}'));
         return;
       }
 
@@ -718,6 +719,73 @@
         request.signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+  }
+
+  // As in Node, the reason a fetch failed is in the error's cause.
+  function fetchFailed(encoded) {
+    const err = new TypeError('fetch failed');
+    let desc;
+    try {
+      desc = JSON.parse(encoded);
+    } catch (e) {
+      desc = { message: encoded };
+    }
+    const cause = new Error(desc.message);
+    if (desc.code) cause.code = desc.code;
+    if (desc.syscall) cause.syscall = desc.syscall;
+    if (desc.errno) cause.errno = desc.errno;
+    if (desc.address) cause.address = desc.address;
+    if (desc.port) cause.port = desc.port;
+    if (desc.hostname) cause.hostname = desc.hostname;
+    err.cause = cause;
+    return err;
+  }
+
+  // Parses a form body as Request.formData() and Response.formData() do.
+  async function parseFormData(message) {
+    const contentType = message.headers.get('content-type') || '';
+    const buffer = Buffer.from(await message.arrayBuffer());
+    const form = new FormData();
+    if (/^application\/x-www-form-urlencoded/i.test(contentType)) {
+      for (const [name, value] of new URLSearchParams(buffer.toString('utf8'))) {
+        form.append(name, value);
+      }
+      return form;
+    }
+    const boundaryMatch = /^multipart\/form-data\s*;.*boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+    if (!boundaryMatch) {
+      throw new TypeError('Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded".');
+    }
+    const delimiter = Buffer.from('--' + (boundaryMatch[1] || boundaryMatch[2]), 'latin1');
+    let at = buffer.indexOf(delimiter);
+    if (at === -1) throw new TypeError('Failed to parse body as FormData.');
+    while (at !== -1) {
+      at += delimiter.length;
+      if (buffer[at] === 45 && buffer[at + 1] === 45) break;
+      at += 2;
+      const headEnd = buffer.indexOf('\r\n\r\n', at, 'latin1');
+      if (headEnd === -1) throw new TypeError('Failed to parse body as FormData.');
+      const head = buffer.slice(at, headEnd).toString('utf8');
+      const next = buffer.indexOf(delimiter, headEnd + 4);
+      if (next === -1) throw new TypeError('Failed to parse body as FormData.');
+      const content = buffer.slice(headEnd + 4, next - 2);
+      const disposition = /content-disposition:[^\r\n]*/i.exec(head);
+      const name = disposition && /[;\s]name="([^"]*)"/i.exec(disposition[0]);
+      if (!name) throw new TypeError('Failed to parse body as FormData.');
+      const filename = /[;\s]filename="([^"]*)"/i.exec(disposition[0]);
+      if (filename) {
+        const type = /content-type:\s*([^\r\n]*)/i.exec(head);
+        const options = type ? { type: type[1] } : {};
+        const file = typeof File !== 'undefined'
+          ? new File([content], filename[1], options)
+          : Object.assign(new Blob([content], options), { name: filename[1] });
+        form.append(name[1], file);
+      } else {
+        form.append(name[1], content.toString('utf8'));
+      }
+      at = next;
+    }
+    return form;
   }
 
   // Export as globals

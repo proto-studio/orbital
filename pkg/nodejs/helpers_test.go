@@ -195,3 +195,80 @@ func (r *recordingResolver) LookupIP(ctx context.Context, network, host string) 
 	}
 	return out, nil
 }
+
+// newEchoListener starts a TCP server that echoes, and returns its address.
+func newEchoListener(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 4096)
+				for {
+					n, err := conn.Read(buf)
+					if err != nil {
+						return
+					}
+					if _, err := conn.Write(buf[:n]); err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// issueClientPEM issues a client certificate and returns it and its key as PEM.
+func (ca *testCA) issueClientPEM(t *testing.T, name string) (string, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encodePEM(t, tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key})
+}
+
+// issuePEM issues a certificate and returns it and its key as PEM.
+func (ca *testCA) issuePEM(t *testing.T, names ...string) (string, string) {
+	t.Helper()
+	return encodePEM(t, ca.issue(t, names...))
+}
+
+// selfSignedPEM returns the CA's own self-signed certificate and key as PEM.
+func (ca *testCA) selfSignedPEM(t *testing.T) (string, string) {
+	t.Helper()
+	return encodePEM(t, tls.Certificate{Certificate: [][]byte{ca.cert.Raw}, PrivateKey: ca.key})
+}
+
+func encodePEM(t *testing.T, cert tls.Certificate) (string, string) {
+	t.Helper()
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
+	return string(certPEM), string(keyPEM)
+}

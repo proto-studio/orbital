@@ -95,7 +95,7 @@
       if (this.lastNeed > 0) {
         const needed = Math.min(bytes.length, this.lastNeed);
         for (let j = 0; j < needed; j++) {
-          this.lastChar[this.lastTotal - this.lastNeed + j] = bytes[j];
+          this.lastChar[this.lastTotal - this.lastNeed] = bytes[j];
           this.lastNeed--;
         }
         i = needed;

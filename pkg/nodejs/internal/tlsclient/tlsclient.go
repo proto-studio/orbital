@@ -15,12 +15,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-)
 
-// ErrNotVerified means a socket connected without running the Config passed to it, so
-// nothing checked the peer's certificate.
-var ErrNotVerified = errors.New("ERR_TLS_CERT_NOT_VERIFIED: the socket factory did not apply the TLS configuration, " +
-	"so the server's certificate was not verified")
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
+)
 
 // Options are Node's client TLS options, as passed from JavaScript.
 type Options struct {
@@ -33,6 +30,9 @@ type Options struct {
 	// ScriptChecksIdentity leaves the hostname check to a JavaScript
 	// checkServerIdentity callback. The chain is still verified here.
 	ScriptChecksIdentity bool `json:"scriptChecksIdentity"`
+	// SNIOnlyFromServername sends SNI only for an explicit Servername, as tls.connect does,
+	// rather than for the host being connected to, as http2.connect does.
+	SNIOnlyFromServername bool `json:"-"`
 }
 
 // Verifier checks the peer of one connection during its handshake and records the result.
@@ -47,6 +47,7 @@ type Verifier struct {
 	ran     bool
 	authErr error
 	peer    []*x509.Certificate
+	chain   []*x509.Certificate
 }
 
 // New builds the verifier for a connection to host. A non-nil base is the embedder's
@@ -90,6 +91,9 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 		}
 	}
 	cfg.ServerName = name
+	if base == nil && opts.SNIOnlyFromServername && opts.Servername == "" {
+		cfg.ServerName = ""
+	}
 
 	// crypto/tls verifies the hostname before the chain and stops the handshake on any
 	// failure. Node reports the chain first and can continue with the failure recorded,
@@ -97,11 +101,12 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 	cfg.InsecureSkipVerify = true
 	next := cfg.VerifyConnection
 	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
-		err := v.verify(cfg, cs)
+		chain, err := v.verify(cfg, name, cs)
 		v.mu.Lock()
 		v.ran = true
 		v.authErr = err
 		v.peer = cs.PeerCertificates
+		v.chain = chain
 		v.mu.Unlock()
 		if err != nil && v.reject {
 			return err
@@ -115,9 +120,9 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 	return v, nil
 }
 
-func (v *Verifier) verify(cfg *tls.Config, cs tls.ConnectionState) error {
+func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) ([]*x509.Certificate, error) {
 	if len(cs.PeerCertificates) == 0 {
-		return errors.New("tls: server provided no certificate")
+		return nil, errors.New("tls: server provided no certificate")
 	}
 	leaf := cs.PeerCertificates[0]
 	opts := x509.VerifyOptions{Roots: cfg.RootCAs, Intermediates: x509.NewCertPool()}
@@ -127,25 +132,17 @@ func (v *Verifier) verify(cfg *tls.Config, cs tls.ConnectionState) error {
 	for _, cert := range cs.PeerCertificates[1:] {
 		opts.Intermediates.AddCert(cert)
 	}
-	_, err := leaf.Verify(opts)
+	chains, err := leaf.Verify(opts)
 	if err == nil && !v.scriptChecksIdentity {
-		err = leaf.VerifyHostname(cfg.ServerName)
+		err = leaf.VerifyHostname(name)
 	}
 	if err != nil {
-		return &tls.CertificateVerificationError{UnverifiedCertificates: cs.PeerCertificates, Err: err}
+		return nil, &tls.CertificateVerificationError{UnverifiedCertificates: cs.PeerCertificates, Err: err}
 	}
-	return nil
-}
-
-// Check returns ErrNotVerified if the connection must be refused because the socket
-// connected without running Config.
-func (v *Verifier) Check() error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.ran && v.reject {
-		return ErrNotVerified
+	if len(chains) > 0 {
+		return chains[0], nil
 	}
-	return nil
+	return nil, nil
 }
 
 // Authorized reports whether the peer's certificate was verified successfully.
@@ -170,10 +167,14 @@ func (v *Verifier) ScriptChecksIdentity() bool {
 	return v.scriptChecksIdentity && v.authErr == nil
 }
 
-// PeerCertificates returns the certificates the peer presented.
+// PeerCertificates returns the peer's certificate chain, up to the trusted root if it was
+// verified, and otherwise as the peer presented it.
 func (v *Verifier) PeerCertificates() []*x509.Certificate {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.chain != nil {
+		return v.chain
+	}
 	return v.peer
 }
 
@@ -196,6 +197,9 @@ func Describe(err error, host string, port int) (string, string) {
 		if certErr.Reason == x509.Expired {
 			return "certificate has expired", "CERT_HAS_EXPIRED"
 		}
+		if certErr.Reason == x509.IncompatibleUsage {
+			return "unsuitable certificate purpose", "INVALID_PURPOSE"
+		}
 		return certErr.Error(), "ERR_TLS_CERT_INVALID"
 	case errors.As(err, &verify):
 		// Any other verification failure is an untrusted chain. The concrete error
@@ -213,7 +217,7 @@ func Describe(err error, host string, port int) (string, string) {
 	case errors.As(err, &dnsErr):
 		return "getaddrinfo ENOTFOUND " + host, "ENOTFOUND"
 	case errors.As(err, &errno):
-		code := errnoName(errno)
+		code := netdial.ErrnoName(errno)
 		return "connect " + code + " " + net.JoinHostPort(host, strconv.Itoa(port)), code
 	case errors.Is(err, context.Canceled):
 		return "The operation was aborted", "ABORT_ERR"
@@ -240,24 +244,4 @@ func altnameMessage(err x509.HostnameError) string {
 		return "Hostname/IP does not match certificate's altnames: IP: " + err.Host + " is not in the cert's list: " + altnames
 	}
 	return "Hostname/IP does not match certificate's altnames: Host: " + err.Host + ". is not in the cert's altnames: " + altnames
-}
-
-func errnoName(errno syscall.Errno) string {
-	switch errno {
-	case syscall.ECONNREFUSED:
-		return "ECONNREFUSED"
-	case syscall.ECONNRESET:
-		return "ECONNRESET"
-	case syscall.ETIMEDOUT:
-		return "ETIMEDOUT"
-	case syscall.EHOSTUNREACH:
-		return "EHOSTUNREACH"
-	case syscall.ENETUNREACH:
-		return "ENETUNREACH"
-	case syscall.EADDRNOTAVAIL:
-		return "EADDRNOTAVAIL"
-	case syscall.EPIPE:
-		return "EPIPE"
-	}
-	return errno.Error()
 }

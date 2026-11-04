@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -20,14 +21,24 @@ var dgramJS string
 type Dgram struct {
 	rt       *runtime.Runtime
 	sockets  map[int64]runtime.UDPSocket
+	holds    map[int64]*holdState
 	socketID int64
 	mu       sync.Mutex
+}
+
+// holdState tracks whether one socket keeps the event loop alive.
+type holdState struct {
+	ref     bool
+	waiting bool
+	held    bool
+	closed  bool
 }
 
 // New creates a new Dgram module.
 func New() *Dgram {
 	return &Dgram{
 		sockets: make(map[int64]runtime.UDPSocket),
+		holds:   make(map[int64]*holdState),
 	}
 }
 
@@ -50,28 +61,20 @@ func (d *Dgram) Register(rt *runtime.Runtime) error {
 
 	// Register functions
 	funcs := map[string]v8.FunctionCallback{
-		"createSocket":          d.createSocketFunc,
-		"bind":                  d.bindFunc,
-		"send":                  d.sendFunc,
-		"receive":               d.receiveFunc,
-		"close":                 d.closeFunc,
-		"address":               d.addressFunc,
-		"setBroadcast":          d.setBroadcastFunc,
-		"setMulticastTTL":       d.setMulticastTTLFunc,
-		"setMulticastLoopback":  d.noopFunc,
-		"setMulticastInterface": d.noopFunc,
-		"addMembership":         d.addMembershipFunc,
-		"dropMembership":        d.dropMembershipFunc,
-		"setTTL":                d.noopFunc,
-		"setRecvBufferSize":     d.noopFunc,
-		"setSendBufferSize":     d.noopFunc,
-		"getRecvBufferSize":     d.noopNumberFunc,
-		"getSendBufferSize":     d.noopNumberFunc,
-		"connect":               d.connectFunc,
-		"disconnect":            d.noopFunc,
-		"remoteAddress":         d.noopNullFunc,
-		"ref":                   d.refFunc,
-		"unref":                 d.unrefFunc,
+		"createSocket":    d.createSocketFunc,
+		"bind":            d.bindFunc,
+		"send":            d.sendFunc,
+		"receive":         d.receiveFunc,
+		"close":           d.closeFunc,
+		"address":         d.addressFunc,
+		"setBroadcast":    d.setBroadcastFunc,
+		"setMulticastTTL": d.setMulticastTTLFunc,
+		"setOption":       d.setOptionFunc,
+		"addMembership":   d.addMembershipFunc,
+		"dropMembership":  d.dropMembershipFunc,
+		"resolve":         d.resolveFunc,
+		"ref":             d.refFunc,
+		"unref":           d.unrefFunc,
 	}
 
 	for name, fn := range funcs {
@@ -157,7 +160,7 @@ func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 5 {
+	if len(args) < 6 {
 		return nil
 	}
 
@@ -165,7 +168,8 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	msg := args[1].String()
 	address := args[2].String()
 	port := int(args[3].Integer())
-	callback := args[4]
+	family := int(args[4].Integer())
+	callback := args[5]
 
 	d.mu.Lock()
 	socket, ok := d.sockets[id]
@@ -186,7 +190,7 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer d.rt.EventLoop().DonePendingWork()
 
-		n, err := socket.Send(data, address, port)
+		n, err := d.send(socket, data, address, port, family)
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -200,6 +204,21 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
+// send resolves a destination name with the injected resolver, so a policy applies to the
+// address the datagram actually goes to.
+func (d *Dgram) send(socket runtime.UDPSocket, data []byte, address string, port, family int) (int, error) {
+	ips, isName, err := netdial.Resolve(d.rt.ExecutionContext(), d.rt, address, family)
+	if err != nil {
+		return 0, err
+	}
+	if resolved, ok := socket.(runtime.ResolvedUDPSocket); ok && isName {
+		return resolved.SendResolved(data, address, ips[0], port)
+	}
+	return socket.Send(data, ips[0], port)
+}
+
+// receive(id, callback) waits for a datagram. callback receives (errorText, base64Data,
+// rinfo). A referenced socket keeps the event loop alive while it waits.
 func (d *Dgram) receiveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -218,46 +237,84 @@ func (d *Dgram) receiveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	d.rt.EventLoop().AddPendingWork()
+	d.setWaiting(id, true)
 	go func() {
-		defer d.rt.EventLoop().DonePendingWork()
-
 		buf := make([]byte, 65536)
 		n, remoteAddr, remotePort, err := socket.Receive(buf)
+		encoded := base64.StdEncoding.EncodeToString(buf[:n])
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
+			ctx := d.rt.Context()
+			defer ctx.PerformMicrotaskCheckpoint()
 
 			if err != nil {
 				d.callReceiveCallback(callback, err.Error(), nil, nil)
 				return
 			}
 
-			if n == 0 {
-				d.callReceiveCallback(callback, "", ctx.Null(), nil)
-				return
-			}
-
-			// Create rinfo object
 			rinfo, _ := ctx.NewObject()
 			addrStr, _ := ctx.NewString(remoteAddr)
 			rinfo.Set("address", addrStr)
 			rinfo.Set("port", ctx.NewNumber(float64(remotePort)))
-			familyStr, _ := ctx.NewString("IPv4")
+			family := "IPv4"
+			if ip := net.ParseIP(remoteAddr); ip != nil && ip.To4() == nil {
+				family = "IPv6"
+			}
+			familyStr, _ := ctx.NewString(family)
 			rinfo.Set("family", familyStr)
 			rinfo.Set("size", ctx.NewNumber(float64(n)))
 
-			// Return message as binary string
-			binary := make([]rune, n)
-			for i, b := range buf[:n] {
-				binary[i] = rune(b)
-			}
-			msgStr, _ := ctx.NewString(string(binary))
+			msgStr, _ := ctx.NewString(encoded)
 			d.callReceiveCallback(callback, "", msgStr, rinfo)
 		})
+		d.setWaiting(id, false)
 	}()
 
 	return nil
+}
+
+// setWaiting records whether a receive is outstanding. Only a referenced socket's receive
+// holds the event loop, as in Node.
+func (d *Dgram) setWaiting(id int64, waiting bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state := d.holds[id]
+	if state == nil {
+		if !waiting {
+			return
+		}
+		state = &holdState{ref: true}
+		d.holds[id] = state
+	}
+	state.waiting = waiting
+	d.updateHoldLocked(id, state)
+}
+
+func (d *Dgram) updateHoldLocked(id int64, state *holdState) {
+	want := state.waiting && state.ref
+	if want != state.held {
+		state.held = want
+		if want {
+			d.rt.EventLoop().AddPendingWork()
+		} else {
+			d.rt.EventLoop().DonePendingWork()
+		}
+	}
+	if !state.waiting && state.closed {
+		delete(d.holds, id)
+	}
+}
+
+func (d *Dgram) setRef(id int64, ref bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state := d.holds[id]
+	if state == nil {
+		state = &holdState{ref: ref}
+		d.holds[id] = state
+	}
+	state.ref = ref
+	d.updateHoldLocked(id, state)
 }
 
 func (d *Dgram) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -278,6 +335,15 @@ func (d *Dgram) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if ok && socket != nil {
 		socket.Close()
 	}
+
+	d.mu.Lock()
+	if state := d.holds[id]; state != nil {
+		// Closing ends the wait, and nothing can receive on the socket after this.
+		state.closed = true
+		state.waiting = false
+		d.updateHoldLocked(id, state)
+	}
+	d.mu.Unlock()
 
 	return nil
 }
@@ -405,73 +471,104 @@ func (d *Dgram) dropMembershipFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-func (d *Dgram) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// setOption(id, name, ...args) sets a socket option and returns null, or an error code.
+func (d *Dgram) setOptionFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 4 {
+	if len(args) < 2 {
+		return ctx.Null()
+	}
+	d.mu.Lock()
+	socket, ok := d.sockets[int64(args[0].Integer())]
+	d.mu.Unlock()
+	if !ok {
+		s, _ := ctx.NewString("EBADF")
+		return s
+	}
+	options, ok := socket.(runtime.UDPSocketOptions)
+	if !ok {
+		s, _ := ctx.NewString("ENOTSUP")
+		return s
+	}
+	text := func(i int) string {
+		if i < len(args) {
+			return args[i].String()
+		}
+		return ""
+	}
+	number := func(i int) int {
+		if i < len(args) {
+			return int(args[i].Integer())
+		}
+		return 0
+	}
+	var err error
+	switch args[1].String() {
+	case "ttl":
+		err = options.SetTTL(number(2))
+	case "multicastLoopback":
+		err = options.SetMulticastLoopback(number(2) != 0)
+	case "multicastInterface":
+		err = options.SetMulticastInterface(text(2))
+	case "joinSource":
+		err = options.JoinSourceGroup(text(2), text(3), text(4))
+	case "leaveSource":
+		err = options.LeaveSourceGroup(text(2), text(3), text(4))
+	case "recvBuffer":
+		err = options.SetReadBuffer(number(2))
+	case "sendBuffer":
+		err = options.SetWriteBuffer(number(2))
+	}
+	if err == nil {
+		return ctx.Null()
+	}
+	s, _ := ctx.NewString(netdial.Describe(err, "setsockopt", "", 0).Code)
+	return s
+}
+
+// resolve(host, family, callback) resolves a destination with the injected resolver.
+// callback receives (errorText, ip).
+func (d *Dgram) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 3 {
 		return nil
 	}
+	host := args[0].String()
+	family := int(args[1].Integer())
+	callback := args[2]
 
-	// id := int64(args[0].Integer())
-	// address := args[1].String()
-	// port := int(args[2].Integer())
-	callback := args[3]
-
-	// UDP "connect" just sets default destination - simplified implementation
-	d.callCallback(callback, "")
-
+	d.rt.EventLoop().AddPendingWork()
+	go func() {
+		defer d.rt.EventLoop().DonePendingWork()
+		ips, _, err := netdial.Resolve(d.rt.ExecutionContext(), d.rt, host, family)
+		d.rt.EventLoop().EnqueueMicrotask(func() {
+			ctx := d.rt.Context()
+			if err != nil {
+				desc := netdial.Describe(err, "getaddrinfo", host, 0)
+				text, _ := ctx.NewString(desc.Code + ": " + desc.Message)
+				callback.Call(ctx.Undefined(), text, ctx.Null())
+			} else {
+				ip, _ := ctx.NewString(ips[0])
+				callback.Call(ctx.Undefined(), ctx.Null(), ip)
+			}
+			ctx.PerformMicrotaskCheckpoint()
+		})
+	}()
 	return nil
 }
 
 func (d *Dgram) refFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
+	if args := info.Args(); len(args) >= 1 {
+		d.setRef(int64(args[0].Integer()), true)
 	}
-
-	id := int64(args[0].Integer())
-
-	d.mu.Lock()
-	socket, ok := d.sockets[id]
-	d.mu.Unlock()
-
-	if ok && socket != nil {
-		socket.Ref()
-	}
-
 	return nil
 }
 
 func (d *Dgram) unrefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
+	if args := info.Args(); len(args) >= 1 {
+		d.setRef(int64(args[0].Integer()), false)
 	}
-
-	id := int64(args[0].Integer())
-
-	d.mu.Lock()
-	socket, ok := d.sockets[id]
-	d.mu.Unlock()
-
-	if ok && socket != nil {
-		socket.Unref()
-	}
-
 	return nil
-}
-
-func (d *Dgram) noopFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	return nil
-}
-
-func (d *Dgram) noopNumberFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	return ctx.NewNumber(65536)
-}
-
-func (d *Dgram) noopNullFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	return ctx.Null()
 }
 
 func (d *Dgram) callCallback(callback *v8.Value, errMsg string) {

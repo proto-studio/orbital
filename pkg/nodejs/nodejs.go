@@ -135,6 +135,7 @@ func registerModules(rt *runtime.Runtime, loader *esm.ESM, workers *worker_threa
 }
 
 func defaultModules(loader *esm.ESM, workers *worker_threads.WorkerThreads) []runtime.Module {
+	netModule := net.New()
 	// Order matters — see comments. CommonJS module system must be last.
 	return []runtime.Module{
 		abort.New(), // AbortController/AbortSignal globals - early for other modules
@@ -151,10 +152,10 @@ func defaultModules(loader *esm.ESM, workers *worker_threads.WorkerThreads) []ru
 		orbitalos.New(),
 		util.New(),
 		crypto.New(),
-		webcrypto.New(), // Web Crypto API (must come after crypto)
-		net.New(),       // TCP/IPC sockets
-		dgram.New(),     // UDP sockets
-		tls.New(),       // TLS/SSL (must come after net)
+		webcrypto.New(),    // Web Crypto API (must come after crypto)
+		netModule,          // TCP/IPC sockets
+		dgram.New(),        // UDP sockets
+		tls.New(netModule), // TLS/SSL (must come after net)
 		http.New(),
 		https.New(), // Must come after http
 		http2.New(), // HTTP/2 (must come after tls)

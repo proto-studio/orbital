@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"proto.zip/studio/orbital/internal/v8dist"
 	goruntime "proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -53,7 +54,11 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	// runtime.versions
 	versions, _ := ctx.NewObject()
 	nodeVer, _ := ctx.NewString("20.0.0")
-	v8Ver, _ := ctx.NewString("12.9.202.13")
+	v8Version := "unknown"
+	if manifest, err := v8dist.LoadManifest(); err == nil {
+		v8Version = manifest.V8Version
+	}
+	v8Ver, _ := ctx.NewString(v8Version)
 	goVer, _ := ctx.NewString(runtime.Version())
 	versions.Set("node", nodeVer)
 	versions.Set("v8", v8Ver)
