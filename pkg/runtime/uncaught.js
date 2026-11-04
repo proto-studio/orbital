@@ -51,9 +51,9 @@
     return Number.isNaN(code) ? fallback : code;
   }
 
-  function die(err, code, origin) {
+  function die(err, code, origin, handlerThrew) {
     dead = true;
-    native.fatal(format(err), code, origin);
+    native.fatal(format(err), code, origin, !!handlerThrew);
   }
 
   // trigger is process._fatalException plus its native caller: run the handlers, and if
@@ -71,7 +71,7 @@
       if (p && p.emit('uncaughtException', err, origin)) return;
     } catch (fromHandler) {
       // Node reports the handler's exception, exits 7, and does not emit 'exit'.
-      die(fromHandler, kExceptionInFatalExceptionHandler, origin);
+      die(fromHandler, kExceptionInFatalExceptionHandler, origin, true);
       return;
     }
     try {
@@ -164,7 +164,10 @@
         trigger(err, false);
       }
     }
-    while (pendingRejections.length > 0 && !dead) {
+    // Only what was pending on entry: a rejection a listener makes must wait for the queues
+    // to drain, like any other, before it counts as unhandled.
+    let batch = pendingRejections.length;
+    while (batch-- > 0 && !dead) {
       const { promise, info } = apply(shift, pendingRejections, []);
       if (info.handled) continue;
       info.reported = true;

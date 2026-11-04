@@ -139,6 +139,13 @@ func (el *EventLoop) runDrainedLocked() bool {
 	return len(el.microtasks) > 0
 }
 
+// hasMicrotasks reports whether any microtasks are queued.
+func (el *EventLoop) hasMicrotasks() bool {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	return len(el.microtasks) > 0
+}
+
 // SetTimeout schedules a function to run after the specified delay.
 func (el *EventLoop) SetTimeout(fn func(), delay time.Duration) *Task {
 	return el.scheduleTimer(fn, delay, 0)

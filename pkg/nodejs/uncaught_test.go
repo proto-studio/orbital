@@ -3,6 +3,7 @@ package nodejs
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -338,6 +339,106 @@ worker.on('exit', (code) => note('exit', code));
 	if want := []string{"error true", "exit 1"}; !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
+}
+
+// A worker reports the code its 'exit' listeners chose. A throwing handler is an ordinary
+// failure there: the 7 Node gives a whole process does not apply.
+func TestWorkerExitCode(t *testing.T) {
+	const thrower = "setTimeout(() => { throw new Error('w'); }, 1);"
+	const nine = "process.on('exit', () => { process.exitCode = 9; });"
+	for name, tc := range map[string]struct {
+		source string
+		want   []string
+	}{
+		"plain":                {thrower, []string{"error w", "exit 1"}},
+		"main script":          {"throw new Error('w');", []string{"error w", "exit 1"}},
+		"exit listener":        {nine + thrower, []string{"error w", "exit 9"}},
+		"exit listener, main":  {nine + "throw new Error('w');", []string{"error w", "exit 9"}},
+		"exit listener, zero":  {"process.on('exit', () => { process.exitCode = 0; });" + thrower, []string{"error w", "exit 0"}},
+		"exit listener, seven": {"process.on('exit', () => { process.exitCode = 7; });" + thrower, []string{"error w", "exit 7"}},
+		"handler throws":       {"process.on('uncaughtException', () => { throw new Error('h'); });" + thrower, []string{"error h", "exit 1"}},
+		"handled":              {"process.on('uncaughtException', () => {});" + thrower, []string{"exit 0"}},
+		"message listener": {nine + "require('worker_threads').parentPort.on('message', () => { throw new Error('w'); });",
+			[]string{"error w", "exit 9"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			source, _ := json.Marshal(tc.source)
+			notes, err := runUncaught(t, fmt.Sprintf(`
+const { Worker } = require('worker_threads');
+const worker = new Worker(%s, { eval: true });
+worker.postMessage(1);
+worker.on('error', (e) => note('error', e.message.split('\n')[0].replace(/^Error: /, '')));
+worker.on('exit', (code) => note('exit', code));
+`, source))
+			if err != nil {
+				t.Fatalf("Run returned %v", err)
+			}
+			if !reflect.DeepEqual(notes, tc.want) {
+				t.Errorf("notes = %q, want %q", notes, tc.want)
+			}
+		})
+	}
+}
+
+// A rejection made inside an 'unhandledRejection' listener gets its chance at a handler
+// before it counts, as any other does. Reporting it at once also never ended if the listener
+// kept doing this.
+func TestUnhandledRejectionFromListener(t *testing.T) {
+	supportsRejections(t)
+	t.Run("handled by a queued reaction", func(t *testing.T) {
+		notes, err := runUncaught(t, `
+let count = 0;
+process.on('unhandledRejection', (r) => {
+  note('unhandled', r.message);
+  if (++count > 5) throw new Error('runaway');
+  const inner = Promise.reject(new Error('inner'));
+  Promise.resolve().then(() => inner.catch(() => {}));
+});
+Promise.reject(new Error('outer'));
+`)
+		if err != nil {
+			t.Fatalf("Run returned %v", err)
+		}
+		if want := []string{"unhandled outer"}; !reflect.DeepEqual(notes, want) {
+			t.Errorf("notes = %q, want %q", notes, want)
+		}
+	})
+	t.Run("handled by a queued tick", func(t *testing.T) {
+		notes, err := runUncaught(t, `
+let count = 0;
+process.on('unhandledRejection', (r) => {
+  note('unhandled', r.message);
+  if (++count > 5) throw new Error('runaway');
+  const inner = Promise.reject(new Error('inner'));
+  process.nextTick(() => inner.catch(() => {}));
+});
+Promise.reject(new Error('outer'));
+`)
+		if err != nil {
+			t.Fatalf("Run returned %v", err)
+		}
+		if want := []string{"unhandled outer"}; !reflect.DeepEqual(notes, want) {
+			t.Errorf("notes = %q, want %q", notes, want)
+		}
+	})
+	t.Run("reported after the batch it was made in", func(t *testing.T) {
+		notes, err := runUncaught(t, `
+process.on('unhandledRejection', (r) => {
+  note('unhandled', r.message);
+  if (r.message === 'a') Promise.reject(new Error('later'));
+});
+Promise.reject(new Error('a'));
+Promise.reject(new Error('b'));
+Promise.resolve().then(() => Promise.reject(new Error('c')));
+`)
+		if err != nil {
+			t.Fatalf("Run returned %v", err)
+		}
+		want := []string{"unhandled a", "unhandled b", "unhandled c", "unhandled later"}
+		if !reflect.DeepEqual(notes, want) {
+			t.Errorf("notes = %q, want %q", notes, want)
+		}
+	})
 }
 
 // Node stops at a fatal exception: nothing already queued runs, whichever queue it is in.
