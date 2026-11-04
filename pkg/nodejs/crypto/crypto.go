@@ -272,7 +272,7 @@ func (c *Crypto) randomBytesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			hexStr := hex.EncodeToString(bytes)
 			code := `Buffer.from('` + hexStr + `', 'hex')`
 			bufVal, _ := c.rt.RunScript(code, "crypto_buffer")
-			callback.Call(nil, ctx.Null(), bufVal)
+			c.rt.MakeCallback(callback, nil, ctx.Null(), bufVal)
 		})
 		return ctx.Undefined()
 	}

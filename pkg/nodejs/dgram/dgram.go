@@ -546,10 +546,10 @@ func (d *Dgram) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			if err != nil {
 				desc := netdial.Describe(err, "getaddrinfo", host, 0)
 				text, _ := ctx.NewString(desc.Code + ": " + desc.Message)
-				callback.Call(ctx.Undefined(), text, ctx.Null())
+				d.rt.MakeCallback(callback, ctx.Undefined(), text, ctx.Null())
 			} else {
 				ip, _ := ctx.NewString(ips[0])
-				callback.Call(ctx.Undefined(), ctx.Null(), ip)
+				d.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ip)
 			}
 			ctx.PerformMicrotaskCheckpoint()
 		})
@@ -584,7 +584,7 @@ func (d *Dgram) callCallback(callback *v8.Value, errMsg string) {
 		errVal = ctx.Null()
 	}
 
-	callback.Call(ctx.Undefined(), errVal)
+	d.rt.MakeCallback(callback, ctx.Undefined(), errVal)
 }
 
 func (d *Dgram) callCallbackWithBytes(callback *v8.Value, errMsg string, bytes int) {
@@ -600,7 +600,7 @@ func (d *Dgram) callCallbackWithBytes(callback *v8.Value, errMsg string, bytes i
 		errVal = ctx.Null()
 	}
 
-	callback.Call(ctx.Undefined(), errVal, ctx.NewNumber(float64(bytes)))
+	d.rt.MakeCallback(callback, ctx.Undefined(), errVal, ctx.NewNumber(float64(bytes)))
 }
 
 func (d *Dgram) callReceiveCallback(callback *v8.Value, errMsg string, msg *v8.Value, rinfo *v8.Value) {
@@ -623,5 +623,5 @@ func (d *Dgram) callReceiveCallback(callback *v8.Value, errMsg string, msg *v8.V
 		rinfo = ctx.Null()
 	}
 
-	callback.Call(ctx.Undefined(), errVal, msg, rinfo)
+	d.rt.MakeCallback(callback, ctx.Undefined(), errVal, msg, rinfo)
 }

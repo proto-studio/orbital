@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -194,8 +195,7 @@ func main() {
 	if printCode != "" {
 		result, err := runCodeAndReturn(printCode, "[eval]")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			exitWithError(err)
 		}
 		if result != "" {
 			fmt.Println(result)
@@ -205,8 +205,7 @@ func main() {
 
 	if evalCode != "" {
 		if err := runCode(evalCode, "[eval]"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			exitWithError(err)
 		}
 		if forceInteractive {
 			repl()
@@ -228,8 +227,7 @@ func main() {
 
 	if scriptFile != "" {
 		if err := runFile(scriptFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			exitWithError(err)
 		}
 		if forceInteractive {
 			repl()
@@ -240,8 +238,7 @@ func main() {
 	// No script - check stdin or start REPL
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		if err := runStdin(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			exitWithError(err)
 		}
 		if forceInteractive {
 			repl()
@@ -250,6 +247,18 @@ func main() {
 	}
 
 	repl()
+}
+
+// exitWithError ends the program for an error from running a script. An uncaught exception
+// has already run the 'exit' listeners, and decided the exit code, the way Node does.
+func exitWithError(err error) {
+	var uncaught *runtime.UncaughtError
+	if errors.As(err, &uncaught) {
+		fmt.Fprintf(os.Stderr, "%s\n", uncaught.Message)
+		os.Exit(uncaught.ExitCode)
+	}
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	os.Exit(1)
 }
 
 // setProcessArgv sets up runtime.argv values
@@ -585,6 +594,9 @@ func runESModule(filename string) error {
 
 	// Run any pending async operations
 	rt.EventLoop().Run()
+	if uncaught := rt.UncaughtError(); uncaught != nil {
+		return uncaught
+	}
 
 	finalizeExit(rt)
 	return nil
@@ -646,7 +658,7 @@ func runCodeAndReturn(source, origin string) (string, error) {
 
 	result, err := rt.Run(source, origin)
 	if err != nil {
-		return "", fmt.Errorf("script error: %w", err)
+		return "", err
 	}
 
 	if result != nil && !result.IsUndefined() {
@@ -683,6 +695,9 @@ func runESModuleSource(source, origin string) error {
 	}
 
 	rt.EventLoop().Run()
+	if uncaught := rt.UncaughtError(); uncaught != nil {
+		return uncaught
+	}
 	finalizeExit(rt)
 	return nil
 }
@@ -764,7 +779,7 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 
 	result, err := rt.Run(source, origin)
 	if err != nil {
-		return fmt.Errorf("script error: %w", err)
+		return err
 	}
 
 	if result != nil && !result.IsUndefined() {
@@ -787,6 +802,12 @@ func repl() {
 		os.Exit(1)
 	}
 	defer rt.Dispose()
+
+	// As in Node, an exception thrown later by something a line started ends that work, not
+	// the session.
+	if _, err := rt.RunScript(`process.on('uncaughtException', (e) => console.error('Uncaught', e));`, "repl_setup"); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to set up REPL: %v\n", err)
+	}
 
 	// Set up readline with history
 	historyFile := filepath.Join(os.TempDir(), ".orbital_history")
@@ -905,7 +926,9 @@ func repl() {
 		multiline = false
 		buffer.Reset()
 
-		result, err := rt.Run(code, "repl")
+		// RunScript rather than Run: a line that throws just reports it, and the session
+		// goes on.
+		result, err := rt.RunScript(code, "repl")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			continue
