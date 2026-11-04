@@ -35,7 +35,9 @@ type Runtime struct {
 	uncaught          uncaughtHandlers
 	fatal             atomic.Pointer[UncaughtError]
 	tracksRejections  bool
-	rejectionsPending bool // only touched on the goroutine running JavaScript
+	rejectionsPending bool   // only touched on the goroutine running JavaScript
+	fatalSettled      bool   // same goroutine: UncaughtError has discarded the promise queue
+	mainBody          func() // same goroutine: what the runMain native function runs next
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -381,20 +383,25 @@ func (rt *Runtime) RunScript(source, origin string) (*v8.Value, error) {
 // An exception the script does not catch, in its main body or any later callback, goes to
 // process.on('uncaughtException') as it does in Node, and execution then carries on. If no
 // handler takes it, or a promise is left rejected with no 'unhandledRejection' handler, the
-// runtime stops and Run returns an *UncaughtError. The runtime cannot run anything further.
+// runtime stops and Run returns an *UncaughtError. The runtime cannot run anything further:
+// calling Run again returns the same error without running the script.
 func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
-	result, err := rt.RunScript(source, origin)
+	if uncaught := rt.UncaughtError(); uncaught != nil {
+		return nil, uncaught
+	}
+
+	result, err := rt.runMainScript(source, origin)
+	if uncaught := rt.UncaughtError(); uncaught != nil {
+		return nil, uncaught
+	}
 	if err != nil {
-		if err := rt.reportScriptError(err); err != nil {
-			return nil, err
-		}
-		result = nil
+		return nil, err
 	}
 
 	// Run the event loop to process any pending async operations
 	rt.eventLoop.Run()
 
-	if uncaught := rt.fatal.Load(); uncaught != nil {
+	if uncaught := rt.UncaughtError(); uncaught != nil {
 		return nil, uncaught
 	}
 	return result, nil
