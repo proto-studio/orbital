@@ -157,7 +157,7 @@ func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
 				errStr, _ := ctx.NewString(err.Error())
-				callback.Call(ctx.Undefined(), errStr, ctx.NewNumber(0))
+				c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.NewNumber(0))
 				return
 			}
 
@@ -171,7 +171,7 @@ func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			}
 			c.mu.Unlock()
 
-			callback.Call(ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(proc.Pid())))
+			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(proc.Pid())))
 		})
 	}()
 
@@ -230,7 +230,7 @@ func (c *ChildProcess) execFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			stdoutVal, _ := ctx.NewString(string(stdout))
 			stderrVal, _ := ctx.NewString(string(stderr))
 
-			callback.Call(ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
+			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
 		})
 	}()
 
@@ -292,7 +292,7 @@ func (c *ChildProcess) execFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			stdoutVal, _ := ctx.NewString(string(stdout))
 			stderrVal, _ := ctx.NewString(string(stderr))
 
-			callback.Call(ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
+			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
 		})
 	}()
 
@@ -497,7 +497,7 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
 			errStr, _ := ctx.NewString("Process not found")
-			callback.Call(ctx.Undefined(), errStr, ctx.NewNumber(-1), ctx.Null())
+			c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.NewNumber(-1), ctx.Null())
 		})
 		return nil
 	}
@@ -517,7 +517,7 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				errVal = ctx.Null()
 			}
 
-			callback.Call(ctx.Undefined(), errVal, ctx.NewNumber(float64(exitCode)), ctx.Null())
+			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, ctx.NewNumber(float64(exitCode)), ctx.Null())
 		})
 
 		// Clean up
@@ -548,7 +548,7 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
 			errStr, _ := ctx.NewString("Process not found")
-			callback.Call(ctx.Undefined(), errStr, ctx.Null())
+			c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.Null())
 		})
 		return nil
 	}
@@ -570,12 +570,12 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
 			if err != nil {
-				callback.Call(ctx.Undefined(), ctx.Null(), ctx.Null())
+				c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.Null())
 				return
 			}
 
 			dataVal, _ := ctx.NewString(string(buf[:n]))
-			callback.Call(ctx.Undefined(), ctx.Null(), dataVal)
+			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), dataVal)
 		})
 	}()
 
@@ -601,7 +601,7 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := info.Context()
 			errStr, _ := ctx.NewString("Process not found")
-			callback.Call(ctx.Undefined(), errStr)
+			c.rt.MakeCallback(callback, ctx.Undefined(), errStr)
 		})
 		return nil
 	}
@@ -616,9 +616,9 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			ctx := info.Context()
 			if err != nil {
 				errStr, _ := ctx.NewString(err.Error())
-				callback.Call(ctx.Undefined(), errStr)
+				c.rt.MakeCallback(callback, ctx.Undefined(), errStr)
 			} else {
-				callback.Call(ctx.Undefined(), ctx.Null())
+				c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
 			}
 		})
 	}()

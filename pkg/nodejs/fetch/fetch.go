@@ -296,7 +296,7 @@ func (f *Fetch) enqueueResponse(op *fetchOp, jsCtx *v8.Context, callback *v8.Val
 				errMsg = ctxErr.Err().Error()
 			}
 			errVal, _ := jsCtx.NewString(errMsg)
-			callback.Call(nil, errVal, jsCtx.NewNumber(0), jsCtx.Null(), jsCtx.Null(), jsCtx.Null(), jsCtx.NewNumber(0))
+			f.rt.MakeCallback(callback, nil, errVal, jsCtx.NewNumber(0), jsCtx.Null(), jsCtx.Null(), jsCtx.Null(), jsCtx.NewNumber(0))
 			jsCtx.PerformMicrotaskCheckpoint()
 			return
 		}
@@ -309,7 +309,7 @@ func (f *Fetch) enqueueResponse(op *fetchOp, jsCtx *v8.Context, callback *v8.Val
 		}
 		headersVal, _ := jsCtx.NewString(string(headersJSON))
 		statusVal, _ := jsCtx.NewString(statusText)
-		callback.Call(nil,
+		f.rt.MakeCallback(callback, nil,
 			jsCtx.Null(),
 			jsCtx.NewNumber(float64(status)),
 			statusVal,
@@ -328,7 +328,7 @@ func (f *Fetch) finishEarly(op *fetchOp, jsCtx *v8.Context, callback *v8.Value, 
 	}
 	f.rt.EventLoop().EnqueueMicrotask(func() {
 		errVal, _ := jsCtx.NewString(msg)
-		callback.Call(nil, errVal, jsCtx.NewNumber(0), jsCtx.Null(), jsCtx.Null(), jsCtx.Null(), jsCtx.NewNumber(0))
+		f.rt.MakeCallback(callback, nil, errVal, jsCtx.NewNumber(0), jsCtx.Null(), jsCtx.Null(), jsCtx.Null(), jsCtx.NewNumber(0))
 		jsCtx.PerformMicrotaskCheckpoint()
 	})
 }
@@ -427,7 +427,7 @@ func (f *Fetch) enqueueRead(jsCtx *v8.Context, callback *v8.Value, errMsg string
 		} else {
 			chunkVal = jsCtx.Null()
 		}
-		callback.Call(nil, errVal, chunkVal, jsCtx.NewBoolean(done))
+		f.rt.MakeCallback(callback, nil, errVal, chunkVal, jsCtx.NewBoolean(done))
 		jsCtx.PerformMicrotaskCheckpoint()
 	})
 }

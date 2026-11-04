@@ -89,7 +89,7 @@ func (d *DNS) finish(callback *v8.Value, code string, result any) {
 		} else if encoded, err := json.Marshal(result); err == nil {
 			resultVal = jsString(ctx, string(encoded))
 		}
-		callback.Call(ctx.Undefined(), errVal, resultVal)
+		d.rt.MakeCallback(callback, ctx.Undefined(), errVal, resultVal)
 		ctx.PerformMicrotaskCheckpoint()
 	})
 }

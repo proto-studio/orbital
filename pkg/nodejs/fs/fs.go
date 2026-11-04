@@ -844,7 +844,7 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
 				errVal, _ := ctx.NewString(err.Error())
-				callback.Call(nil, errVal, ctx.Null())
+				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
 			} else {
 				var dataVal *v8.Value
 				if encoding == "utf8" || encoding == "utf-8" {
@@ -852,7 +852,7 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				} else {
 					dataVal, _ = ctx.NewString(string(data))
 				}
-				callback.Call(nil, ctx.Null(), dataVal)
+				f.rt.MakeCallback(callback, nil, ctx.Null(), dataVal)
 			}
 		})
 	}()
@@ -888,9 +888,9 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
 				errVal, _ := ctx.NewString(err.Error())
-				callback.Call(nil, errVal)
+				f.rt.MakeCallback(callback, nil, errVal)
 			} else {
-				callback.Call(nil, ctx.Null())
+				f.rt.MakeCallback(callback, nil, ctx.Null())
 			}
 		})
 	}()
@@ -978,12 +978,12 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 					code = "EACCES"
 				}
 				errVal := f.makeFsError(ctx, code, err.Error(), path, "stat")
-				callback.Call(nil, errVal, ctx.Null())
+				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
 				return
 			}
 			statObj := f.createStatObject(ctx, stat)
 			f.callFsHelper(ctx, "__addStatsMethods", statObj)
-			callback.Call(nil, ctx.Null(), statObj)
+			f.rt.MakeCallback(callback, nil, ctx.Null(), statObj)
 		})
 	}()
 
@@ -1014,11 +1014,11 @@ func (f *FS) accessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if exists {
-				callback.Call(nil, ctx.Null())
+				f.rt.MakeCallback(callback, nil, ctx.Null())
 				return
 			}
 			errVal := f.makeFsError(ctx, "ENOENT", "ENOENT: no such file or directory, access '"+path+"'", path, "access")
-			callback.Call(nil, errVal)
+			f.rt.MakeCallback(callback, nil, errVal)
 		})
 	}()
 
@@ -1119,7 +1119,7 @@ func (f *FS) readStreamReadFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if !ok {
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			errVal, _ := ctx.NewString("EBADF: bad file descriptor, read")
-			callback.Call(nil, errVal, ctx.Null())
+			f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
 		})
 		return nil
 	}
@@ -1132,7 +1132,7 @@ func (f *FS) readStreamReadFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if h.limited {
 			if h.remaining <= 0 {
 				f.rt.EventLoop().EnqueueMicrotask(func() {
-					callback.Call(nil, ctx.Null(), ctx.Null())
+					f.rt.MakeCallback(callback, nil, ctx.Null(), ctx.Null())
 				})
 				return
 			}
@@ -1150,16 +1150,16 @@ func (f *FS) readStreamReadFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if n > 0 {
 				dataVal, _ := ctx.NewString(latin1String(buf[:n]))
-				callback.Call(nil, ctx.Null(), dataVal)
+				f.rt.MakeCallback(callback, nil, ctx.Null(), dataVal)
 				return
 			}
 			if err == nil || err == io.EOF {
 				// EOF
-				callback.Call(nil, ctx.Null(), ctx.Null())
+				f.rt.MakeCallback(callback, nil, ctx.Null(), ctx.Null())
 				return
 			}
 			errVal, _ := ctx.NewString(err.Error())
-			callback.Call(nil, errVal, ctx.Null())
+			f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
 		})
 	}()
 

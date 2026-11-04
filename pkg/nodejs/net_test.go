@@ -17,6 +17,9 @@ const net = require('net');
 const stream = require('stream');
 const listen = (handler, options) => new Promise((resolve) => {
   const server = net.createServer(options || {}, handler);
+  // A client that closes while there is unread data resets the connection, which is an
+  // uncaught exception in Node too. Tests that care add their own listener.
+  server.on('connection', (c) => c.on('error', () => {}));
   server.listen(0, '127.0.0.1', () => resolve(server));
 });
 const fail = (e) => done({ failed: String(e && e.stack || e) });
