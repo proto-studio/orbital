@@ -75,13 +75,13 @@ func (s *zStream) ensureStarted() {
 			s.pr.CloseWithError(err)
 			s.z.rt.EventLoop().EnqueueMicrotask(func() {
 				errVal, _ := s.ctx.NewString(err.Error())
-				s.callback.Call(nil, errVal, s.ctx.Null())
+				s.z.rt.MakeCallback(s.callback, nil, errVal, s.ctx.Null())
 			})
 			return
 		}
 		s.pr.Close()
 		s.z.rt.EventLoop().EnqueueMicrotask(func() {
-			s.callback.Call(nil, s.ctx.Null(), s.ctx.Null())
+			s.z.rt.MakeCallback(s.callback, nil, s.ctx.Null(), s.ctx.Null())
 		})
 	}()
 }
@@ -393,7 +393,7 @@ func (s *zSink) Write(p []byte) (int, error) {
 	enc := base64.StdEncoding.EncodeToString(p)
 	s.z.rt.EventLoop().EnqueueMicrotask(func() {
 		dataVal, _ := s.ctx.NewString(enc)
-		s.cb.Call(nil, s.ctx.Null(), dataVal)
+		s.z.rt.MakeCallback(s.cb, nil, s.ctx.Null(), dataVal)
 	})
 	return len(p), nil
 }

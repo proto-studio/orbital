@@ -185,6 +185,19 @@ about them. They work only with `RealSocketFactory` itself and an unrestricted f
 and otherwise fail with `EACCES`. A type that embeds `RealSocketFactory` does not inherit
 them. A custom factory can offer them by implementing `UnixSocketFactory`.
 
+## Uncaught exceptions
+
+An exception no one catches, or a promise left rejected, follows Node's rules:
+`process.on('uncaughtException')` and `'unhandledRejection'` run, and execution carries on. With no
+handler, Node prints the error and exits, which a library must not do to its host. So `Run` stops
+the runtime and returns a `*runtime.UncaughtError` holding the message and exit code, after the
+script's `'exit'` listeners have run. The `orbital` CLI prints it and exits with that code.
+
+If you run the event loop yourself, check `rt.UncaughtError()` afterwards. A native module should
+call into JavaScript from the event loop with `rt.MakeCallback`, not `Value.Call`, so that what the
+function throws gets the same treatment. Remaining differences from Node are in
+[known limitations](docs/known-limitations.md).
+
 ## Packages
 
 | Package | Purpose |

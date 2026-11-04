@@ -209,10 +209,11 @@ done({ seen });`)
 		result := runHTTP(t, &runtime.Config{}, `
 const server = await serve((q, p) => p.end('x'));
 const seen = [];
+process.on('uncaughtException', (e) => seen.push('uncaught:' + e.message));
 const q = http.get(target(server), () => { throw new Error('mine'); });
 q.on('error', (e) => seen.push('error:' + e.message));
 setTimeout(() => { server.close(); server.closeAllConnections(); done({ seen }); }, 50);`)
-		wantJSON(t, result, map[string]any{"seen": []any{}})
+		wantJSON(t, result, map[string]any{"seen": []any{"uncaught:mine"}})
 	})
 
 	t.Run("failures", func(t *testing.T) {

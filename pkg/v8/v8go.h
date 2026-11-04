@@ -177,6 +177,11 @@ void v8go_set_dynamic_import_resolver(void* context, int resolver_id);
 
 // Drain V8's microtask queue (promise reactions). The default policy is kAuto,
 // but callers pumping the event loop can force a checkpoint explicitly.
+// Calls a JavaScript function as (event, promise, value) for each promise rejection event. event
+// is V8's PromiseRejectEvent. Returns 0 if the handler was not set.
+int v8go_set_promise_reject_handler(void* context_ptr, void* function_ptr);
+// Returns what the last failed v8go_context_run_script threw, once, or NULL.
+void* v8go_context_take_last_script_exception(void* context_ptr);
 void v8go_perform_microtask_checkpoint(void* isolate);
 
 #ifdef __cplusplus

@@ -185,7 +185,7 @@ func (h *HTTP2) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				msg, code = describeError(err, opts)
 			}
 			h.deliver(func(ctx *v8.Context) {
-				onClose.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
+				h.rt.MakeCallback(onClose, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
 			})
 		})
 		msg, code := "", ""
@@ -193,7 +193,7 @@ func (h *HTTP2) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			msg, code = describeError(err, opts)
 		}
 		h.deliver(func(ctx *v8.Context) {
-			onConnect.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
+			h.rt.MakeCallback(onConnect, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
 		})
 	}()
 
@@ -257,7 +257,7 @@ func (h *HTTP2) requestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	reply := func(msg, code string, rst int, headers string) {
 		h.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewInteger(int64(rst)), jsString(ctx, headers))
+			h.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewInteger(int64(rst)), jsString(ctx, headers))
 		})
 	}
 
@@ -458,7 +458,7 @@ func (h *HTTP2) readStreamFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			if len(chunk) > 0 {
 				chunkVal = jsString(ctx, latin1String(chunk))
 			}
-			callback.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewInteger(int64(rst)),
+			h.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewInteger(int64(rst)),
 				chunkVal, ctx.NewBoolean(done), jsString(ctx, trailers))
 		})
 	}
@@ -506,7 +506,7 @@ func (h *HTTP2) writeStreamFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	reply := func(msg, code string) {
 		h.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
+			h.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code))
 		})
 	}
 
@@ -587,7 +587,7 @@ func (h *HTTP2) pingFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	callback := args[1]
 	reply := func(msg, code string, ms float64) {
 		h.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewNumber(ms))
+			h.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, msg), jsString(ctx, code), ctx.NewNumber(ms))
 		})
 	}
 
