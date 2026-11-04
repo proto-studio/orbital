@@ -71,6 +71,25 @@ type ResolvedTCPSocket interface {
 	ConnectResolved(ctx context.Context, hostname, ip string, port int) error
 }
 
+// HalfClosableTCPSocket is an optional extension of TCPSocket for sockets that can
+// finish sending while still receiving, as Node's socket.end needs.
+type HalfClosableTCPSocket interface {
+	TCPSocket
+
+	// CloseWrite signals the end of the outgoing data. Read keeps working until the
+	// peer finishes too. A wrapper whose underlying socket cannot do this returns
+	// errors.ErrUnsupported.
+	CloseWrite() error
+}
+
+// CloseWrite half-closes socket, or returns errors.ErrUnsupported if it cannot.
+func CloseWrite(socket TCPSocket) error {
+	if halfClosable, ok := socket.(HalfClosableTCPSocket); ok {
+		return halfClosable.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
 // NewSocketConn adapts a connected TCPSocket to a net.Conn so protocol stacks
 // such as crypto/tls can run on top of an injected SocketFactory.
 //
@@ -286,6 +305,21 @@ func (s *RealTCPSocket) Close() error {
 	return err
 }
 
+// CloseWrite shuts down the sending side of the TCP connection.
+func (s *RealTCPSocket) CloseWrite() error {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+
+	if conn == nil {
+		return ErrSocketClosed
+	}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		return tcpConn.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
 // SetTimeout sets the read/write timeout for the connection.
 func (s *RealTCPSocket) SetTimeout(d time.Duration) error {
 	s.mu.Lock()
@@ -495,6 +529,26 @@ func (s *RealTLSSocket) Close() error {
 		s.tlsConn = nil
 	}
 	return s.underlying.Close()
+}
+
+// CloseWrite sends close_notify and then, where the underlying socket supports it, a
+// TCP FIN. The close_notify alone tells a TLS peer the data is complete, so an
+// underlying socket that cannot half-close is not an error.
+func (s *RealTLSSocket) CloseWrite() error {
+	s.mu.Lock()
+	tlsConn := s.tlsConn
+	s.mu.Unlock()
+
+	if tlsConn == nil {
+		return ErrSocketClosed
+	}
+	if err := tlsConn.CloseWrite(); err != nil {
+		return err
+	}
+	if err := CloseWrite(s.underlying); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		return err
+	}
+	return nil
 }
 
 // SetTimeout delegates to the underlying socket.

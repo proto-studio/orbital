@@ -10,6 +10,15 @@
   const DEFAULT_MIN_VERSION = 'TLSv1.2';
   const DEFAULT_MAX_VERSION = 'TLSv1.3';
 
+  // Node's default for a socket's write buffer.
+  const kHighWaterMark = 16384;
+
+  function makeError(message, code) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+  }
+
   function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
   }
@@ -48,7 +57,20 @@
       this._destroyed = false;
       this._writable = true;
       this._readable = true;
-      
+      this._allowHalfOpen = !!options.allowHalfOpen;
+
+      // Writes run one at a time, in order, once the handshake is done. end() takes
+      // effect after the last one.
+      this._writes = [];
+      this._writeLength = 0;
+      this._currentWrite = null;
+      this._needDrain = false;
+      this._ending = false;
+      this._finished = false;
+      this._readEnded = false;
+      this._shuttingDown = false;
+      this._endCallbacks = [];
+
       // Forward events from underlying socket
       this._setupSocketEvents();
     }
@@ -150,7 +172,7 @@
 
         this.emit('secureConnect');
 
-        // Start reading
+        this._pumpWrites();
         this._startReading();
       });
 
@@ -161,22 +183,24 @@
       if (this._destroyed || !this._connected) return;
 
       internal.read(this._id, (err, data) => {
+        if (this._destroyed) return;
+
         if (err) {
-          if (!this._destroyed) {
-            this.emit('error', new Error(err));
-            this.destroy();
-          }
+          this.emit('error', new Error(err));
+          this.destroy();
           return;
         }
 
         if (data === null) {
           this._readable = false;
+          this._readEnded = true;
           this.emit('end');
+          if (!this._allowHalfOpen) this.end();
+          this._destroyIfDone();
           return;
         }
 
-        const buf = Buffer.from(data, 'binary');
-        this.emit('data', buf);
+        this.emit('data', Buffer.from(data, 'base64'));
 
         this._startReading();
       });
@@ -191,8 +215,22 @@
         encoding = undefined;
       }
 
-      if (this._destroyed) {
-        if (callback) callback(new Error('Socket is closed'));
+      if (this._ending || this._destroyed) {
+        const err = this._ending
+          ? makeError('write after end', 'ERR_STREAM_WRITE_AFTER_END')
+          : makeError('Cannot call write after a stream was destroyed', 'ERR_STREAM_DESTROYED');
+        process.nextTick(() => {
+          if (callback) callback(err);
+          this.destroy(err);
+        });
+        return false;
+      }
+
+      // A socket that never connected has nothing to write to.
+      if (this._id === null) {
+        const err = new Error('Socket not found');
+        this.emit('error', err);
+        if (callback) callback(err);
         return false;
       }
 
@@ -205,40 +243,103 @@
         buf = Buffer.from(data);
       }
 
-      internal.write(this._id, buf.toString('binary'), (err) => {
+      this._writes.push({ buf, callback });
+      this._writeLength += buf.length;
+      const belowLimit = this._writeLength < kHighWaterMark;
+      if (!belowLimit) this._needDrain = true;
+
+      this._pumpWrites();
+      return belowLimit;
+    }
+
+    _pumpWrites() {
+      if (this._currentWrite || !this._connected || this._destroyed) return;
+
+      const entry = this._writes.shift();
+      if (!entry) {
+        if (this._ending) this._shutdown();
+        return;
+      }
+
+      this._currentWrite = entry;
+      internal.write(this._id, entry.buf.toString('base64'), (err) => {
+        // destroy() has already answered this write.
+        if (this._destroyed) return;
+
+        this._currentWrite = null;
+        this._writeLength -= entry.buf.length;
+
         if (err) {
-          this.emit('error', new Error(err));
-          if (callback) callback(new Error(err));
+          const error = new Error(err);
+          if (entry.callback) entry.callback(error);
+          this.destroy(error);
           return;
         }
 
-        this.emit('drain');
-        if (callback) callback();
+        if (this._needDrain && !this._ending && this._writeLength === 0) {
+          this._needDrain = false;
+          this.emit('drain');
+        }
+        if (entry.callback) entry.callback();
+        this._pumpWrites();
       });
+    }
 
-      return true;
+    _shutdown() {
+      if (this._shuttingDown) return;
+      this._shuttingDown = true;
+
+      internal.shutdown(this._id, () => {
+        if (this._destroyed) return;
+
+        this._finished = true;
+        for (const callback of this._endCallbacks.splice(0)) callback();
+        this.emit('finish');
+        this._destroyIfDone();
+      });
+    }
+
+    _destroyIfDone() {
+      if (this._readEnded && this._finished) this.destroy();
     }
 
     /**
-     * End the socket.
+     * Finish writing. The socket closes once the peer has finished too.
      */
     end(data, encoding, callback) {
       if (typeof data === 'function') {
         callback = data;
         data = undefined;
+        encoding = undefined;
+      } else if (typeof encoding === 'function') {
+        callback = encoding;
+        encoding = undefined;
       }
 
-      if (data) {
+      if (data !== undefined && data !== null) {
         this.write(data, encoding);
       }
 
-      this._writable = false;
-
       if (callback) {
-        this.once('finish', callback);
+        if (this._finished) {
+          process.nextTick(callback, makeError('Cannot call end after a stream was finished', 'ERR_STREAM_ALREADY_FINISHED'));
+        } else if (this._destroyed) {
+          process.nextTick(callback, makeError('Cannot call end after a stream was destroyed', 'ERR_STREAM_DESTROYED'));
+        } else {
+          this._endCallbacks.push(callback);
+        }
       }
 
-      this.destroy();
+      if (!this._ending) {
+        this._ending = true;
+        this._writable = false;
+        if (this._id === null) {
+          this.destroy();
+        } else {
+          this._pumpWrites();
+        }
+      }
+
       return this;
     }
 
@@ -256,12 +357,28 @@
         this._id = null;
       }
 
+      this._cancelPendingWrites();
+
       if (error) {
         this.emit('error', error);
       }
 
       this.emit('close', !!error);
       return this;
+    }
+
+    // As in Node, a write already handed to the socket reports no error, and one still
+    // waiting never went out.
+    _cancelPendingWrites() {
+      const current = this._currentWrite;
+      this._currentWrite = null;
+      if (current && current.callback) current.callback(null);
+
+      const err = makeError('Cannot call write after a stream was destroyed', 'ERR_STREAM_DESTROYED');
+      for (const { callback } of this._writes.splice(0)) {
+        if (callback) callback(err);
+      }
+      for (const callback of this._endCallbacks.splice(0)) callback(err);
     }
 
     /**
