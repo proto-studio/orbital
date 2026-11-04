@@ -58,6 +58,7 @@
   function createSecretKey(key, encoding) {
     let buf;
     if (typeof key === 'string') buf = Buffer.from(key, encoding || 'utf8');
+    else if (ArrayBuffer.isView(key)) buf = Buffer.from(new Uint8Array(key.buffer, key.byteOffset, key.byteLength));
     else buf = Buffer.from(key);
     return wrap(crypto._createSecretKey(buf.toString('base64')));
   }
