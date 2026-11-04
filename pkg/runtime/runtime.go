@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"proto.zip/studio/orbital/pkg/v8"
@@ -31,6 +32,10 @@ type Runtime struct {
 	execController    *ExecutionController
 	disposed          bool
 	mu                sync.Mutex
+	uncaught          uncaughtHandlers
+	fatal             atomic.Pointer[UncaughtError]
+	tracksRejections  bool
+	rejectionsPending bool // only touched on the goroutine running JavaScript
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -209,6 +214,12 @@ func New(cfg *Config) (*Runtime, error) {
 		rt.eventLoop.Stop()
 	})
 
+	if err := rt.installUncaught(); err != nil {
+		ctx.Dispose()
+		iso.Dispose()
+		return nil, fmt.Errorf("failed to set up exception handling: %w", err)
+	}
+
 	return rt, nil
 }
 
@@ -366,15 +377,26 @@ func (rt *Runtime) RunScript(source, origin string) (*v8.Value, error) {
 }
 
 // Run executes JavaScript code and runs the event loop until completion.
+//
+// An exception the script does not catch, in its main body or any later callback, goes to
+// process.on('uncaughtException') as it does in Node, and execution then carries on. If no
+// handler takes it, or a promise is left rejected with no 'unhandledRejection' handler, the
+// runtime stops and Run returns an *UncaughtError. The runtime cannot run anything further.
 func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
 	result, err := rt.RunScript(source, origin)
 	if err != nil {
-		return nil, err
+		if err := rt.reportScriptError(err); err != nil {
+			return nil, err
+		}
+		result = nil
 	}
 
 	// Run the event loop to process any pending async operations
 	rt.eventLoop.Run()
 
+	if uncaught := rt.fatal.Load(); uncaught != nil {
+		return nil, uncaught
+	}
 	return result, nil
 }
 

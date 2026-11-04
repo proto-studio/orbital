@@ -352,7 +352,7 @@ func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 
 		n.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsJSON(ctx, out))
+			n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
 		})
 	}()
 	return nil
@@ -414,7 +414,7 @@ func (n *Net) connectUnixFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			}
 		}
 		n.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsJSON(ctx, out))
+			n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
 		})
 	}()
 	return nil
@@ -448,10 +448,10 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		n.deliver(func(ctx *v8.Context) {
 			if err != nil {
 				desc := netdial.Describe(err, "write", "", 0)
-				callback.Call(ctx.Undefined(), jsJSON(ctx, desc))
+				n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, desc))
 				return
 			}
-			callback.Call(ctx.Undefined(), ctx.Null())
+			n.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
 		})
 	}()
 	return nil
@@ -460,7 +460,7 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (n *Net) failSocketClosed(callback *v8.Value, syscallName string) *v8.Value {
 	n.deliver(func(ctx *v8.Context) {
 		desc := netdial.NodeError{Message: "Socket is closed", Code: "ERR_SOCKET_CLOSED", Syscall: syscallName}
-		callback.Call(ctx.Undefined(), jsJSON(ctx, desc))
+		n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, desc))
 	})
 	return nil
 }
@@ -528,13 +528,13 @@ func (n *Net) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		n.deliver(func(ctx *v8.Context) {
 			switch {
 			case n2 > 0:
-				callback.Call(ctx.Undefined(), ctx.Null(), jsString(ctx, encoded))
+				n.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), jsString(ctx, encoded))
 			case err == nil, errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF),
 				errors.Is(err, net.ErrClosed), errors.Is(err, runtime.ErrSocketClosed):
-				callback.Call(ctx.Undefined(), ctx.Null(), ctx.Null())
+				n.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.Null())
 			default:
 				desc := netdial.Describe(err, "read", "", 0)
-				callback.Call(ctx.Undefined(), jsJSON(ctx, desc), ctx.Null())
+				n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, desc), ctx.Null())
 			}
 		})
 
@@ -562,7 +562,7 @@ func (n *Net) shutdownFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		socket = conn.Socket()
 	}
 	if socket == nil {
-		n.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined()) })
+		n.deliver(func(ctx *v8.Context) { n.rt.MakeCallback(callback, ctx.Undefined()) })
 		return nil
 	}
 
@@ -572,7 +572,7 @@ func (n *Net) shutdownFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if errors.Is(runtime.CloseWrite(socket), errors.ErrUnsupported) {
 			conn.Close()
 		}
-		n.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined()) })
+		n.deliver(func(ctx *v8.Context) { n.rt.MakeCallback(callback, ctx.Undefined()) })
 	}()
 	return nil
 }
@@ -859,14 +859,14 @@ func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		n.deliver(func(ctx *v8.Context) {
 			if err != nil {
 				desc := netdial.Describe(err, "accept", "", 0)
-				callback.Call(ctx.Undefined(), jsJSON(ctx, desc), ctx.Null(), ctx.Null())
+				n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, desc), ctx.Null(), ctx.Null())
 				return
 			}
 			id, conn := n.newConn()
 			conn.mu.Lock()
 			conn.socket = socket
 			conn.mu.Unlock()
-			callback.Call(ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(id)), jsJSON(ctx, describeAddresses(socket)))
+			n.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(id)), jsJSON(ctx, describeAddresses(socket)))
 		})
 
 		s.mu.Lock()

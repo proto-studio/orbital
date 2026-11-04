@@ -185,7 +185,7 @@ func (t *Timers) setTimeoutFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			return
 		}
 		t.timers.Delete(id)
-		callback.Call(nil, callArgs...)
+		t.rt.MakeCallback(callback, nil, callArgs...)
 	}, time.Duration(delay)*time.Millisecond)
 
 	handle.task = task
@@ -266,7 +266,7 @@ func (t *Timers) setIntervalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if handle.cancelled {
 			return
 		}
-		callback.Call(nil, callArgs...)
+		t.rt.MakeCallback(callback, nil, callArgs...)
 	}, time.Duration(interval)*time.Millisecond)
 
 	handle.task = task
@@ -287,7 +287,7 @@ func (t *Timers) queueMicrotaskFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	callback := args[0]
 	t.rt.EventLoop().EnqueueMicrotask(func() {
-		callback.Call(nil)
+		t.rt.MakeCallback(callback, nil)
 	})
 	return nil
 }
@@ -322,7 +322,7 @@ func (t *Timers) setImmediateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			return
 		}
 		t.timers.Delete(id)
-		callback.Call(nil, callArgs...)
+		t.rt.MakeCallback(callback, nil, callArgs...)
 	})
 
 	handle.task = task

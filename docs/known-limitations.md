@@ -95,11 +95,29 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ---
 
+## Uncaught exceptions and rejections (`pkg/runtime/uncaught.go`, `uncaught.js`)
+
+- **[gap] Needs a V8 release with the new glue.** `unhandledRejection` and the thrown value of
+  a main-script exception depend on `v8go_set_promise_reject_handler` and
+  `v8go_context_take_last_script_exception` in `v8go.cc`, which only ship in a V8 release. Until
+  the pinned release has them, weak stubs in `pkg/v8/promise_reject.go` keep the build linking:
+  rejections are not reported at all, and a handler for a main-script exception gets an `Error`
+  rebuilt from its text, with no custom properties. Delete the stubs when the pin moves.
+- **[approx] The printed error has no source-line header.** Node prints `file:line`, the source
+  line and a caret above the stack, and its version below it. Orbital prints the stack.
+- **[gap] Only the default `throw` rejection mode.** There is no `--unhandled-rejections` flag,
+  and no `PromiseRejectionHandledWarning`.
+- **[gap] `domain` does not follow async work.** Only a throw inside the synchronous `run()`
+  reaches a domain's `'error'` listener. A throw from a timer started in one is uncaught.
+- **[approx] A worker's `'error'` event carries text.** The parent gets an `Error` whose message
+  is the worker's whole printed exception, not a copy of the thrown value.
+- **[approx] Native modules must use `Runtime.MakeCallback`.** A Go module that calls a function
+  with `Value.Call` from the event loop and ignores the error still loses the exception.
+
+---
+
 ## Network modules (`pkg/nodejs/net`, `tls`, `http`, `https`, `dns`, `dgram`)
 
-- **Uncaught exceptions.** The runtime has no `uncaughtException` handling, so an exception
-  thrown in an async callback, including a socket or HTTP handler, is lost silently and the
-  process exits 0. In Node it would crash the process.
 - **Hostname checks follow Go, not Node, unless a script passes `checkServerIdentity`.** A
   certificate with only a Common Name and no SAN fails where Node accepts it. Only a
   whole-label `*.` wildcard matches, not `f*.example.com`, and Go accepts `*.com` from a

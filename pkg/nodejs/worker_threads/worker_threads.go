@@ -196,7 +196,7 @@ func (w *WorkerThreads) dispatchToParent(id int, e wtEvent) {
 	kindV, _ := ctx.NewString(e.kind)
 	dataV, _ := ctx.NewString(e.data)
 	codeV := ctx.NewInteger(int64(e.code))
-	_, _ = w.dispatcher.Call(nil, idV, kindV, dataV, codeV)
+	w.rt.MakeCallback(w.dispatcher, nil, idV, kindV, dataV, codeV)
 }
 
 // __wt_post(id, msgJson)
@@ -310,7 +310,7 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 						return
 					}
 					s, _ := wrt.Context().NewString(m)
-					_, _ = deliverFn.Call(nil, s)
+					wrt.MakeCallback(deliverFn, nil, s)
 				})
 			}
 		}
