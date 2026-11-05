@@ -78,7 +78,7 @@ type EventLoop struct {
 	pendingWork int32 // atomic counter for pending async work
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
-	drained     func() // runs once the microtask queue empties; see setDrainedHook
+	drained     func() // runs once both queues empty; see setDrainedHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -122,13 +122,13 @@ func (el *EventLoop) SetContext(ctx context.Context) {
 	el.ctx, el.cancelCtx = context.WithCancel(ctx)
 }
 
-// setDrainedHook sets a function to run on the loop's goroutine each time the microtask queue
-// has emptied, before the loop looks for more work. Call it before the loop starts.
+// setDrainedHook sets a function to run on the loop's goroutine each time the tick and
+// microtask queues have emptied, before the loop looks for more work. Call it before the loop starts.
 func (el *EventLoop) setDrainedHook(fn func()) {
 	el.drained = fn
 }
 
-// runDrainedLocked runs the drained hook, and reports whether that queued more microtasks.
+// runDrainedLocked runs the drained hook, and reports whether that queued more callbacks.
 // el.mu must be held. It is released while the hook runs.
 func (el *EventLoop) runDrainedLocked() bool {
 	if el.drained == nil {
@@ -137,14 +137,14 @@ func (el *EventLoop) runDrainedLocked() bool {
 	el.mu.Unlock()
 	el.drained()
 	el.mu.Lock()
-	return len(el.microtasks) > 0
+	return len(el.ticks) > 0 || len(el.microtasks) > 0
 }
 
-// hasMicrotasks reports whether any microtasks are queued.
+// hasMicrotasks reports whether any ticks or microtasks are queued.
 func (el *EventLoop) hasMicrotasks() bool {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	return len(el.microtasks) > 0
+	return len(el.ticks) > 0 || len(el.microtasks) > 0
 }
 
 // SetTimeout schedules a function to run after the specified delay.

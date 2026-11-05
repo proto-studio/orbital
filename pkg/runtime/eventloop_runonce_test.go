@@ -131,3 +131,26 @@ func TestClearAllMicrotasks_ClearsTicks(t *testing.T) {
 	}
 	el.RunOnce()
 }
+
+// A tick queued by the drained hook is work like any other, so the loop has to run it, and
+// the queues have to count as non-empty until it has.
+func TestRun_RunsTicksQueuedByDrainedHook(t *testing.T) {
+	el := NewEventLoop()
+	ran, drains := false, 0
+	el.setDrainedHook(func() {
+		drains++
+		if drains == 1 {
+			el.EnqueueTick(func() { ran = true })
+			if !el.hasMicrotasks() {
+				t.Error("a queued tick does not count as queued")
+			}
+		}
+	})
+	el.Run()
+	if !ran {
+		t.Error("the tick never ran")
+	}
+	if drains != 2 {
+		t.Errorf("hook ran %d times, want 2", drains)
+	}
+}
