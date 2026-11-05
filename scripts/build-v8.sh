@@ -193,9 +193,11 @@ v8_use_external_startup_data=false
 use_custom_libcxx=true
 v8_enable_sandbox=true
 # Chromium's rustc is often x86_64-only; ARM hosts hit Exec format error.
-# Temporal (JS Temporal API) is what pulls Rust into V8 — disable both.
+# Temporal (JS Temporal API) and ICU4X Intl (icu_capi) are what pull Rust into V8 —
+# disable all three.
 enable_rust=false
 v8_enable_temporal_support=false
+v8_enable_ecma402_icu4x=false
 # ICU / i18n is required for the full Intl API *and* for RegExp Unicode property
 # escapes (/\p{...}/u). Real-world packages depend on the latter at parse time —
 # e.g. path-to-regexp@8 (Express 5's router) has `/^[$_\p{ID_Start}]$/u` at module

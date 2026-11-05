@@ -268,6 +268,7 @@ v8-gn-gen: v8-deps
 	echo 'v8_enable_sandbox=true' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'enable_rust=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_temporal_support=false' >> "$$V8_OUT_DIR/args.gn" && \
+	echo 'v8_enable_ecma402_icu4x=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_i18n_support=true' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'icu_use_data_file=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'treat_warnings_as_errors=false' >> "$$V8_OUT_DIR/args.gn" && \
