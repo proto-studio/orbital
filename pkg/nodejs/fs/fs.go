@@ -3,6 +3,7 @@ package fs
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"os"
@@ -326,54 +327,55 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-// readFileSyncFunc implements fs.readFileSync
+// File contents cross between JavaScript and Go as base64, because Value.String() stops at
+// the first NUL and goes through UTF-8. The functions below take and return base64; the
+// wrappers in fs_setup.js give them Node's signatures and handle encodings. Only a read that
+// asks for UTF-8 text skips base64, since NewString keeps every byte of its input and most
+// reads are of source files.
+
+// decodeData reads a base64 argument.
+func decodeData(v *v8.Value) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(v.String())
+}
+
+// fileContents is what a read hands to JavaScript: UTF-8 text or base64.
+func fileContents(data []byte, asText bool) string {
+	if asText {
+		return string(data)
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// readFileSyncFunc backs fs.readFileSync(path, asText).
 func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 1 {
+	if len(args) < 2 {
 		return nil
 	}
 
-	path := args[0].String()
-
-	// Check for encoding option
-	encoding := ""
-	if len(args) >= 2 {
-		if args[1].IsString() {
-			encoding = args[1].String()
-		} else if args[1].IsObject() {
-			if encVal, err := args[1].Get("encoding"); err == nil && encVal != nil {
-				encoding = encVal.String()
-			}
-		}
-	}
-
-	data, err := f.fs().ReadFile(path)
+	data, err := f.fs().ReadFile(args[0].String())
 	if err != nil {
 		return nil
 	}
 
-	if encoding == "utf8" || encoding == "utf-8" {
-		val, _ := ctx.NewString(string(data))
-		return val
-	}
-
-	// Return as string for now
-	val, _ := ctx.NewString(string(data))
+	val, _ := ctx.NewString(fileContents(data, args[1].Boolean()))
 	return val
 }
 
-// writeFileSyncFunc implements fs.writeFileSync
+// writeFileSyncFunc backs fs.writeFileSync(path, base64Data).
 func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
 	}
 
-	path := args[0].String()
-	data := args[1].String()
+	data, err := decodeData(args[1])
+	if err != nil {
+		return info.Context().Throw(err.Error())
+	}
 
-	if err := f.fs().WriteFile(path, []byte(data), 0644); err != nil {
+	if err := f.fs().WriteFile(args[0].String(), data, 0644); err != nil {
 		return nil
 	}
 
@@ -671,74 +673,74 @@ func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// writeSyncFunc implements the string form of fs.writeSync:
-//
-//	writeSync(fd, string[, position[, encoding]])
-//
-// and a best-effort buffer form writeSync(fd, data[, offset[, length[, position]]])
-// where data is coerced to its string contents.
+// atPosition runs op with the file at position, then puts the offset back, because a read or
+// write at a position leaves the current offset alone. A negative position means the current
+// offset.
+func atPosition(file runtime.File, position int64, op func() (int, error)) (int, error) {
+	if position < 0 {
+		return op()
+	}
+	saved, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := file.Seek(position, io.SeekStart); err != nil {
+		return 0, err
+	}
+	n, opErr := op()
+	if _, err := file.Seek(saved, io.SeekStart); err != nil && opErr == nil {
+		opErr = err
+	}
+	return n, opErr
+}
+
+// writeSyncFunc backs fs.writeSync(fd, base64Data, position) and returns the bytes written.
 func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 2 {
-		return ctx.Throw("writeSync: fd and data are required")
+	if len(args) < 3 {
+		return ctx.Throw("writeSync: fd, data and position are required")
 	}
-	fd := int(args[0].Integer())
-	file, ok := f.fileForFD(fd)
+	file, ok := f.fileForFD(int(args[0].Integer()))
 	if !ok {
 		return ctx.Throw("EBADF: bad file descriptor, write")
 	}
-
-	data := []byte(args[1].String())
-
-	// Optional explicit position (3rd arg, when numeric) seeks before writing;
-	// otherwise the write continues at the current offset.
-	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
-		if _, err := file.Seek(args[2].Integer(), 0); err != nil {
-			return ctx.Throw(err.Error())
-		}
+	data, err := decodeData(args[1])
+	if err != nil {
+		return ctx.Throw(err.Error())
 	}
 
-	n, err := file.Write(data)
+	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
+		return file.Write(data)
+	})
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}
 	return ctx.NewInteger(int64(n))
 }
 
-// readSyncFunc implements a minimal fs.readSync(fd, buffer, offset, length, position).
-// Orbital buffers are string-backed here, so it returns the bytes read and the
-// caller is expected to use the string form where possible.
+// readSyncFunc backs fs.readSync(fd, length, position) and returns the bytes read as base64,
+// empty at the end of the file.
 func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 1 {
-		return ctx.Throw("readSync: fd is required")
+	if len(args) < 3 {
+		return ctx.Throw("readSync: fd, length and position are required")
 	}
-	fd := int(args[0].Integer())
-	file, ok := f.fileForFD(fd)
+	file, ok := f.fileForFD(int(args[0].Integer()))
 	if !ok {
 		return ctx.Throw("EBADF: bad file descriptor, read")
 	}
 
-	length := 0
-	if len(args) >= 4 && args[3] != nil && args[3].IsNumber() {
-		length = int(args[3].Integer())
+	buf := make([]byte, args[1].Integer())
+	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
+		return file.Read(buf)
+	})
+	if err != nil && err != io.EOF && n == 0 {
+		return ctx.Throw(err.Error())
 	}
-	if len(args) >= 5 && args[4] != nil && args[4].IsNumber() {
-		if _, err := file.Seek(args[4].Integer(), 0); err != nil {
-			return ctx.Throw(err.Error())
-		}
-	}
-	if length <= 0 {
-		return ctx.NewInteger(0)
-	}
-	buf := make([]byte, length)
-	n, err := file.Read(buf)
-	if err != nil && n == 0 {
-		return ctx.NewInteger(0)
-	}
-	return ctx.NewInteger(int64(n))
+	val, _ := ctx.NewString(fileContents(buf[:n], false))
+	return val
 }
 
 // fstatSyncFunc implements fs.fstatSync(fd).
@@ -788,48 +790,35 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// appendFileSyncFunc implements fs.appendFileSync
+// appendFileSyncFunc backs fs.appendFileSync(path, base64Data).
 func (f *FS) appendFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
 	}
 
-	if err := f.fs().AppendFile(args[0].String(), []byte(args[1].String())); err != nil {
+	data, err := decodeData(args[1])
+	if err != nil {
+		return info.Context().Throw(err.Error())
+	}
+
+	if err := f.fs().AppendFile(args[0].String(), data); err != nil {
 		return nil
 	}
 
 	return nil
 }
 
-// readFileFunc implements fs.readFile (async)
+// readFileFunc backs fs.readFile(path, asText, callback).
 func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 2 {
+	if len(args) < 3 || !args[2].IsFunction() {
 		return nil
 	}
 
 	path := args[0].String()
-	var callback *v8.Value
-	encoding := ""
-
-	// Handle (path, callback) or (path, options, callback)
-	if len(args) == 2 {
-		callback = args[1]
-	} else if len(args) >= 3 {
-		if args[1].IsString() {
-			encoding = args[1].String()
-		} else if args[1].IsObject() {
-			if encVal, err := args[1].Get("encoding"); err == nil && encVal != nil {
-				encoding = encVal.String()
-			}
-		}
-		callback = args[2]
-	}
-
-	if callback == nil || !callback.IsFunction() {
-		return nil
-	}
+	asText := args[1].Boolean()
+	callback := args[2]
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -840,18 +829,17 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer f.rt.EventLoop().DonePendingWork()
 
 		data, err := fsys.ReadFile(path)
+		contents := ""
+		if err == nil {
+			contents = fileContents(data, asText)
+		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
 				errVal, _ := ctx.NewString(err.Error())
 				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
 			} else {
-				var dataVal *v8.Value
-				if encoding == "utf8" || encoding == "utf-8" {
-					dataVal, _ = ctx.NewString(string(data))
-				} else {
-					dataVal, _ = ctx.NewString(string(data))
-				}
+				dataVal, _ := ctx.NewString(contents)
 				f.rt.MakeCallback(callback, nil, ctx.Null(), dataVal)
 			}
 		})
@@ -860,20 +848,16 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// writeFileFunc implements fs.writeFile (async)
+// writeFileFunc backs fs.writeFile(path, base64Data, callback).
 func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 3 {
+	if len(args) < 3 || !args[2].IsFunction() {
 		return nil
 	}
 
 	path := args[0].String()
-	data := args[1].String()
-	callback := args[len(args)-1]
-
-	if !callback.IsFunction() {
-		return nil
-	}
+	encoded := args[1].String()
+	callback := args[2]
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -883,7 +867,10 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		err := fsys.WriteFile(path, []byte(data), fs.FileMode(0644))
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err == nil {
+			err = fsys.WriteFile(path, data, fs.FileMode(0644))
+		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {

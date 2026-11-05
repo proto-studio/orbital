@@ -243,15 +243,14 @@ func TestFS_ReadFileSync_NoEncoding(t *testing.T) {
 	result, err := rt.RunScript(`
 		__fs_module.writeFileSync('/buffer.txt', 'test');
 		const content = __fs_module.readFileSync('/buffer.txt');
-		// Should return something (either Buffer or string depending on implementation)
-		content !== undefined && content !== null;
+		Buffer.isBuffer(content) && content.toString() === 'test';
 	`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
 
 	if !result.Boolean() {
-		t.Error("readFileSync should return content")
+		t.Error("readFileSync without an encoding should return a Buffer of the content")
 	}
 }
 
