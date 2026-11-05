@@ -383,6 +383,9 @@
         if (data === null) {
           this._onEnd();
           this.push(null);
+          // With nothing buffered the stream ends now, whether or not anyone is reading.
+          // That is what lets a socket nobody reads from reach 'close'.
+          this.read(0);
           return;
         }
         const buf = Buffer.from(data, 'base64');
@@ -414,7 +417,9 @@
       // As in Node, a write already handed to the transport reports no error if the
       // socket is destroyed before it completes.
       this._writeInFlight = cb;
+      writingSockets.add(this);
       const done = internal.write(this._id, buf.toString('base64'), (encodedError) => {
+        writingSockets.delete(this);
         this._pendingWriteBytes = 0;
         if (this._writeInFlight !== cb) return;
         this._writeInFlight = null;
@@ -427,6 +432,7 @@
         cb();
       });
       if (done === true) {
+        writingSockets.delete(this);
         this._pendingWriteBytes = 0;
         this._writeInFlight = null;
         this._bytesDispatched += buf.length;
@@ -453,6 +459,7 @@
 
       const inFlight = this._writeInFlight;
       this._writeInFlight = null;
+      writingSockets.delete(this);
       if (inFlight) inFlight();
 
       const queue = this._ioQueue;
@@ -576,6 +583,23 @@
       return this;
     }
   }
+
+  // Sockets waiting for a write to finish, whose later writes are still in JavaScript.
+  const writingSockets = new Set();
+
+  // Node's writes reach the kernel before write() returns if they can, so process.exit()
+  // cannot lose them. Here they go through a goroutine, one at a time. The exit therefore
+  // hands over what is still queued behind each write in progress, and waits for it. A
+  // corked socket has not asked for its data to be sent, in Node either.
+  internal.setExitFlush(() => {
+    for (const socket of writingSockets) {
+      if (socket._id === null || socket.writableCorked > 0) continue;
+      for (const { chunk, encoding } of socket.writableBuffer) {
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk;
+        internal.writeAtExit(socket._id, buf.toString('base64'));
+      }
+    }
+  });
 
   function writeAfterFIN(chunk, encoding, cb) {
     if (!this.writableEnded) {

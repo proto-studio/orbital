@@ -37,9 +37,10 @@ type Runtime struct {
 	fatal             atomic.Pointer[UncaughtError]
 	exited            atomic.Pointer[ExitError]
 	tracksRejections  bool
-	rejectionsPending bool   // only touched on the goroutine running JavaScript
-	fatalSettled      bool   // same goroutine: UncaughtError has discarded the promise queue
-	mainBody          func() // same goroutine: what the runMain native function runs next
+	rejectionsPending bool     // only touched on the goroutine running JavaScript
+	fatalSettled      bool     // same goroutine: UncaughtError has discarded the promise queue
+	mainBody          func()   // same goroutine: what the runMain native function runs next
+	processExitHooks  []func() // same goroutine
 }
 
 // Module represents a Node.js module that can be registered with the runtime.
@@ -468,6 +469,20 @@ func (rt *Runtime) TrackResource(resource CloseableResource) uint64 {
 // Call this when a resource is closed normally.
 func (rt *Runtime) UntrackResource(id uint64) {
 	rt.resourceTracker.Untrack(id)
+}
+
+// OnProcessExit registers fn to run on the JavaScript thread when script calls
+// process.exit(), before the runtime ends. Modules use it for work that Node would already
+// have finished by then. fn must not block for long.
+func (rt *Runtime) OnProcessExit(fn func()) {
+	rt.processExitHooks = append(rt.processExitHooks, fn)
+}
+
+// RunProcessExitHooks runs the functions registered with OnProcessExit.
+func (rt *Runtime) RunProcessExitHooks() {
+	for _, fn := range rt.processExitHooks {
+		fn()
+	}
 }
 
 // Dispose releases all resources associated with the runtime.

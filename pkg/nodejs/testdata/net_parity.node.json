@@ -1,0 +1,75 @@
+{
+  "endInConnect": {
+    "seen": [
+      "connect",
+      "finish",
+      "end",
+      "close false"
+    ],
+    "destroyed": true,
+    "readyState": "closed"
+  },
+  "endWithData": {
+    "seen": [
+      "connect",
+      "finish",
+      "end",
+      "close false"
+    ],
+    "destroyed": true,
+    "readyState": "closed"
+  },
+  "endBeforeConnect": {
+    "seen": [
+      "connect",
+      "finish",
+      "end",
+      "close false"
+    ],
+    "destroyed": true,
+    "readyState": "closed"
+  },
+  "writeThenEnd": {
+    "seen": [
+      "connect",
+      "finish",
+      "end",
+      "close false"
+    ],
+    "destroyed": true,
+    "readyState": "closed"
+  },
+  "peerEndsFirst": {
+    "seen": [
+      "connect",
+      "end",
+      "finish",
+      "close false"
+    ],
+    "destroyed": true,
+    "readyState": "closed"
+  },
+  "halfOpen": {
+    "seen": [
+      "connect",
+      "end",
+      "ending now",
+      "finish",
+      "close false"
+    ]
+  },
+  "unreadDataAtEnd": {
+    "seen": [
+      "connect",
+      "close"
+    ],
+    "readable": 6
+  },
+  "serverSocket": {
+    "seen": [
+      "end",
+      "finish",
+      "close false"
+    ]
+  }
+}

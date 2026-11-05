@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -21,6 +22,11 @@ var netJS string
 
 const readBufferSize = 65536
 
+// exitFlushTimeout limits how long process.exit() waits for writes in progress. A write to a
+// healthy socket finishes at once, since it only has to reach the kernel. One that takes
+// longer is blocked on a peer that is not reading, and Node would have lost that data too.
+const exitFlushTimeout = 500 * time.Millisecond
+
 var errUnixDenied = errors.New("EACCES: unix sockets are not available in this sandbox")
 
 // Net provides TCP and Unix domain socket networking.
@@ -31,6 +37,8 @@ type Net struct {
 	servers  map[int64]*server
 	nextConn int64
 	nextSrv  int64
+
+	exitFlush *v8.Value // JavaScript's part of flushForExit
 }
 
 // New creates a new Net module.
@@ -59,6 +67,8 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 
 	funcs := map[string]v8.FunctionCallback{
 		"createSocket":     n.createSocketFunc,
+		"setExitFlush":     n.setExitFlushFunc,
+		"writeAtExit":      n.writeAtExitFunc,
 		"connect":          n.connectFunc,
 		"connectUnix":      n.connectUnixFunc,
 		"write":            n.writeFunc,
@@ -101,6 +111,8 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	rt.OnProcessExit(n.flushForExit)
+
 	_, err = rt.RunScript(netJS, "net.js")
 	return err
 }
@@ -130,6 +142,11 @@ type Conn struct {
 	afterRead  func()
 	// afterWrite, if set, waits until a write the transport accepted has gone on.
 	afterWrite func() error
+
+	// Only the JavaScript thread adds to these, and flushForExit keeps it waiting
+	// while they are read.
+	writes     sync.WaitGroup
+	exitWrites [][]byte
 }
 
 type divertedRead struct {
@@ -469,11 +486,13 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	data = data[written:]
 
 	n.rt.EventLoop().AddPendingWork()
+	conn.writes.Add(1)
 	go func() {
 		defer n.rt.EventLoop().DonePendingWork()
 		if err == nil && len(data) > 0 {
 			_, err = socket.Write(data)
 		}
+		conn.writes.Done()
 		if err == nil && afterWrite != nil {
 			err = afterWrite()
 		}
@@ -487,6 +506,75 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		})
 	}()
 	return nil
+}
+
+// setExitFlush(fn) registers what JavaScript does when the process exits.
+func (n *Net) setExitFlushFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	if args := info.Args(); len(args) >= 1 {
+		n.exitFlush = args[0]
+	}
+	return nil
+}
+
+// writeAtExit(id, base64Data) queues bytes to follow a socket's write in progress. It is
+// only called from flushForExit.
+func (n *Net) writeAtExitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(args[1].String())
+	if err != nil {
+		return info.Context().Throw("net: invalid write data")
+	}
+	if conn, ok := n.Conn(int64(args[0].Integer())); ok {
+		conn.exitWrites = append(conn.exitWrites, data)
+	}
+	return nil
+}
+
+// flushForExit runs on the JavaScript thread as process.exit() ends the process. Data
+// that write() has accepted reaches the kernel first, as it would have in Node.
+func (n *Net) flushForExit() {
+	if n.exitFlush != nil {
+		// The process is ending, so an error here has nowhere to go.
+		_, _ = n.exitFlush.Call(nil)
+	}
+
+	n.mu.Lock()
+	conns := make([]*Conn, 0, len(n.conns))
+	for _, conn := range n.conns {
+		conns = append(conns, conn)
+	}
+	n.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for _, conn := range conns {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				conn.writes.Wait()
+				if socket := conn.Socket(); socket != nil {
+					for _, data := range conn.exitWrites {
+						if _, err := socket.Write(data); err != nil {
+							return
+						}
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	}()
+
+	timer := time.NewTimer(exitFlushTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 func (n *Net) failSocketClosed(callback *v8.Value, syscallName string) *v8.Value {

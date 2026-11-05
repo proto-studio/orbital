@@ -730,6 +730,7 @@ func (p *Process) reallyExitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		code = int(args[0].Integer())
 	}
 	p.exitCode = code
+	p.rt.RunProcessExitHooks()
 	p.rt.Exit(code)
 	return nil
 }

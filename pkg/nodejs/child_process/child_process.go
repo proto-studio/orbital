@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/nodejs/internal/sysconst"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -32,18 +36,15 @@ type ChildProcess struct {
 	mu        sync.Mutex
 }
 
-// childProc wraps a spawned process with its stdio streams.
+// childProc wraps a spawned process with the pipes JavaScript can use, by descriptor.
 type childProc struct {
-	proc   runtime.ChildProcess
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	proc    runtime.ChildProcess
+	writers map[int]io.WriteCloser
+	readers map[int]io.ReadCloser
 
 	// A process may exit before its output has been read, so its entry stays until
-	// it has exited and JavaScript has closed both output streams. Guarded by mu.
-	exited     bool
-	stdoutDone bool
-	stderrDone bool
+	// it has exited and JavaScript has closed every reader. Guarded by mu.
+	exited bool
 }
 
 // New creates a new ChildProcess module.
@@ -72,20 +73,16 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 
 	// Register functions
 	funcs := map[string]v8.FunctionCallback{
-		"spawn":        c.spawnFunc,
-		"exec":         c.execFunc,
-		"execFile":     c.execFileFunc,
-		"execSync":     c.execSyncFunc,
-		"execFileSync": c.execFileSyncFunc,
-		"spawnSync":    c.spawnSyncFunc,
-		"kill":         c.killFunc,
-		"wait":         c.waitFunc,
-		"read":         c.readFunc,
-		"closeOutput":  c.closeOutputFunc,
-		"write":        c.writeFunc,
-		"closeStdin":   c.closeStdinFunc,
-		"ref":          c.refFunc,
-		"unref":        c.unrefFunc,
+		"spawn":       c.spawnFunc,
+		"spawnSync":   c.spawnSyncFunc,
+		"kill":        c.killFunc,
+		"wait":        c.waitFunc,
+		"read":        c.readFunc,
+		"closeOutput": c.closeOutputFunc,
+		"write":       c.writeFunc,
+		"closeInput":  c.closeInputFunc,
+		"ref":         c.refFunc,
+		"unref":       c.unrefFunc,
 	}
 
 	for name, fn := range funcs {
@@ -138,12 +135,12 @@ func (c *ChildProcess) lookup(id int64) (*childProc, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	proc, ok := c.processes[id]
-	return proc, ok && proc.proc != nil
+	return proc, ok
 }
 
 // releaseIfDone forgets a process once nothing can use it. The caller holds mu.
 func (c *ChildProcess) releaseIfDone(id int64, proc *childProc) {
-	if proc.exited && proc.stdoutDone && proc.stderrDone {
+	if proc.exited && len(proc.readers) == 0 {
 		delete(c.processes, id)
 	}
 }
@@ -167,13 +164,6 @@ func jsBase64(ctx *v8.Context, data []byte) *v8.Value {
 	return jsString(ctx, base64.StdEncoding.EncodeToString(data))
 }
 
-// decodeInput reads the base64 stdin data of the buffered calls. JavaScript encodes it,
-// so it is always valid.
-func decodeInput(encoded string) []byte {
-	input, _ := base64.StdEncoding.DecodeString(encoded)
-	return input
-}
-
 // stringArgs reads a JavaScript array of strings.
 func stringArgs(array *v8.Value) []string {
 	var out []string
@@ -192,18 +182,164 @@ func stringArgs(array *v8.Value) []string {
 	return out
 }
 
-// spawnOptions contains options for spawning a child runtime.
+// errnoOf finds the error number behind a failed spawn. A spawner is free to return any
+// error, so the second result is false for one that has no number.
+func errnoOf(err error) (syscall.Errno, bool) {
+	var errno syscall.Errno
+	switch {
+	case errors.As(err, &errno):
+		return errno, true
+	case errors.Is(err, exec.ErrNotFound):
+		return syscall.ENOENT, true
+	case errors.Is(err, runtime.ErrCommandNotAllowed), errors.Is(err, fs.ErrPermission):
+		return syscall.EACCES, true
+	case errors.Is(err, runtime.ErrSpawnBlocked):
+		return syscall.EPERM, true
+	case errors.Is(err, runtime.ErrTooManyProcesses):
+		return syscall.EMFILE, true
+	}
+	return 0, false
+}
+
+// errnoName returns the name Node uses for an error number a spawn can report.
+func errnoName(errno syscall.Errno) string {
+	if name, ok := sysconst.ErrnoName(errno); ok {
+		return name
+	}
+	return netdial.ErrnoName(errno)
+}
+
+// setErrno adds the fields JavaScript builds an error from: errno, code and, for an error
+// with no number, detail.
+func setErrno(ctx *v8.Context, result *v8.Value, err error) {
+	errno, ok := errnoOf(err)
+	if !ok {
+		result.Set("errno", ctx.NewNumber(-4094)) // UV_UNKNOWN
+		result.Set("code", jsString(ctx, "UNKNOWN"))
+		result.Set("detail", jsError(ctx, err))
+		return
+	}
+	result.Set("errno", ctx.NewNumber(-float64(errno)))
+	result.Set("code", jsString(ctx, errnoName(errno)))
+}
+
+// stdioEntry is one element of the stdio array JavaScript has normalized.
+type stdioEntry struct {
+	Type string `json:"type"` // "pipe", "ignore" or "fd"
+	Fd   int    `json:"fd"`
+}
+
+// spawnOptions contains the options of spawn and spawnSync.
 type spawnOptions struct {
-	Cwd      string   `json:"cwd"`
-	Env      []string `json:"env"`
-	Shell    bool     `json:"shell"`
-	Detached bool     `json:"detached"`
-	Input    string   `json:"input"`
+	Cwd      string       `json:"cwd"`
+	Env      []string     `json:"env"`
+	Shell    bool         `json:"shell"`
+	Detached bool         `json:"detached"`
+	Stdio    []stdioEntry `json:"stdio"`
+
+	// spawnSync only. JavaScript watches the time and the buffers of an asynchronous
+	// child itself.
+	Input      string  `json:"input"`
+	Timeout    float64 `json:"timeout"`
+	MaxBuffer  float64 `json:"maxBuffer"` // negative means no limit
+	KillSignal int     `json:"killSignal"`
+}
+
+// fileForFD finds the file a descriptor number in the stdio option refers to. 0-2 are this
+// process's own stdio. Others are from fs.openSync, whose numbers do not name real
+// descriptors, so script can only hand a child files its filesystem let it open. The second
+// result says the caller owns the file and must close it.
+func (c *ChildProcess) fileForFD(fd int) (*os.File, bool, error) {
+	switch fd {
+	case 0:
+		return os.Stdin, false, nil
+	case 1:
+		return os.Stdout, false, nil
+	case 2:
+		return os.Stderr, false, nil
+	}
+	if mod, ok := c.rt.GetModule("fs"); ok {
+		if table, ok := mod.(interface {
+			FileForFD(int) (runtime.File, bool)
+		}); ok {
+			if file, ok := table.FileForFD(fd); ok {
+				// A file from another Filesystem may have no descriptor to pass on.
+				if real, ok := file.(interface{ Fd() uintptr }); ok {
+					return dupFile(real.Fd())
+				}
+			}
+		}
+	}
+	return nil, false, syscall.EBADF
+}
+
+// dupFile copies a descriptor the fs table owns, so closing the copy leaves it open.
+func dupFile(fd uintptr) (*os.File, bool, error) {
+	syscall.ForkLock.RLock()
+	dup, err := syscall.Dup(int(fd))
+	if err == nil {
+		syscall.CloseOnExec(dup)
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return nil, false, err
+	}
+	return os.NewFile(uintptr(dup), "stdio"), true, nil
+}
+
+// start spawns a process as the options describe, on the JavaScript thread.
+func (c *ChildProcess) start(command string, cmdArgs []string, opts *spawnOptions) (runtime.ChildProcess, error) {
+	spawnOpts := &runtime.SpawnOptions{
+		Cwd:      opts.Cwd,
+		Env:      opts.Env,
+		Shell:    opts.Shell,
+		Detached: opts.Detached,
+	}
+	for _, entry := range opts.Stdio {
+		switch entry.Type {
+		case "pipe":
+			spawnOpts.Stdio = append(spawnOpts.Stdio, runtime.StdioOption{Mode: runtime.StdioPipe})
+		case "fd":
+			file, owned, err := c.fileForFD(entry.Fd)
+			if err != nil {
+				return nil, err
+			}
+			if owned {
+				defer file.Close()
+			}
+			spawnOpts.Stdio = append(spawnOpts.Stdio, runtime.StdioOption{Mode: runtime.StdioFile, File: file})
+		default:
+			spawnOpts.Stdio = append(spawnOpts.Stdio, runtime.StdioOption{Mode: runtime.StdioIgnore})
+		}
+	}
+	return c.rt.ProcessSpawner().Spawn(context.Background(), command, cmdArgs, spawnOpts)
+}
+
+// pipesOf lists the pipes a started process has, by descriptor.
+func pipesOf(proc runtime.ChildProcess, stdio []stdioEntry) (map[int]io.WriteCloser, map[int]io.ReadCloser) {
+	writers := make(map[int]io.WriteCloser)
+	readers := make(map[int]io.ReadCloser)
+	if stdin := proc.Stdin(); stdin != nil {
+		writers[0] = stdin
+	}
+	if stdout := proc.Stdout(); stdout != nil {
+		readers[1] = stdout
+	}
+	if stderr := proc.Stderr(); stderr != nil {
+		readers[2] = stderr
+	}
+	for fd := 3; fd < len(stdio); fd++ {
+		if pipe := proc.Pipe(fd); pipe != nil {
+			writers[fd] = pipe
+			readers[fd] = pipe
+		}
+	}
+	return writers, readers
 }
 
 // spawnFunc handles spawn() calls from JavaScript. As in Node, the process has started
 // by the time spawn() returns, so its pid and stdio are available immediately. It
-// returns {id, pid}, or {error} if the process could not be started.
+// returns {id, pid}, or {errno, code} if the process could not be started.
 func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -211,34 +347,22 @@ func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Null()
 	}
 
-	command := args[0].String()
-	cmdArgs := stringArgs(args[1])
-
 	var opts spawnOptions
-	json.Unmarshal([]byte(args[2].String()), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd:      opts.Cwd,
-		Env:      opts.Env,
-		Shell:    opts.Shell,
-		Detached: opts.Detached,
+	if err := json.Unmarshal([]byte(args[2].String()), &opts); err != nil {
+		return ctx.Throw("child_process: invalid spawn options")
 	}
 
 	result, _ := ctx.NewObject()
-	proc, err := c.rt.ProcessSpawner().Spawn(context.Background(), command, cmdArgs, spawnOpts)
+	proc, err := c.start(args[0].String(), stringArgs(args[1]), &opts)
 	if err != nil {
-		result.Set("error", jsError(ctx, err))
+		setErrno(ctx, result, err)
 		return result
 	}
 
+	writers, readers := pipesOf(proc, opts.Stdio)
 	id := atomic.AddInt64(&c.processID, 1)
 	c.mu.Lock()
-	c.processes[id] = &childProc{
-		proc:   proc,
-		stdin:  proc.Stdin(),
-		stdout: proc.Stdout(),
-		stderr: proc.Stderr(),
-	}
+	c.processes[id] = &childProc{proc: proc, writers: writers, readers: readers}
 	c.mu.Unlock()
 
 	result.Set("id", ctx.NewNumber(float64(id)))
@@ -246,153 +370,53 @@ func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return result
 }
 
-// execOptions contains options for exec/execFile operations.
-type execOptions struct {
-	Cwd       string   `json:"cwd"`
-	Env       []string `json:"env"`
-	Timeout   int      `json:"timeout"`
-	MaxBuffer int      `json:"maxBuffer"`
-	Encoding  string   `json:"encoding"`
-	Input     string   `json:"input"`
+// syncRun is one spawnSync call in progress. It runs on the goroutines serving the
+// process, while JavaScript waits.
+type syncRun struct {
+	proc       runtime.ChildProcess
+	readers    map[int]io.ReadCloser
+	killSignal syscall.Signal
+	maxBuffer  float64
+
+	mu      sync.Mutex
+	failure syscall.Errno
+	stopped bool
 }
 
-// finishBuffered delivers the result of an asynchronous exec or execFile.
-func (c *ChildProcess) finishBuffered(callback *v8.Value, stdout, stderr []byte, exitCode int, err error) {
-	c.deliver(func(ctx *v8.Context) {
-		c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err),
-			jsBase64(ctx, stdout), jsBase64(ctx, stderr), ctx.NewNumber(float64(exitCode)))
-	})
+// fail ends the run early. As in Node it closes the pipes along with killing the process,
+// since a process it started may still hold them open.
+func (r *syncRun) fail(errno syscall.Errno) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		return
+	}
+	r.stopped = true
+	r.failure = errno
+	r.proc.Kill(r.killSignal)
+	for _, reader := range r.readers {
+		reader.Close()
+	}
 }
 
-// bufferedResult builds the result object of a synchronous call.
-func bufferedResult(ctx *v8.Context, stdout, stderr []byte, exitCode int, err error) *v8.Value {
-	result, _ := ctx.NewObject()
-	if err != nil {
-		result.Set("error", jsError(ctx, err))
+func (r *syncRun) collect(reader io.Reader) []byte {
+	var out []byte
+	buf := make([]byte, 65536)
+	for {
+		n, err := reader.Read(buf)
+		out = append(out, buf[:n]...)
+		if r.maxBuffer >= 0 && float64(len(out)) > r.maxBuffer {
+			r.fail(syscall.ENOBUFS)
+		}
+		if err != nil {
+			return out
+		}
 	}
-	result.Set("stdout", jsBase64(ctx, stdout))
-	result.Set("stderr", jsBase64(ctx, stderr))
-	result.Set("exitCode", ctx.NewNumber(float64(exitCode)))
-	return result
 }
 
-// execFunc handles exec() calls from JavaScript.
-func (c *ChildProcess) execFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 3 {
-		return nil
-	}
-
-	command := args[0].String()
-	optionsJSON := args[1].String()
-	callback := args[2]
-
-	var opts execOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd: opts.Cwd,
-		Env: opts.Env,
-	}
-
-	spawner := c.rt.ProcessSpawner()
-
-	c.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer c.rt.EventLoop().DonePendingWork()
-
-		stdout, stderr, exitCode, err := spawner.Exec(context.Background(), command, spawnOpts)
-		c.finishBuffered(callback, stdout, stderr, exitCode, err)
-	}()
-
-	return nil
-}
-
-// execFileFunc handles execFile() calls from JavaScript.
-func (c *ChildProcess) execFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 4 {
-		return nil
-	}
-
-	file := args[0].String()
-	cmdArgs := stringArgs(args[1])
-	optionsJSON := args[2].String()
-	callback := args[3]
-
-	var opts execOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd: opts.Cwd,
-		Env: opts.Env,
-	}
-
-	spawner := c.rt.ProcessSpawner()
-
-	c.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer c.rt.EventLoop().DonePendingWork()
-
-		stdout, stderr, exitCode, err := spawner.ExecFile(context.Background(), file, cmdArgs, spawnOpts)
-		c.finishBuffered(callback, stdout, stderr, exitCode, err)
-	}()
-
-	return nil
-}
-
-// execSyncFunc handles execSync() calls from JavaScript.
-func (c *ChildProcess) execSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 2 {
-		return ctx.Null()
-	}
-
-	command := args[0].String()
-	optionsJSON := args[1].String()
-
-	var opts execOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd:   opts.Cwd,
-		Env:   opts.Env,
-		Input: decodeInput(opts.Input),
-	}
-
-	spawner := c.rt.ProcessSpawner()
-	stdout, stderr, exitCode, err := spawner.Exec(context.Background(), command, spawnOpts)
-	return bufferedResult(ctx, stdout, stderr, exitCode, err)
-}
-
-// execFileSyncFunc handles execFileSync() calls from JavaScript.
-func (c *ChildProcess) execFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 3 {
-		return ctx.Null()
-	}
-
-	file := args[0].String()
-	cmdArgs := stringArgs(args[1])
-	optionsJSON := args[2].String()
-
-	var opts execOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd:   opts.Cwd,
-		Env:   opts.Env,
-		Input: decodeInput(opts.Input),
-	}
-
-	spawner := c.rt.ProcessSpawner()
-	stdout, stderr, exitCode, err := spawner.ExecFile(context.Background(), file, cmdArgs, spawnOpts)
-	return bufferedResult(ctx, stdout, stderr, exitCode, err)
-}
-
-// spawnSyncFunc handles spawnSync() calls from JavaScript.
+// spawnSyncFunc handles spawnSync() calls from JavaScript. It returns {errno, code} if the
+// process could not be started. Otherwise it returns {pid, status, signal, output}, with
+// {errno, code} added if the process had to be stopped.
 func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -400,66 +424,127 @@ func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Null()
 	}
 
-	command := args[0].String()
-	cmdArgs := stringArgs(args[1])
-	optionsJSON := args[2].String()
-
 	var opts spawnOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
-
-	spawnOpts := &runtime.SpawnOptions{
-		Cwd:   opts.Cwd,
-		Env:   opts.Env,
-		Shell: opts.Shell,
-		Input: decodeInput(opts.Input),
+	if err := json.Unmarshal([]byte(args[2].String()), &opts); err != nil {
+		return ctx.Throw("child_process: invalid spawn options")
+	}
+	input, err := base64.StdEncoding.DecodeString(opts.Input)
+	if err != nil {
+		return ctx.Throw("child_process: invalid input")
 	}
 
-	spawner := c.rt.ProcessSpawner()
+	result, _ := ctx.NewObject()
+	proc, err := c.start(args[0].String(), stringArgs(args[1]), &opts)
+	if err != nil {
+		setErrno(ctx, result, err)
+		return result
+	}
 
-	// For sync, we use Exec or ExecFile depending on shell option
-	var stdout, stderr []byte
-	var exitCode int
-	var err error
+	writers, readers := pipesOf(proc, opts.Stdio)
+	run := &syncRun{
+		proc:       proc,
+		readers:    readers,
+		killSignal: syscall.Signal(opts.KillSignal),
+		maxBuffer:  opts.MaxBuffer,
+	}
 
-	if opts.Shell {
-		fullCmd := command
-		for _, arg := range cmdArgs {
-			fullCmd += " " + arg
+	// Nothing waits for these. A child that never reads must not hold up its own exit,
+	// and that exit closes the pipes they are using.
+	if stdin, ok := writers[0]; ok {
+		go func() {
+			stdin.Write(input)
+			stdin.Close()
+		}()
+	}
+	for fd, writer := range writers {
+		if fd != 0 {
+			// Only the read side of these is exposed to spawnSync.
+			if closer, ok := writer.(interface{ CloseWrite() error }); ok {
+				closer.CloseWrite()
+			}
 		}
-		stdout, stderr, exitCode, err = spawner.Exec(context.Background(), fullCmd, spawnOpts)
-	} else {
-		stdout, stderr, exitCode, err = spawner.ExecFile(context.Background(), command, cmdArgs, spawnOpts)
 	}
 
-	result := bufferedResult(ctx, stdout, stderr, exitCode, err)
-	result.Set("pid", ctx.NewNumber(0))
+	var wg sync.WaitGroup
+	var outputMu sync.Mutex
+	output := make(map[int][]byte, len(readers))
+	for fd, reader := range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			data := run.collect(reader)
+			outputMu.Lock()
+			output[fd] = data
+			outputMu.Unlock()
+		}()
+	}
+
+	if opts.Timeout > 0 {
+		timer := time.AfterFunc(time.Duration(opts.Timeout*float64(time.Millisecond)), func() {
+			run.fail(syscall.ETIMEDOUT)
+		})
+		defer timer.Stop()
+	}
+
+	code, _ := proc.Wait()
+	wg.Wait()
+	for _, reader := range readers {
+		reader.Close()
+	}
+
+	run.mu.Lock()
+	run.stopped = true
+	failure := run.failure
+	run.mu.Unlock()
+
+	result.Set("pid", ctx.NewNumber(float64(proc.Pid())))
+	if signal := proc.ExitSignal(); signal != 0 {
+		result.Set("signal", ctx.NewNumber(float64(signal)))
+		result.Set("status", ctx.Null())
+	} else {
+		result.Set("signal", ctx.Null())
+		result.Set("status", ctx.NewNumber(float64(code)))
+	}
+	outputs, _ := ctx.NewObject()
+	for fd, data := range output {
+		outputs.SetIndex(fd, jsBase64(ctx, data))
+	}
+	result.Set("output", outputs)
+	if failure != 0 {
+		setErrno(ctx, result, failure)
+	}
 	return result
 }
 
-// killFunc handles kill() calls from JavaScript to send signals to a runtime.
+// killFunc sends a signal to a process. It returns 0, or the negative error number.
 func (c *ChildProcess) killFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
+	esrch := ctx.NewNumber(-float64(syscall.ESRCH))
 	if len(args) < 2 {
-		return ctx.False()
+		return esrch
 	}
 
-	id := int64(args[0].Integer())
-	signal := syscall.Signal(args[1].Integer())
-
-	proc, ok := c.lookup(id)
+	proc, ok := c.lookup(int64(args[0].Integer()))
 	if !ok {
-		return ctx.False()
+		return esrch
 	}
 
-	err := proc.proc.Kill(signal)
-	if err != nil {
-		return ctx.False()
+	err := proc.proc.Kill(syscall.Signal(args[1].Integer()))
+	if err == nil {
+		return ctx.NewNumber(0)
 	}
-	return ctx.True()
+	if errors.Is(err, os.ErrProcessDone) {
+		return esrch
+	}
+	if errno, ok := errnoOf(err); ok {
+		return ctx.NewNumber(-float64(errno))
+	}
+	return ctx.NewNumber(-4094) // UV_UNKNOWN
 }
 
-// waitFunc handles wait() calls from JavaScript to wait for process exit.
+// waitFunc handles wait() calls from JavaScript to wait for process exit. The callback
+// receives (error, exitCode, signalNumber); the signal number is 0 if no signal ended it.
 func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -472,7 +557,7 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	proc, ok := c.lookup(id)
 	if !ok {
 		c.deliver(func(ctx *v8.Context) {
-			c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "Process not found"), ctx.NewNumber(-1), ctx.Null())
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "Process not found"), ctx.NewNumber(-1), ctx.NewNumber(0))
 		})
 		return nil
 	}
@@ -482,6 +567,7 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer c.rt.EventLoop().DonePendingWork()
 
 		exitCode, err := proc.proc.Wait()
+		signal := proc.proc.ExitSignal()
 
 		c.mu.Lock()
 		proc.exited = true
@@ -489,16 +575,16 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		c.mu.Unlock()
 
 		c.deliver(func(ctx *v8.Context) {
-			c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err), ctx.NewNumber(float64(exitCode)), ctx.Null())
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err), ctx.NewNumber(float64(exitCode)), ctx.NewNumber(float64(signal)))
 		})
 	}()
 
 	return nil
 }
 
-// readFunc reads one chunk from stdout or stderr when JavaScript asks for more, which
-// is how a paused stream applies backpressure to the child. The callback receives the
-// chunk as base64, or null at the end of the stream.
+// readFunc reads one chunk from a descriptor when JavaScript asks for more, which is how a
+// paused stream applies backpressure to the child. The callback receives the chunk as
+// base64, or null at the end of the stream.
 func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
@@ -506,20 +592,23 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	id := int64(args[0].Integer())
-	streamType := args[1].String()
+	fd := int(args[1].Integer())
 	callback := args[2]
 
-	proc, ok := c.lookup(id)
-	if !ok {
+	var reader io.Reader
+	c.mu.Lock()
+	if proc, ok := c.processes[id]; ok {
+		if r, ok := proc.readers[fd]; ok {
+			reader = r
+		}
+	}
+	c.mu.Unlock()
+
+	if reader == nil {
 		c.deliver(func(ctx *v8.Context) {
 			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
 		})
 		return nil
-	}
-
-	reader := proc.stderr
-	if streamType == "stdout" {
-		reader = proc.stdout
 	}
 
 	c.rt.EventLoop().AddPendingWork()
@@ -543,7 +632,7 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// closeOutputFunc closes stdout or stderr when its stream is finished or destroyed.
+// closeOutputFunc closes a descriptor's read side when its stream is finished or destroyed.
 func (c *ChildProcess) closeOutputFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -551,7 +640,7 @@ func (c *ChildProcess) closeOutputFunc(info *v8.FunctionCallbackInfo) *v8.Value 
 	}
 
 	id := int64(args[0].Integer())
-	isStdout := args[1].String() == "stdout"
+	fd := int(args[1].Integer())
 
 	c.mu.Lock()
 	proc, ok := c.processes[id]
@@ -559,40 +648,44 @@ func (c *ChildProcess) closeOutputFunc(info *v8.FunctionCallbackInfo) *v8.Value 
 		c.mu.Unlock()
 		return nil
 	}
-	reader := proc.stderr
-	if isStdout {
-		reader = proc.stdout
-		proc.stdoutDone = true
-	} else {
-		proc.stderrDone = true
-	}
+	reader, open := proc.readers[fd]
+	delete(proc.readers, fd)
 	c.releaseIfDone(id, proc)
 	c.mu.Unlock()
 
-	if reader != nil {
+	if open {
 		reader.Close()
 	}
 	return nil
 }
 
-// writeFunc writes one base64 chunk to stdin. The callback receives (null) or
+// writeFunc writes one base64 chunk to a descriptor. The callback receives (null) or
 // (message, code).
 func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 3 {
+	if len(args) < 4 {
 		return nil
 	}
 
 	id := int64(args[0].Integer())
-	callback := args[2]
+	fd := int(args[1].Integer())
+	callback := args[3]
 
-	data, decodeErr := base64.StdEncoding.DecodeString(args[1].String())
+	data, decodeErr := base64.StdEncoding.DecodeString(args[2].String())
 	if decodeErr != nil {
 		return info.Context().Throw("child_process: invalid write data")
 	}
 
-	proc, ok := c.lookup(id)
-	if !ok {
+	var writer io.Writer
+	c.mu.Lock()
+	if proc, ok := c.processes[id]; ok {
+		if w, ok := proc.writers[fd]; ok {
+			writer = w
+		}
+	}
+	c.mu.Unlock()
+
+	if writer == nil {
 		c.deliver(func(ctx *v8.Context) {
 			c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "Process not found"), ctx.Null())
 		})
@@ -603,7 +696,7 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer c.rt.EventLoop().DonePendingWork()
 
-		_, err := proc.stdin.Write(data)
+		_, err := writer.Write(data)
 
 		c.deliver(func(ctx *v8.Context) {
 			switch {
@@ -620,18 +713,33 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// closeStdinFunc handles closeStdin() calls from JavaScript.
-func (c *ChildProcess) closeStdinFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// closeInputFunc ends what JavaScript writes to a descriptor. A pipe above stdio stays
+// open for reading.
+func (c *ChildProcess) closeInputFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 1 {
+	if len(args) < 2 {
 		return nil
 	}
 
-	proc, ok := c.lookup(int64(args[0].Integer()))
-	if ok && proc.stdin != nil {
-		proc.stdin.Close()
-	}
+	id := int64(args[0].Integer())
+	fd := int(args[1].Integer())
 
+	c.mu.Lock()
+	var writer io.WriteCloser
+	if proc, ok := c.processes[id]; ok {
+		writer = proc.writers[fd]
+		delete(proc.writers, fd)
+	}
+	c.mu.Unlock()
+
+	if writer == nil {
+		return nil
+	}
+	if half, ok := writer.(interface{ CloseWrite() error }); ok {
+		half.CloseWrite()
+	} else {
+		writer.Close()
+	}
 	return nil
 }
 

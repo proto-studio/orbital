@@ -769,6 +769,12 @@ func (f *FS) fileForFD(fd int) (runtime.File, bool) {
 	return file, ok
 }
 
+// FileForFD returns the file open at a descriptor from fs.openSync. These numbers belong to
+// this table, so other modules that take a descriptor look it up here.
+func (f *FS) FileForFD(fd int) (runtime.File, bool) {
+	return f.fileForFD(fd)
+}
+
 // closeSyncFunc implements fs.closeSync(fd).
 func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()

@@ -1,0 +1,1250 @@
+{
+  "killDefault": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        null,
+        "SIGTERM"
+      ],
+      [
+        "close",
+        null,
+        "SIGTERM"
+      ]
+    ],
+    "pidType": "number",
+    "returned": true,
+    "exitCode": null,
+    "signalCode": "SIGTERM",
+    "killed": true,
+    "spawnfile": "sleep",
+    "spawnargs": [
+      "sleep",
+      "30"
+    ]
+  },
+  "killSigkill": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        null,
+        "SIGKILL"
+      ],
+      [
+        "close",
+        null,
+        "SIGKILL"
+      ]
+    ],
+    "pidType": "number",
+    "exitCode": null,
+    "signalCode": "SIGKILL",
+    "killed": true,
+    "spawnfile": "sleep",
+    "spawnargs": [
+      "sleep",
+      "30"
+    ]
+  },
+  "killNumber": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        null,
+        "SIGINT"
+      ],
+      [
+        "close",
+        null,
+        "SIGINT"
+      ]
+    ],
+    "pidType": "number",
+    "exitCode": null,
+    "signalCode": "SIGINT",
+    "killed": true,
+    "spawnfile": "sleep",
+    "spawnargs": [
+      "sleep",
+      "30"
+    ]
+  },
+  "selfSignal": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        null,
+        "SIGUSR2"
+      ],
+      [
+        "close",
+        null,
+        "SIGUSR2"
+      ]
+    ],
+    "pidType": "number",
+    "exitCode": null,
+    "signalCode": "SIGUSR2",
+    "killed": false,
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "kill -USR2 $$"
+    ]
+  },
+  "killTwice": {
+    "first": true,
+    "second": true,
+    "code": null,
+    "signal": "SIGKILL",
+    "afterExit": false
+  },
+  "killUnknown": {
+    "threw": {
+      "name": "TypeError",
+      "message": "Unknown signal: SIGNOPE",
+      "code": "ERR_UNKNOWN_SIGNAL"
+    }
+  },
+  "exitNonZero": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        3,
+        null
+      ],
+      [
+        "close",
+        3,
+        null
+      ]
+    ],
+    "pidType": "number",
+    "exitCode": 3,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "exit 3"
+    ]
+  },
+  "spawnEnoent": {
+    "events": [
+      [
+        "error",
+        {
+          "name": "Error",
+          "message": "spawn /nonexistent/orbital-parity-binary ENOENT",
+          "errno": -2,
+          "code": "ENOENT",
+          "syscall": "spawn /nonexistent/orbital-parity-binary",
+          "path": "/nonexistent/orbital-parity-binary",
+          "spawnargs": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      [
+        "close",
+        -2,
+        null
+      ]
+    ],
+    "pidType": "undefined",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    },
+    "exitCode": -2,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "/nonexistent/orbital-parity-binary",
+    "spawnargs": [
+      "/nonexistent/orbital-parity-binary",
+      "a",
+      "b"
+    ]
+  },
+  "spawnEnoentPath": {
+    "events": [
+      [
+        "error",
+        {
+          "name": "Error",
+          "message": "spawn orbital-parity-not-on-path ENOENT",
+          "errno": -2,
+          "code": "ENOENT",
+          "syscall": "spawn orbital-parity-not-on-path",
+          "path": "orbital-parity-not-on-path",
+          "spawnargs": []
+        }
+      ],
+      [
+        "close",
+        -2,
+        null
+      ]
+    ],
+    "pidType": "undefined",
+    "exitCode": -2,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "orbital-parity-not-on-path",
+    "spawnargs": [
+      "orbital-parity-not-on-path"
+    ]
+  },
+  "spawnBadCwd": {
+    "events": [
+      [
+        "error",
+        {
+          "name": "Error",
+          "message": "spawn ls ENOENT",
+          "errno": -2,
+          "code": "ENOENT",
+          "syscall": "spawn ls",
+          "path": "ls",
+          "spawnargs": []
+        }
+      ],
+      [
+        "close",
+        -2,
+        null
+      ]
+    ],
+    "pidType": "undefined",
+    "exitCode": -2,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "ls",
+    "spawnargs": [
+      "ls"
+    ]
+  },
+  "spawnEacces": {
+    "events": [
+      [
+        "error",
+        {
+          "name": "Error",
+          "message": "spawn <tmp>plain EACCES",
+          "errno": -13,
+          "code": "EACCES",
+          "syscall": "spawn <tmp>plain",
+          "path": "<tmp>plain",
+          "spawnargs": [
+            "x"
+          ]
+        }
+      ],
+      [
+        "close",
+        -13,
+        null
+      ]
+    ],
+    "pidType": "undefined",
+    "exitCode": -13,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "<tmp>plain",
+    "spawnargs": [
+      "<tmp>plain",
+      "x"
+    ]
+  },
+  "nulArg": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'args[0]' must be a string without null bytes. Received 'a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulArgSecond": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'args[1]' must be a string without null bytes. Received 'a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulFile": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'file' must be a string without null bytes. Received 'ec\\x00ho'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulEnvValue": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The property 'options.env['A']' must be a string without null bytes. Received 'x\\x00y'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulEnvKey": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The property 'options.env['A\u0000B']' must be a string without null bytes. Received 'A\\x00B'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulCwd": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received '/tm\\x00p'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulArgSpawnSync": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'args[0]' must be a string without null bytes. Received 'a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulArgExecFileSync": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'args[0]' must be a string without null bytes. Received 'a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulArgExecFile": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'args[0]' must be a string without null bytes. Received 'a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulExec": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'command' must be a string without null bytes. Received 'echo a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "nulExecSync": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'command' must be a string without null bytes. Received 'echo a\\x00b'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "emptyFile": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'file' cannot be empty. Received ''",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "fileNotString": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The \"file\" argument must be of type string. Received type number (1)",
+      "code": "ERR_INVALID_ARG_TYPE"
+    }
+  },
+  "argsNotArray": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The \"args\" argument must be of type object. Received type string ('x')",
+      "code": "ERR_INVALID_ARG_TYPE"
+    }
+  },
+  "optionsNotObject": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The \"options\" argument must be of type object. Received type string ('x')",
+      "code": "ERR_INVALID_ARG_TYPE"
+    }
+  },
+  "badStdioString": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The argument 'stdio' is invalid. Received 'nope'",
+      "code": "ERR_INVALID_ARG_VALUE"
+    }
+  },
+  "badStdioEntry": {
+    "threw": {
+      "name": "TypeError",
+      "message": "Asynchronous forks do not support Buffer, TypedArray, DataView or string input: 'nope'",
+      "code": "ERR_INVALID_SYNC_FORK_INPUT"
+    }
+  },
+  "execNotString": {
+    "threw": {
+      "name": "TypeError",
+      "message": "The \"command\" argument must be of type string. Received type number (1)",
+      "code": "ERR_INVALID_ARG_TYPE"
+    }
+  },
+  "execOk": {
+    "err": null,
+    "stdout": "out\n",
+    "stderr": "err\n",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFails": {
+    "err": {
+      "name": "Error",
+      "message": "Command failed: echo out; echo err >&2; exit 4\nerr\n",
+      "code": 4,
+      "killed": false,
+      "signal": null,
+      "cmd": "echo out; echo err >&2; exit 4"
+    },
+    "stdout": "out\n",
+    "stderr": "err\n",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileOk": {
+    "err": null,
+    "stdout": "fine\n",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileFails": {
+    "err": {
+      "name": "Error",
+      "message": "Command failed: /bin/sh -c echo bad >&2; exit 5\nbad\n",
+      "code": 5,
+      "killed": false,
+      "signal": null,
+      "cmd": "/bin/sh -c echo bad >&2; exit 5"
+    },
+    "stdout": "",
+    "stderr": "bad\n",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileMissing": {
+    "err": {
+      "name": "Error",
+      "message": "spawn /nonexistent/orbital-parity-binary ENOENT",
+      "errno": -2,
+      "code": "ENOENT",
+      "syscall": "spawn /nonexistent/orbital-parity-binary",
+      "path": "/nonexistent/orbital-parity-binary",
+      "spawnargs": [
+        "x"
+      ],
+      "cmd": "/nonexistent/orbital-parity-binary x"
+    },
+    "stdout": "",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execKilled": {
+    "err": {
+      "name": "Error",
+      "message": "Command failed: sleep 30\n",
+      "code": null,
+      "killed": true,
+      "signal": "SIGTERM",
+      "cmd": "sleep 30"
+    },
+    "stdout": "",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execTimeout": {
+    "err": {
+      "name": "Error",
+      "message": "Command failed: sleep 30\n",
+      "code": null,
+      "killed": true,
+      "signal": "SIGTERM",
+      "cmd": "sleep 30"
+    },
+    "stdout": "",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileTimeoutSignal": {
+    "err": {
+      "name": "Error",
+      "message": "Command failed: sleep 30\n",
+      "code": null,
+      "killed": true,
+      "signal": "SIGKILL",
+      "cmd": "sleep 30"
+    },
+    "stdout": "",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execMaxBuffer": {
+    "err": {
+      "name": "RangeError",
+      "message": "stdout maxBuffer length exceeded",
+      "code": "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+      "cmd": "echo 0123456789"
+    },
+    "stdout": "0123",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execBufferEncoding": {
+    "err": null,
+    "stdout": "68c3a9",
+    "isBuffer": true
+  },
+  "execStreams": {
+    "code": 0,
+    "signal": null,
+    "read": "through exec",
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "cat"
+    ],
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileStreams": {
+    "code": 0,
+    "signal": null,
+    "read": "through execFile",
+    "spawnfile": "cat",
+    "spawnargs": [
+      "cat"
+    ],
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execEvents": {
+    "events": [
+      [
+        "spawn"
+      ],
+      [
+        "exit",
+        6,
+        null
+      ],
+      [
+        "close",
+        6,
+        null
+      ]
+    ],
+    "pidType": "number",
+    "exitCode": 6,
+    "signalCode": null,
+    "killed": false,
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "exit 6"
+    ]
+  },
+  "promisifyOk": {
+    "stdout": "promised\n",
+    "stderr": ""
+  },
+  "promisifyFails": {
+    "name": "Error",
+    "message": "Command failed: echo partial; exit 7\n",
+    "code": 7,
+    "killed": false,
+    "signal": null,
+    "cmd": "echo partial; exit 7",
+    "stdout": "partial\n",
+    "stderr": ""
+  },
+  "promisifyExecFile": {
+    "stdout": "promised\n",
+    "stderr": ""
+  },
+  "execSyncOk": {
+    "returned": {
+      "buffer": "fine\n"
+    }
+  },
+  "execSyncString": {
+    "returned": "fine\n"
+  },
+  "execSyncFails": {
+    "threw": {
+      "name": "Error",
+      "message": "Command failed: echo out; echo err >&2; exit 3\nerr\n",
+      "signal": null,
+      "status": 3,
+      "stdout": {
+        "buffer": "out\n"
+      },
+      "stderr": {
+        "buffer": "err\n"
+      },
+      "output": [
+        null,
+        {
+          "buffer": "out\n"
+        },
+        {
+          "buffer": "err\n"
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "execSyncFailsNoStderr": {
+    "threw": {
+      "name": "Error",
+      "message": "Command failed: exit 3",
+      "signal": null,
+      "status": 3,
+      "stdout": {
+        "buffer": ""
+      },
+      "stderr": {
+        "buffer": ""
+      },
+      "output": [
+        null,
+        {
+          "buffer": ""
+        },
+        {
+          "buffer": ""
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "execSyncFailsEncoded": {
+    "threw": {
+      "name": "Error",
+      "message": "Command failed: echo out; echo err >&2; exit 3\nerr\n",
+      "signal": null,
+      "status": 3,
+      "stdout": "out\n",
+      "stderr": "err\n",
+      "output": [
+        null,
+        "out\n",
+        "err\n"
+      ],
+      "pidType": "number"
+    }
+  },
+  "execSyncSignal": {
+    "threw": {
+      "name": "Error",
+      "message": "Command failed: kill -TERM $$",
+      "signal": "SIGTERM",
+      "status": null,
+      "stdout": {
+        "buffer": ""
+      },
+      "stderr": {
+        "buffer": ""
+      },
+      "output": [
+        null,
+        {
+          "buffer": ""
+        },
+        {
+          "buffer": ""
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "execSyncTimeout": {
+    "threw": {
+      "name": "Error",
+      "message": "spawnSync /bin/sh ETIMEDOUT",
+      "errno": "number",
+      "code": "ETIMEDOUT",
+      "syscall": "spawnSync /bin/sh",
+      "path": "/bin/sh",
+      "spawnargs": [
+        "-c",
+        "sleep 30"
+      ],
+      "signal": "SIGTERM",
+      "status": null,
+      "stdout": {
+        "buffer": ""
+      },
+      "stderr": {
+        "buffer": ""
+      },
+      "output": [
+        null,
+        {
+          "buffer": ""
+        },
+        {
+          "buffer": ""
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "execSyncMaxBuffer": {
+    "name": "Error",
+    "message": "spawnSync /bin/sh ENOBUFS",
+    "errno": "number",
+    "code": "ENOBUFS",
+    "syscall": "spawnSync /bin/sh",
+    "path": "/bin/sh",
+    "spawnargs": [
+      "-c",
+      "echo 0123456789"
+    ],
+    "stdout": {
+      "buffer": "0123456789\n"
+    },
+    "stderr": {
+      "buffer": ""
+    },
+    "output": [
+      null,
+      {
+        "buffer": "0123456789\n"
+      },
+      {
+        "buffer": ""
+      }
+    ],
+    "pidType": "number"
+  },
+  "execFileSyncOk": {
+    "returned": {
+      "buffer": "fine\n"
+    }
+  },
+  "execFileSyncFails": {
+    "threw": {
+      "name": "Error",
+      "message": "Command failed: /bin/sh -c echo err >&2; exit 2\nerr\n",
+      "signal": null,
+      "status": 2,
+      "stdout": {
+        "buffer": ""
+      },
+      "stderr": {
+        "buffer": "err\n"
+      },
+      "output": [
+        null,
+        {
+          "buffer": ""
+        },
+        {
+          "buffer": "err\n"
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "execFileSyncMissing": {
+    "threw": {
+      "name": "Error",
+      "message": "spawnSync /nonexistent/orbital-parity-binary ENOENT",
+      "errno": -2,
+      "code": "ENOENT",
+      "syscall": "spawnSync /nonexistent/orbital-parity-binary",
+      "path": "/nonexistent/orbital-parity-binary",
+      "spawnargs": [
+        "x"
+      ],
+      "signal": null,
+      "status": null,
+      "stdout": null,
+      "stderr": null,
+      "output": null,
+      "pidType": "number"
+    }
+  },
+  "execFileSyncTimeout": {
+    "threw": {
+      "name": "Error",
+      "message": "spawnSync sleep ETIMEDOUT",
+      "errno": "number",
+      "code": "ETIMEDOUT",
+      "syscall": "spawnSync sleep",
+      "path": "sleep",
+      "spawnargs": [
+        "30"
+      ],
+      "signal": "SIGKILL",
+      "status": null,
+      "stdout": {
+        "buffer": ""
+      },
+      "stderr": {
+        "buffer": ""
+      },
+      "output": [
+        null,
+        {
+          "buffer": ""
+        },
+        {
+          "buffer": ""
+        }
+      ],
+      "pidType": "number"
+    }
+  },
+  "spawnSyncOk": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": "out\n",
+    "stderr": "err\n",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncFails": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 9,
+    "signal": null,
+    "stdout": "",
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncSignal": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": null,
+    "signal": "SIGTERM",
+    "stdout": "",
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncMissing": {
+    "pidType": "number",
+    "pidPositive": false,
+    "status": null,
+    "signal": null,
+    "stdout": null,
+    "stderr": null,
+    "outputLength": null,
+    "error": {
+      "name": "Error",
+      "message": "spawnSync /nonexistent/orbital-parity-binary ENOENT",
+      "errno": -2,
+      "code": "ENOENT",
+      "syscall": "spawnSync /nonexistent/orbital-parity-binary",
+      "path": "/nonexistent/orbital-parity-binary",
+      "spawnargs": [
+        "x"
+      ]
+    }
+  },
+  "spawnSyncTimeout": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": null,
+    "signal": "SIGTERM",
+    "stdout": "",
+    "stderr": "",
+    "outputLength": 3,
+    "error": {
+      "name": "Error",
+      "message": "spawnSync sleep ETIMEDOUT",
+      "errno": "number",
+      "code": "ETIMEDOUT",
+      "syscall": "spawnSync sleep",
+      "path": "sleep",
+      "spawnargs": [
+        "30"
+      ]
+    }
+  },
+  "spawnSyncMaxBuffer": {
+    "pidType": "number",
+    "pidPositive": true,
+    "stdout": "0123456789\n",
+    "stderr": "",
+    "outputLength": 3,
+    "error": {
+      "name": "Error",
+      "message": "spawnSync /bin/sh ENOBUFS",
+      "errno": "number",
+      "code": "ENOBUFS",
+      "syscall": "spawnSync /bin/sh",
+      "path": "/bin/sh",
+      "spawnargs": [
+        "-c",
+        "echo 0123456789"
+      ]
+    }
+  },
+  "spawnSyncShell": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": "SHELLED\n",
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncIgnore": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": null,
+    "stderr": null,
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncIgnoreOne": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": null,
+    "stderr": "err\n",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncToFd": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": null,
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncToFdContents": "to-file\n",
+  "stdioDefault": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "stdioPipe": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "stdioIgnore": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    }
+  },
+  "stdioArray": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        "object",
+        null
+      ],
+      "stdin": null,
+      "stdout": "function",
+      "stderr": null
+    }
+  },
+  "stdioShortArray": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        "object",
+        "object"
+      ],
+      "stdin": null,
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "stdioNullEntries": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        null
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": null
+    }
+  },
+  "stdioIgnoreStdinIsEmpty": {
+    "code": 0,
+    "read": ""
+  },
+  "stdioFdWrite": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    },
+    "contents": "via-fd\nvia-err\n"
+  },
+  "stdioFdRead": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        "object",
+        null
+      ],
+      "stdin": null,
+      "stdout": "function",
+      "stderr": null
+    },
+    "read": "from-file"
+  },
+  "stdioInherit": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    }
+  },
+  "stdioExtraIgnore": {
+    "code": 7,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    }
+  },
+  "stdioExtraFd": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    },
+    "contents": "on-three\n"
+  },
+  "stdioExtraPipe": {
+    "code": 0,
+    "signal": null,
+    "read": "on-three\n",
+    "kinds": {
+      "stdio": [
+        null,
+        null,
+        null,
+        "object"
+      ],
+      "stdin": null,
+      "stdout": null,
+      "stderr": null
+    },
+    "three": "object"
+  },
+  "shellOption": {
+    "code": 0,
+    "read": "A B\n",
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "echo a b | tr a-z A-Z"
+    ]
+  },
+  "shellWithArgs": {
+    "code": 0,
+    "read": "joined args\n",
+    "spawnfile": "/bin/sh",
+    "spawnargs": [
+      "/bin/sh",
+      "-c",
+      "echo joined args"
+    ]
+  }
+}
