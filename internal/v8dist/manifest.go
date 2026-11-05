@@ -44,6 +44,9 @@ type Manifest struct {
 	// V8BuildConfig is the hash from scripts/v8-build-config.sh of how the pinned
 	// V8 libraries were built. Changing it needs a full V8 build.
 	V8BuildConfig string `json:"v8_build_config"`
+	// GlueBuildFiles maps the files glue rebuilds download (V8 headers and glue
+	// SDKs) to their sha256. Consumers don't use these.
+	GlueBuildFiles map[string]string `json:"glue_build_files"`
 	// Owner/Repo identify the GitHub repository hosting the Releases (this can
 	// differ from the vanity module path).
 	Owner string `json:"owner"`

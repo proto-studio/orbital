@@ -2,9 +2,15 @@
   "v8_version": "15.7.112.12",
   "module_version": "v0.3.5",
   "source_commit": "2db6f54a826cf1a1bfd00b56c7ca749cdefddb2b",
-  "source_run_id": "41948040122",
+  "source_run_id": "41949571479",
   "glue_inputs": "fcbd4f2ed57c671b39c3a00fa371f11f0dcd45c635df90c33a372034c367cbe4",
   "v8_build_config": "3593e51ccb583c155809efe5a9f630f3c671194f2c7c6a3baa4fdde13246cfc4",
+  "glue_build_files": {
+    "v8-glue-sdk-darwin-arm64.tar.gz": "4ecd68cc784522894fb7f11081ea450672f394b24c1c94d391053e2ab2d69c6b",
+    "v8-glue-sdk-linux-amd64.tar.gz": "e3e63ee016c1c6f04771deb6e2de72d0ebe906245cb0f6b0a921a0616a883069",
+    "v8-glue-sdk-linux-arm64.tar.gz": "1ec40c2fd32ca7629712737739ec165de74a0bee736a6ea203173af9a6956a44",
+    "v8-headers.tar.gz": "e5bb0449692576b3e9767daf74fca74dde8637e2f8b25e8a2e819bd51b418075"
+  },
   "owner": "proto-studio",
   "repo": "orbital",
   "targets": [

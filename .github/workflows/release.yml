@@ -128,19 +128,19 @@ jobs:
             echo "Downloading $name ..."
             gh run download "$RUN_ID" -n "$name" -D dist
           done
-          # Public headers for glue-only local rebuilds (not in the consumer lib
-          # tarball; not pinned in the manifest — verified via sidecar .sha256).
-          echo "Downloading v8-headers ..."
-          gh run download "$RUN_ID" -n v8-headers -D dist
+          # What glue rebuilds need: headers and the glue SDK. Consumers don't use these.
+          for file in $(jq -r '.glue_build_files | keys[]' internal/v8dist/manifest.json); do
+            name="${file%.tar.gz}"
+            echo "Downloading $name ..."
+            gh run download "$RUN_ID" -n "$name" -D dist
+          done
           ls -la dist
 
       - name: Verify checksums against manifest
         run: |
-          jq -r '.targets[] | .sha256 + "  " + .filename' internal/v8dist/manifest.json > dist/manifest.sha256
-          echo "Expected (libs):" && cat dist/manifest.sha256
+          jq -r '(.targets[] | .sha256 + "  " + .filename), (.glue_build_files | to_entries[] | .value + "  " + .key)' internal/v8dist/manifest.json > dist/manifest.sha256
+          echo "Expected:" && cat dist/manifest.sha256
           ( cd dist && shasum -a 256 -c manifest.sha256 )
-          echo "Expected (headers):" && cat dist/v8-headers.tar.gz.sha256
-          ( cd dist && shasum -a 256 -c v8-headers.tar.gz.sha256 )
 
       # main only takes changes through pull requests, so the version bump goes through
       # one too. GitHub starts no checks for a pull request opened with GITHUB_TOKEN, so
@@ -252,7 +252,7 @@ jobs:
             fi
           } > "$notes"
 
-          # dist/v8-*.tar.gz includes both platform libs and v8-headers.tar.gz.
+          # dist/v8-*.tar.gz includes the platform libs, v8-headers.tar.gz and the glue SDKs.
           gh release create "$TAG" \
             dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
             --target "$TARGET" \

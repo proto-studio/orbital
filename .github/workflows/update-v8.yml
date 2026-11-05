@@ -7,7 +7,8 @@ name: Update V8
 # by hand and publishes whatever main pins at that point.
 #
 # The glue isn't compiled here. A new V8 version changes the headers it builds against,
-# so this calls glue.yml, the same workflow pull requests use for glue changes.
+# so this calls glue.yml, the same workflow pull requests use for glue changes. This
+# is the one place with a V8 checkout, so it packages the headers and glue SDK for it.
 #
 # Two entry points feed the SAME build->glue->test->ready chain:
 #
@@ -332,6 +333,9 @@ jobs:
         if: always()
         run: sccache --show-stats || true
 
+      - name: Package the glue SDK
+        run: bash scripts/package-glue-sdk.sh "${{ matrix.platform }}"
+
       - name: Upload packaged artifact
         uses: ./.github/actions/upload-artifact-retry
         with:
@@ -339,6 +343,23 @@ jobs:
           path: |
             dist/v8-${{ matrix.platform }}.tar.gz
             dist/v8-${{ matrix.platform }}.tar.gz.sha256
+
+      - name: Upload glue SDK
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: base-v8-glue-sdk-${{ matrix.platform }}
+          path: |
+            dist/v8-glue-sdk-${{ matrix.platform }}.tar.gz
+            dist/v8-glue-sdk-${{ matrix.platform }}.tar.gz.sha256
+
+      - name: Upload V8 headers
+        if: matrix.platform == 'linux-amd64'
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: base-v8-headers
+          path: |
+            dist/v8-headers.tar.gz
+            dist/v8-headers.tar.gz.sha256
 
   # ---------------------------------------------------------------------------
   # Compile the glue against this V8, package it with the libraries built above,

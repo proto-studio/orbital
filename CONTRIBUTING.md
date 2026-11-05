@@ -364,9 +364,13 @@ A Release is a separate step that publishes whatever `main` pins at that point.
 - `.github/workflows/ci.yml` — Runs on every pull request into `main`. It runs the tests
   against the pinned libraries, and if the glue changed, rebuilds it first:
   - **"Changed"** means `glue_inputs` in `internal/v8dist/manifest.json` no longer matches
-    the hash from `scripts/glue-inputs.sh`, which covers the glue's sources, the script
-    that compiles it, and the Makefile. Any Makefile change rebuilds the glue.
-  - **The rebuild** calls `glue.yml`, which commits a re-pinned manifest to the pull
+    the hash from `scripts/glue-inputs.sh`, which covers the glue's sources, the scripts
+    that set up and run the compile, and the Makefile. Any Makefile change rebuilds the glue.
+  - **The rebuild** needs no V8 checkout. It uses the pinned headers and glue SDK (V8's
+    compile command and libc++ headers, about 2 MB), and downloads V8's own clang and
+    sysroot from Chromium's buckets at the revisions that V8 pins. `update-v8.yml`
+    packages the SDK for each V8 version.
+  - **The pin** comes from `glue.yml`, which commits a re-pinned manifest to the pull
     request's branch, so **pull before pushing again**. The tests then run against those
     exact artifacts, and the results are reported on that new commit.
   - **Two pull requests that both change the glue** conflict in the manifest. Resolve
@@ -379,7 +383,7 @@ A Release is a separate step that publishes whatever `main` pins at that point.
     `automated/update-v8-*` branch, which does a full build.
 - `.github/workflows/update-v8.yml` — Weekly or by hand, detects a newer stable V8 and
   (create-only) opens a **draft** PR early, so a PR exists no matter what happens next.
-  It builds the V8 libraries for every target, calls `glue.yml` to compile the glue
+  It builds the V8 libraries and glue SDK for every target, calls `glue.yml` to compile the glue
   against the new headers, and calls `test.yml`, then marks the PR ready. A failure leaves
   it a draft. If the build or tests fail, clone the `automated/update-v8-*` branch, fix it,
   and push; that reruns everything and re-pins the manifest on the same PR.
@@ -387,7 +391,7 @@ A Release is a separate step that publishes whatever `main` pins at that point.
   `gh workflow run release.yml -f bump=patch`. It verifies provenance (pin job succeeded,
   belongs to this repo, `source_commit` matches, checksums match, the pin matches the
   glue and V8 version on `main`), re-downloads the **same** artifacts by run id (platform
-  libs + `v8-headers`), merges a pull request that bumps the version, then tags and
+  libs, `v8-headers` and glue SDKs), merges a pull request that bumps the version, then tags and
   publishes. Never rebuilds. If it fails after the bump merges, including because a new
   pin merged during the run, run it again and it publishes that version rather than
   bumping again.
