@@ -388,8 +388,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh pr ready "${{ needs.setup.outputs.ref }}" || echo "PR already ready (or none to mark)."
-      # GitHub doesn't start other workflows for a pull request opened with GITHUB_TOKEN, so the Change link
-      # check can't run on this one. This reports it instead, only for the exact commit tested above. If the
+      # GitHub doesn't start other workflows for a pull request opened with GITHUB_TOKEN, so the Tests and
+      # Change link checks can't run on this one. This reports them instead, only for the exact commit tested above. If the
       # pull request has moved on, the newer commit gets its own run, and its own report if it passes.
       - name: Report as a standard change
         env:
@@ -410,4 +410,6 @@ jobs:
             exit 0
           fi
           gh api "repos/$GH_REPO/issues/$number/labels" -f "labels[]=standard-change" > /dev/null
-          gh api "repos/$GH_REPO/statuses/$VALIDATED" -f state=success -f context="Change link" -f description="Automated V8 update that passed validation" > /dev/null
+          for context in Tests "Change link"; do
+            gh api "repos/$GH_REPO/statuses/$VALIDATED" -f state=success -f context="$context" -f description="Automated V8 update that passed validation" > /dev/null
+          done

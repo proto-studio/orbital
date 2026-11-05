@@ -41,11 +41,16 @@ jobs:
         env:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
-          # A glue rebuild reuses the pinned V8 libraries, so it can't move to another V8.
+          # A glue rebuild reuses the pinned V8 libraries, so it can't change the V8
+          # version or how V8 is built: new glue might not work with the old libraries.
           makefile_v8="$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
           manifest_v8="$(jq -r .v8_version internal/v8dist/manifest.json)"
           if [ "$makefile_v8" != "$manifest_v8" ]; then
             echo "::error::The Makefile pins V8 $makefile_v8 but the manifest has $manifest_v8. Changing V8 needs a full build, so use the Update V8 workflow."
+            exit 1
+          fi
+          if [ "$(bash scripts/v8-build-config.sh)" != "$(jq -r .v8_build_config internal/v8dist/manifest.json)" ]; then
+            echo "::error::The V8 build recipes in the Makefile changed, which needs a full V8 build. Make this change on an automated/update-v8-* branch."
             exit 1
           fi
 

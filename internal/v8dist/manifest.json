@@ -4,6 +4,7 @@
   "source_commit": "56f52a5a1305705f1c09bd851190b2614205078b",
   "source_run_id": "41937357862",
   "glue_inputs": "c698b35668b91702081facdb5890ed249f43e61774c6349d6e3b18f9e34be51b",
+  "v8_build_config": "3593e51ccb583c155809efe5a9f630f3c671194f2c7c6a3baa4fdde13246cfc4",
   "owner": "proto-studio",
   "repo": "orbital",
   "targets": [

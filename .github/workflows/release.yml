@@ -87,6 +87,9 @@ jobs:
           if [ "$makefile_v8" != "$V8" ]; then
             echo "ERROR: Makefile pins V8 $makefile_v8 but the manifest has $V8" >&2; exit 1
           fi
+          if [ "$(bash scripts/v8-build-config.sh)" != "$(jq -r .v8_build_config internal/v8dist/manifest.json)" ]; then
+            echo "ERROR: the V8 build recipes on main differ from how the pinned V8 was built" >&2; exit 1
+          fi
           if [ "$(bash scripts/glue-inputs.sh)" != "$GLUE_INPUTS" ]; then
             echo "ERROR: the glue on main differs from the glue the manifest pins" >&2; exit 1
           fi

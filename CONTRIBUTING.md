@@ -374,8 +374,8 @@ A Release is a separate step that publishes whatever `main` pins at that point.
   - **Forks** can't be committed to, so the `Check glue` job fails if a fork changes the
     glue. A maintainer needs to push the branch to this repository instead.
   - **Changing V8** isn't something a glue rebuild can do, because it reuses the pinned V8
-    libraries. `Check glue` fails if the Makefile's `V8_VERSION` differs from the manifest.
-    GN args have the same limit but no such check: change them on an
+    libraries. `Check glue` fails if `V8_VERSION` or the Makefile's V8 build recipes, GN args
+    included, differ from what the manifest records. Change those on an
     `automated/update-v8-*` branch, which does a full build.
 - `.github/workflows/update-v8.yml` — Weekly or by hand, detects a newer stable V8 and
   (create-only) opens a **draft** PR early, so a PR exists no matter what happens next.

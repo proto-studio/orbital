@@ -250,6 +250,7 @@ V8_BUILD_GLUE ?= 1
 
 # Write args.gn and run gn gen for the target. This is all the glue needs from a
 # V8 build: compile_commands.json and the toolchain, not the compiled monolith.
+# Changing this or v8-build needs a full V8 build; see scripts/v8-build-config.sh.
 .PHONY: v8-gn-gen
 v8-gn-gen: v8-deps
 	@export PATH="$(CURDIR)/$(DEPOT_TOOLS_DIR):$$PATH"; \
@@ -462,6 +463,7 @@ v8-manifest:
 		--commit "$(SOURCE_COMMIT)" \
 		--run-id "$(SOURCE_RUN_ID)" \
 		--glue-inputs "$$(bash scripts/glue-inputs.sh)" \
+		--v8-build-config "$$(bash scripts/v8-build-config.sh)" \
 		--owner "$(OWNER)" \
 		--repo "$(REPO)" \
 		--output internal/v8dist/manifest.json
