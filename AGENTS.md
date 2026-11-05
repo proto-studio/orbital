@@ -8,6 +8,9 @@
   check fails without them.
 - AI assists with a change. The person responsible is its author, so never
   describe an AI tool as the author.
+- Copy the template's `## Attestation` section as written, and tell the person
+  responsible to review the change before merging. The statement is theirs, so
+  never say or imply that they've already reviewed it.
 
 ## Git commits
 
