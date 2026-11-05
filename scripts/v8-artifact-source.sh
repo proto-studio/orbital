@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Print the v8setup environment for installing the libraries this checkout pins.
-# The manifest can move ahead of the latest Release, because glue and V8 updates
-# are pinned when they merge and only published when someone runs the Release
-# workflow. Until then the libraries exist only as the pinning run's artifacts.
+# The manifest can move ahead of the latest Release, on a pull request's branch or
+# while the Release workflow runs after a merge. Until it finishes, the libraries
+# exist only as the pinning run's artifacts.
 set -euo pipefail
 
 manifest="$(dirname "$0")/../internal/v8dist/manifest.json"

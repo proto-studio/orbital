@@ -2,7 +2,7 @@ name: Build glue
 
 # Compiles libv8go_glue.a for every target, packages it with the V8 libraries into
 # the v8-<goos>-<goarch>.tar.gz artifacts, and commits a manifest that pins them.
-# release.yml later publishes whatever the manifest on main pins.
+# release.yml publishes the pin when it reaches main.
 #
 # ci.yml calls this for a pull request that changes the glue. update-v8.yml calls it
 # for a new V8 version, since the glue has to compile against the new headers; it

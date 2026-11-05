@@ -1,16 +1,22 @@
 name: Release
 
-# Run by hand to publish a new version from whatever glue and V8 binary are pinned in
-# internal/v8dist/manifest.json on main. Those are updated separately, by pull
-# requests (glue) and update-v8.yml (V8), and neither publishes anything itself.
+# Publishes a new version from whatever glue and V8 binary are pinned in
+# internal/v8dist/manifest.json on main. Those are updated separately, by pull requests
+# (glue) and update-v8.yml (V8), and this runs by itself when either merges, as a patch
+# release. Run it by hand for a release with no new pin, or to choose the bump level.
 #
-# Never rebuilds: it re-downloads the artifacts from the run the manifest pins,
-# re-verifies them, bumps the version through a pull request, then tags and publishes.
+# Runs the tests on main first, since main doesn't require them and a release can't be
+# taken back. Never rebuilds: it re-downloads the artifacts from the run the manifest
+# pins, re-verifies them, bumps the version through a pull request, then tags and
+# publishes. That pull request merges with GITHUB_TOKEN, so it doesn't start this again.
 #
 # If this fails after the version bump merges, run it again. It sees that the version
 # on main isn't published yet and publishes that rather than bumping again. The same
 # goes for a bump pull request it couldn't merge, once someone has merged it by hand.
 on:
+  push:
+    branches: [main]
+    paths: [internal/v8dist/manifest.json]
   workflow_dispatch:
     inputs:
       bump:
@@ -34,14 +40,61 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # Everything below uses the latest main rather than the commit that started this run.
+  # Runs queue, so that commit may be behind by now.
+  check:
+    name: Check for a new pin
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/heads/main
+
+      # A manifest change alone isn't enough, because a version bump is one too.
+      - name: Compare the pin to the published version
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          f=internal/v8dist/manifest.json
+          version="$(jq -r .module_version "$f")"
+          pin() { jq -S 'del(.module_version)'; }
+          if [ "$EVENT" != workflow_dispatch ] \
+            && published="$(gh release download "$version" -p manifest.json -O - 2>/dev/null)" \
+            && [ "$(printf '%s' "$published" | pin)" = "$(pin < "$f")" ]; then
+            echo "$version already has this pin, so there's nothing to release."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: Test
+    needs: check
+    if: needs.check.outputs.run == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.check.outputs.sha }}
+
   release:
     name: Publish Release
-    if: github.ref == 'refs/heads/main'
+    needs: [check, test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          ref: ${{ needs.check.outputs.sha }}
           fetch-depth: 0
 
       - name: Read manifest
@@ -58,7 +111,7 @@ jobs:
         id: version
         env:
           CURRENT: ${{ steps.m.outputs.module_version }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ inputs.bump || 'patch' }}
         run: |
           git fetch --tags --force
           if git rev-parse -q --verify "refs/tags/$CURRENT" > /dev/null || gh release view "$CURRENT" > /dev/null 2>&1; then
@@ -187,7 +240,8 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           V8: ${{ steps.m.outputs.v8 }}
           RUN_ID: ${{ steps.m.outputs.run_id }}
-          TARGET: ${{ steps.bump.outputs.sha || github.sha }}
+          VERIFIED: ${{ needs.check.outputs.sha }}
+          TARGET: ${{ steps.bump.outputs.sha || needs.check.outputs.sha }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -197,7 +251,7 @@ jobs:
           # cleanly on top of it. dist/ holds the artifacts of the pin this run verified,
           # so publishing them under the newer manifest would fail every checksum.
           pin() { jq -S 'del(.module_version)'; }
-          if [ "$(git show "$GITHUB_SHA:internal/v8dist/manifest.json" | pin)" != "$(pin < dist/manifest.json)" ]; then
+          if [ "$(git show "$VERIFIED:internal/v8dist/manifest.json" | pin)" != "$(pin < dist/manifest.json)" ]; then
             echo "ERROR: the pin on main changed during this run. Start this workflow again to publish $TAG with the new pin." >&2
             exit 1
           fi

@@ -231,7 +231,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make build-native
 | C++ glue compile (`libv8go_glue.a`) | CI (`glue.yml`), for pull requests and V8 updates; locally via `make v8-native` or `make v8-glue` |
 | Package `v8-<goos>-<goarch>.tar.gz` + sha256 | CI (`glue.yml`); locally alongside the V8 build (into `dist/`) |
 | Package `v8-headers.tar.gz` | CI (`glue.yml`), as `v8-headers`; locally alongside the V8 build; published on the Release |
-| Publish Release assets (libs + headers) | CI (`release.yml`, run by hand) |
+| Publish Release assets (libs + headers) | CI (`release.yml`, when a new pin merges or by hand) |
 | Fetch into `.v8/` + write cgo link file | Consumer/CI via `cmd/v8setup` (`go generate`) |
 | Go compile + CGO link | Native platform (this host, or a native CI runner) |
 
@@ -358,8 +358,8 @@ No Docker, no emulation. Linux libraries are cross-compiled on x64 runners
 matching runners. Tests always run on a **native** runner per architecture
 against the exact packaged artifacts — never a rebuild.
 
-The glue and the V8 libraries are updated separately, and neither publishes anything.
-A Release is a separate step that publishes whatever `main` pins at that point.
+The glue and the V8 libraries are updated separately. When either merges, the Release
+workflow publishes the new pin as a patch release.
 
 - `.github/workflows/ci.yml` — Runs on every pull request into `main`. It runs the tests
   against the pinned libraries, and if the glue changed, rebuilds it first:
@@ -387,8 +387,11 @@ A Release is a separate step that publishes whatever `main` pins at that point.
   against the new headers, and calls `test.yml`, then marks the PR ready. A failure leaves
   it a draft. If the build or tests fail, clone the `automated/update-v8-*` branch, fix it,
   and push; that reruns everything and re-pins the manifest on the same PR.
-- `.github/workflows/release.yml` — Run by hand: Actions → Release → Run workflow, or
-  `gh workflow run release.yml -f bump=patch`. It verifies provenance (pin job succeeded,
+- `.github/workflows/release.yml` — Runs when a merge to `main` changes the pin, as a
+  patch release. A version bump alone doesn't count. Run it by hand for a release with no
+  new pin, or for a minor or major bump: Actions → Release → Run workflow, or
+  `gh workflow run release.yml -f bump=minor`. It runs the tests on `main` first, and
+  publishes nothing if they fail; run it by hand once they're fixed. It verifies provenance (pin job succeeded,
   belongs to this repo, `source_commit` matches, checksums match, the pin matches the
   glue and V8 version on `main`), re-downloads the **same** artifacts by run id (platform
   libs, `v8-headers` and glue SDKs), merges a pull request that bumps the version, then tags and
@@ -400,10 +403,11 @@ Actions artifacts expire after 90 days. Publish a pin before then, or rebuild it
 
 ### Between releases
 
-`main` can pin libraries that aren't in any Release yet. `module_version` stays at the
-last published version until the next Release, so `go generate` on such a commit fails
-with a checksum error. Consumers should use a tagged version. Inside this repo,
-`make v8-setup` handles it by using the pinning run's artifacts, which needs `gh`.
+`main` pins libraries that aren't in a Release yet while the Release workflow runs after
+a merge, or if that run fails. `module_version` stays at the last published version until
+it finishes, so `go generate` on such a commit fails with a checksum error. Consumers
+should use a tagged version. Inside this repo, `make v8-setup` handles it by using the
+pinning run's artifacts, which needs `gh`.
 
 ### Release notes
 

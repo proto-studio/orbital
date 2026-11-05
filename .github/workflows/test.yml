@@ -2,7 +2,7 @@ name: Test
 
 # Installs the V8 libraries the way a consumer does (the go generate flow), then
 # runs the tests on a native runner per architecture. Called by ci.yml for pull
-# requests and by update-v8.yml for new V8 builds.
+# requests, by update-v8.yml for new V8 builds, and by release.yml before publishing.
 on:
   workflow_call:
     inputs:

@@ -3,8 +3,8 @@ name: Update V8
 # Rebuilds the prebuilt V8 libraries and opens a PR that pins them. The libraries are
 # NOT committed: each target is packaged into dist/v8-<goos>-<goarch>.tar.gz, uploaded
 # as an Actions artifact, and pinned (by run id + sha256) in
-# internal/v8dist/manifest.json. Merging the PR publishes nothing: release.yml is run
-# by hand and publishes whatever main pins at that point.
+# internal/v8dist/manifest.json. Merging the PR starts release.yml, which publishes
+# the pin as a new version.
 #
 # The glue isn't compiled here. A new V8 version changes the headers it builds against,
 # so this calls glue.yml, the same workflow pull requests use for glue changes. This
@@ -148,7 +148,7 @@ jobs:
             build finishes, `internal/v8dist/manifest.json` is committed (pinning
             the build run id + sha256 of each `v8-<target>.tar.gz`), the `test`
             job tests the exact artifacts on native runners, and the PR is marked
-            ready. Merging publishes nothing; run the Release workflow to do that.
+            ready. Merging publishes it as a patch release, through the Release workflow.
 
             **If the build or tests fail:** clone this branch, fix the issue, and
             push. That reruns build + test and re-pins the manifest on this PR.
