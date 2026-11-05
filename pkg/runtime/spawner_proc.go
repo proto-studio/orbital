@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,27 @@ var (
 	ErrSpawnBlocked = errors.New("EPERM: process spawning is disabled in sandbox mode")
 	// ErrCommandNotAllowed is returned when a command is not in the allowlist
 	ErrCommandNotAllowed = errors.New("EACCES: command not allowed")
+	// ErrTooManyProcesses is returned when MaxProcesses children are already running
+	ErrTooManyProcesses = errors.New("EMFILE: too many child processes")
 )
+
+// StdioMode says what one file descriptor of a spawned process is connected to.
+type StdioMode int
+
+const (
+	// StdioPipe connects the descriptor to a pipe its parent can use.
+	StdioPipe StdioMode = iota
+	// StdioIgnore connects descriptors 0-2 to the null device and leaves others closed.
+	StdioIgnore
+	// StdioFile gives the process a file its parent already has open.
+	StdioFile
+)
+
+// StdioOption configures one file descriptor of a spawned process.
+type StdioOption struct {
+	Mode StdioMode
+	File *os.File // for StdioFile
+}
 
 // SpawnOptions contains options for spawning a process.
 type SpawnOptions struct {
@@ -49,6 +70,11 @@ type SpawnOptions struct {
 	// Argv0 is the name the process sees as argv[0], if not the command. Spawn and
 	// ExecFile only.
 	Argv0 string
+
+	// Stdio configures the process's file descriptors, indexed by number. Spawn honors
+	// it; Exec and ExecFile do not. Descriptors 0-2 default to pipes, and any others
+	// are left closed.
+	Stdio []StdioOption
 
 	// Input is written to the stdin of Exec and ExecFile commands. Spawn ignores it,
 	// because its caller writes to Stdin itself.
@@ -69,8 +95,16 @@ type ChildProcess interface {
 	// Stderr returns the stderr reader.
 	Stderr() io.ReadCloser
 
-	// Wait waits for the process to exit and returns the exit code.
+	// Wait waits for the process to exit and returns the exit code. A process ended by a
+	// signal has no exit code, so this returns -1 and ExitSignal returns the signal.
 	Wait() (int, error)
+
+	// ExitSignal returns the signal that ended the process, or 0 if none did. It is
+	// only meaningful after Wait has returned.
+	ExitSignal() syscall.Signal
+
+	// Pipe returns the parent's end of a pipe at descriptor 3 or above, or nil.
+	Pipe(fd int) io.ReadWriteCloser
 
 	// Kill sends a signal to the process.
 	Kill(signal syscall.Signal) error
@@ -133,46 +167,118 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		cmd.Env = os.Environ()
 	}
 
-	// Set up pipes
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
+	return startProcess(cmd, options.Stdio)
+}
+
+// startProcess connects a command's file descriptors as stdio asks and starts it.
+func startProcess(cmd *exec.Cmd, stdio []StdioOption) (*RealChildProcess, error) {
+	option := func(fd int) StdioOption {
+		if fd < len(stdio) {
+			return stdio[fd]
+		}
+		return StdioOption{Mode: StdioPipe}
+	}
+
+	proc := &RealChildProcess{cmd: cmd, pipes: make(map[int]io.ReadWriteCloser)}
+	var parentEnds []io.Closer // closed if the process cannot start
+	var childEnds []*os.File   // always closed once the process has its copies
+	fail := func(err error) (*RealChildProcess, error) {
+		for _, end := range parentEnds {
+			end.Close()
+		}
+		for _, end := range childEnds {
+			end.Close()
+		}
 		return nil, err
+	}
+
+	switch in := option(0); in.Mode {
+	case StdioPipe:
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return fail(err)
+		}
+		proc.stdin = stdin
+		parentEnds = append(parentEnds, stdin)
+	case StdioFile:
+		cmd.Stdin = in.File
 	}
 
 	// cmd.StdoutPipe and cmd.StderrPipe would close the read ends as soon as Wait sees
 	// the process exit, losing output nobody has read yet. These stay open until the
 	// caller closes them, so output can be read in full after the exit is reported.
-	stdout, stdoutChild, err := os.Pipe()
-	if err != nil {
-		stdin.Close()
-		return nil, err
-	}
-	stderr, stderrChild, err := os.Pipe()
-	if err != nil {
-		stdin.Close()
-		stdout.Close()
-		stdoutChild.Close()
-		return nil, err
-	}
-	cmd.Stdout = stdoutChild
-	cmd.Stderr = stderrChild
-
-	err = cmd.Start()
-	stdoutChild.Close()
-	stderrChild.Close()
-	if err != nil {
-		stdin.Close()
-		stdout.Close()
-		stderr.Close()
-		return nil, err
+	outputs := []struct {
+		fd     int
+		target *io.Writer
+		reader *io.ReadCloser
+	}{{1, &cmd.Stdout, &proc.stdout}, {2, &cmd.Stderr, &proc.stderr}}
+	for _, output := range outputs {
+		switch out := option(output.fd); out.Mode {
+		case StdioPipe:
+			read, write, err := os.Pipe()
+			if err != nil {
+				return fail(err)
+			}
+			parentEnds = append(parentEnds, read)
+			childEnds = append(childEnds, write)
+			*output.target = write
+			*output.reader = read
+		case StdioFile:
+			*output.target = out.File
+		}
 	}
 
-	return &RealChildProcess{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-	}, nil
+	for fd := 3; fd < len(stdio); fd++ {
+		var file *os.File // a nil entry leaves the descriptor closed in the child
+		switch stdio[fd].Mode {
+		case StdioPipe:
+			parent, child, err := socketPair()
+			if err != nil {
+				return fail(err)
+			}
+			parentEnds = append(parentEnds, parent)
+			childEnds = append(childEnds, child)
+			proc.pipes[fd] = parent
+			file = child
+		case StdioFile:
+			file = stdio[fd].File
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, file)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fail(err)
+	}
+	for _, end := range childEnds {
+		end.Close()
+	}
+	return proc, nil
+}
+
+// socketPair returns the two ends of a connection for a descriptor above stdio. A socket
+// rather than a pipe lets data flow both ways, as it does in Node. The parent's end also
+// supports CloseWrite.
+func socketPair() (net.Conn, *os.File, error) {
+	syscall.ForkLock.RLock()
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err == nil {
+		syscall.CloseOnExec(fds[0])
+		syscall.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	parentFile := os.NewFile(uintptr(fds[0]), "stdio-pipe")
+	defer parentFile.Close()
+	child := os.NewFile(uintptr(fds[1]), "stdio-pipe")
+	parent, err := net.FileConn(parentFile)
+	if err != nil {
+		child.Close()
+		return nil, nil, err
+	}
+	return parent, child, nil
 }
 
 // Exec executes a command in a shell and returns stdout, stderr, and exit code.
@@ -272,6 +378,8 @@ type RealChildProcess struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
+	pipes  map[int]io.ReadWriteCloser
+	signal syscall.Signal
 }
 
 // Pid returns the process ID, or -1 if the process hasn't started.
@@ -291,9 +399,25 @@ func (p *RealChildProcess) Stdout() io.ReadCloser { return p.stdout }
 // Stderr returns the stderr reader for the process.
 func (p *RealChildProcess) Stderr() io.ReadCloser { return p.stderr }
 
+// Pipe returns the parent's end of the pipe at a descriptor above stdio, or nil.
+func (p *RealChildProcess) Pipe(fd int) io.ReadWriteCloser {
+	if pipe, ok := p.pipes[fd]; ok {
+		return pipe
+	}
+	return nil
+}
+
+// ExitSignal returns the signal that ended the process, or 0 if none did.
+func (p *RealChildProcess) ExitSignal() syscall.Signal { return p.signal }
+
 // Wait waits for the process to exit and returns the exit code.
 func (p *RealChildProcess) Wait() (int, error) {
 	err := p.cmd.Wait()
+	if state := p.cmd.ProcessState; state != nil {
+		if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			p.signal = status.Signal()
+		}
+	}
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
@@ -652,7 +776,7 @@ func (s *SandboxedProcessSpawner) acquire() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.MaxProcesses > 0 && s.activeCount >= s.MaxProcesses {
-		return errors.New("EMFILE: too many child processes")
+		return ErrTooManyProcesses
 	}
 	s.activeCount++
 	return nil

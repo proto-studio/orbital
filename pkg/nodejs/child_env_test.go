@@ -30,7 +30,8 @@ process.env.ORBITAL_SCRIPT_VAR = 'set-by-script';
   scriptVar: await run('printenv', ['ORBITAL_SCRIPT_VAR'], {}),
   emptyEnv: await run('/usr/bin/env', [], { env: {} }),
   givenEnv: await run('/usr/bin/env', [], { env: { ONLY: '1' } }),
-  sync: cp.execFileSync('printenv', ['ORBITAL_FILTERED_VAR']).toString().trim(),
+  // printenv exits 1 for a variable it doesn't have, and execFileSync throws for that.
+  sync: (() => { try { return cp.execFileSync('printenv', ['ORBITAL_FILTERED_VAR']).toString().trim(); } catch (e) { return 'exit ' + e.status; } })(),
 }))().catch((e) => done({ failed: String(e && e.message) }));`)
 	wantJSON(t, got, map[string]any{
 		"processEnv": "hidden",
@@ -38,6 +39,6 @@ process.env.ORBITAL_SCRIPT_VAR = 'set-by-script';
 		"scriptVar":  "set-by-script",
 		"emptyEnv":   "",
 		"givenEnv":   "ONLY=1",
-		"sync":       "",
+		"sync":       "exit 1",
 	})
 }
