@@ -387,9 +387,10 @@ workflow publishes the new pin as a patch release.
   against the new headers, and calls `test.yml`, then marks the PR ready. A failure leaves
   it a draft. If the build or tests fail, clone the `automated/update-v8-*` branch, fix it,
   and push; that reruns everything and re-pins the manifest on the same PR. A push that
-  leaves the V8 version, the Makefile, the glue and `scripts/` alone, like merging `main`
-  to resolve a conflict, reuses the pinned artifacts and only reruns the tests. Add
-  `[rebuild v8]` to the commit message to force a full build.
+  leaves the V8 version, the Makefile, the glue, `scripts/` and the workflows that build
+  the artifacts alone, like merging `main` to resolve a conflict, reuses the pinned
+  artifacts and only reruns the tests. Add `[rebuild v8]` to the commit message to force a
+  full build.
 - `.github/workflows/release.yml` — Runs when a merge to `main` changes the pin, as a
   patch release. A version bump alone doesn't count. Run it by hand for a release with no
   new pin, or for a minor or major bump: Actions → Release → Run workflow, or

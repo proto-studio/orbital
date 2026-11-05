@@ -153,9 +153,9 @@ jobs:
             ready. Merging publishes it as a patch release, through the Release workflow.
 
             **If the build or tests fail:** clone this branch, fix the issue, and
-            push. That reruns build + test and re-pins the manifest on this PR. Put
-            `[rebuild v8]` in the commit message if the push doesn't change what the
-            build compares, such as a change to this workflow's build steps.
+            push. That reruns build + test and re-pins the manifest on this PR. A push
+            that doesn't change the build only reruns the tests. Put `[rebuild v8]` in
+            the commit message to force a full build anyway.
           add-paths: |
             Makefile
             scripts/build-v8.sh
@@ -202,9 +202,11 @@ jobs:
 
       # A push only needs a new build if it changes what the pinned artifacts were built
       # from. The hashes come from the same scripts ci.yml compares, but they only cover
-      # the Makefile and the glue, so any change under scripts/ also counts. This lives
-      # here rather than in scripts/ so that adding it doesn't trip its own check on
-      # branches that merge it in. When in doubt, it builds.
+      # the Makefile and the glue, so this also compares scripts/ and the workflows that
+      # produce the artifacts against the commit the pinned run started from. That commit
+      # comes from GitHub rather than the manifest, which anyone who can push can edit.
+      # Otherwise a build poisoned through a workflow edit could be pinned, and then
+      # reused from a branch whose workflow had been reverted. When in doubt, it builds.
       - name: Check whether the pinned artifacts can be reused
         id: reuse
         if: github.event_name == 'push'
@@ -227,10 +229,19 @@ jobs:
             || rebuild "the V8 build recipes changed."
           [ "$(bash scripts/glue-inputs.sh)" = "$(jq -r .glue_inputs "$f")" ] \
             || rebuild "the glue's inputs changed."
-          source_commit="$(jq -r .source_commit "$f")"
-          git diff --quiet "$source_commit" HEAD -- scripts \
-            || rebuild "scripts/ changed since $source_commit, or that commit is missing."
           run_id="$(jq -r .source_run_id "$f")"
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '"\(.event) \(.head_sha)"')" \
+            || rebuild "couldn't look up run $run_id."
+          event="${run% *}"
+          run_sha="${run#* }"
+          git diff --quiet "$run_sha" HEAD -- .github/workflows/update-v8.yml .github/workflows/glue.yml .github/actions \
+            || rebuild "the workflows that build the artifacts changed since $run_sha, or that commit is missing."
+          # A scheduled or dispatched run starts on main, then builds the branch it opens,
+          # which bumps the version in build-v8.sh. The Makefile check covers the version.
+          ignore=()
+          [ "$event" = push ] || ignore=(-I '^V8_VERSION="\$\{V8_VERSION:-[0-9.]+\}"$')
+          git diff --quiet "${ignore[@]}" "$run_sha" HEAD -- scripts \
+            || rebuild "scripts/ changed since $run_sha, or that commit is missing."
           have="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
             --jq '.artifacts[] | select(.expired | not) | .name')" \
             || rebuild "couldn't list the artifacts of run $run_id."
