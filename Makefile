@@ -11,7 +11,7 @@ V8_BUILD_DIR := v8-build
 V8_OUTPUT_DIR := deps/v8
 # Packaged release artifacts (v8-<goos>-<goarch>.tar.gz + .sha256) land here.
 DIST_DIR := dist
-V8_VERSION := 15.7.112.12
+V8_VERSION := 15.8.62.9
 GO := go
 GOFLAGS :=
 NUM_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
@@ -268,6 +268,7 @@ v8-gn-gen: v8-deps
 	echo 'v8_enable_sandbox=true' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'enable_rust=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_temporal_support=false' >> "$$V8_OUT_DIR/args.gn" && \
+	echo 'v8_enable_ecma402_icu4x=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'v8_enable_i18n_support=true' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'icu_use_data_file=false' >> "$$V8_OUT_DIR/args.gn" && \
 	echo 'treat_warnings_as_errors=false' >> "$$V8_OUT_DIR/args.gn" && \
