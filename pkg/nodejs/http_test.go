@@ -893,6 +893,39 @@ done({ v });`, host)
 	})
 }
 
+// A script can only listen for 'connect' once the request hands it the socket, so that must
+// happen first however quickly the connection opens. The server echoes, so a listener that
+// misses 'connect' gets a parse error from the echoed request instead.
+func TestHTTP_SocketEventBeforeConnect(t *testing.T) {
+	underlying := &recordingFactory{redirect: map[string]string{"203.0.113.7": newEchoListener(t)}}
+	cfg := &runtime.Config{
+		SocketFactory: underlying,
+		DNSResolver:   &recordingResolver{hosts: map[string][]string{"slow.test": {"203.0.113.7"}}},
+	}
+	result := runHTTP(t, cfg, `
+const seen = [];
+const agent = new http.Agent();
+const create = agent.createConnection;
+agent.createConnection = function (...args) {
+  const socket = create.apply(this, args);
+  socket.on('connect', () => seen.push('connect'));
+  // Stay on the script's thread until the dial has finished in the background.
+  const end = Date.now() + 50;
+  while (Date.now() < end);
+  return socket;
+};
+const v = await new Promise((resolve) => {
+  const q = http.get({ host: 'slow.test', path: '/', agent });
+  q.on('error', (e) => resolve(e.code));
+  q.on('socket', (s) => {
+    seen.push('socket');
+    s.on('connect', () => { resolve('connected'); q.destroy(); });
+  });
+});
+done({ v, seen });`)
+	wantJSON(t, result, map[string]any{"v": "connected", "seen": []any{"socket", "connect"}})
+}
+
 func TestHTTPS(t *testing.T) {
 	ca := newTestCA(t)
 	certPEM, keyPEM := ca.issuePEM(t, "localhost", "127.0.0.1")

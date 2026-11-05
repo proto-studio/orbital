@@ -2,6 +2,7 @@ package nodejs
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -203,6 +204,25 @@ server.close();
 server.closeAllConnections();
 done({ ok: true });`)
 	})
+}
+
+// The dial finishes during the spin, so its result is queued before either callback.
+func TestEventLoop_CallbacksRunBeforeFinishedIO(t *testing.T) {
+	_, port, err := net.SplitHostPort(newEchoListener(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runScript(t, &runtime.Config{}, fmt.Sprintf(`
+const seen = [];
+await new Promise((resolve) => {
+  const s = net.connect(%s, '127.0.0.1', () => { seen.push('connect'); s.destroy(); resolve(); });
+  const end = Date.now() + 50;
+  while (Date.now() < end);
+  process.nextTick(() => seen.push('nextTick'));
+  queueMicrotask(() => seen.push('queueMicrotask'));
+});
+done({ seen });`, port))
+	wantJSON(t, result, map[string]any{"seen": []any{"nextTick", "queueMicrotask", "connect"}})
 }
 
 func TestNet_Socket(t *testing.T) {
