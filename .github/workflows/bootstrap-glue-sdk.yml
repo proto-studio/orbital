@@ -1,0 +1,107 @@
+name: Bootstrap glue SDK
+
+# Temporary, and removed before this pull request merges. glue.yml needs a pinned glue
+# SDK, and until now no run has built one. This builds the first from a V8 checkout,
+# and uploads it alongside copies of the pinned artifacts so that one run holds them all.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sdk:
+    name: Glue SDK (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runs-on: ubuntu-latest
+          - platform: linux-arm64
+            runs-on: ubuntu-latest
+          - platform: darwin-arm64
+            runs-on: macos-15
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Derive target
+        id: t
+        run: |
+          platform="${{ matrix.platform }}"
+          {
+            echo "os=${platform%-*}"
+            echo "arch=${platform##*-}"
+            echo "v8=$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore shared V8 source
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            v8-build/v8
+            v8-build/.gclient
+            v8-build/.gclient_entries
+          key: v8-src-${{ steps.t.outputs.v8 }}
+          restore-keys: |
+            v8-src-
+
+      - name: Install V8 build toolchain (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: bash scripts/ci-install-linux-toolchain.sh
+
+      - name: Drop any build dir carried in the source cache
+        run: rm -rf v8-build/v8/out.gn
+
+      - name: Fetch + sync V8 (runs hooks)
+        run: make v8-fetch V8_VERSION="${{ steps.t.outputs.v8 }}" NUM_JOBS=4
+
+      - name: Generate the compile command
+        run: make v8-gn-gen V8_VERSION="${{ steps.t.outputs.v8 }}" TARGET_OS="${{ steps.t.outputs.os }}" TARGET_ARCH="${{ steps.t.outputs.arch }}"
+
+      - name: Package the glue SDK
+        run: bash scripts/package-glue-sdk.sh "${{ matrix.platform }}"
+
+      - name: Copy the pinned artifacts
+        run: |
+          run_id="$(jq -r .source_run_id internal/v8dist/manifest.json)"
+          gh run download "$run_id" -n "v8-${{ matrix.platform }}" -D dist
+          gh run download "$run_id" -n v8-headers -D dist
+          cd dist
+          for f in *.sha256; do
+            shasum -a 256 -c "$f"
+          done
+
+      - name: Upload the glue SDK
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: v8-glue-sdk-${{ matrix.platform }}
+          path: |
+            dist/v8-glue-sdk-${{ matrix.platform }}.tar.gz
+            dist/v8-glue-sdk-${{ matrix.platform }}.tar.gz.sha256
+
+      - name: Upload the pinned libraries
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: v8-${{ matrix.platform }}
+          path: |
+            dist/v8-${{ matrix.platform }}.tar.gz
+            dist/v8-${{ matrix.platform }}.tar.gz.sha256
+
+      - name: Upload the pinned headers
+        if: matrix.platform == 'linux-amd64'
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: v8-headers
+          path: |
+            dist/v8-headers.tar.gz
+            dist/v8-headers.tar.gz.sha256
