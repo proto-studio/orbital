@@ -795,7 +795,8 @@ func (t *TLS) isSessionReusedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return ctx.NewBoolean(ok && state.DidResume)
 }
 
-// exportKeyingMaterial(netId, length, label, base64Context) returns base64 keying material.
+// exportKeyingMaterial(netId, length, base64Label, base64Context) returns base64 keying
+// material. The label crosses as base64 because a NUL in it is significant.
 func (t *TLS) exportKeyingMaterialFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -807,7 +808,11 @@ func (t *TLS) exportKeyingMaterialFunc(info *v8.FunctionCallbackInfo) *v8.Value 
 	if len(args) > 3 && !args[3].IsNull() && !args[3].IsUndefined() {
 		context, _ = base64.StdEncoding.DecodeString(args[3].String())
 	}
-	material, err := state.ExportKeyingMaterial(args[2].String(), context, int(args[1].Integer()))
+	label, err := base64.StdEncoding.DecodeString(args[2].String())
+	if err != nil {
+		return ctx.Throw(err.Error())
+	}
+	material, err := state.ExportKeyingMaterial(string(label), context, int(args[1].Integer()))
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}
