@@ -4,8 +4,11 @@ package child_process
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,6 +21,9 @@ import (
 var childProcessJS string
 
 // ChildProcess provides child process spawning.
+//
+// All process I/O crosses into JavaScript as base64. Value.String() stops at the first
+// NUL and NewString decodes UTF-8, so neither can carry arbitrary bytes directly.
 type ChildProcess struct {
 	rt        *runtime.Runtime
 	processes map[int64]*childProc
@@ -31,6 +37,12 @@ type childProc struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
+
+	// A process may exit before its output has been read, so its entry stays until
+	// it has exited and JavaScript has closed both output streams. Guarded by mu.
+	exited     bool
+	stdoutDone bool
+	stderrDone bool
 }
 
 // New creates a new ChildProcess module.
@@ -68,6 +80,7 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 		"kill":         c.killFunc,
 		"wait":         c.waitFunc,
 		"read":         c.readFunc,
+		"closeOutput":  c.closeOutputFunc,
 		"write":        c.writeFunc,
 		"closeStdin":   c.closeStdinFunc,
 		"ref":          c.refFunc,
@@ -99,45 +112,97 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
+// deliver runs fn on the JavaScript thread.
+func (c *ChildProcess) deliver(fn func(ctx *v8.Context)) {
+	c.rt.EventLoop().EnqueueMicrotask(func() {
+		ctx := c.rt.Context()
+		fn(ctx)
+		ctx.PerformMicrotaskCheckpoint()
+	})
+}
+
+func (c *ChildProcess) lookup(id int64) (*childProc, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	proc, ok := c.processes[id]
+	return proc, ok && proc.proc != nil
+}
+
+// releaseIfDone forgets a process once nothing can use it. The caller holds mu.
+func (c *ChildProcess) releaseIfDone(id int64, proc *childProc) {
+	if proc.exited && proc.stdoutDone && proc.stderrDone {
+		delete(c.processes, id)
+	}
+}
+
+func jsString(ctx *v8.Context, s string) *v8.Value {
+	v, err := ctx.NewString(s)
+	if err != nil {
+		return ctx.Null()
+	}
+	return v
+}
+
+func jsError(ctx *v8.Context, err error) *v8.Value {
+	if err == nil {
+		return ctx.Null()
+	}
+	return jsString(ctx, err.Error())
+}
+
+func jsBase64(ctx *v8.Context, data []byte) *v8.Value {
+	return jsString(ctx, base64.StdEncoding.EncodeToString(data))
+}
+
+// decodeInput reads the base64 stdin data of the buffered calls. JavaScript encodes it,
+// so it is always valid.
+func decodeInput(encoded string) []byte {
+	input, _ := base64.StdEncoding.DecodeString(encoded)
+	return input
+}
+
+// stringArgs reads a JavaScript array of strings.
+func stringArgs(array *v8.Value) []string {
+	var out []string
+	if array.IsArray() {
+		length, _ := array.Get("length")
+		if length != nil {
+			l := int(length.Integer())
+			for i := 0; i < l; i++ {
+				elem, _ := array.GetIndex(i)
+				if elem != nil {
+					out = append(out, elem.String())
+				}
+			}
+		}
+	}
+	return out
+}
+
 // spawnOptions contains options for spawning a child runtime.
 type spawnOptions struct {
 	Cwd      string   `json:"cwd"`
 	Env      []string `json:"env"`
 	Shell    bool     `json:"shell"`
 	Detached bool     `json:"detached"`
+	Input    string   `json:"input"`
 }
 
-// spawnFunc handles spawn() calls from JavaScript.
+// spawnFunc handles spawn() calls from JavaScript. As in Node, the process has started
+// by the time spawn() returns, so its pid and stdio are available immediately. It
+// returns {id, pid}, or {error} if the process could not be started.
 func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 4 {
-		return ctx.NewNumber(-1)
+	if len(args) < 3 {
+		return ctx.Null()
 	}
 
 	command := args[0].String()
-	jsArgs := args[1]
-	optionsJSON := args[2].String()
-	callback := args[3]
+	cmdArgs := stringArgs(args[1])
 
-	// Parse args array
-	var cmdArgs []string
-	if jsArgs.IsArray() {
-		length, _ := jsArgs.Get("length")
-		if length != nil {
-			l := int(length.Integer())
-			for i := 0; i < l; i++ {
-				elem, _ := jsArgs.GetIndex(i)
-				if elem != nil {
-					cmdArgs = append(cmdArgs, elem.String())
-				}
-			}
-		}
-	}
-
-	// Parse options
 	var opts spawnOptions
-	json.Unmarshal([]byte(optionsJSON), &opts)
+	json.Unmarshal([]byte(args[2].String()), &opts)
 
 	spawnOpts := &runtime.SpawnOptions{
 		Cwd:      opts.Cwd,
@@ -146,40 +211,26 @@ func (c *ChildProcess) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		Detached: opts.Detached,
 	}
 
-	spawner := c.rt.ProcessSpawner()
+	result, _ := ctx.NewObject()
+	proc, err := c.rt.ProcessSpawner().Spawn(context.Background(), command, cmdArgs, spawnOpts)
+	if err != nil {
+		result.Set("error", jsError(ctx, err))
+		return result
+	}
 
-	c.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer c.rt.EventLoop().DonePendingWork()
-
-		proc, err := spawner.Spawn(context.Background(), command, cmdArgs, spawnOpts)
-
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
-				errStr, _ := ctx.NewString(err.Error())
-				c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.NewNumber(0))
-				return
-			}
-
-			c.mu.Lock()
-			id := atomic.AddInt64(&c.processID, 1)
-			c.processes[id] = &childProc{
-				proc:   proc,
-				stdin:  proc.Stdin(),
-				stdout: proc.Stdout(),
-				stderr: proc.Stderr(),
-			}
-			c.mu.Unlock()
-
-			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(proc.Pid())))
-		})
-	}()
-
-	// Return a temporary ID that will be replaced
-	c.mu.Lock()
 	id := atomic.AddInt64(&c.processID, 1)
+	c.mu.Lock()
+	c.processes[id] = &childProc{
+		proc:   proc,
+		stdin:  proc.Stdin(),
+		stdout: proc.Stdout(),
+		stderr: proc.Stderr(),
+	}
 	c.mu.Unlock()
-	return ctx.NewNumber(float64(id))
+
+	result.Set("id", ctx.NewNumber(float64(id)))
+	result.Set("pid", ctx.NewNumber(float64(proc.Pid())))
+	return result
 }
 
 // execOptions contains options for exec/execFile operations.
@@ -189,6 +240,27 @@ type execOptions struct {
 	Timeout   int      `json:"timeout"`
 	MaxBuffer int      `json:"maxBuffer"`
 	Encoding  string   `json:"encoding"`
+	Input     string   `json:"input"`
+}
+
+// finishBuffered delivers the result of an asynchronous exec or execFile.
+func (c *ChildProcess) finishBuffered(callback *v8.Value, stdout, stderr []byte, exitCode int, err error) {
+	c.deliver(func(ctx *v8.Context) {
+		c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err),
+			jsBase64(ctx, stdout), jsBase64(ctx, stderr), ctx.NewNumber(float64(exitCode)))
+	})
+}
+
+// bufferedResult builds the result object of a synchronous call.
+func bufferedResult(ctx *v8.Context, stdout, stderr []byte, exitCode int, err error) *v8.Value {
+	result, _ := ctx.NewObject()
+	if err != nil {
+		result.Set("error", jsError(ctx, err))
+	}
+	result.Set("stdout", jsBase64(ctx, stdout))
+	result.Set("stderr", jsBase64(ctx, stderr))
+	result.Set("exitCode", ctx.NewNumber(float64(exitCode)))
+	return result
 }
 
 // execFunc handles exec() calls from JavaScript.
@@ -217,21 +289,7 @@ func (c *ChildProcess) execFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer c.rt.EventLoop().DonePendingWork()
 
 		stdout, stderr, exitCode, err := spawner.Exec(context.Background(), command, spawnOpts)
-
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			var errVal *v8.Value
-			if err != nil {
-				errVal, _ = ctx.NewString(err.Error())
-			} else {
-				errVal = ctx.Null()
-			}
-
-			stdoutVal, _ := ctx.NewString(string(stdout))
-			stderrVal, _ := ctx.NewString(string(stderr))
-
-			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
-		})
+		c.finishBuffered(callback, stdout, stderr, exitCode, err)
 	}()
 
 	return nil
@@ -245,24 +303,9 @@ func (c *ChildProcess) execFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	file := args[0].String()
-	jsArgs := args[1]
+	cmdArgs := stringArgs(args[1])
 	optionsJSON := args[2].String()
 	callback := args[3]
-
-	// Parse args array
-	var cmdArgs []string
-	if jsArgs.IsArray() {
-		length, _ := jsArgs.Get("length")
-		if length != nil {
-			l := int(length.Integer())
-			for i := 0; i < l; i++ {
-				elem, _ := jsArgs.GetIndex(i)
-				if elem != nil {
-					cmdArgs = append(cmdArgs, elem.String())
-				}
-			}
-		}
-	}
 
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
@@ -279,21 +322,7 @@ func (c *ChildProcess) execFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer c.rt.EventLoop().DonePendingWork()
 
 		stdout, stderr, exitCode, err := spawner.ExecFile(context.Background(), file, cmdArgs, spawnOpts)
-
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			var errVal *v8.Value
-			if err != nil {
-				errVal, _ = ctx.NewString(err.Error())
-			} else {
-				errVal = ctx.Null()
-			}
-
-			stdoutVal, _ := ctx.NewString(string(stdout))
-			stderrVal, _ := ctx.NewString(string(stderr))
-
-			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, stdoutVal, stderrVal, ctx.NewNumber(float64(exitCode)))
-		})
+		c.finishBuffered(callback, stdout, stderr, exitCode, err)
 	}()
 
 	return nil
@@ -314,25 +343,14 @@ func (c *ChildProcess) execSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
 	spawnOpts := &runtime.SpawnOptions{
-		Cwd: opts.Cwd,
-		Env: opts.Env,
+		Cwd:   opts.Cwd,
+		Env:   opts.Env,
+		Input: decodeInput(opts.Input),
 	}
 
 	spawner := c.rt.ProcessSpawner()
 	stdout, stderr, exitCode, err := spawner.Exec(context.Background(), command, spawnOpts)
-
-	result, _ := ctx.NewObject()
-	if err != nil {
-		errStr, _ := ctx.NewString(err.Error())
-		result.Set("error", errStr)
-	}
-	stdoutVal, _ := ctx.NewString(string(stdout))
-	stderrVal, _ := ctx.NewString(string(stderr))
-	result.Set("stdout", stdoutVal)
-	result.Set("stderr", stderrVal)
-	result.Set("exitCode", ctx.NewNumber(float64(exitCode)))
-
-	return result
+	return bufferedResult(ctx, stdout, stderr, exitCode, err)
 }
 
 // execFileSyncFunc handles execFileSync() calls from JavaScript.
@@ -344,46 +362,21 @@ func (c *ChildProcess) execFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value
 	}
 
 	file := args[0].String()
-	jsArgs := args[1]
+	cmdArgs := stringArgs(args[1])
 	optionsJSON := args[2].String()
-
-	var cmdArgs []string
-	if jsArgs.IsArray() {
-		length, _ := jsArgs.Get("length")
-		if length != nil {
-			l := int(length.Integer())
-			for i := 0; i < l; i++ {
-				elem, _ := jsArgs.GetIndex(i)
-				if elem != nil {
-					cmdArgs = append(cmdArgs, elem.String())
-				}
-			}
-		}
-	}
 
 	var opts execOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
 
 	spawnOpts := &runtime.SpawnOptions{
-		Cwd: opts.Cwd,
-		Env: opts.Env,
+		Cwd:   opts.Cwd,
+		Env:   opts.Env,
+		Input: decodeInput(opts.Input),
 	}
 
 	spawner := c.rt.ProcessSpawner()
 	stdout, stderr, exitCode, err := spawner.ExecFile(context.Background(), file, cmdArgs, spawnOpts)
-
-	result, _ := ctx.NewObject()
-	if err != nil {
-		errStr, _ := ctx.NewString(err.Error())
-		result.Set("error", errStr)
-	}
-	stdoutVal, _ := ctx.NewString(string(stdout))
-	stderrVal, _ := ctx.NewString(string(stderr))
-	result.Set("stdout", stdoutVal)
-	result.Set("stderr", stderrVal)
-	result.Set("exitCode", ctx.NewNumber(float64(exitCode)))
-
-	return result
+	return bufferedResult(ctx, stdout, stderr, exitCode, err)
 }
 
 // spawnSyncFunc handles spawnSync() calls from JavaScript.
@@ -395,22 +388,8 @@ func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	command := args[0].String()
-	jsArgs := args[1]
+	cmdArgs := stringArgs(args[1])
 	optionsJSON := args[2].String()
-
-	var cmdArgs []string
-	if jsArgs.IsArray() {
-		length, _ := jsArgs.Get("length")
-		if length != nil {
-			l := int(length.Integer())
-			for i := 0; i < l; i++ {
-				elem, _ := jsArgs.GetIndex(i)
-				if elem != nil {
-					cmdArgs = append(cmdArgs, elem.String())
-				}
-			}
-		}
-	}
 
 	var opts spawnOptions
 	json.Unmarshal([]byte(optionsJSON), &opts)
@@ -419,6 +398,7 @@ func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		Cwd:   opts.Cwd,
 		Env:   opts.Env,
 		Shell: opts.Shell,
+		Input: decodeInput(opts.Input),
 	}
 
 	spawner := c.rt.ProcessSpawner()
@@ -438,18 +418,8 @@ func (c *ChildProcess) spawnSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		stdout, stderr, exitCode, err = spawner.ExecFile(context.Background(), command, cmdArgs, spawnOpts)
 	}
 
-	result, _ := ctx.NewObject()
-	if err != nil {
-		errStr, _ := ctx.NewString(err.Error())
-		result.Set("error", errStr)
-	}
-	stdoutVal, _ := ctx.NewString(string(stdout))
-	stderrVal, _ := ctx.NewString(string(stderr))
-	result.Set("stdout", stdoutVal)
-	result.Set("stderr", stderrVal)
-	result.Set("exitCode", ctx.NewNumber(float64(exitCode)))
+	result := bufferedResult(ctx, stdout, stderr, exitCode, err)
 	result.Set("pid", ctx.NewNumber(0))
-
 	return result
 }
 
@@ -464,11 +434,8 @@ func (c *ChildProcess) killFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	id := int64(args[0].Integer())
 	signal := syscall.Signal(args[1].Integer())
 
-	c.mu.Lock()
-	proc, ok := c.processes[id]
-	c.mu.Unlock()
-
-	if !ok || proc.proc == nil {
+	proc, ok := c.lookup(id)
+	if !ok {
 		return ctx.False()
 	}
 
@@ -489,15 +456,10 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	id := int64(args[0].Integer())
 	callback := args[1]
 
-	c.mu.Lock()
-	proc, ok := c.processes[id]
-	c.mu.Unlock()
-
-	if !ok || proc.proc == nil {
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			errStr, _ := ctx.NewString("Process not found")
-			c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.NewNumber(-1), ctx.Null())
+	proc, ok := c.lookup(id)
+	if !ok {
+		c.deliver(func(ctx *v8.Context) {
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "Process not found"), ctx.NewNumber(-1), ctx.Null())
 		})
 		return nil
 	}
@@ -508,28 +470,22 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		exitCode, err := proc.proc.Wait()
 
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			var errVal *v8.Value
-			if err != nil {
-				errVal, _ = ctx.NewString(err.Error())
-			} else {
-				errVal = ctx.Null()
-			}
-
-			c.rt.MakeCallback(callback, ctx.Undefined(), errVal, ctx.NewNumber(float64(exitCode)), ctx.Null())
-		})
-
-		// Clean up
 		c.mu.Lock()
-		delete(c.processes, id)
+		proc.exited = true
+		c.releaseIfDone(id, proc)
 		c.mu.Unlock()
+
+		c.deliver(func(ctx *v8.Context) {
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err), ctx.NewNumber(float64(exitCode)), ctx.Null())
+		})
 	}()
 
 	return nil
 }
 
-// readFunc handles read() calls from JavaScript to read from stdout/stderr.
+// readFunc reads one chunk from stdout or stderr when JavaScript asks for more, which
+// is how a paused stream applies backpressure to the child. The callback receives the
+// chunk as base64, or null at the end of the stream.
 func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
@@ -540,24 +496,17 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	streamType := args[1].String()
 	callback := args[2]
 
-	c.mu.Lock()
-	proc, ok := c.processes[id]
-	c.mu.Unlock()
-
-	if !ok || proc.proc == nil {
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			errStr, _ := ctx.NewString("Process not found")
-			c.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.Null())
+	proc, ok := c.lookup(id)
+	if !ok {
+		c.deliver(func(ctx *v8.Context) {
+			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
 		})
 		return nil
 	}
 
-	var reader io.ReadCloser
+	reader := proc.stderr
 	if streamType == "stdout" {
 		reader = proc.stdout
-	} else {
-		reader = proc.stderr
 	}
 
 	c.rt.EventLoop().AddPendingWork()
@@ -565,24 +514,56 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer c.rt.EventLoop().DonePendingWork()
 
 		buf := make([]byte, 65536)
-		n, err := reader.Read(buf)
+		n, _ := reader.Read(buf)
 
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			if err != nil {
-				c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.Null())
+		// A read error other than the end of the stream can only be a closed pipe,
+		// and a later read reports it if data came with it.
+		c.deliver(func(ctx *v8.Context) {
+			if n == 0 {
+				c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
 				return
 			}
-
-			dataVal, _ := ctx.NewString(string(buf[:n]))
-			c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), dataVal)
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsBase64(ctx, buf[:n]))
 		})
 	}()
 
 	return nil
 }
 
-// writeFunc handles write() calls from JavaScript to write to stdin.
+// closeOutputFunc closes stdout or stderr when its stream is finished or destroyed.
+func (c *ChildProcess) closeOutputFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
+		return nil
+	}
+
+	id := int64(args[0].Integer())
+	isStdout := args[1].String() == "stdout"
+
+	c.mu.Lock()
+	proc, ok := c.processes[id]
+	if !ok {
+		c.mu.Unlock()
+		return nil
+	}
+	reader := proc.stderr
+	if isStdout {
+		reader = proc.stdout
+		proc.stdoutDone = true
+	} else {
+		proc.stderrDone = true
+	}
+	c.releaseIfDone(id, proc)
+	c.mu.Unlock()
+
+	if reader != nil {
+		reader.Close()
+	}
+	return nil
+}
+
+// writeFunc writes one base64 chunk to stdin. The callback receives (null) or
+// (message, code).
 func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
@@ -590,18 +571,17 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	id := int64(args[0].Integer())
-	data := args[1].String()
 	callback := args[2]
 
-	c.mu.Lock()
-	proc, ok := c.processes[id]
-	c.mu.Unlock()
+	data, decodeErr := base64.StdEncoding.DecodeString(args[1].String())
+	if decodeErr != nil {
+		return info.Context().Throw("child_process: invalid write data")
+	}
 
-	if !ok || proc.proc == nil {
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			errStr, _ := ctx.NewString("Process not found")
-			c.rt.MakeCallback(callback, ctx.Undefined(), errStr)
+	proc, ok := c.lookup(id)
+	if !ok {
+		c.deliver(func(ctx *v8.Context) {
+			c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "Process not found"), ctx.Null())
 		})
 		return nil
 	}
@@ -610,15 +590,16 @@ func (c *ChildProcess) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer c.rt.EventLoop().DonePendingWork()
 
-		_, err := proc.stdin.Write([]byte(data))
+		_, err := proc.stdin.Write(data)
 
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			ctx := info.Context()
-			if err != nil {
-				errStr, _ := ctx.NewString(err.Error())
-				c.rt.MakeCallback(callback, ctx.Undefined(), errStr)
-			} else {
+		c.deliver(func(ctx *v8.Context) {
+			switch {
+			case err == nil:
 				c.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null())
+			case errors.Is(err, syscall.EPIPE) || errors.Is(err, os.ErrClosed):
+				c.rt.MakeCallback(callback, ctx.Undefined(), jsString(ctx, "write EPIPE"), jsString(ctx, "EPIPE"))
+			default:
+				c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err), ctx.Null())
 			}
 		})
 	}()
@@ -633,12 +614,7 @@ func (c *ChildProcess) closeStdinFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	id := int64(args[0].Integer())
-
-	c.mu.Lock()
-	proc, ok := c.processes[id]
-	c.mu.Unlock()
-
+	proc, ok := c.lookup(int64(args[0].Integer()))
 	if ok && proc.stdin != nil {
 		proc.stdin.Close()
 	}

@@ -16,6 +16,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -43,6 +44,10 @@ type SpawnOptions struct {
 	Shell    bool
 	Detached bool
 	Timeout  int // milliseconds, 0 = no timeout
+
+	// Input is written to the stdin of Exec and ExecFile commands. Spawn ignores it,
+	// because its caller writes to Stdin itself.
+	Input []byte
 }
 
 // ChildProcess represents a spawned child process.
@@ -125,20 +130,28 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		return nil, err
 	}
 
-	stdout, err := cmd.StdoutPipe()
+	// cmd.StdoutPipe and cmd.StderrPipe would close the read ends as soon as Wait sees
+	// the process exit, losing output nobody has read yet. These stay open until the
+	// caller closes them, so output can be read in full after the exit is reported.
+	stdout, stdoutChild, err := os.Pipe()
 	if err != nil {
 		stdin.Close()
 		return nil, err
 	}
-
-	stderr, err := cmd.StderrPipe()
+	stderr, stderrChild, err := os.Pipe()
 	if err != nil {
 		stdin.Close()
 		stdout.Close()
+		stdoutChild.Close()
 		return nil, err
 	}
+	cmd.Stdout = stdoutChild
+	cmd.Stderr = stderrChild
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	stdoutChild.Close()
+	stderrChild.Close()
+	if err != nil {
 		stdin.Close()
 		stdout.Close()
 		stderr.Close()
@@ -169,6 +182,10 @@ func (s *RealProcessSpawner) Exec(ctx context.Context, command string, options *
 		cmd.Env = options.Env
 	} else {
 		cmd.Env = os.Environ()
+	}
+
+	if len(options.Input) > 0 {
+		cmd.Stdin = bytes.NewReader(options.Input)
 	}
 
 	var stdout, stderr []byte
@@ -209,6 +226,10 @@ func (s *RealProcessSpawner) ExecFile(ctx context.Context, file string, args []s
 		cmd.Env = options.Env
 	} else {
 		cmd.Env = os.Environ()
+	}
+
+	if len(options.Input) > 0 {
+		cmd.Stdin = bytes.NewReader(options.Input)
 	}
 
 	var stdoutBuf, stderrBuf safeBuffer
