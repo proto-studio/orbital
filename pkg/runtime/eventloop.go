@@ -70,14 +70,15 @@ type EventLoop struct {
 	mu          sync.Mutex
 	cond        *sync.Cond
 	timers      taskHeap
-	microtasks  []func()
+	ticks       []func() // scheduled by running JS: run ahead of everything else
+	microtasks  []func() // native completions: run once no tick is waiting
 	nextID      uint64
 	running     bool
 	shouldStop  bool
 	pendingWork int32 // atomic counter for pending async work
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
-	drained     func() // runs once the microtask queue empties; see setDrainedHook
+	drained     func() // runs once both queues empty; see setDrainedHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -121,13 +122,13 @@ func (el *EventLoop) SetContext(ctx context.Context) {
 	el.ctx, el.cancelCtx = context.WithCancel(ctx)
 }
 
-// setDrainedHook sets a function to run on the loop's goroutine each time the microtask queue
-// has emptied, before the loop looks for more work. Call it before the loop starts.
+// setDrainedHook sets a function to run on the loop's goroutine each time the tick and
+// microtask queues have emptied, before the loop looks for more work. Call it before the loop starts.
 func (el *EventLoop) setDrainedHook(fn func()) {
 	el.drained = fn
 }
 
-// runDrainedLocked runs the drained hook, and reports whether that queued more microtasks.
+// runDrainedLocked runs the drained hook, and reports whether that queued more callbacks.
 // el.mu must be held. It is released while the hook runs.
 func (el *EventLoop) runDrainedLocked() bool {
 	if el.drained == nil {
@@ -136,14 +137,14 @@ func (el *EventLoop) runDrainedLocked() bool {
 	el.mu.Unlock()
 	el.drained()
 	el.mu.Lock()
-	return len(el.microtasks) > 0
+	return len(el.ticks) > 0 || len(el.microtasks) > 0
 }
 
-// hasMicrotasks reports whether any microtasks are queued.
+// hasMicrotasks reports whether any ticks or microtasks are queued.
 func (el *EventLoop) hasMicrotasks() bool {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	return len(el.microtasks) > 0
+	return len(el.ticks) > 0 || len(el.microtasks) > 0
 }
 
 // SetTimeout schedules a function to run after the specified delay.
@@ -195,6 +196,33 @@ func (el *EventLoop) EnqueueMicrotask(fn func()) {
 	el.cond.Signal()
 }
 
+// EnqueueTick adds a callback that runs before any queued microtask, even one queued
+// earlier. Use it for process.nextTick and queueMicrotask. Native operations finish on their
+// own goroutines, so their completions can already be queued by the time the script that
+// started them schedules a callback, and Node promises that callback runs first. Scripts
+// rely on this to add a listener for an event that their operation will emit.
+func (el *EventLoop) EnqueueTick(fn func()) {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	el.ticks = append(el.ticks, fn)
+	el.cond.Signal()
+}
+
+// nextQueuedLocked removes the callback to run next, or returns nil if none is queued.
+func (el *EventLoop) nextQueuedLocked() func() {
+	queue := &el.microtasks
+	if len(el.ticks) > 0 {
+		queue = &el.ticks
+	}
+	if len(*queue) == 0 {
+		return nil
+	}
+	fn := (*queue)[0]
+	(*queue)[0] = nil
+	*queue = (*queue)[1:]
+	return fn
+}
+
 // AddPendingWork increments the pending work counter.
 // Call this when starting an async operation.
 func (el *EventLoop) AddPendingWork() {
@@ -239,24 +267,20 @@ func (el *EventLoop) Run() {
 
 		el.mu.Lock()
 
-		// Process all microtasks first
-		for len(el.microtasks) > 0 {
-			microtasks := el.microtasks
-			el.microtasks = nil
+		// Process all queued callbacks first
+		for fn := el.nextQueuedLocked(); fn != nil; fn = el.nextQueuedLocked() {
 			el.mu.Unlock()
 
-			for _, fn := range microtasks {
-				// Check for context cancellation before each microtask
-				select {
-				case <-ctx.Done():
-					el.mu.Lock()
-					el.running = false
-					el.mu.Unlock()
-					return
-				default:
-				}
-				fn()
+			// Check for context cancellation before each callback
+			select {
+			case <-ctx.Done():
+				el.mu.Lock()
+				el.running = false
+				el.mu.Unlock()
+				return
+			default:
 			}
+			fn()
 
 			el.mu.Lock()
 		}
@@ -384,16 +408,10 @@ func (el *EventLoop) wake() {
 func (el *EventLoop) RunOnce() bool {
 	el.mu.Lock()
 
-	// Process microtasks
-	for len(el.microtasks) > 0 {
-		microtasks := el.microtasks
-		el.microtasks = nil
+	// Process queued callbacks
+	for fn := el.nextQueuedLocked(); fn != nil; fn = el.nextQueuedLocked() {
 		el.mu.Unlock()
-
-		for _, fn := range microtasks {
-			fn()
-		}
-
+		fn()
 		el.mu.Lock()
 	}
 
@@ -462,6 +480,7 @@ func (el *EventLoop) CancelAllTimers() {
 func (el *EventLoop) ClearAllMicrotasks() {
 	el.mu.Lock()
 	defer el.mu.Unlock()
+	el.ticks = nil
 	el.microtasks = nil
 }
 
@@ -469,5 +488,5 @@ func (el *EventLoop) ClearAllMicrotasks() {
 func (el *EventLoop) HasPendingWork() bool {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	return el.hasReferencedTimerLocked() || len(el.microtasks) > 0 || atomic.LoadInt32(&el.pendingWork) > 0
+	return el.hasReferencedTimerLocked() || len(el.ticks) > 0 || len(el.microtasks) > 0 || atomic.LoadInt32(&el.pendingWork) > 0
 }

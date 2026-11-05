@@ -596,7 +596,7 @@ func (p *Process) nextTickFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		callArgs = args[1:]
 	}
 
-	p.rt.EventLoop().EnqueueMicrotask(func() {
+	p.rt.EventLoop().EnqueueTick(func() {
 		p.rt.MakeCallback(callback, nil, callArgs...)
 	})
 

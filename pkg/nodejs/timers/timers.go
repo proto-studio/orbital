@@ -286,7 +286,7 @@ func (t *Timers) queueMicrotaskFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	callback := args[0]
-	t.rt.EventLoop().EnqueueMicrotask(func() {
+	t.rt.EventLoop().EnqueueTick(func() {
 		t.rt.MakeCallback(callback, nil)
 	})
 	return nil
