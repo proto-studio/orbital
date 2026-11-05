@@ -118,21 +118,20 @@ jobs:
             echo "ERROR: build run head $head_sha != manifest source_commit $SRC_COMMIT" >&2; exit 1
           fi
 
+      # Artifacts expire, so fall back to the Release, which holds the same files if this
+      # pin has been published. The next step checks them against the manifest either way.
       - name: Download artifacts from the build run
         env:
           RUN_ID: ${{ steps.m.outputs.run_id }}
+          PUBLISHED: ${{ steps.m.outputs.module_version }}
         run: |
           mkdir -p dist
-          # One artifact per manifest target: v8-<goos>-<goarch>.
-          for name in $(jq -r '.targets[] | "v8-" + .goos + "-" + .goarch' internal/v8dist/manifest.json); do
-            echo "Downloading $name ..."
-            gh run download "$RUN_ID" -n "$name" -D dist
-          done
-          # What glue rebuilds need: headers and the glue SDK. Consumers don't use these.
-          for file in $(jq -r '.glue_build_files | keys[]' internal/v8dist/manifest.json); do
+          # What consumers install, then what glue rebuilds use.
+          for file in $(jq -r '.targets[].filename, (.glue_build_files | keys[])' internal/v8dist/manifest.json); do
             name="${file%.tar.gz}"
             echo "Downloading $name ..."
-            gh run download "$RUN_ID" -n "$name" -D dist
+            gh run download "$RUN_ID" -n "$name" -D dist \
+              || gh release download "$PUBLISHED" -p "$file*" -D dist
           done
           ls -la dist
 
