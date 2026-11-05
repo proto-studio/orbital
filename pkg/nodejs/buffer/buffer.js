@@ -15,7 +15,7 @@
 					} else if (code < 0x800) {
 						bytes.push(0xc0 | (code >> 6));
 						bytes.push(0x80 | (code & 0x3f));
-					} else if (code >= 0xd800 && code < 0xdc00) {
+					} else if (code >= 0xd800 && code < 0xdc00 && str.charCodeAt(i + 1) >= 0xdc00 && str.charCodeAt(i + 1) < 0xe000) {
 						// Surrogate pair
 						i++;
 						const low = str.charCodeAt(i);
@@ -24,6 +24,9 @@
 						bytes.push(0x80 | ((code >> 12) & 0x3f));
 						bytes.push(0x80 | ((code >> 6) & 0x3f));
 						bytes.push(0x80 | (code & 0x3f));
+					} else if (code >= 0xd800 && code < 0xe000) {
+						// An unpaired surrogate becomes U+FFFD.
+						bytes.push(0xef, 0xbf, 0xbd);
 					} else {
 						bytes.push(0xe0 | (code >> 12));
 						bytes.push(0x80 | ((code >> 6) & 0x3f));
@@ -95,26 +98,50 @@
 				this.encoding = encoding;
 			}
 			decode(bytes) {
+				// Each lead byte fixes how many continuation bytes follow and the range of the
+				// first one. A malformed sequence becomes one U+FFFD, and decoding resumes at the
+				// byte that broke it.
 				let str = '';
-				for (let i = 0; i < bytes.length; i++) {
-					const b = bytes[i];
+				for (let i = 0; i < bytes.length;) {
+					const b = bytes[i++];
 					if (b < 0x80) {
 						str += String.fromCharCode(b);
-					} else if ((b & 0xe0) === 0xc0) {
-						const b2 = bytes[++i];
-						str += String.fromCharCode(((b & 0x1f) << 6) | (b2 & 0x3f));
-					} else if ((b & 0xf0) === 0xe0) {
-						const b2 = bytes[++i];
-						const b3 = bytes[++i];
-						str += String.fromCharCode(((b & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f));
-					} else if ((b & 0xf8) === 0xf0) {
-						const b2 = bytes[++i];
-						const b3 = bytes[++i];
-						const b4 = bytes[++i];
-						const code = ((b & 0x07) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
-						// Convert to surrogate pair
+						continue;
+					}
+					let needed = 0;
+					let code = 0;
+					let lower = 0x80;
+					let upper = 0xbf;
+					if (b >= 0xc2 && b <= 0xdf) {
+						needed = 1;
+						code = b & 0x1f;
+					} else if (b >= 0xe0 && b <= 0xef) {
+						needed = 2;
+						code = b & 0x0f;
+						if (b === 0xe0) lower = 0xa0;
+						if (b === 0xed) upper = 0x9f;
+					} else if (b >= 0xf0 && b <= 0xf4) {
+						needed = 3;
+						code = b & 0x07;
+						if (b === 0xf0) lower = 0x90;
+						if (b === 0xf4) upper = 0x8f;
+					} else {
+						str += '\ufffd';
+						continue;
+					}
+					while (needed > 0 && i < bytes.length && bytes[i] >= lower && bytes[i] <= upper) {
+						code = (code << 6) | (bytes[i++] & 0x3f);
+						lower = 0x80;
+						upper = 0xbf;
+						needed--;
+					}
+					if (needed > 0) {
+						str += '\ufffd';
+					} else if (code > 0xffff) {
 						const offset = code - 0x10000;
 						str += String.fromCharCode(0xd800 + (offset >> 10), 0xdc00 + (offset & 0x3ff));
+					} else {
+						str += String.fromCharCode(code);
 					}
 				}
 				return str;
@@ -261,7 +288,9 @@
 	function assertEncoding(encoding) {
 		encoding = normalizeEncoding(encoding);
 		if (!encodings.includes(encoding)) {
-			throw new TypeError('Unknown encoding: ' + encoding);
+			const err = new TypeError('Unknown encoding: ' + encoding);
+			err.code = 'ERR_UNKNOWN_ENCODING';
+			throw err;
 		}
 		return encoding;
 	}
@@ -516,7 +545,7 @@
 		// Instance methods
 
 		toString(encoding, start, end) {
-			encoding = normalizeEncoding(encoding);
+			encoding = assertEncoding(encoding);
 			start = start || 0;
 			end = end !== undefined ? end : this.length;
 
@@ -541,12 +570,17 @@
 					return str;
 				case 'latin1':
 				case 'binary':
-				case 'ascii':
 					let result = '';
 					for (let i = 0; i < slice.length; i++) {
 						result += String.fromCharCode(slice[i]);
 					}
 					return result;
+				case 'ascii':
+					let ascii = '';
+					for (let i = 0; i < slice.length; i++) {
+						ascii += String.fromCharCode(slice[i] & 0x7f);
+					}
+					return ascii;
 				case 'utf8':
 				default:
 					const decoder = new TextDecoder('utf-8');

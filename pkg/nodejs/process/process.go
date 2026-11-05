@@ -2,6 +2,7 @@
 package process
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -286,16 +287,50 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 				}
 			});
 		}
+		// Bytes reach Go as base64, because a string stops at its first NUL. Buffer registers
+		// after process, so it is only looked up when a write runs.
+		function wrapWrite(s) {
+			var writeBase64 = s.write;
+			s.write = function (chunk, encoding, cb) {
+				if (typeof encoding === 'function') {
+					cb = encoding;
+					encoding = undefined;
+				}
+				var bytes;
+				if (typeof chunk === 'string') {
+					bytes = Buffer.from(chunk, encoding || 'utf8');
+				} else if (ArrayBuffer.isView(chunk)) {
+					bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+				} else {
+					var err = chunk === null
+						? new TypeError('May not write null values to stream')
+						: new TypeError('The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+					err.code = chunk === null ? 'ERR_STREAM_NULL_VALUES' : 'ERR_INVALID_ARG_TYPE';
+					throw err;
+				}
+				writeBase64(bytes.toString('base64'));
+				if (typeof cb === 'function') process.nextTick(cb);
+				return true;
+			};
+		}
 		['stdout', 'stderr'].forEach(function (name) {
 			var s = process[name];
 			if (!s) return;
 			mixEmitter(s);
 			s.writable = true;
 			s.readable = false;
+			wrapWrite(s);
 			if (typeof s.end !== 'function') {
 				s.end = function (chunk, enc, cb) {
-					if (chunk != null && typeof chunk !== 'function') this.write(chunk);
-					if (typeof enc === 'function') cb = enc;
+					if (typeof chunk === 'function') {
+						cb = chunk;
+						chunk = null;
+					}
+					if (typeof enc === 'function') {
+						cb = enc;
+						enc = undefined;
+					}
+					if (chunk != null) this.write(chunk, enc);
 					if (typeof cb === 'function') cb();
 					return this;
 				};
@@ -395,21 +430,20 @@ func (p *Process) buildReadStream(ctx *v8.Context, iso *v8.Isolate, f *os.File, 
 	return obj, nil
 }
 
-// writeStreamFunc returns a write(chunk[, encoding][, callback]) implementation
-// that writes to the given OS file and invokes a trailing callback if present.
+// writeStreamFunc returns a write(base64Data) implementation that writes the bytes to the
+// given OS file. The bootstrap JS above wraps it in Node's write(chunk[, encoding][, callback]).
 func (p *Process) writeStreamFunc(f *os.File) v8.FunctionCallback {
 	return func(info *v8.FunctionCallbackInfo) *v8.Value {
 		args := info.Args()
-		if len(args) > 0 && args[0] != nil && !args[0].IsUndefined() && !args[0].IsNull() {
-			_, _ = f.WriteString(args[0].String())
+		if len(args) < 1 {
+			return nil
 		}
-		for i := 1; i < len(args); i++ {
-			if args[i] != nil && args[i].IsFunction() {
-				p.rt.MakeCallback(args[i], nil)
-				break
-			}
+		data, err := base64.StdEncoding.DecodeString(args[0].String())
+		if err != nil {
+			return info.Context().Throw(err.Error())
 		}
-		return info.Context().True()
+		_, _ = f.Write(data)
+		return nil
 	}
 }
 

@@ -140,12 +140,12 @@
   }
 
   class Console {
-    constructor(options) {
+    constructor(options, stderrStream) {
       let stdout;
       let stderr;
       if (options && typeof options.write === 'function') {
         stdout = options;
-        stderr = options;
+        stderr = stderrStream || options;
       } else if (options) {
         stdout = options.stdout;
         stderr = options.stderr || options.stdout;

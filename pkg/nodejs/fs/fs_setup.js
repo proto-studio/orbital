@@ -44,6 +44,61 @@
   wrapStat('lstatSync');
   wrapStat('fstatSync');
 
+  // Everything below moves file contents as base64, because a string reaching Go stops at its
+  // first NUL. Buffer registers after fs, so it is only looked up when these run.
+  function codedError(Ctor, code, message) {
+    const e = new Ctor(message);
+    e.code = code;
+    return e;
+  }
+
+  function encodingOf(options) {
+    const encoding = typeof options === 'string'
+      ? options
+      : (options && typeof options === 'object' ? options.encoding : null);
+    if (encoding && encoding !== 'buffer' && !Buffer.isEncoding(encoding)) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'encoding' is invalid encoding. Received '" + encoding + "'");
+    }
+    return encoding || null;
+  }
+
+  // The native reads return UTF-8 text directly, which is cheaper than base64 and is what most
+  // reads of source files ask for.
+  function isUtf8(encoding) {
+    return !!encoding && /^utf-?8$/i.test(encoding);
+  }
+
+  function decodeContents(contents, encoding) {
+    if (isUtf8(encoding)) return contents;
+    const buffer = Buffer.from(contents, 'base64');
+    return encoding ? buffer.toString(encoding) : buffer;
+  }
+
+  function viewBytes(view) {
+    return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+  }
+
+  function dataBytes(data, encoding) {
+    if (typeof data === 'string') return Buffer.from(data, encoding || 'utf8');
+    if (ArrayBuffer.isView(data)) return viewBytes(data);
+    throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+      'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+  }
+
+  function checkCallback(callback) {
+    if (typeof callback !== 'function') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "cb" argument must be of type function.');
+    }
+  }
+
+  function checkRange(name, value, max) {
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be >= 0 && <= ' + max + '. Received ' + value);
+    }
+  }
+
+  const positionArg = (position) => (typeof position === 'number' ? position : -1);
+
   // readFileSync: Node ALWAYS throws when a read fails (ENOENT for a missing
   // path, etc.); libraries lean on that catchable error (e.g. y18n does
   // `JSON.parse(readFileSync(...))` inside a try/catch and treats an ENOENT as
@@ -52,8 +107,9 @@
   // -> SyntaxError. Convert that sentinel back into a real Node-style error.
   const _readFileSync = fs.readFileSync;
   if (typeof _readFileSync === 'function') {
-    fs.readFileSync = function (p) {
-      const result = _readFileSync.apply(this, arguments);
+    fs.readFileSync = function (p, options) {
+      const encoding = encodingOf(options);
+      const result = _readFileSync.call(this, p, isUtf8(encoding));
       if (result === null || result === undefined) {
         const path = typeof p === 'string' ? p : String(p);
         const exists = typeof fs.existsSync === 'function' && fs.existsSync(path);
@@ -68,9 +124,84 @@
         e.path = path;
         throw e;
       }
-      return result;
+      return decodeContents(result, encoding);
     };
   }
+
+  const _writeFileSync = fs.writeFileSync;
+  fs.writeFileSync = function (path, data, options) {
+    _writeFileSync.call(this, path, dataBytes(data, encodingOf(options)).toString('base64'));
+  };
+
+  const _appendFileSync = fs.appendFileSync;
+  fs.appendFileSync = function (path, data, options) {
+    _appendFileSync.call(this, path, dataBytes(data, encodingOf(options)).toString('base64'));
+  };
+
+  const _readFile = fs.readFile;
+  fs.readFile = function (path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    checkCallback(callback);
+    const encoding = encodingOf(options);
+    _readFile.call(this, path, isUtf8(encoding), (err, contents) => {
+      if (err) callback(err);
+      else callback(null, decodeContents(contents, encoding));
+    });
+  };
+
+  const _writeFile = fs.writeFile;
+  fs.writeFile = function (path, data, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    checkCallback(callback);
+    _writeFile.call(this, path, dataBytes(data, encodingOf(options)).toString('base64'), callback);
+  };
+
+  // writeSync(fd, buffer[, offset[, length[, position]]]), writeSync(fd, buffer[, options])
+  // or writeSync(fd, string[, position[, encoding]]).
+  const _writeSync = fs.writeSync;
+  fs.writeSync = function (fd, data, offsetOrPosition, lengthOrEncoding, position) {
+    if (typeof data === 'string') {
+      return _writeSync.call(this, fd, dataBytes(data, lengthOrEncoding).toString('base64'), positionArg(offsetOrPosition));
+    }
+    if (!ArrayBuffer.isView(data)) dataBytes(data);
+    let offset = offsetOrPosition;
+    let length = lengthOrEncoding;
+    if (offset !== null && typeof offset === 'object') {
+      ({ offset = 0, length = data.byteLength - offset, position = null } = offset);
+    }
+    if (offset === undefined || offset === null) offset = 0;
+    checkRange('offset', offset, data.byteLength);
+    if (typeof length !== 'number') length = data.byteLength - offset;
+    checkRange('length', length, data.byteLength - offset);
+    const bytes = viewBytes(data).subarray(offset, offset + length);
+    return _writeSync.call(this, fd, bytes.toString('base64'), positionArg(position));
+  };
+
+  // readSync(fd, buffer[, offset[, length[, position]]]) or readSync(fd, buffer[, options]).
+  const _readSync = fs.readSync;
+  fs.readSync = function (fd, buffer, offsetOrOptions, length, position) {
+    if (!ArrayBuffer.isView(buffer)) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.');
+    }
+    let offset = offsetOrOptions;
+    if (arguments.length <= 3 || (offset !== null && typeof offset === 'object')) {
+      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset || {});
+    }
+    if (offset === undefined || offset === null) offset = 0;
+    checkRange('offset', offset, buffer.byteLength);
+    length |= 0;
+    if (length === 0) return 0;
+    checkRange('length', length, buffer.byteLength - offset);
+    const bytes = Buffer.from(_readSync.call(this, fd, length, positionArg(position)), 'base64');
+    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).set(bytes, offset);
+    return bytes.length;
+  };
 
   // readdirSync(path, { withFileTypes: true }) returns Dirent-like objects; the
   // native layer sets the boolean props, so attach the predicate methods here.
