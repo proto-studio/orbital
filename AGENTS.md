@@ -1,5 +1,14 @@
 # Agent instructions
 
+## Pull requests
+
+- Use `.github/pull_request_template.md`. Passing your own description skips
+  it, so include both parts yourself: `Closes #123`, and an `## AI used` section
+  listing the AI tools that assisted, including yourself. The `Change link`
+  check fails without them.
+- AI assists with a change. The person responsible is its author, so never
+  describe an AI tool as the author.
+
 ## Git commits
 
 - NEVER add advertising or attribution trailers to commit messages. In
