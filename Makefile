@@ -243,10 +243,16 @@ V8_BUILD_PREREQ ?= v8-fetch
 # sccache cannot cache PCH-based compiles.
 CC_WRAPPER ?=
 
-.PHONY: v8-build
-v8-build: v8-deps $(V8_BUILD_PREREQ)
-	@echo ">>> Building V8 for $(TARGET_OS)/$(TARGET_ARCH)..."
-	@mkdir -p $(V8_PLATFORM_DIR)/lib $(V8_PLATFORM_DIR)/include
+# Set to 0 to skip compiling the glue. CI builds the V8 libraries and the glue in
+# separate jobs (see .github/workflows/glue.yml), so its v8-build tarballs have no
+# glue in them until that job adds it.
+V8_BUILD_GLUE ?= 1
+
+# Write args.gn and run gn gen for the target. This is all the glue needs from a
+# V8 build: compile_commands.json and the toolchain, not the compiled monolith.
+# Changing this or v8-build needs a full V8 build; see scripts/v8-build-config.sh.
+.PHONY: v8-gn-gen
+v8-gn-gen: v8-deps
 	@export PATH="$(CURDIR)/$(DEPOT_TOOLS_DIR):$$PATH"; \
 	cd $(V8_SRC_DIR) && \
 	V8_OUT_DIR="out.gn/$(TARGET_OS)-$(V8_ARCH)" && \
@@ -290,7 +296,16 @@ v8-build: v8-deps $(V8_BUILD_PREREQ)
 		echo 'enable_precompiled_headers=false' >> "$$V8_OUT_DIR/args.gn"; \
 	fi && \
 	echo "GN Args:" && cat "$$V8_OUT_DIR/args.gn" && \
-	gn gen "$$V8_OUT_DIR" --export-compile-commands && \
+	gn gen "$$V8_OUT_DIR" --export-compile-commands
+
+.PHONY: v8-build
+v8-build: v8-deps $(V8_BUILD_PREREQ)
+	@echo ">>> Building V8 for $(TARGET_OS)/$(TARGET_ARCH)..."
+	@mkdir -p $(V8_PLATFORM_DIR)/lib $(V8_PLATFORM_DIR)/include
+	@$(MAKE) --no-print-directory v8-gn-gen
+	@export PATH="$(CURDIR)/$(DEPOT_TOOLS_DIR):$$PATH"; \
+	cd $(V8_SRC_DIR) && \
+	V8_OUT_DIR="out.gn/$(TARGET_OS)-$(V8_ARCH)" && \
 	ninja -C "$$V8_OUT_DIR" v8_monolith -j $(NUM_JOBS) && \
 	echo ">>> Building target libc++/libc++abi (the monolith static lib does not compile its link deps)..." && \
 	ninja -C "$$V8_OUT_DIR" -j $(NUM_JOBS) \
@@ -315,13 +330,15 @@ v8-build: v8-deps $(V8_BUILD_PREREQ)
 	fi && \
 	cp "$$V8_OUT_DIR/obj/libv8_monolith.a" $(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8_monolith.a && \
 	cp "$$V8_OUT_DIR/obj/libv8_libcxx.a" $(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8_libcxx.a && \
-	echo ">>> Pre-compiling cgo C++ glue with V8's libc++ ABI..." && \
-	python3 $(CURDIR)/scripts/build-glue.py \
-		--out-dir "$$(pwd)/$$V8_OUT_DIR" \
-		--src "$(CURDIR)/pkg/v8/csrc/v8go.cc" \
-		--include "$(CURDIR)/pkg/v8" \
-		--include "$$(pwd)/include" \
-		--output "$(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8go_glue.a" && \
+	if [ "$(V8_BUILD_GLUE)" = "1" ]; then \
+		echo ">>> Pre-compiling cgo C++ glue with V8's libc++ ABI..." && \
+		python3 $(CURDIR)/scripts/build-glue.py \
+			--out-dir "$$(pwd)/$$V8_OUT_DIR" \
+			--src "$(CURDIR)/pkg/v8/csrc/v8go.cc" \
+			--include "$(CURDIR)/pkg/v8" \
+			--include "$$(pwd)/include" \
+			--output "$(CURDIR)/$(V8_PLATFORM_DIR)/lib/libv8go_glue.a"; \
+	fi && \
 	echo ">>> Shipped library sizes:" && ls -lh $(CURDIR)/$(V8_PLATFORM_DIR)/lib/*.a
 	@echo ">>> V8 built: $(V8_PLATFORM_DIR)"
 	@$(MAKE) --no-print-directory package-v8-headers TARGET_OS=$(TARGET_OS) TARGET_ARCH=$(TARGET_ARCH)
@@ -445,6 +462,8 @@ v8-manifest:
 		--module-version "$(MODULE_VERSION)" \
 		--commit "$(SOURCE_COMMIT)" \
 		--run-id "$(SOURCE_RUN_ID)" \
+		--glue-inputs "$$(bash scripts/glue-inputs.sh)" \
+		--v8-build-config "$$(bash scripts/v8-build-config.sh)" \
 		--owner "$(OWNER)" \
 		--repo "$(REPO)" \
 		--output internal/v8dist/manifest.json
@@ -456,12 +475,12 @@ v8-manifest:
 # Generated per-target cgo link file that carries the -L/-l flags (gitignored).
 V8_LINK_FILE := pkg/v8/zz_generated_v8link_$(GOOS)_$(GOARCH).go
 
-# Fetch the version-pinned V8 libraries from the published GitHub Release into
-# .v8/ and write the per-target cgo link file. This is what consumers run via
-# `go generate`; use it once a Release for the pinned module version exists.
+# Fetch the version-pinned V8 libraries into .v8/ and write the per-target cgo
+# link file. Consumers do the same via `go generate`, from a Release. On a commit
+# whose pin isn't published yet, this uses the pinning run's artifacts (needs gh).
 .PHONY: v8-setup
 v8-setup:
-	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) run ./cmd/v8setup -source release -link-out pkg/v8 -link-pkg v8
+	env $$(bash scripts/v8-artifact-source.sh) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) run ./cmd/v8setup -link-out pkg/v8 -link-pkg v8
 
 # Install the V8 libraries from a locally built asset (dist/) instead of a
 # Release. Use after `make v8-native` (or `make v8-<target>`) during development
@@ -477,7 +496,7 @@ check-v8-link:
 		echo "Error: V8 link file $(V8_LINK_FILE) not found for $(GOOS)/$(GOARCH)."; \
 		echo ""; \
 		echo "Fetch the prebuilt libraries and generate the link file first:"; \
-		echo "  make v8-setup                 # from the published GitHub Release"; \
+		echo "  make v8-setup                 # the pinned libraries"; \
 		echo "  make v8-native v8-setup-local # build locally, then install from dist/"; \
 		exit 1; \
 	fi
@@ -631,7 +650,7 @@ help:
 	@echo "  (multi-platform binaries are produced by CI, not locally)"
 	@echo ""
 	@echo "V8 runtime setup (consumers / developers):"
-	@echo "  v8-setup         Fetch pinned V8 libraries from the Release into .v8/ + link file"
+	@echo "  v8-setup         Fetch pinned V8 libraries into .v8/ + link file"
 	@echo "  v8-setup-local   Install V8 libraries from a locally built dist/ asset + link file"
 	@echo "  v8-list          List installed V8 runtimes under .v8/"
 	@echo ""
@@ -641,6 +660,7 @@ help:
 	@echo "  v8-linux-amd64   Build V8 for Linux x86_64"
 	@echo "  v8-linux-arm64   Build V8 for Linux ARM64"
 	@echo "  v8-darwin-arm64  Build V8 for macOS ARM64 (Apple Silicon)"
+	@echo "  v8-gn-gen        Generate the GN output dir (no compile)"
 	@echo "  v8-glue          Rebuild ONLY libv8go_glue.a (needs headers + out.gn)"
 	@echo "  package-v8       Package a built platform into dist/v8-<goos>-<goarch>.tar.gz"
 	@echo "  package-v8-headers  Package V8 public headers → dist/v8-headers.tar.gz"
