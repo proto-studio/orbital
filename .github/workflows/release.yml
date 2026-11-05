@@ -1,167 +1,135 @@
 name: Release
 
-# Publishes a new version from whatever glue and V8 binary are pinned in
-# internal/v8dist/manifest.json on main. Those are updated separately, by pull requests
-# (glue) and update-v8.yml (V8), and this runs by itself when either merges, as a patch
-# release. Run it by hand for a release with no new pin, or to choose the bump level.
+# On merge to main (when internal/v8dist/manifest.json changes), promote the
+# EXACT artifacts already pinned in the manifest to a GitHub Release. Never
+# rebuilds: it re-downloads the artifacts from the build run id in the
+# manifest, re-verifies checksums, then tags + publishes.
 #
-# Runs the tests on main first, since main doesn't require them and a release can't be
-# taken back. Never rebuilds: it re-downloads the artifacts from the run the manifest
-# pins, re-verifies them, bumps the version through a pull request, then tags and
-# publishes. That pull request merges with GITHUB_TOKEN, so it doesn't start this again.
+# Two cases share this path:
+#   * Merging an automated/update-v8-* PR (new V8 build, new module_version).
+#   * A Go/JS-only bump of module_version that keeps the same source_run_id
+#     and sha256s — reuse the existing tarballs, no V8 compile.
 #
-# If this fails after the version bump merges, run it again. It sees that the version
-# on main isn't published yet and publishes that rather than bumping again. The same
-# goes for a bump pull request it couldn't merge, once someone has merged it by hand.
+# Push events publish when the manifest's module_version tag does not yet
+# exist. Notes are the commits since the previous tag, not the V8 artifact
+# blurb. workflow_dispatch remains for an intentional publish after a
+# workflow-only fix (path filter would not fire).
 on:
   push:
     branches: [main]
-    paths: [internal/v8dist/manifest.json]
+    paths:
+      - internal/v8dist/manifest.json
+  # Manual re-publish for whatever manifest is currently on main (e.g. after
+  # fixing this workflow, since a workflow-only change does not touch the path
+  # filter above).
   workflow_dispatch:
-    inputs:
-      bump:
-        description: Version bump level
-        type: choice
-        options: [patch, minor, major]
-        default: patch
 
 permissions:
   contents: write
-  pull-requests: write
-  statuses: write
-  actions: read
+  pull-requests: read
 
 concurrency:
+  # Serialize per version so simultaneous merges cannot double-publish.
   group: release-${{ github.workflow }}
   cancel-in-progress: false
 
-env:
-  GH_TOKEN: ${{ github.token }}
-  GH_REPO: ${{ github.repository }}
-
 jobs:
-  # Everything below uses the latest main rather than the commit that started this run.
-  # Runs queue, so that commit may be behind by now.
-  check:
-    name: Check for a new pin
-    if: github.ref == 'refs/heads/main'
+  # Gate push events: publish only when the manifest tag is not already out.
+  gate:
+    name: Check whether to publish
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
-      run: ${{ steps.check.outputs.run }}
-      sha: ${{ steps.check.outputs.sha }}
+      should_release: ${{ steps.check.outputs.should_release }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
         with:
-          ref: refs/heads/main
+          fetch-depth: 0
 
-      # A manifest change alone isn't enough, because a version bump is one too.
-      - name: Compare the pin to the published version
+      - name: Decide whether to publish
         id: check
         env:
-          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          f=internal/v8dist/manifest.json
-          version="$(jq -r .module_version "$f")"
-          pin() { jq -S 'del(.module_version)'; }
-          if [ "$EVENT" != workflow_dispatch ] \
-            && published="$(gh release download "$version" -p manifest.json -O - 2>/dev/null)" \
-            && [ "$(printf '%s' "$published" | pin)" = "$(pin < "$f")" ]; then
-            echo "$version already has this pin, so there's nothing to release."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch — publishing."
+            exit 0
           fi
 
-  test:
-    name: Test
-    needs: check
-    if: needs.check.outputs.run == 'true'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/test.yml
-    with:
-      ref: ${{ needs.check.outputs.sha }}
+          git fetch --tags --force
+          tag="$(jq -r .module_version internal/v8dist/manifest.json)"
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "manifest has no module_version — skipping release."
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "tag $tag already exists — skipping (releases are immutable)."
+            exit 0
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "release $tag already published — skipping."
+            exit 0
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "Publishing new tag $tag from ${{ github.sha }}"
 
   release:
     name: Publish Release
-    needs: [check, test]
+    needs: gate
+    if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.check.outputs.sha }}
           fetch-depth: 0
 
       - name: Read manifest
         id: m
         run: |
           f=internal/v8dist/manifest.json
-          echo "module_version=$(jq -r .module_version "$f")" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .module_version "$f")" >> "$GITHUB_OUTPUT"
           echo "run_id=$(jq -r .source_run_id "$f")" >> "$GITHUB_OUTPUT"
           echo "commit=$(jq -r .source_commit "$f")" >> "$GITHUB_OUTPUT"
           echo "v8=$(jq -r .v8_version "$f")" >> "$GITHUB_OUTPUT"
-          echo "glue_inputs=$(jq -r .glue_inputs "$f")" >> "$GITHUB_OUTPUT"
 
-      - name: Choose the version
-        id: version
+      - name: Verify preconditions
         env:
-          CURRENT: ${{ steps.m.outputs.module_version }}
-          BUMP: ${{ inputs.bump || 'patch' }}
-        run: |
-          git fetch --tags --force
-          if git rev-parse -q --verify "refs/tags/$CURRENT" > /dev/null || gh release view "$CURRENT" > /dev/null 2>&1; then
-            tag="$(bash scripts/next-module-version.sh "$BUMP")"
-            echo "bump=true" >> "$GITHUB_OUTPUT"
-          else
-            tag="$CURRENT"
-            echo "$CURRENT is on main but isn't published, so publishing it."
-            echo "bump=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Releasing $tag"
-          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null || gh release view "$tag" > /dev/null 2>&1; then
-            echo "ERROR: $tag already exists (releases are immutable)" >&2; exit 1
-          fi
-
-      - name: Verify the pin matches this commit
-        env:
-          V8: ${{ steps.m.outputs.v8 }}
-          GLUE_INPUTS: ${{ steps.m.outputs.glue_inputs }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.m.outputs.tag }}
           RUN_ID: ${{ steps.m.outputs.run_id }}
           SRC_COMMIT: ${{ steps.m.outputs.commit }}
         run: |
           set -e
-          makefile_v8="$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
-          if [ "$makefile_v8" != "$V8" ]; then
-            echo "ERROR: Makefile pins V8 $makefile_v8 but the manifest has $V8" >&2; exit 1
-          fi
-          if [ "$(bash scripts/v8-build-config.sh)" != "$(jq -r .v8_build_config internal/v8dist/manifest.json)" ]; then
-            echo "ERROR: the V8 build recipes on main differ from how the pinned V8 was built" >&2; exit 1
-          fi
-          if [ "$(bash scripts/glue-inputs.sh)" != "$GLUE_INPUTS" ]; then
-            echo "ERROR: the glue on main differs from the glue the manifest pins" >&2; exit 1
-          fi
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "ERROR: manifest has no source_run_id" >&2; exit 1
           fi
 
-          # The pin must have succeeded on source_commit. This checks the pin job and
-          # not the whole run, whose tests can fail for a reason a later push fixes:
-          # that push leaves the glue alone, so the pin stays. `gh run view` resolves
+          # Tag must not already exist / be published (immutable releases).
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "ERROR: tag $TAG already exists" >&2; exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "ERROR: release $TAG already published" >&2; exit 1
+          fi
+
+          # Build run must have succeeded on source_commit. `gh run view` resolves
           # the id within this repo (the checkout's remote), so a run id from another
           # repo 404s here; we additionally assert the run url is under this repo.
-          run_json="$(gh run view "$RUN_ID" --json jobs,headSha,url)"
-          concl="$(echo "$run_json" | jq -r '[.jobs[] | select(.name | endswith("Pin artifacts in manifest"))][0].conclusion')"
+          run_json="$(gh run view "$RUN_ID" --json conclusion,headSha,url)"
+          echo "$run_json"
+          concl="$(echo "$run_json" | jq -r .conclusion)"
           head_sha="$(echo "$run_json" | jq -r .headSha)"
           run_url="$(echo "$run_json" | jq -r .url)"
-          echo "Pin job: $concl, head: $head_sha, run: $run_url"
           if [ "$concl" != "success" ]; then
-            echo "ERROR: run $RUN_ID did not pin successfully (conclusion=$concl)" >&2; exit 1
+            echo "ERROR: build run $RUN_ID did not succeed (conclusion=$concl)" >&2; exit 1
           fi
           case "$run_url" in
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/"*) ;;
@@ -171,90 +139,40 @@ jobs:
             echo "ERROR: build run head $head_sha != manifest source_commit $SRC_COMMIT" >&2; exit 1
           fi
 
-      # Artifacts expire, so fall back to the Release, which holds the same files if this
-      # pin has been published. The next step checks them against the manifest either way.
       - name: Download artifacts from the build run
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ steps.m.outputs.run_id }}
-          PUBLISHED: ${{ steps.m.outputs.module_version }}
         run: |
           mkdir -p dist
-          # What consumers install, then what glue rebuilds use.
-          for file in $(jq -r '.targets[].filename, (.glue_build_files | keys[])' internal/v8dist/manifest.json); do
-            name="${file%.tar.gz}"
+          # One artifact per manifest target: v8-<goos>-<goarch>.
+          for name in $(jq -r '.targets[] | "v8-" + .goos + "-" + .goarch' internal/v8dist/manifest.json); do
             echo "Downloading $name ..."
-            gh run download "$RUN_ID" -n "$name" -D dist \
-              || gh release download "$PUBLISHED" -p "$file*" -D dist
+            gh run download "$RUN_ID" -n "$name" -D dist
           done
+          # Public headers for glue-only local rebuilds (not in the consumer lib
+          # tarball; not pinned in the manifest — verified via sidecar .sha256).
+          echo "Downloading v8-headers ..."
+          gh run download "$RUN_ID" -n v8-headers -D dist
           ls -la dist
 
       - name: Verify checksums against manifest
         run: |
-          jq -r '(.targets[] | .sha256 + "  " + .filename), (.glue_build_files | to_entries[] | .value + "  " + .key)' internal/v8dist/manifest.json > dist/manifest.sha256
-          echo "Expected:" && cat dist/manifest.sha256
+          jq -r '.targets[] | .sha256 + "  " + .filename' internal/v8dist/manifest.json > dist/manifest.sha256
+          echo "Expected (libs):" && cat dist/manifest.sha256
           ( cd dist && shasum -a 256 -c manifest.sha256 )
-
-      # main only takes changes through pull requests, so the version bump goes through
-      # one too. GitHub starts no checks for a pull request opened with GITHUB_TOKEN, so
-      # this reports Tests and Change link itself. It changes nothing but the version, on
-      # top of a main that already passed them.
-      - name: Bump the version on main
-        id: bump
-        if: steps.version.outputs.bump == 'true'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          branch="automated/release-$TAG"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          sed -i -E "s/(const ModuleVersion = )\"v[0-9.]+\"/\1\"${TAG}\"/" internal/v8dist/version.go
-          manifest=internal/v8dist/manifest.json
-          jq --arg tag "$TAG" '.module_version = $tag' "$manifest" > "$manifest.new"
-          mv "$manifest.new" "$manifest"
-          git add internal/v8dist/version.go "$manifest"
-          git commit -m "Cut $TAG"
-          git push --force origin "HEAD:refs/heads/$branch"
-
-          gh pr view "$branch" --json number > /dev/null 2>&1 \
-            || gh pr create --base main --head "$branch" --title "Cut $TAG" \
-              --body "Version bump from the Release workflow, run $GITHUB_RUN_ID. It publishes $TAG once this merges."
-          number="$(gh pr view "$branch" --json number --jq .number)"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$number/labels" -f "labels[]=standard-change" > /dev/null
-          for context in Tests "Change link"; do
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" -f state=success -f context="$context" -f description="Automated version bump" > /dev/null
-          done
-
-          # GitHub can take a moment to work out that a new pull request is mergeable.
-          for attempt in 1 2 3 4 5 6; do
-            gh pr merge "$number" --squash --subject "Cut $TAG" --body "" && break
-            [ "$attempt" = 6 ] && { echo "ERROR: couldn't merge #$number. Merge it by hand, then run this workflow again." >&2; exit 1; }
-            sleep 10
-          done
-          echo "sha=$(gh pr view "$number" --json mergeCommit --jq .mergeCommit.oid)" >> "$GITHUB_OUTPUT"
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" > /dev/null || true
+          echo "Expected (headers):" && cat dist/v8-headers.tar.gz.sha256
+          ( cd dist && shasum -a 256 -c v8-headers.tar.gz.sha256 )
 
       - name: Create and publish Release
         env:
-          TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.m.outputs.tag }}
           V8: ${{ steps.m.outputs.v8 }}
           RUN_ID: ${{ steps.m.outputs.run_id }}
-          VERIFIED: ${{ needs.check.outputs.sha }}
-          TARGET: ${{ steps.bump.outputs.sha || needs.check.outputs.sha }}
         run: |
           set -euo pipefail
-          git fetch origin main
-          git show "$TARGET:internal/v8dist/manifest.json" > dist/manifest.json
-
-          # A glue or V8 update can merge while this runs, and the version bump merges
-          # cleanly on top of it. dist/ holds the artifacts of the pin this run verified,
-          # so publishing them under the newer manifest would fail every checksum.
-          pin() { jq -S 'del(.module_version)'; }
-          if [ "$(git show "$VERIFIED:internal/v8dist/manifest.json" | pin)" != "$(pin < dist/manifest.json)" ]; then
-            echo "ERROR: the pin on main changed during this run. Start this workflow again to publish $TAG with the new pin." >&2
-            exit 1
-          fi
+          cp internal/v8dist/manifest.json dist/manifest.json
 
           git fetch --tags --force
           prev="$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)"
@@ -279,7 +197,7 @@ jobs:
               # -z keeps git from inserting a newline between records. That
               # newline was landing on the next subject, so "Cut v…" no longer
               # matched and the version bump showed up as its own bullet.
-              git log --reverse -z --pretty=format:'%s%x1e%b' "${prev}..${TARGET}" |
+              git log --reverse -z --pretty=format:'%s%x1e%b' "${prev}..${GITHUB_SHA}" |
                 while IFS= read -r -d '' record; do
                   subject="${record%%$'\x1e'*}"
                   body="${record#*$'\x1e'}"
@@ -293,7 +211,7 @@ jobs:
                 done
             fi
             if [ -n "$prev_v8" ] && [ "$prev_v8" = "$V8" ]; then
-              echo "V8 is unchanged ($V8). Prebuilt static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\`. Fetched by \`go generate\` / \`cmd/v8setup\`."
+              echo "V8 is unchanged ($V8). Same linux (amd64/arm64) and macOS (arm64) lib tarballs as $prev, plus \`v8-headers.tar.gz\`. Fetched by \`go generate\` / \`cmd/v8setup\`."
             else
               echo "Prebuilt V8 $V8 static libraries for linux (amd64/arm64) and macOS (arm64), plus \`v8-headers.tar.gz\` (public headers for glue-only local rebuilds; see CONTRIBUTING.md). Fetched by \`go generate\` / \`cmd/v8setup\`."
             fi
@@ -305,9 +223,9 @@ jobs:
             fi
           } > "$notes"
 
-          # dist/v8-*.tar.gz includes the platform libs, v8-headers.tar.gz and the glue SDKs.
+          # dist/v8-*.tar.gz includes both platform libs and v8-headers.tar.gz.
           gh release create "$TAG" \
             dist/v8-*.tar.gz dist/v8-*.tar.gz.sha256 dist/manifest.json \
-            --target "$TARGET" \
+            --target "${GITHUB_SHA}" \
             --title "$title" \
             --notes-file "$notes"

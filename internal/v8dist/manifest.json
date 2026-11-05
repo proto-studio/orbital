@@ -1,16 +1,8 @@
 {
   "v8_version": "15.7.112.12",
   "module_version": "v0.3.5",
-  "source_commit": "e2b84cd8ff25fcc6e90afc247285a97bf3e3a9b2",
-  "source_run_id": "41950293849",
-  "glue_inputs": "009b856912f2f6d446363657a34178ea05a3c9d7dec8f529897a6719bb790809",
-  "v8_build_config": "3593e51ccb583c155809efe5a9f630f3c671194f2c7c6a3baa4fdde13246cfc4",
-  "glue_build_files": {
-    "v8-glue-sdk-darwin-arm64.tar.gz": "4ecd68cc784522894fb7f11081ea450672f394b24c1c94d391053e2ab2d69c6b",
-    "v8-glue-sdk-linux-amd64.tar.gz": "e3e63ee016c1c6f04771deb6e2de72d0ebe906245cb0f6b0a921a0616a883069",
-    "v8-glue-sdk-linux-arm64.tar.gz": "1ec40c2fd32ca7629712737739ec165de74a0bee736a6ea203173af9a6956a44",
-    "v8-headers.tar.gz": "e5bb0449692576b3e9767daf74fca74dde8637e2f8b25e8a2e819bd51b418075"
-  },
+  "source_commit": "b683766aa76e3a65827dd3a876a7dfca5915acd5",
+  "source_run_id": "41492152840",
   "owner": "proto-studio",
   "repo": "orbital",
   "targets": [
@@ -18,19 +10,19 @@
       "goos": "linux",
       "goarch": "amd64",
       "filename": "v8-linux-amd64.tar.gz",
-      "sha256": "2d63f8cf7ed3506ccd865c0fa6e962c55b1e720be3503d0390e2952f32144707"
+      "sha256": "3399627095a454f72559dd17959f2b35b7e62d862e2e65d42472214ceea6922a"
     },
     {
       "goos": "linux",
       "goarch": "arm64",
       "filename": "v8-linux-arm64.tar.gz",
-      "sha256": "2b820eb0cc7b98cbf397b93c68344b350da9c28e9c1d17a320d06ea60fa78d5a"
+      "sha256": "d3fcb9b3f96fa76a36c2beec21b2d8da25845c234ab391e9c49f506784b66793"
     },
     {
       "goos": "darwin",
       "goarch": "arm64",
       "filename": "v8-darwin-arm64.tar.gz",
-      "sha256": "815163431287d2fccba817f6a5156d3ed31ca6be68ead0d3ec0d7ebe2415dfeb"
+      "sha256": "75ac51e464ca8039d6582b3d950ec3ede2715a91267901adaf81fde0cd1dd0f4"
     }
   ]
 }
