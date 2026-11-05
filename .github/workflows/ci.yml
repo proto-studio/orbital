@@ -1,0 +1,132 @@
+name: CI
+
+# Runs on every pull request into main. If the glue changed, rebuilds it and pins the
+# result on the pull request's branch, then runs the tests.
+#
+# "Changed" means the manifest's glue_inputs no longer matches the hash from
+# scripts/glue-inputs.sh. Later pushes that leave the glue alone don't rebuild it,
+# and two pull requests that both rebuild it conflict in the manifest rather than
+# one silently overwriting the other.
+#
+# update-v8.yml does all this itself for automated/update-v8-* branches in this repo,
+# and its runs pin to the same branch, so this stays out of the way there. It doesn't
+# run for forks, so a fork's branch with that name gets checked here like any other.
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-glue:
+    name: Check glue
+    if: ${{ github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'automated/update-v8-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stale: ${{ steps.check.outputs.stale }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Compare the glue to what the manifest pins
+        id: check
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          # A glue rebuild reuses the pinned V8 libraries, so it can't change the V8
+          # version or how V8 is built: new glue might not work with the old libraries.
+          makefile_v8="$(sed -nE 's/^V8_VERSION := *//p' Makefile)"
+          manifest_v8="$(jq -r .v8_version internal/v8dist/manifest.json)"
+          if [ "$makefile_v8" != "$manifest_v8" ]; then
+            echo "::error::The Makefile pins V8 $makefile_v8 but the manifest has $manifest_v8. Changing V8 needs a full build, so use the Update V8 workflow."
+            exit 1
+          fi
+          if [ "$(bash scripts/v8-build-config.sh)" != "$(jq -r .v8_build_config internal/v8dist/manifest.json)" ]; then
+            echo "::error::The V8 build recipes in the Makefile changed, which needs a full V8 build. Make this change on an automated/update-v8-* branch."
+            exit 1
+          fi
+
+          if [ "$(bash scripts/glue-inputs.sh)" = "$(jq -r '.glue_inputs // ""' internal/v8dist/manifest.json)" ]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "The pinned glue is up to date."
+          elif [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "The glue changed, so it needs rebuilding."
+          else
+            echo "::error::The glue changed, but CI can't commit to a fork. A maintainer needs to push this branch to $GITHUB_REPOSITORY for the glue to be rebuilt."
+            exit 1
+          fi
+
+  glue:
+    name: Glue
+    needs: check-glue
+    if: needs.check-glue.outputs.stale == 'true'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/glue.yml
+    with:
+      branch: ${{ github.head_ref }}
+
+  test:
+    name: Test
+    needs: [check-glue, glue]
+    # glue is skipped when the pinned glue is up to date.
+    if: ${{ !cancelled() && needs.check-glue.result == 'success' && (needs.glue.result == 'success' || needs.glue.result == 'skipped') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.glue.outputs.sha || github.sha }}
+      run_id: ${{ needs.check-glue.outputs.stale == 'true' && github.run_id || '' }}
+
+  # One check to require, whichever jobs above ran. When CI commits a new manifest,
+  # GitHub starts no checks for that commit and they'd all be missing from the pull
+  # request, so this reports the two that matter on it directly. The script comes
+  # from the base branch, for the reasons given in change-link.yml.
+  tests:
+    name: Tests
+    needs: [check-glue, glue, test]
+    if: ${{ always() && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'automated/update-v8-')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      statuses: write
+    steps:
+      - name: Check out the base branch only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Report on the commit CI added
+        if: needs.glue.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ needs.glue.outputs.sha }}
+          TEST_RESULT: ${{ needs.test.result }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          [ "$TEST_RESULT" = success ] && state=success || state=failure
+          gh api "repos/$REPOSITORY/statuses/$PINNED" -f state="$state" -f context="Tests" -f description="Tests of the rebuilt glue: $TEST_RESULT" > /dev/null
+          node .github/scripts/change-link.mjs && state=success || state=failure
+          gh api "repos/$REPOSITORY/statuses/$PINNED" -f state="$state" -f context="Change link" -f description="Checked after CI pinned the rebuilt glue" > /dev/null
+
+      - name: Require the tests to have passed
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          echo "Tests: $TEST_RESULT"
+          [ "$TEST_RESULT" = success ]
