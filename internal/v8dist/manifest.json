@@ -1,6 +1,6 @@
 {
   "v8_version": "15.7.112.12",
-  "module_version": "v0.3.5",
+  "module_version": "v0.3.6",
   "source_commit": "e2b84cd8ff25fcc6e90afc247285a97bf3e3a9b2",
   "source_run_id": "41950293849",
   "glue_inputs": "009b856912f2f6d446363657a34178ea05a3c9d7dec8f529897a6719bb790809",
