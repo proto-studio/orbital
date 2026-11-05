@@ -122,6 +122,9 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if err := e.ensureLoader(); err != nil {
 		return nil, err
 	}
+	if uncaught := e.rt.UncaughtError(); uncaught != nil {
+		return nil, uncaught
+	}
 
 	ctx := e.rt.Context()
 
@@ -139,21 +142,25 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 		return nil, err
 	}
 
-	// Run any pending async operations (timers, microtasks, top-level await).
-	e.rt.EventLoop().Run()
-
 	// A module always evaluates to a promise (top-level-await semantics): it
 	// fulfills once the module graph finishes evaluating and REJECTS if the
 	// module (or anything it imports) threw. V8 hands that promise back here with
-	// no Go-level error, so we must inspect it — otherwise a module that throws
-	// at import time fails silently. Drain the microtask queue once more, then
-	// surface a rejection (with its stack) or an unsettled top-level await.
-	if result != nil && result.IsPromise() {
+	// no Go-level error, and the module's open handles can keep the loop below
+	// running indefinitely, so the rejection has to be observed from inside it.
+	isPromise := result != nil && result.IsPromise()
+	if isPromise {
+		e.rt.WatchModuleEvaluation(result)
+	}
+
+	// Run any pending async operations (timers, microtasks, top-level await).
+	e.rt.EventLoop().Run()
+	if uncaught := e.rt.UncaughtError(); uncaught != nil {
+		return nil, uncaught
+	}
+
+	if isPromise {
 		ctx.PerformMicrotaskCheckpoint()
-		switch result.PromiseState() {
-		case v8.PromiseRejected:
-			return nil, rejectionError(result.PromiseResult())
-		case v8.PromisePending:
+		if result.PromiseState() == v8.PromisePending {
 			return nil, errors.New("Top-level await promise never resolved before the event loop drained")
 		}
 	}
@@ -279,6 +286,8 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, maxTicks int) (*v8.Value, 
 		// A hook may return a plain value instead of a promise; pass it through.
 		return p, nil
 	}
+	// The caller gets a rejection as an error, so it is not an unhandled one.
+	rt.MarkPromiseHandled(p)
 	ctx := rt.Context()
 	for i := 0; i < maxTicks; i++ {
 		switch p.PromiseState() {

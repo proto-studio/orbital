@@ -246,7 +246,7 @@ func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	verifier, err := opts.newVerifier(t.rt.ClientTLSConfig(), host)
 	if err != nil {
-		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
+		t.deliver(func(ctx *v8.Context) { t.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
 		return nil
 	}
 
@@ -273,7 +273,7 @@ func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (t *TLS) startHandshake(id int64, callback *v8.Value, cfg *tls.Config, isServer bool,
 	peer func() []*x509.Certificate, finish func(*tls.Conn, error) handshakeResult) {
 	fail := func(err error) {
-		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
+		t.deliver(func(ctx *v8.Context) { t.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
 	}
 
 	conn, ok := t.net.Conn(id)
@@ -313,7 +313,7 @@ func (t *TLS) startHandshake(id int64, callback *v8.Value, cfg *tls.Config, isSe
 			conn.SetSocket(&socket{Conn: tlsConn, raw: raw})
 		}
 		result := finish(tlsConn, err)
-		t.deliver(func(ctx *v8.Context) { callback.Call(ctx.Undefined(), jsJSON(ctx, result)) })
+		t.deliver(func(ctx *v8.Context) { t.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, result)) })
 	}()
 }
 
@@ -465,7 +465,7 @@ func (t *TLS) upgradeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	conn, ok := t.net.Conn(id)
 	if !ok {
 		t.deliver(func(ctx *v8.Context) {
-			callback.Call(ctx.Undefined(), jsJSON(ctx, describeForJS(runtime.ErrSocketClosed)))
+			t.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, describeForJS(runtime.ErrSocketClosed)))
 		})
 		return nil
 	}
@@ -537,7 +537,7 @@ func (t *TLS) upgradeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 					chosen <- 0
 					return
 				}
-				chooseContext.Call(ctx.Undefined(), jsString(ctx, hello.ServerName), reply)
+				t.rt.MakeCallback(chooseContext, ctx.Undefined(), jsString(ctx, hello.ServerName), reply)
 			})
 			select {
 			case id := <-chosen:

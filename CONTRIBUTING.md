@@ -425,6 +425,6 @@ MIT
 
 ## Pull requests
 
-Each pull request into `main` needs a linked issue. Add `Closes #123` to the description, using the number of that issue. The `Change link` check confirms this.
+Each pull request into `main` needs a linked issue. Add `Closes #123` to the description, using the number of that issue. It also needs an "AI used" section, listing the AI tools that assisted, or saying "None". The pull request template has both, and the `Change link` check confirms them.
 
 Please report security problems privately to security@proto.studio rather than in an issue. For more details, visit https://proto.studio/security/

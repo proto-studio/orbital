@@ -11,6 +11,7 @@ package worker_threads
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -196,7 +197,7 @@ func (w *WorkerThreads) dispatchToParent(id int, e wtEvent) {
 	kindV, _ := ctx.NewString(e.kind)
 	dataV, _ := ctx.NewString(e.data)
 	codeV := ctx.NewInteger(int64(e.code))
-	_, _ = w.dispatcher.Call(nil, idV, kindV, dataV, codeV)
+	w.rt.MakeCallback(w.dispatcher, nil, idV, kindV, dataV, codeV)
 }
 
 // __wt_post(id, msgJson)
@@ -310,7 +311,7 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 						return
 					}
 					s, _ := wrt.Context().NewString(m)
-					_, _ = deliverFn.Call(nil, s)
+					wrt.MakeCallback(deliverFn, nil, s)
 				})
 			}
 		}
@@ -350,6 +351,12 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 		if !wrt.IsKilled() {
 			wk.fromWorker <- wtEvent{kind: "error", data: runErr.Error()}
 			code = 1
+			// The 7 for a throwing handler is a whole process's exit code, and Node's
+			// workers report 1 for it.
+			var uncaught *goruntime.UncaughtError
+			if errors.As(runErr, &uncaught) && !uncaught.HandlerThrew {
+				code = uncaught.ExitCode
+			}
 		}
 	}
 	wk.fromWorker <- wtEvent{kind: "exit", code: code}

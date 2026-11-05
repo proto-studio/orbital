@@ -85,7 +85,7 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		h.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := h.rt.Context()
 			errStr, _ := ctx.NewString(message)
-			callback.Call(ctx.Undefined(), errStr, ctx.Null())
+			h.rt.MakeCallback(callback, ctx.Undefined(), errStr, ctx.Null())
 			ctx.PerformMicrotaskCheckpoint()
 		})
 	}
@@ -157,7 +157,7 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		h.rt.EventLoop().EnqueueMicrotask(func() {
 			ctx := h.rt.Context()
 			respStr, _ := ctx.NewString(string(encoded))
-			callback.Call(ctx.Undefined(), ctx.Null(), respStr)
+			h.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), respStr)
 			ctx.PerformMicrotaskCheckpoint()
 		})
 	}()

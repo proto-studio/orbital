@@ -78,6 +78,7 @@ type EventLoop struct {
 	pendingWork int32 // atomic counter for pending async work
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
+	drained     func() // runs once the microtask queue empties; see setDrainedHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -119,6 +120,31 @@ func (el *EventLoop) SetContext(ctx context.Context) {
 	}
 
 	el.ctx, el.cancelCtx = context.WithCancel(ctx)
+}
+
+// setDrainedHook sets a function to run on the loop's goroutine each time the microtask queue
+// has emptied, before the loop looks for more work. Call it before the loop starts.
+func (el *EventLoop) setDrainedHook(fn func()) {
+	el.drained = fn
+}
+
+// runDrainedLocked runs the drained hook, and reports whether that queued more microtasks.
+// el.mu must be held. It is released while the hook runs.
+func (el *EventLoop) runDrainedLocked() bool {
+	if el.drained == nil {
+		return false
+	}
+	el.mu.Unlock()
+	el.drained()
+	el.mu.Lock()
+	return len(el.microtasks) > 0
+}
+
+// hasMicrotasks reports whether any microtasks are queued.
+func (el *EventLoop) hasMicrotasks() bool {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	return len(el.microtasks) > 0
 }
 
 // SetTimeout schedules a function to run after the specified delay.
@@ -259,6 +285,11 @@ func (el *EventLoop) Run() {
 			el.mu.Lock()
 		}
 
+		if el.runDrainedLocked() {
+			el.mu.Unlock()
+			continue
+		}
+
 		// Check if we should stop
 		if el.shouldStop {
 			el.running = false
@@ -383,6 +414,8 @@ func (el *EventLoop) RunOnce() bool {
 		fn()
 		el.mu.Lock()
 	}
+
+	el.runDrainedLocked()
 
 	// Process one ready timer
 	if el.timers.Len() > 0 {

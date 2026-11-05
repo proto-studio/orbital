@@ -465,12 +465,24 @@
       if (this.handshakeTimeout > 0) {
         timer = setTimeout(() => {
           timer = null;
+          if (handshakeOver) return;
+          handshakeOver = true;
           this.emit('tlsClientError', makeError('TLS handshake timeout', 'ERR_TLS_HANDSHAKE_TIMEOUT'), socket);
           socket.destroy();
         }, this.handshakeTimeout);
         timer.unref();
       }
       socket.once('close', clearTimer);
+
+      // As in Node, a server's sockets always have this listener, so a failure on one is
+      // never an uncaught 'error': before the handshake it is a 'tlsClientError', and
+      // after it, the application's to listen for if it cares.
+      let handshakeOver = false;
+      socket.on('error', (err) => {
+        if (handshakeOver) return;
+        handshakeOver = true;
+        this.emit('tlsClientError', err, socket);
+      });
 
       socket._startServerHandshake({
         contextId: this._contextId,
@@ -481,6 +493,8 @@
         contexts: this._contexts
       }, (err) => {
         clearTimer();
+        if (handshakeOver) return;
+        handshakeOver = true;
         if (err) {
           this.emit('tlsClientError', err, socket);
           socket.destroy();

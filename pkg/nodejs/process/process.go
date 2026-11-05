@@ -238,6 +238,10 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
+	if err := rt.BindProcess(processObj); err != nil {
+		return err
+	}
+
 	// Set process as global
 	if err := rt.SetGlobal("process", processObj); err != nil {
 		return err
@@ -401,7 +405,7 @@ func (p *Process) writeStreamFunc(f *os.File) v8.FunctionCallback {
 		}
 		for i := 1; i < len(args); i++ {
 			if args[i] != nil && args[i].IsFunction() {
-				_, _ = args[i].Call(nil)
+				p.rt.MakeCallback(args[i], nil)
 				break
 			}
 		}
@@ -593,7 +597,7 @@ func (p *Process) nextTickFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	p.rt.EventLoop().EnqueueTick(func() {
-		callback.Call(nil, callArgs...)
+		p.rt.MakeCallback(callback, nil, callArgs...)
 	})
 
 	return nil

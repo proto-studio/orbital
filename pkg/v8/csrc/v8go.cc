@@ -39,6 +39,10 @@ struct ContextWrapper {
     // single InstantiateModule call) and the persistent one for import().
     int module_resolver_id = -1;
     int dynamic_resolver_id = -1;
+    // JavaScript function told about promise rejections; see v8go_set_promise_reject_handler.
+    Global<Function> promise_reject_handler;
+    // What the last failed v8go_context_run_script threw, until it is taken.
+    Global<Value> last_script_exception;
 };
 
 // Embedder-data slot in which each Context stores its ContextWrapper*.
@@ -399,6 +403,8 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
 void v8go_context_dispose(void* ptr) {
     if (!ptr) return;
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(ptr);
+    wrapper->promise_reject_handler.Reset();
+    wrapper->last_script_exception.Reset();
     wrapper->context.Reset();
     delete wrapper;
 }
@@ -430,6 +436,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
+            wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
         }
@@ -444,6 +451,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
+            wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
             String::Utf8Value exception(isolate, try_catch.Exception());
             String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
             
@@ -1758,6 +1766,61 @@ void v8go_set_dynamic_import_resolver(void* context_ptr, int resolver_id) {
     // isolate-wide hook that recovers per-context state via embedder data.
     cw->dynamic_resolver_id = resolver_id;
     isolate->SetHostImportModuleDynamicallyCallback(hostImportModuleDynamically);
+}
+
+// V8 only calls this for rejections with no handler yet and for handlers added afterwards. The
+// JavaScript handler decides what that means, once the microtask queue has drained.
+static void promiseRejectCallback(PromiseRejectMessage message) {
+    Local<Promise> promise = message.GetPromise();
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope handle_scope(isolate);
+    Local<Context> context = promise->GetCreationContextChecked(isolate);
+    ContextWrapper* wrapper = wrapperFromContext(context);
+    if (!wrapper || wrapper->promise_reject_handler.IsEmpty()) return;
+
+    Context::Scope context_scope(context);
+    TryCatch try_catch(isolate);
+    Local<Value> value = message.GetValue();
+    if (value.IsEmpty()) value = Undefined(isolate);
+    Local<Value> args[] = {
+        Integer::New(isolate, static_cast<int>(message.GetEvent())),
+        promise,
+        value,
+    };
+    Local<Function> handler = wrapper->promise_reject_handler.Get(isolate);
+    (void)handler->Call(context, Undefined(isolate), 3, args);
+}
+
+int v8go_set_promise_reject_handler(void* context_ptr, void* function_ptr) {
+    if (!context_ptr || !function_ptr) return 0;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* func_wrapper = static_cast<ValueWrapper*>(function_ptr);
+    Isolate* isolate = wrapper->isolate;
+
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Value> func = func_wrapper->value.Get(isolate);
+    if (!func->IsFunction()) return 0;
+    wrapper->promise_reject_handler.Reset(isolate, func.As<Function>());
+    isolate->SetPromiseRejectCallback(promiseRejectCallback);
+    return 1;
+}
+
+void* v8go_context_take_last_script_exception(void* context_ptr) {
+    if (!context_ptr) return nullptr;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = wrapper->isolate;
+
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    if (wrapper->last_script_exception.IsEmpty()) return nullptr;
+    ValueWrapper* result = new ValueWrapper();
+    result->isolate = isolate;
+    result->value.Reset(isolate, wrapper->last_script_exception.Get(isolate));
+    wrapper->last_script_exception.Reset();
+    return result;
 }
 
 void v8go_perform_microtask_checkpoint(void* isolate_ptr) {
