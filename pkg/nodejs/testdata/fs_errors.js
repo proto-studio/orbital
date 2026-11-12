@@ -109,7 +109,10 @@ async function testNulPaths() {
     join: path.join('a', 'n\0m'), basename: path.basename('/x/n\0m.t'), extname: path.extname('n.t\0x'),
     parse: path.parse('/x/a\0b.c'), relative: path.relative('/a', '/a/n\0m'),
     basenameSuffix: [path.basename('a\0', '0'), path.basename('a\0', '\0'), path.basename('/x/a.txt', 'txt'),
-      path.basename('/x/aaa', 'aaa'), path.basename('', 'x'), path.basename('')]
+      path.basename('/x/aaa', 'aaa'), path.basename('', 'x'), path.basename(''),
+      path.basename('report.txt', 'report.txt'), path.basename('aaa/', 'aaa')],
+    formatInherited: path.format(Object.create({ dir: '/tmp', base: 'report.txt' })),
+    parseKeys: Object.keys(path.parse('/x/a\0b.c'))
   };
   // An s flag asks for synchronous writes, and the data still lands.
   fs.writeFileSync(file('sync_flag'), 'one', { flag: 'as' });
