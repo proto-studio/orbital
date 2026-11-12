@@ -149,3 +149,28 @@ fs.writeFile('/full', 'x', (err) => done({
 		"stillDir": true,
 	})
 }
+
+// Reading a directory on the in-memory filesystem fails with EISDIR at read, as on disk, and
+// a missing file with ENOENT at open.
+func TestFS_MemoryFilesystemReadErrors(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	if err := memory.Mkdir("/dir", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: memory}, `
+const fs = require('fs');
+const describe = (e) => e && [e.code, e.syscall, e.message];
+const attempt = (fn) => { try { fn(); return null; } catch (e) { return describe(e); } };
+fs.readFile('/dir', (err) => require('fs/promises').readFile('/dir').catch((perr) => done({
+  sync: attempt(() => fs.readFileSync('/dir')),
+  callback: describe(err),
+  promise: perr.code,
+  missing: attempt(() => fs.readFileSync('/nothing')),
+})));`)
+	wantJSON(t, got, map[string]any{
+		"sync":     []any{"EISDIR", "read", "EISDIR: illegal operation on a directory, read"},
+		"callback": []any{"EISDIR", "read", "EISDIR: illegal operation on a directory, read"},
+		"promise":  "EISDIR",
+		"missing":  []any{"ENOENT", "open", "ENOENT: no such file or directory, open '/nothing'"},
+	})
+}

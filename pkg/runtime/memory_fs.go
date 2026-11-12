@@ -47,8 +47,11 @@ func (m *MemoryFilesystem) ReadFile(path string) ([]byte, error) {
 
 	path = m.normalizePath(path)
 	f, ok := m.files[path]
-	if !ok || f.isDir {
-		return nil, fs.ErrNotExist
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ENOENT}
+	}
+	if f.isDir {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: syscall.EISDIR}
 	}
 	return append([]byte(nil), f.data...), nil
 }

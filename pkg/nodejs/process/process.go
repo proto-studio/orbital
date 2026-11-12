@@ -288,7 +288,37 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 			});
 		}
 		// Bytes reach Go as base64, because a string stops at its first NUL. Buffer registers
-		// after process, so it is only looked up when a write runs.
+		// after process, and an embedder can register process without it, so without Buffer
+		// strings are encoded as UTF-8 here.
+		var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+		function utf8Bytes(str) {
+			var out = [];
+			for (var i = 0; i < str.length; i++) {
+				var c = str.charCodeAt(i);
+				if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+					var next = str.charCodeAt(i + 1);
+					if (next >= 0xdc00 && next <= 0xdfff) {
+						c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
+						i++;
+					}
+				}
+				if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+				if (c < 0x80) out.push(c);
+				else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+				else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+				else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+			}
+			return new Uint8Array(out);
+		}
+		function base64Of(bytes) {
+			var out = '';
+			for (var i = 0; i < bytes.length; i += 3) {
+				var n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
+				out += B64[n >> 18] + B64[(n >> 12) & 63] +
+					(i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? B64[n & 63] : '=');
+			}
+			return out;
+		}
 		function wrapWrite(s) {
 			var writeBase64 = s.write;
 			s.write = function (chunk, encoding, cb) {
@@ -296,11 +326,14 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 					cb = encoding;
 					encoding = undefined;
 				}
+				var hasBuffer = typeof Buffer === 'function';
 				var bytes;
 				if (typeof chunk === 'string') {
-					bytes = Buffer.from(chunk, encoding || 'utf8');
+					bytes = hasBuffer ? Buffer.from(chunk, encoding || 'utf8') : utf8Bytes(chunk);
 				} else if (ArrayBuffer.isView(chunk)) {
-					bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+					bytes = hasBuffer
+						? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+						: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 				} else {
 					var err = chunk === null
 						? new TypeError('May not write null values to stream')
@@ -308,7 +341,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 					err.code = chunk === null ? 'ERR_STREAM_NULL_VALUES' : 'ERR_INVALID_ARG_TYPE';
 					throw err;
 				}
-				writeBase64(bytes.toString('base64'));
+				writeBase64(hasBuffer ? bytes.toString('base64') : base64Of(bytes));
 				if (typeof cb === 'function') process.nextTick(cb);
 				return true;
 			};

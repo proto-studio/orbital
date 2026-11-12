@@ -12,10 +12,16 @@
   const show = (v) => (typeof v === 'string' && v.includes(MARK)
     ? v.replace(/([0])/g, (_, c) => (c === '0' ? '\0' : MARK))
     : v);
+  // format reads its fields however the object provides them, inherited or through getters,
+  // and parse's result has exactly these fields.
+  const FIELDS = ['root', 'dir', 'base', 'ext', 'name'];
   const mapFields = (obj, fn) => {
     if (!obj || typeof obj !== 'object') return obj;
     const out = {};
-    for (const key of Object.keys(obj)) out[key] = fn(obj[key]);
+    for (const key of FIELDS) {
+      const value = obj[key];
+      if (value !== undefined) out[key] = fn(value);
+    }
     return out;
   };
   for (const name of ['basename', 'dirname', 'extname', 'join', 'resolve', 'normalize',
@@ -28,9 +34,12 @@
       // Go's Base gives '.' for an empty path, where Node gives ''.
       if (name === 'basename' && arguments[0] === '') return '';
       if (name === 'basename' && arguments.length > 1 && typeof arguments[1] === 'string') {
-        const base = show(original.call(this, hide(arguments[0])));
+        const input = arguments[0];
+        const base = show(original.call(this, hide(input)));
         const suffix = arguments[1];
-        return suffix && base !== suffix && base.endsWith(suffix) ? base.slice(0, -suffix.length) : base;
+        // A suffix equal to the whole name is removed only when the path is just that name.
+        if (base === suffix) return input === suffix ? '' : base;
+        return suffix && base.endsWith(suffix) ? base.slice(0, -suffix.length) : base;
       }
       const args = Array.prototype.map.call(arguments, (a) => (name === 'format' ? mapFields(a, hide) : hide(a)));
       const result = original.apply(this, args);
