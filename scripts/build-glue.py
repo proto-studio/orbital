@@ -206,7 +206,8 @@ def main():
         os.remove(output)
     ar_cmd = [args.ar, "rcs", output, obj]
     print(">>> Archiving: " + " ".join(shlex.quote(c) for c in ar_cmd))
-    subprocess.run(ar_cmd, check=True)
+    # macOS ar stamps each member with the time; this makes it write 0, as GNU ar does.
+    subprocess.run(ar_cmd, check=True, env={**os.environ, "ZERO_AR_DATE": "1"})
     print(f">>> Built glue: {output}")
 
 

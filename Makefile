@@ -363,7 +363,7 @@ package-v8-headers:
 	cp -R "$$src"/. "$(V8_PLATFORM_DIR)/include/"; \
 	asset="v8-headers.tar.gz"; \
 	echo ">>> Packaging $(DIST_DIR)/$$asset"; \
-	tar -C "$(V8_OUTPUT_DIR)" -czf "$(DIST_DIR)/$$asset" include; \
+	python3 scripts/reproducible-tar.py "$(DIST_DIR)/$$asset" "$(V8_OUTPUT_DIR)" include; \
 	( cd $(DIST_DIR) && shasum -a 256 "$$asset" > "$$asset.sha256" ); \
 	echo ">>> Wrote $(DIST_DIR)/$$asset ($$(du -h "$(DIST_DIR)/$$asset" | cut -f1))"; \
 	cat "$(DIST_DIR)/$$asset.sha256"
@@ -447,7 +447,7 @@ package-v8:
 	@mkdir -p $(DIST_DIR)
 	@asset="v8-$(GOOS)-$(GOARCH).tar.gz"; \
 	echo ">>> Packaging $(DIST_DIR)/$$asset"; \
-	tar -C "$(V8_PLATFORM_DIR)" -czf "$(DIST_DIR)/$$asset" lib; \
+	python3 scripts/reproducible-tar.py "$(DIST_DIR)/$$asset" "$(V8_PLATFORM_DIR)" lib; \
 	( cd $(DIST_DIR) && shasum -a 256 "$$asset" > "$$asset.sha256" ); \
 	echo ">>> Wrote $(DIST_DIR)/$$asset ($$(du -h "$(DIST_DIR)/$$asset" | cut -f1))"; \
 	cat "$(DIST_DIR)/$$asset.sha256"

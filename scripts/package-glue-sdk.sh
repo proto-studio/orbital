@@ -56,7 +56,7 @@ fi
 tar -C "$src" -cf - "${files[@]}" | tar -C "$work" -xf -
 
 mkdir -p dist
-tar -C "$work" -czf "dist/$asset" .
+python3 scripts/reproducible-tar.py "dist/$asset" "$work" .
 ( cd dist && shasum -a 256 "$asset" > "$asset.sha256" )
 ls -lh "dist/$asset"
 cat "dist/$asset.sha256"
