@@ -19,6 +19,10 @@ on:
         description: Branch to build, and to commit the pinned manifest to
         type: string
         required: true
+      ref:
+        description: Commit to build instead of the branch's tip. The pin fails if the branch has moved past it.
+        type: string
+        default: ""
       base_run_id:
         description: Run with base-v8-<platform> artifacts to use instead of the V8 libraries the manifest pins
         type: string
@@ -52,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.ref || inputs.branch }}
 
       - name: Derive target
         id: t
@@ -120,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.ref || inputs.branch }}
 
       - name: Download packaged artifacts
         run: |

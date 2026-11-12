@@ -20,7 +20,9 @@ name: Update V8
 #
 #   * push to automated/update-v8-**: when a developer clones the PR branch, fixes
 #     whatever broke the build/tests, and pushes, this reruns build + test and
-#     uploads fresh artifacts + a re-pinned manifest attached to that same PR.
+#     uploads fresh artifacts + a re-pinned manifest attached to that same PR. If the
+#     artifacts the branch pins still match it, as after merging main to resolve a
+#     conflict, `setup` skips the build and only the tests run again.
 #
 # `open-draft-pr` is create-only (guarded on branch-existence) so re-dispatching
 # never resets a branch that carries a developer's fixes. The manifest is re-pinned
@@ -151,7 +153,9 @@ jobs:
             ready. Merging publishes it as a patch release, through the Release workflow.
 
             **If the build or tests fail:** clone this branch, fix the issue, and
-            push. That reruns build + test and re-pins the manifest on this PR.
+            push. That reruns build + test and re-pins the manifest on this PR. A push
+            that doesn't change the build only reruns the tests. Put `[rebuild v8]` in
+            the commit message to force a full build anyway.
           add-paths: |
             Makefile
             scripts/build-v8.sh
@@ -175,12 +179,18 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.p.outputs.ref }}
+      sha: ${{ steps.p.outputs.sha }}
       v8_version: ${{ steps.p.outputs.v8_version }}
+      reuse: ${{ steps.reuse.outputs.reuse }}
     steps:
+      # A push builds the commit that triggered it, not whatever the branch points at
+      # by the time this job starts, so the run's head_sha is exactly what it built.
       - name: Checkout target branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || needs.check.outputs.branch }}
+          ref: ${{ github.event_name == 'push' && github.sha || needs.check.outputs.branch }}
+          # The reuse check compares against the commit the manifest was built from.
+          fetch-depth: 0
 
       - name: Read pinned version
         id: p
@@ -188,8 +198,67 @@ jobs:
           ref="${{ github.event_name == 'push' && github.ref_name || needs.check.outputs.branch }}"
           v8="$(grep -E '^V8_VERSION :=' Makefile | sed -E 's/^V8_VERSION := *//')"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "v8_version=$v8" >> "$GITHUB_OUTPUT"
           echo "Building ref=$ref  V8=$v8"
+
+      # A push only needs a new build if it changes what the pinned artifacts were built
+      # from. The hashes come from the same scripts ci.yml compares, but they only cover
+      # the Makefile and the glue, so this also compares scripts/ and the workflows that
+      # produce the artifacts against the commit the pinned run started from. That commit
+      # comes from GitHub rather than the manifest, which anyone who can push can edit.
+      # Otherwise a build poisoned through a workflow edit could be pinned, and then
+      # reused from a branch whose workflow had been reverted. When in doubt, it builds.
+      - name: Check whether the pinned artifacts can be reused
+        id: reuse
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          rebuild() {
+            echo "Full build: $1"
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          f=internal/v8dist/manifest.json
+          case "$COMMIT_MESSAGE" in
+            *'[rebuild v8]'*) rebuild "the commit message asks for one." ;;
+          esac
+          [ "$(sed -nE 's/^V8_VERSION := *//p' Makefile)" = "$(jq -r .v8_version "$f")" ] \
+            || rebuild "the manifest pins a different V8 version."
+          [ "$(bash scripts/v8-build-config.sh)" = "$(jq -r .v8_build_config "$f")" ] \
+            || rebuild "the V8 build recipes changed."
+          [ "$(bash scripts/glue-inputs.sh)" = "$(jq -r .glue_inputs "$f")" ] \
+            || rebuild "the glue's inputs changed."
+          run_id="$(jq -r .source_run_id "$f")"
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+            --jq '"\(.path) \(.head_repository.full_name) \(.event) \(.head_sha)"')" \
+            || rebuild "couldn't look up run $run_id."
+          read -r run_path run_repo event run_sha <<< "$run"
+          # Only a run of this workflow counts. Another workflow could upload artifacts
+          # with the same names and then be deleted, leaving nothing here to compare.
+          [ "$run_path" = .github/workflows/update-v8.yml ] && [ "$run_repo" = "$GITHUB_REPOSITORY" ] \
+            || rebuild "run $run_id is not an Update V8 run in this repository ($run_path in $run_repo)."
+          # Only a push run's head_sha is the commit it built. A scheduled or dispatched
+          # run reports main but builds the update branch, so nothing here could check it.
+          [ "$event" = push ] || rebuild "run $run_id was started by $event, not a push."
+          pinned="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+            --jq '.jobs[] | select(.name == "Glue / Pin artifacts in manifest") | .conclusion')" \
+            || rebuild "couldn't list the jobs of run $run_id."
+          [ "$pinned" = success ] || rebuild "run $run_id did not pin its artifacts."
+          git diff --quiet "$run_sha" HEAD -- .github/workflows/update-v8.yml .github/workflows/glue.yml .github/actions \
+            || rebuild "the workflows that build the artifacts changed since $run_sha, or that commit is missing."
+          git diff --quiet "$run_sha" HEAD -- scripts \
+            || rebuild "scripts/ changed since $run_sha, or that commit is missing."
+          have="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
+            --jq '.artifacts[] | select(.expired | not) | .name')" \
+            || rebuild "couldn't list the artifacts of run $run_id."
+          for name in $(jq -r '(.targets[].filename, (.glue_build_files | keys[])) | sub("\\.tar\\.gz$"; "")' "$f"); do
+            grep -qxF "$name" <<< "$have" || rebuild "run $run_id no longer has $name."
+          done
+          echo "Reusing the artifacts from run $run_id."
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # Fetch V8 source once; all platform builds share this cache.
@@ -199,14 +268,15 @@ jobs:
     needs: setup
     # setup uses always(), so downstream jobs must carry a status-check function
     # (!cancelled()) or the skipped check/open-draft-pr ancestors propagate a skip.
-    if: ${{ !cancelled() && needs.setup.result == 'success' }}
+    # Skipping this skips build and glue too, since each needs the one before it.
+    if: ${{ !cancelled() && needs.setup.result == 'success' && needs.setup.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.setup.outputs.ref }}
+          ref: ${{ needs.setup.outputs.sha }}
 
       # One rolling source cache, warm-started across versions. A new V8 version
       # misses the exact key, but the `v8-src-` restore-key restores the most
@@ -266,7 +336,7 @@ jobs:
       - name: Checkout branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.setup.outputs.ref }}
+          ref: ${{ needs.setup.outputs.sha }}
 
       - name: Derive target
         id: t
@@ -373,21 +443,23 @@ jobs:
     uses: ./.github/workflows/glue.yml
     with:
       branch: ${{ needs.setup.outputs.ref }}
+      ref: ${{ needs.setup.outputs.sha }}
       base_run_id: ${{ github.run_id }}
 
   # ---------------------------------------------------------------------------
   # Test the freshly built artifacts on NATIVE runners, exactly the way a consumer
   # installs them. Runs after the manifest is pinned so the embedded sha256s match
-  # what this run produced.
+  # what this run produced. When setup reused a build, this tests the pushed commit
+  # against the run its manifest pins.
   # ---------------------------------------------------------------------------
   test:
     name: Test
-    needs: glue
-    if: ${{ !cancelled() && needs.glue.result == 'success' }}
+    needs: [setup, glue]
+    if: ${{ !cancelled() && (needs.glue.result == 'success' || (needs.setup.outputs.reuse == 'true' && needs.glue.result == 'skipped')) }}
     uses: ./.github/workflows/test.yml
     with:
-      ref: ${{ needs.glue.outputs.sha }}
-      run_id: ${{ github.run_id }}
+      ref: ${{ needs.glue.outputs.sha || needs.setup.outputs.sha }}
+      run_id: ${{ needs.setup.outputs.reuse != 'true' && github.run_id || '' }}
 
   # ---------------------------------------------------------------------------
   # Mark the PR ready once every target passed. If any build/test job
@@ -417,7 +489,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           REF: ${{ needs.setup.outputs.ref }}
-          VALIDATED: ${{ needs.glue.outputs.sha }}
+          VALIDATED: ${{ needs.glue.outputs.sha || needs.setup.outputs.sha }}
         run: |
           case "$REF" in
             automated/update-v8-*) ;;
