@@ -118,7 +118,8 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		cmd.Dir = options.Cwd
 	}
 
-	if len(options.Env) > 0 {
+	// A nil Env means the host's environment. An empty one means an empty environment.
+	if options.Env != nil {
 		cmd.Env = options.Env
 	} else {
 		cmd.Env = os.Environ()
@@ -178,7 +179,8 @@ func (s *RealProcessSpawner) Exec(ctx context.Context, command string, options *
 		cmd.Dir = options.Cwd
 	}
 
-	if len(options.Env) > 0 {
+	// A nil Env means the host's environment. An empty one means an empty environment.
+	if options.Env != nil {
 		cmd.Env = options.Env
 	} else {
 		cmd.Env = os.Environ()
@@ -222,7 +224,8 @@ func (s *RealProcessSpawner) ExecFile(ctx context.Context, file string, args []s
 		cmd.Dir = options.Cwd
 	}
 
-	if len(options.Env) > 0 {
+	// A nil Env means the host's environment. An empty one means an empty environment.
+	if options.Env != nil {
 		cmd.Env = options.Env
 	} else {
 		cmd.Env = os.Environ()
