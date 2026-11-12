@@ -116,6 +116,19 @@ async function testFailures() {
   results.fail_unlink_missing = await codeOf(fs.unlink, file('nothing'));
   try { fs.mkdirSync(file('dir')); } catch (e) { results.fail_mkdirSync = [e.code, e.syscall, local(e.message)]; }
 
+  // Descriptor calls fail with Node's codes, and COPYFILE_EXCL keeps an existing destination.
+  const bad = 9999;
+  results.fail_close_bad = await codeOf(fs.close, bad);
+  results.fail_fstat_bad = await codeOf(fs.fstat, bad);
+  results.fail_read_bad = await codeOf(fs.read, bad, Buffer.alloc(1), 0, 1, null);
+  results.fail_write_bad = await codeOf(fs.write, bad, Buffer.from('x'));
+  try { fs.closeSync(bad); } catch (e) { results.fail_closeSync_bad = [e.code, e.syscall, e.message, e.path === undefined]; }
+  fs.writeFileSync(file('excl_src'), 'new');
+  fs.writeFileSync(file('excl_dest'), 'old');
+  results.fail_copy_excl = await codeOf(fs.copyFile, file('excl_src'), file('excl_dest'), fs.constants.COPYFILE_EXCL);
+  results.fail_copy_excl_kept = fs.readFileSync(file('excl_dest'), 'utf8');
+  results.copy_excl_new = await codeOf(fs.copyFile, file('excl_src'), file('excl_new'), fs.constants.COPYFILE_EXCL);
+
   // An explicit close closes the descriptor even with autoClose off.
   const ws = fs.createWriteStream(file('autoclose'), { autoClose: false });
   ws.write('x');

@@ -193,7 +193,8 @@
   };
 
   // These calls return a failure description too.
-  for (const name of ['mkdirSync', 'rmdirSync', 'unlinkSync', 'readdirSync', 'renameSync', 'copyFileSync']) {
+  for (const name of ['mkdirSync', 'rmdirSync', 'unlinkSync', 'readdirSync', 'renameSync', 'copyFileSync',
+    'closeSync', 'writeSync', 'readSync', 'fstatSync']) {
     const native = fs[name];
     if (typeof native === 'function') {
       fs[name] = function () {

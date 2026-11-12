@@ -64,7 +64,7 @@ func fsErrorMessage(code, description, syscallName, path string) string {
 // closes work on a descriptor, so their errors name none.
 func errorPath(syscallName, path string) string {
 	switch syscallName {
-	case "read", "write", "close":
+	case "read", "write", "close", "fstat":
 		return ""
 	}
 	return path

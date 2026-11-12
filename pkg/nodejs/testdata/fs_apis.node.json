@@ -26,6 +26,28 @@
     "W_OK": 2,
     "X_OK": 1
   },
+  "copy_excl_new": null,
+  "fail_closeSync_bad": [
+    "EBADF",
+    "close",
+    "EBADF: bad file descriptor, close",
+    true
+  ],
+  "fail_close_bad": [
+    "EBADF",
+    "close",
+    null,
+    null,
+    "EBADF: bad file descriptor, close"
+  ],
+  "fail_copy_excl": [
+    "EEXIST",
+    "copyfile",
+    "\u003cdir\u003e/excl_src",
+    "\u003cdir\u003e/excl_dest",
+    "EEXIST: file already exists, copyfile '\u003cdir\u003e/excl_src' -\u003e '\u003cdir\u003e/excl_dest'"
+  ],
+  "fail_copy_excl_kept": "old",
   "fail_copy_missing": [
     "ENOENT",
     "copyfile",
@@ -34,6 +56,13 @@
     "ENOENT: no such file or directory, copyfile '\u003cdir\u003e/nothing' -\u003e '\u003cdir\u003e/dest'"
   ],
   "fail_fd_still_open": false,
+  "fail_fstat_bad": [
+    "EBADF",
+    "fstat",
+    null,
+    null,
+    "EBADF: bad file descriptor, fstat"
+  ],
   "fail_mkdirSync": [
     "EEXIST",
     "mkdir",
@@ -45,6 +74,13 @@
     "\u003cdir\u003e/dir",
     null,
     "EEXIST: file already exists, mkdir '\u003cdir\u003e/dir'"
+  ],
+  "fail_read_bad": [
+    "EBADF",
+    "read",
+    null,
+    null,
+    "EBADF: bad file descriptor, read"
   ],
   "fail_readdir_missing": [
     "ENOENT",
@@ -83,7 +119,17 @@
     "ERR_INVALID_ARG_VALUE"
   ],
   "fail_victim_kept": true,
+  "fail_write_bad": [
+    "EBADF",
+    "write",
+    null,
+    null,
+    "EBADF: bad file descriptor, write"
+  ],
   "file:autoclose": "78",
+  "file:excl_dest": "6f6c64",
+  "file:excl_new": "6e6577",
+  "file:excl_src": "6e6577",
   "file:fd.bin": "0203686579",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",

@@ -680,10 +680,10 @@ func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	f.fdMu.Unlock()
 
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, close")
+		return fsFailure(ctx, syscall.EBADF, "close", "")
 	}
 	if err := file.Close(); err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "close", "")
 	}
 	return nil
 }
@@ -726,21 +726,21 @@ func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if _, open := f.fileForFD(fd); !open {
 			n, err := std.Write(data)
 			if err != nil {
-				return ctx.Throw(err.Error())
+				return fsFailure(ctx, err, "write", "")
 			}
 			return ctx.NewInteger(int64(n))
 		}
 	}
 	file, ok := f.fileForFD(fd)
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, write")
+		return fsFailure(ctx, syscall.EBADF, "write", "")
 	}
 
 	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
 		return file.Write(data)
 	})
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "write", "")
 	}
 	return ctx.NewInteger(int64(n))
 }
@@ -755,7 +755,7 @@ func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	file, ok := f.fileForFD(int(args[0].Integer()))
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, read")
+		return fsFailure(ctx, syscall.EBADF, "read", "")
 	}
 
 	buf := make([]byte, args[1].Integer())
@@ -763,7 +763,7 @@ func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return file.Read(buf)
 	})
 	if err != nil && err != io.EOF && n == 0 {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "read", "")
 	}
 	val, _ := ctx.NewString(fileContents(buf[:n], false))
 	return val
@@ -779,11 +779,11 @@ func (f *FS) fstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	fd := int(args[0].Integer())
 	file, ok := f.fileForFD(fd)
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, fstat")
+		return fsFailure(ctx, syscall.EBADF, "fstat", "")
 	}
 	stat, err := file.Stat()
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "fstat", "")
 	}
 	return f.createStatObject(ctx, stat)
 }
@@ -809,8 +809,13 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Copy(args[0].String(), args[1].String()); err != nil {
-		return fsFailureTo(info.Context(), err, "copyfile", args[0].String(), args[1].String())
+	src, dest := args[0].String(), args[1].String()
+	// COPYFILE_EXCL: refuse to replace an existing destination.
+	if len(args) >= 3 && args[2].IsNumber() && args[2].Integer()&1 != 0 && f.fs().Exists(dest) {
+		return fsFailureTo(info.Context(), syscall.EEXIST, "copyfile", src, dest)
+	}
+	if err := f.fs().Copy(src, dest); err != nil {
+		return fsFailureTo(info.Context(), err, "copyfile", src, dest)
 	}
 
 	return nil
