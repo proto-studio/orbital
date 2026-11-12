@@ -97,13 +97,24 @@ jobs:
             echo "Pinned V8 $current is newer than Chromium-stable $latest; not downgrading."
           fi
 
+      # An existing branch is rebuilt, never recreated, so a developer's fixes survive.
+      # If its pull request was closed, that build would have nowhere to go, so stop and
+      # say so instead of building onto it.
       - name: Compute branch
         id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGED: ${{ steps.detect.outputs.changed }}
         run: |
           branch="automated/update-v8-${{ steps.detect.outputs.latest }}"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+            open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq length)"
+            if [ "$CHANGED" = true ] && [ "$open" = 0 ]; then
+              echo "::error::Branch $branch already exists but has no open pull request, so a build would go nowhere. Reopen its pull request, or delete the branch to start a new one, then run this again."
+              exit 1
+            fi
             echo "Branch $branch already exists — will rebuild it, not recreate."
           else
             echo "branch_exists=false" >> "$GITHUB_OUTPUT"
