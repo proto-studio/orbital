@@ -1,5 +1,12 @@
 # Security Policy
 
+## Reporting a Vulnerability
+
+Follow Proto Studio's responsible disclosure policy at
+<https://proto.studio/security>, which explains how to report a vulnerability and
+what to expect afterwards. Don't report vulnerabilities in public issues or pull
+requests.
+
 ## System and Scope
 
 Orbital is a Go JavaScript runtime built on V8. It ships as a Go module, and its
@@ -7,6 +14,12 @@ prebuilt V8 libraries ship as release assets: one `v8-<goos>-<goarch>.tar.gz` pe
 target, pinned by sha256 in `internal/v8dist/manifest.json`. `internal/v8dist`
 downloads an archive from the GitHub Release for the pinned module version and
 refuses it if its sha256 doesn't match the manifest.
+
+For security reasons, the released V8 archives are built only in CI, by the workflows
+in this repository. Installing Orbital never builds V8 or runs its build scripts on
+the user's machine: it downloads the prepackaged archive and verifies it. Contributors
+can build V8 locally on purpose with the Makefile, but those builds are never pinned
+or released.
 
 This policy covers two areas:
 
