@@ -380,8 +380,8 @@ func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	path := args[0].String()
-	if err := f.writeWithFlags(path, data, argAt(args, 2), modeArg(args, 3)); err != nil {
-		return fsFailure(info.Context(), err, "open", path)
+	if failed, err := f.writeWithFlags(path, data, argAt(args, 2), modeArg(args, 3)); err != nil {
+		return fsFailure(info.Context(), err, failed, path)
 	}
 	return nil
 }
@@ -581,11 +581,16 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v.IsNumber() {
 		return int(v.Integer()), true
 	}
+	// Node's flags; the s forms add O_SYNC, so a write reaches the disk before it returns.
 	switch strings.TrimSpace(v.String()) {
-	case "r", "rs":
+	case "r":
 		return os.O_RDONLY, true
-	case "r+", "rs+":
+	case "rs", "sr":
+		return os.O_RDONLY | os.O_SYNC, true
+	case "r+":
 		return os.O_RDWR, true
+	case "rs+", "sr+":
+		return os.O_RDWR | os.O_SYNC, true
 	case "w":
 		return os.O_WRONLY | os.O_CREATE | os.O_TRUNC, true
 	case "wx", "xw":
@@ -598,10 +603,14 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE, true
 	case "ax", "xa":
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as", "sa":
+		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	case "a+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE, true
 	case "ax+", "xa+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as+", "sa+":
+		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	default:
 		return 0, false
 	}
@@ -860,23 +869,18 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
+		failed := "open"
 		data, err := base64.StdEncoding.DecodeString(encoded)
 		if err == nil && !flagsOK {
 			err = syscall.EINVAL
 		}
 		if err == nil {
-			var file runtime.File
-			if file, err = fsys.OpenFile(path, flags, perm); err == nil {
-				_, err = file.Write(data)
-				if closeErr := file.Close(); err == nil {
-					err = closeErr
-				}
-			}
+			failed, err = writeFile(fsys, path, data, flags, perm)
 		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, "open", path))
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, failed, path))
 			} else {
 				f.rt.MakeCallback(callback, nil, ctx.Null())
 			}

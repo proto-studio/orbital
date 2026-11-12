@@ -107,8 +107,14 @@ async function testNulPaths() {
   // path keeps a NUL, so fs sees it and refuses the path.
   results.nul_path = {
     join: path.join('a', 'n\0m'), basename: path.basename('/x/n\0m.t'), extname: path.extname('n.t\0x'),
-    parse: path.parse('/x/a\0b.c'), relative: path.relative('/a', '/a/n\0m')
+    parse: path.parse('/x/a\0b.c'), relative: path.relative('/a', '/a/n\0m'),
+    basenameSuffix: [path.basename('a\0', '0'), path.basename('a\0', '\0'), path.basename('/x/a.txt', 'txt'),
+      path.basename('/x/aaa', 'aaa'), path.basename('', 'x'), path.basename('')]
   };
+  // An s flag asks for synchronous writes, and the data still lands.
+  fs.writeFileSync(file('sync_flag'), 'one', { flag: 'as' });
+  fs.appendFileSync(file('sync_flag'), 'two', { flag: 'as+' });
+  results.sync_flags = read('sync_flag');
 }
 
 async function main() {

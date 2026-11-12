@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"syscall"
 
+	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
@@ -53,15 +54,17 @@ func errnoOf(err error) (code, description string, errno int) {
 // "ENOENT: no such file or directory, open 'missing/file'". A failed read names no path,
 // because Node reads from a descriptor it already opened.
 func fsErrorMessage(code, description, syscallName, path string) string {
-	if syscallName == "read" {
+	if errorPath(syscallName, path) == "" {
 		return fmt.Sprintf("%s: %s, %s", code, description, syscallName)
 	}
 	return fmt.Sprintf("%s: %s, %s '%s'", code, description, syscallName, path)
 }
 
-// errorPath is the path Node attaches to a failed call's error, if any.
+// errorPath is the path Node attaches to a failed call's error, if any. Reads, writes and
+// closes work on a descriptor, so their errors name none.
 func errorPath(syscallName, path string) string {
-	if syscallName == "read" {
+	switch syscallName {
+	case "read", "write", "close":
 		return ""
 	}
 	return path
@@ -98,21 +101,31 @@ func (f *FS) asyncFsError(ctx *v8.Context, err error, syscallName, path string) 
 }
 
 // writeWithFlags writes data to path, opening it with a Node flag such as 'w', 'a' or 'wx',
-// and perm as the mode of a file it creates.
-func (f *FS) writeWithFlags(path string, data []byte, flag *v8.Value, perm fs.FileMode) error {
+// and perm as the mode of a file it creates. On failure it also names the call that failed,
+// "open", "write" or "close", as Node's error does.
+func (f *FS) writeWithFlags(path string, data []byte, flag *v8.Value, perm fs.FileMode) (string, error) {
 	flags, ok := parseOpenFlags(flag)
 	if !ok {
-		return syscall.EINVAL
+		return "open", syscall.EINVAL
 	}
-	file, err := f.fs().OpenFile(path, flags, perm)
+	return writeFile(f.fs(), path, data, flags, perm)
+}
+
+// writeFile writes data to path opened with flags. On failure it also names the call that
+// failed, as writeWithFlags does.
+func writeFile(fsys runtime.Filesystem, path string, data []byte, flags int, perm fs.FileMode) (string, error) {
+	file, err := fsys.OpenFile(path, flags, perm)
 	if err != nil {
-		return err
+		return "open", err
 	}
-	_, err = file.Write(data)
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return "write", err
 	}
-	return err
+	if err := file.Close(); err != nil {
+		return "close", err
+	}
+	return "", nil
 }
 
 // modeArg reads a mode argument, falling back to Node's default of 0o666.

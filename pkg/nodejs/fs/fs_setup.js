@@ -123,8 +123,7 @@
     if (!OPEN_FLAGS.includes(flag)) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'flags' is invalid. Received " + JSON.stringify(flag).replace(/"/g, "'"));
     }
-    // Go has no synchronous-mode flags, and every write here is already flushed on close.
-    return flag.replace('s', '');
+    return flag;
   }
 
   function writeMode(options) {
