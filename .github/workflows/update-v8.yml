@@ -183,10 +183,12 @@ jobs:
       v8_version: ${{ steps.p.outputs.v8_version }}
       reuse: ${{ steps.reuse.outputs.reuse }}
     steps:
+      # A push builds the commit that triggered it, not whatever the branch points at
+      # by the time this job starts, so the run's head_sha is exactly what it built.
       - name: Checkout target branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || needs.check.outputs.branch }}
+          ref: ${{ github.event_name == 'push' && github.sha || needs.check.outputs.branch }}
           # The reuse check compares against the commit the manifest was built from.
           fetch-depth: 0
 
@@ -238,17 +240,16 @@ jobs:
           # with the same names and then be deleted, leaving nothing here to compare.
           [ "$run_path" = .github/workflows/update-v8.yml ] && [ "$run_repo" = "$GITHUB_REPOSITORY" ] \
             || rebuild "run $run_id is not an Update V8 run in this repository ($run_path in $run_repo)."
+          # Only a push run's head_sha is the commit it built. A scheduled or dispatched
+          # run reports main but builds the update branch, so nothing here could check it.
+          [ "$event" = push ] || rebuild "run $run_id was started by $event, not a push."
           pinned="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
             --jq '.jobs[] | select(.name == "Glue / Pin artifacts in manifest") | .conclusion')" \
             || rebuild "couldn't list the jobs of run $run_id."
           [ "$pinned" = success ] || rebuild "run $run_id did not pin its artifacts."
           git diff --quiet "$run_sha" HEAD -- .github/workflows/update-v8.yml .github/workflows/glue.yml .github/actions \
             || rebuild "the workflows that build the artifacts changed since $run_sha, or that commit is missing."
-          # A scheduled or dispatched run starts on main, then builds the branch it opens,
-          # which bumps the version in build-v8.sh. The Makefile check covers the version.
-          ignore=()
-          [ "$event" = push ] || ignore=(-I '^V8_VERSION="\$\{V8_VERSION:-[0-9.]+\}"$')
-          git diff --quiet "${ignore[@]}" "$run_sha" HEAD -- scripts \
+          git diff --quiet "$run_sha" HEAD -- scripts \
             || rebuild "scripts/ changed since $run_sha, or that commit is missing."
           have="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
             --jq '.artifacts[] | select(.expired | not) | .name')" \
@@ -275,7 +276,7 @@ jobs:
       - name: Checkout branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.setup.outputs.ref }}
+          ref: ${{ needs.setup.outputs.sha }}
 
       # One rolling source cache, warm-started across versions. A new V8 version
       # misses the exact key, but the `v8-src-` restore-key restores the most
@@ -335,7 +336,7 @@ jobs:
       - name: Checkout branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.setup.outputs.ref }}
+          ref: ${{ needs.setup.outputs.sha }}
 
       - name: Derive target
         id: t
@@ -442,6 +443,7 @@ jobs:
     uses: ./.github/workflows/glue.yml
     with:
       branch: ${{ needs.setup.outputs.ref }}
+      ref: ${{ needs.setup.outputs.sha }}
       base_run_id: ${{ github.run_id }}
 
   # ---------------------------------------------------------------------------
