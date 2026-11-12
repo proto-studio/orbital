@@ -45,7 +45,58 @@
   wrapStat('fstatSync');
 
   // Everything below moves file contents as base64, because a string reaching Go stops at its
-  // first NUL. Buffer registers after fs, so it is only looked up when these run.
+  // first NUL.
+
+  // Buffer registers after fs, and an embedder can register fs without it. These move UTF-8
+  // text and raw bytes without Buffer when it is missing; with it, they use Buffer.
+  const hasBuffer = () => typeof Buffer === 'function';
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function utf8Bytes(str) {
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+      let c = str.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+        const next = str.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
+          i++;
+        }
+      }
+      if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return new Uint8Array(out);
+  }
+  function base64Of(bytes) {
+    if (hasBuffer()) return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
+      out += B64[n >> 18] + B64[(n >> 12) & 63] +
+        (i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? B64[n & 63] : '=');
+    }
+    return out;
+  }
+  function bytesOf(base64) {
+    if (hasBuffer()) return Buffer.from(base64, 'base64');
+    const clean = base64.replace(/=+$/, '');
+    const out = new Uint8Array(Math.floor(clean.length * 3 / 4));
+    let bits = 0;
+    let value = 0;
+    let j = 0;
+    for (let i = 0; i < clean.length; i++) {
+      value = (value << 6) | B64.indexOf(clean[i]);
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        out[j++] = (value >> bits) & 255;
+      }
+    }
+    return out;
+  }
   function codedError(Ctor, code, message) {
     const e = new Ctor(message);
     e.code = code;
@@ -56,7 +107,8 @@
     const encoding = typeof options === 'string'
       ? options
       : (options && typeof options === 'object' ? options.encoding : null);
-    if (encoding && encoding !== 'buffer' && !Buffer.isEncoding(encoding)) {
+    const known = hasBuffer() ? Buffer.isEncoding(encoding) : isUtf8(encoding);
+    if (encoding && encoding !== 'buffer' && !known) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'encoding' is invalid encoding. Received '" + encoding + "'");
     }
     return encoding || null;
@@ -70,16 +122,18 @@
 
   function decodeContents(contents, encoding) {
     if (isUtf8(encoding)) return contents;
-    const buffer = Buffer.from(contents, 'base64');
+    const buffer = bytesOf(contents);
     return encoding ? buffer.toString(encoding) : buffer;
   }
 
   function viewBytes(view) {
-    return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+    return hasBuffer()
+      ? Buffer.from(view.buffer, view.byteOffset, view.byteLength)
+      : new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   }
 
   function dataBytes(data, encoding) {
-    if (typeof data === 'string') return Buffer.from(data, encoding || 'utf8');
+    if (typeof data === 'string') return hasBuffer() ? Buffer.from(data, encoding || 'utf8') : utf8Bytes(data);
     if (ArrayBuffer.isView(data)) return viewBytes(data);
     throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
       'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
@@ -145,13 +199,13 @@
 
   const _writeFileSync = fs.writeFileSync;
   fs.writeFileSync = function (path, data, options) {
-    const bytes = dataBytes(data, encodingOf(options)).toString('base64');
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
     check(_writeFileSync.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options)));
   };
 
   const _appendFileSync = fs.appendFileSync;
   fs.appendFileSync = function (path, data, options) {
-    const bytes = dataBytes(data, encodingOf(options)).toString('base64');
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
     check(_appendFileSync.call(this, path, bytes, writeFlag(options, 'a'), writeMode(options)));
   };
 
@@ -176,7 +230,7 @@
       options = undefined;
     }
     checkCallback(callback);
-    const bytes = dataBytes(data, encodingOf(options)).toString('base64');
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
     _writeFile.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options), callback);
   };
 
@@ -185,7 +239,7 @@
   const _writeSync = fs.writeSync;
   fs.writeSync = function (fd, data, offsetOrPosition, lengthOrEncoding, position) {
     if (typeof data === 'string') {
-      return _writeSync.call(this, fd, dataBytes(data, lengthOrEncoding).toString('base64'), positionArg(offsetOrPosition));
+      return _writeSync.call(this, fd, base64Of(dataBytes(data, lengthOrEncoding)), positionArg(offsetOrPosition));
     }
     if (!ArrayBuffer.isView(data)) dataBytes(data);
     let offset = offsetOrPosition;
@@ -198,7 +252,7 @@
     if (typeof length !== 'number') length = data.byteLength - offset;
     checkRange('length', length, data.byteLength - offset);
     const bytes = viewBytes(data).subarray(offset, offset + length);
-    return _writeSync.call(this, fd, bytes.toString('base64'), positionArg(position));
+    return _writeSync.call(this, fd, base64Of(bytes), positionArg(position));
   };
 
   // readSync(fd, buffer[, offset[, length[, position]]]) or readSync(fd, buffer[, options]).
@@ -216,7 +270,7 @@
     length |= 0;
     if (length === 0) return 0;
     checkRange('length', length, buffer.byteLength - offset);
-    const bytes = Buffer.from(_readSync.call(this, fd, length, positionArg(position)), 'base64');
+    const bytes = bytesOf(_readSync.call(this, fd, length, positionArg(position)));
     new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).set(bytes, offset);
     return bytes.length;
   };

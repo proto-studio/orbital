@@ -60,9 +60,12 @@
       "a.",
       "aaa",
       "",
-      ""
+      "",
+      "",
+      "aaa"
     ],
     "extname": ".t\u0000x",
+    "formatInherited": "/tmp/report.txt",
     "join": "a/n\u0000m",
     "parse": {
       "base": "a\u0000b.c",
@@ -71,6 +74,13 @@
       "name": "a\u0000b",
       "root": "/"
     },
+    "parseKeys": [
+      "root",
+      "dir",
+      "base",
+      "ext",
+      "name"
+    ],
     "relative": "n\u0000m"
   },
   "nul_promises_readFile": {
