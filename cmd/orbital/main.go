@@ -257,6 +257,11 @@ func exitWithError(err error) {
 		fmt.Fprintf(os.Stderr, "%s\n", uncaught.Message)
 		os.Exit(uncaught.ExitCode)
 	}
+	// process.exit() has already run the 'exit' listeners.
+	var exit *runtime.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.Code)
+	}
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	os.Exit(1)
 }
@@ -594,8 +599,8 @@ func runESModule(filename string) error {
 
 	// Run any pending async operations
 	rt.EventLoop().Run()
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return uncaught
+	if ended := rt.Ended(); ended != nil {
+		return ended
 	}
 
 	finalizeExit(rt)
@@ -695,8 +700,8 @@ func runESModuleSource(source, origin string) error {
 	}
 
 	rt.EventLoop().Run()
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return uncaught
+	if ended := rt.Ended(); ended != nil {
+		return ended
 	}
 	finalizeExit(rt)
 	return nil
@@ -929,6 +934,9 @@ func repl() {
 		// RunScript rather than Run: a line that throws just reports it, and the session
 		// goes on.
 		result, err := rt.RunScript(code, "repl")
+		if exit := rt.ExitError(); exit != nil {
+			os.Exit(exit.Code)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			continue
@@ -936,6 +944,9 @@ func repl() {
 
 		// Run any pending async operations
 		rt.EventLoop().Run()
+		if exit := rt.ExitError(); exit != nil {
+			os.Exit(exit.Code)
+		}
 
 		if result != nil && !result.IsUndefined() {
 			fmt.Println(result.String())

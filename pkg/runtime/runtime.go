@@ -34,6 +34,7 @@ type Runtime struct {
 	mu                sync.Mutex
 	uncaught          uncaughtHandlers
 	fatal             atomic.Pointer[UncaughtError]
+	exited            atomic.Pointer[ExitError]
 	tracksRejections  bool
 	rejectionsPending bool   // only touched on the goroutine running JavaScript
 	fatalSettled      bool   // same goroutine: UncaughtError has discarded the promise queue
@@ -383,16 +384,18 @@ func (rt *Runtime) RunScript(source, origin string) (*v8.Value, error) {
 // An exception the script does not catch, in its main body or any later callback, goes to
 // process.on('uncaughtException') as it does in Node, and execution then carries on. If no
 // handler takes it, or a promise is left rejected with no 'unhandledRejection' handler, the
-// runtime stops and Run returns an *UncaughtError. The runtime cannot run anything further:
-// calling Run again returns the same error without running the script.
+// runtime stops and Run returns an *UncaughtError. If the script calls process.exit(), the
+// runtime runs the 'exit' listeners, stops, and Run returns an *ExitError. Either way the
+// runtime cannot run anything further: calling Run again returns the same error without
+// running the script.
 func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := rt.Ended(); ended != nil {
+		return nil, ended
 	}
 
 	result, err := rt.runMainScript(source, origin)
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := rt.Ended(); ended != nil {
+		return nil, ended
 	}
 	if err != nil {
 		return nil, err
@@ -401,8 +404,8 @@ func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
 	// Run the event loop to process any pending async operations
 	rt.eventLoop.Run()
 
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := rt.Ended(); ended != nil {
+		return nil, ended
 	}
 	return result, nil
 }

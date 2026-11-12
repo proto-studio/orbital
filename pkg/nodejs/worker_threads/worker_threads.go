@@ -347,7 +347,11 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	_, _ = wrt.RunScript(pathSetup, "worker_paths.js")
 
 	code := 0
-	if _, runErr := wrt.Run(source, origin); runErr != nil {
+	var exit *goruntime.ExitError
+	if _, runErr := wrt.Run(source, origin); errors.As(runErr, &exit) {
+		// process.exit() in a worker ends only the worker, with that code and no error.
+		code = exit.Code
+	} else if runErr != nil {
 		if !wrt.IsKilled() {
 			wk.fromWorker <- wtEvent{kind: "error", data: runErr.Error()}
 			code = 1

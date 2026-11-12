@@ -123,7 +123,7 @@ inst, err := nodejs.New(cfg)
 
 See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DNS use these controls.
 
-## Uncaught exceptions
+## Uncaught exceptions and `process.exit`
 
 An exception no one catches, or a promise left rejected, follows Node's rules:
 `process.on('uncaughtException')` and `'unhandledRejection'` run, and execution carries on. With no
@@ -131,7 +131,10 @@ handler, Node prints the error and exits, which a library must not do to its hos
 the runtime and returns a `*runtime.UncaughtError` holding the message and exit code, after the
 script's `'exit'` listeners have run. The `orbital` CLI prints it and exits with that code.
 
-If you run the event loop yourself, check `rt.UncaughtError()` afterwards. A native module should
+`process.exit()` works the same way: the `'exit'` listeners run, nothing more of the script runs,
+and `Run` returns a `*runtime.ExitError` holding the code. In a worker it ends only the worker.
+
+If you run the event loop yourself, check `rt.Ended()` afterwards, which returns either error. A native module should
 call into JavaScript from the event loop with `rt.MakeCallback`, not `Value.Call`, so that what the
 function throws gets the same treatment. Remaining differences from Node are in
 [known limitations](docs/known-limitations.md).

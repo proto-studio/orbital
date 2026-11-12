@@ -32,6 +32,20 @@ func (e *UncaughtError) Error() string {
 	return e.Message
 }
 
+// ExitError is what ended a runtime when JavaScript called process.exit(). Node would run
+// the 'exit' listeners and then exit with Code. A library has no business ending its host,
+// so the runtime runs the listeners, stops, and hands the code to the embedder.
+type ExitError struct {
+	// Code is the exit code: process.exit's argument, or process.exitCode as an 'exit'
+	// listener left it.
+	Code int
+}
+
+// Error describes the exit.
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("process.exit(%d)", e.Code)
+}
+
 // uncaughtHandlers holds the functions uncaught.js returns.
 type uncaughtHandlers struct {
 	callback          *v8.Value
@@ -127,12 +141,39 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 4 {
 		return nil
 	}
+	if rt.ended() {
+		return nil
+	}
 	rt.fatal.Store(&UncaughtError{
 		Message:      args[0].String(),
 		ExitCode:     int(args[1].Integer()),
 		Origin:       args[2].String(),
 		HandlerThrew: args[3].Boolean(),
 	})
+	rt.stopRunning()
+	return nil
+}
+
+// Exit ends the runtime as process.exit() does once its 'exit' listeners have run: nothing
+// more of the program runs, and Run returns an *ExitError with code. Later calls do nothing.
+func (rt *Runtime) Exit(code int) {
+	if rt.ended() {
+		// The runtime has already ended, but JavaScript is running again, as when an
+		// embedder calls RunScript afterwards. Stop it all the same.
+		rt.isolate.TerminateExecution()
+		return
+	}
+	rt.exited.Store(&ExitError{Code: code})
+	rt.stopRunning()
+}
+
+// ended reports whether an uncaught exception or process.exit() has ended the runtime.
+func (rt *Runtime) ended() bool {
+	return rt.fatal.Load() != nil || rt.exited.Load() != nil
+}
+
+// stopRunning stops everything still queued once the runtime has ended.
+func (rt *Runtime) stopRunning() {
 	rt.eventLoop.CancelAllTimers()
 	rt.eventLoop.ClearAllMicrotasks()
 	rt.eventLoop.Stop()
@@ -140,7 +181,6 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// as soon as the stack empties, and JavaScript that called into Go may still be on the
 	// stack. Terminating stops both before they run any more of the program.
 	rt.isolate.TerminateExecution()
-	return nil
 }
 
 // MakeCallback calls a JavaScript function from the event loop, the way node::MakeCallback
@@ -150,7 +190,7 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 // the caller does this same work. It returns nil if the function threw, or if the runtime
 // has already ended. A nil recv means the global object, as it does for Value.Call.
 func (rt *Runtime) MakeCallback(fn, recv *v8.Value, args ...*v8.Value) *v8.Value {
-	if rt.fatal.Load() != nil || fn == nil || !fn.IsFunction() {
+	if rt.ended() || fn == nil || !fn.IsFunction() {
 		return nil
 	}
 	if recv == nil {
@@ -165,7 +205,7 @@ func (rt *Runtime) MakeCallback(fn, recv *v8.Value, args ...*v8.Value) *v8.Value
 	callArgs = append(callArgs, args...)
 	// The only error left is a terminated isolate, which is reported through IsKilled.
 	result, _ := rt.uncaught.callback.Call(nil, callArgs...)
-	if rt.fatal.Load() != nil {
+	if rt.ended() {
 		rt.keepTerminating()
 		return nil
 	}
@@ -182,11 +222,11 @@ func (rt *Runtime) keepTerminating() {
 // handleUncaught treats a value as an exception nothing caught, as if it had been thrown
 // from a callback. It reports whether the runtime survived.
 func (rt *Runtime) handleUncaught(thrown *v8.Value) bool {
-	if rt.fatal.Load() == nil {
+	if !rt.ended() {
 		// trigger reports a handler's exception itself, so this call cannot fail with one.
 		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false))
 	}
-	if rt.fatal.Load() != nil {
+	if rt.ended() {
 		rt.keepTerminating()
 		return false
 	}
@@ -210,18 +250,42 @@ func (rt *Runtime) MarkPromiseHandled(promise *v8.Value) {
 // JavaScript on the stack: the first call after the runtime ends throws away the promise
 // reactions still queued, which leaves the isolate readable through RunScript and GetGlobal.
 func (rt *Runtime) UncaughtError() *UncaughtError {
-	uncaught := rt.fatal.Load()
-	if uncaught != nil && !rt.fatalSettled {
-		rt.fatalSettled = true
-		// V8 empties its queue when execution terminates during a checkpoint, and the first
-		// reaction's function is where termination lands, before any of its body runs.
-		rt.isolate.TerminateExecution()
-		rt.context.PerformMicrotaskCheckpoint()
-		if !rt.IsKilled() {
-			rt.isolate.CancelTerminateExecution()
-		}
+	rt.settleEnd()
+	return rt.fatal.Load()
+}
+
+// ExitError returns the process.exit() that ended this runtime, or nil. Like UncaughtError,
+// call it with no JavaScript on the stack.
+func (rt *Runtime) ExitError() *ExitError {
+	rt.settleEnd()
+	return rt.exited.Load()
+}
+
+// Ended returns what ended this runtime, an *UncaughtError or an *ExitError, or nil if it
+// hasn't ended. Embedders who run the event loop themselves should check it afterwards.
+func (rt *Runtime) Ended() error {
+	if uncaught := rt.UncaughtError(); uncaught != nil {
+		return uncaught
 	}
-	return uncaught
+	if exit := rt.ExitError(); exit != nil {
+		return exit
+	}
+	return nil
+}
+
+// settleEnd throws away the promise reactions still queued once the runtime has ended.
+func (rt *Runtime) settleEnd() {
+	if !rt.ended() || rt.fatalSettled {
+		return
+	}
+	rt.fatalSettled = true
+	// V8 empties its queue when execution terminates during a checkpoint, and the first
+	// reaction's function is where termination lands, before any of its body runs.
+	rt.isolate.TerminateExecution()
+	rt.context.PerformMicrotaskCheckpoint()
+	if !rt.IsKilled() {
+		rt.isolate.CancelTerminateExecution()
+	}
 }
 
 // TracksRejections reports whether this runtime's V8 glue reports promise rejections. See
@@ -239,7 +303,7 @@ func (rt *Runtime) BindProcess(process *v8.Value) error {
 // reportRejections runs once the microtask queues are empty, which is the point where a
 // promise rejected with no handler has had its chance to get one.
 func (rt *Runtime) reportRejections() {
-	for rt.rejectionsPending && rt.fatal.Load() == nil && !rt.execController.IsDone() {
+	for rt.rejectionsPending && !rt.ended() && !rt.execController.IsDone() {
 		rt.rejectionsPending = false
 		if _, err := rt.uncaught.processRejections.Call(nil); err != nil {
 			return
@@ -266,7 +330,7 @@ func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
 			scriptErr = rt.reportScriptError(err)
 		}
 	}
-	if _, err := rt.uncaught.runMain.Call(nil); err != nil && scriptErr == nil && rt.fatal.Load() == nil {
+	if _, err := rt.uncaught.runMain.Call(nil); err != nil && scriptErr == nil && !rt.ended() {
 		scriptErr = err
 	}
 	return result, scriptErr
@@ -276,8 +340,8 @@ func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
 // register a handler and then throw, and in Node it keeps running after that. It returns nil
 // if a handler took the exception, and otherwise the error Run should return.
 func (rt *Runtime) reportScriptError(scriptErr error) error {
-	if uncaught := rt.fatal.Load(); uncaught != nil {
-		return uncaught
+	if rt.ended() {
+		return rt.endedError()
 	}
 	if errors.Is(scriptErr, v8.ErrExecutionTerminated) || rt.IsDone() {
 		return scriptErr
@@ -298,8 +362,19 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 	if rt.handleUncaught(thrown) {
 		return nil
 	}
+	if rt.ended() {
+		return rt.endedError()
+	}
+	return fmt.Errorf("uncaught: %w", scriptErr)
+}
+
+// endedError returns what ended the runtime, without settling its promise queue.
+func (rt *Runtime) endedError() error {
 	if uncaught := rt.fatal.Load(); uncaught != nil {
 		return uncaught
 	}
-	return fmt.Errorf("uncaught: %w", scriptErr)
+	if exit := rt.exited.Load(); exit != nil {
+		return exit
+	}
+	return nil
 }

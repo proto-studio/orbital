@@ -135,8 +135,8 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// runtime.exit()
-	exitFn, err := iso.NewFunctionTemplate(p.exitFunc)
+	// process.reallyExit(code), which process.exit calls once the 'exit' listeners have run.
+	exitFn, err := iso.NewFunctionTemplate(p.reallyExitFunc)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	if err != nil {
 		return err
 	}
-	if err := processObj.Set("exit", exitVal); err != nil {
+	if err := processObj.Set("reallyExit", exitVal); err != nil {
 		return err
 	}
 
@@ -268,6 +268,23 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		}
 		if (process && !('exitCode' in process)) {
 			process.exitCode = undefined;
+		}
+
+		// process.exit as in Node: the 'exit' listeners run once, and can change the code
+		// through process.exitCode or by calling process.exit again.
+		if (process && typeof process.reallyExit === 'function') {
+			process.exit = function exit(code) {
+				if (code !== undefined) process.exitCode = code;
+				if (!process._exiting) {
+					process._exiting = true;
+					process.emit('exit', Number(process.exitCode) || 0);
+				}
+				process.reallyExit(Number(process.exitCode) || 0);
+				// reallyExit asked V8 to stop, but V8 only stops at its next interrupt check,
+				// and returning from a native call is not one. A loop checks on every
+				// iteration, so nothing after process.exit runs, not even a finally block.
+				for (;;) {}
+			};
 		}
 
 		// Turn the Go-backed std streams into proper Node stream-like objects:
@@ -506,15 +523,15 @@ func (p *Process) chdirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-func (p *Process) exitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// reallyExitFunc backs process.reallyExit(code): it ends the runtime, which hands the code to
+// the embedder rather than ending the host process. Nothing more of the program runs.
+func (p *Process) reallyExitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	code := 0
-	args := info.Args()
-	if len(args) >= 1 {
+	if args := info.Args(); len(args) >= 1 {
 		code = int(args[0].Integer())
 	}
 	p.exitCode = code
-	p.rt.EventLoop().Stop()
-	os.Exit(code)
+	p.rt.Exit(code)
 	return nil
 }
 

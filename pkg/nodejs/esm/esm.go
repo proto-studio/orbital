@@ -122,8 +122,8 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if err := e.ensureLoader(); err != nil {
 		return nil, err
 	}
-	if uncaught := e.rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := e.rt.Ended(); ended != nil {
+		return nil, ended
 	}
 
 	ctx := e.rt.Context()
@@ -154,8 +154,8 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 
 	// Run any pending async operations (timers, microtasks, top-level await).
 	e.rt.EventLoop().Run()
-	if uncaught := e.rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := e.rt.Ended(); ended != nil {
+		return nil, ended
 	}
 
 	if isPromise {
