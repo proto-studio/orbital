@@ -335,9 +335,11 @@ type SandboxedProcessSpawner struct {
 	BlockedCommands []string
 	// AllowAll allows all commands (use with BlockedCommands for denylist mode).
 	AllowAll bool
-	// MaxProcesses limits concurrent child processes (0 = unlimited).
+	// MaxProcesses limits concurrent child processes, including Exec and ExecFile while they
+	// run (0 = unlimited).
 	MaxProcesses int
-	// AllowShellCommands allows shell commands via exec() in allowlist mode.
+	// AllowShellCommands allows shell command lines (exec(), or a spawn with shell: true) in
+	// allowlist mode.
 	AllowShellCommands bool
 	// underlying spawner
 	real        *RealProcessSpawner
@@ -355,10 +357,12 @@ type SandboxProcessConfig struct {
 	BlockedCommands []string
 	// AllowAll allows all commands (use with BlockedCommands for denylist mode).
 	AllowAll bool
-	// MaxProcesses limits concurrent child processes (0 = unlimited).
+	// MaxProcesses limits concurrent child processes, including Exec and ExecFile while they
+	// run (0 = unlimited).
 	MaxProcesses int
-	// AllowShellCommands allows shell commands via exec() even in allowlist mode.
-	// When false, exec() is blocked unless AllowAll is true.
+	// AllowShellCommands allows shell command lines even in allowlist mode: exec(), and
+	// spawn or execFile with shell: true. When false, these are refused unless AllowAll is
+	// true and /bin/sh is not blocked.
 	AllowShellCommands bool
 }
 
@@ -462,23 +466,23 @@ func (s *SandboxedProcessSpawner) isCommandAllowed(command string) bool {
 
 // Spawn starts a new process if the command is allowed by the sandbox rules.
 func (s *SandboxedProcessSpawner) Spawn(ctx context.Context, command string, args []string, options *SpawnOptions) (ChildProcess, error) {
-	if !s.isCommandAllowed(command) {
+	// A shell runs the whole line, command and arguments joined, so the command's name
+	// says nothing about what runs. Such a spawn needs the rules that allow a shell.
+	if options != nil && options.Shell {
+		if !s.shellAllowed() {
+			return nil, ErrCommandNotAllowed
+		}
+	} else if !s.isCommandAllowed(command) {
 		return nil, ErrCommandNotAllowed
 	}
 
-	s.mu.Lock()
-	if s.MaxProcesses > 0 && s.activeCount >= s.MaxProcesses {
-		s.mu.Unlock()
-		return nil, errors.New("EMFILE: too many child processes")
+	if err := s.acquire(); err != nil {
+		return nil, err
 	}
-	s.activeCount++
-	s.mu.Unlock()
 
 	proc, err := s.real.Spawn(ctx, command, args, options)
 	if err != nil {
-		s.mu.Lock()
-		s.activeCount--
-		s.mu.Unlock()
+		s.release()
 		return nil, err
 	}
 
@@ -490,26 +494,61 @@ func (s *SandboxedProcessSpawner) Spawn(ctx context.Context, command string, arg
 
 // Exec executes a shell command if shell commands are allowed.
 func (s *SandboxedProcessSpawner) Exec(ctx context.Context, command string, options *SpawnOptions) ([]byte, []byte, int, error) {
-	// Shell commands are complex to validate - check if allowed
-	if !s.AllowAll && !s.AllowShellCommands {
+	if !s.shellAllowed() {
 		return nil, nil, -1, ErrCommandNotAllowed
 	}
-
-	// If using denylist mode, check if shell itself is blocked
-	if s.AllowAll && !s.isCommandAllowed("/bin/sh") {
-		return nil, nil, -1, ErrCommandNotAllowed
+	if err := s.acquire(); err != nil {
+		return nil, nil, -1, err
 	}
+	defer s.release()
 
 	return s.real.Exec(ctx, command, options)
 }
 
 // ExecFile executes a file if it is allowed by the sandbox rules.
 func (s *SandboxedProcessSpawner) ExecFile(ctx context.Context, file string, args []string, options *SpawnOptions) ([]byte, []byte, int, error) {
-	if !s.isCommandAllowed(file) {
+	if options != nil && options.Shell {
+		if !s.shellAllowed() {
+			return nil, nil, -1, ErrCommandNotAllowed
+		}
+	} else if !s.isCommandAllowed(file) {
 		return nil, nil, -1, ErrCommandNotAllowed
 	}
+	if err := s.acquire(); err != nil {
+		return nil, nil, -1, err
+	}
+	defer s.release()
 
 	return s.real.ExecFile(ctx, file, args, options)
+}
+
+// shellAllowed reports whether the rules let a shell run a command line.
+func (s *SandboxedProcessSpawner) shellAllowed() bool {
+	// A command line is too complex to check, so it takes an explicit allowance.
+	if !s.AllowAll && !s.AllowShellCommands {
+		return false
+	}
+	// In denylist mode, the shell itself may be denied.
+	return !s.AllowAll || s.isCommandAllowed("/bin/sh")
+}
+
+// acquire counts a process against MaxProcesses, or fails if the limit is reached. Exec and
+// ExecFile count too, for as long as they run.
+func (s *SandboxedProcessSpawner) acquire() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MaxProcesses > 0 && s.activeCount >= s.MaxProcesses {
+		return errors.New("EMFILE: too many child processes")
+	}
+	s.activeCount++
+	return nil
+}
+
+// release ends a count taken by acquire.
+func (s *SandboxedProcessSpawner) release() {
+	s.mu.Lock()
+	s.activeCount--
+	s.mu.Unlock()
 }
 
 // sandboxedChildProcess wraps a ChildProcess to track active process count.
@@ -521,9 +560,7 @@ type sandboxedChildProcess struct {
 // Wait waits for the process to exit and decrements the active process count.
 func (p *sandboxedChildProcess) Wait() (int, error) {
 	code, err := p.ChildProcess.Wait()
-	p.spawner.mu.Lock()
-	p.spawner.activeCount--
-	p.spawner.mu.Unlock()
+	p.spawner.release()
 	return code, err
 }
 
