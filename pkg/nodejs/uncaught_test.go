@@ -47,7 +47,7 @@ func supportsRejections(t *testing.T) {
 	}
 	defer inst.Runtime.Dispose()
 	if !inst.Runtime.TracksRejections() {
-		t.Skip("the linked V8 glue does not report promise rejections")
+		t.Fatal("the linked V8 glue does not report promise rejections")
 	}
 }
 
