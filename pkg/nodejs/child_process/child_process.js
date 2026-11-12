@@ -12,6 +12,18 @@
     return err;
   }
 
+  // The environment a child gets, as "KEY=value" entries. As in Node, a child with no env
+  // option gets process.env: the environment the script sees, which an embedder may have
+  // filtered, rather than the host's own.
+  function childEnv(env) {
+    const source = env === undefined || env === null ? process.env : env;
+    const entries = [];
+    for (const key of Object.keys(source)) {
+      if (source[key] !== undefined) entries.push(`${key}=${source[key]}`);
+    }
+    return entries;
+  }
+
   // Process output crosses from Go as base64, so every byte survives.
   function decodeOutput(encoded, encoding) {
     const buf = encoded ? Buffer.from(encoded, 'base64') : Buffer.alloc(0);
@@ -277,7 +289,7 @@
 
     const spawnOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       shell: options.shell || false,
       detached: options.detached || false
     };
@@ -317,7 +329,7 @@
 
     const execOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       timeout: options.timeout || 0,
       maxBuffer: options.maxBuffer || 1024 * 1024,
       encoding: outputEncoding(options, 'utf8')
@@ -381,7 +393,7 @@
 
     const execOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       timeout: options.timeout || 0,
       maxBuffer: options.maxBuffer || 1024 * 1024,
       encoding: outputEncoding(options, 'utf8')
@@ -450,7 +462,7 @@
     
     const execOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       timeout: options.timeout || 0,
       encoding: outputEncoding(options, 'buffer'),
       input: encodeInput(options)
@@ -482,7 +494,7 @@
 
     const execOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       timeout: options.timeout || 0,
       encoding: outputEncoding(options, 'buffer'),
       input: encodeInput(options)
@@ -514,7 +526,7 @@
 
     const spawnOptions = {
       cwd: options.cwd || process.cwd(),
-      env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
+      env: childEnv(options.env),
       shell: options.shell || false,
       timeout: options.timeout || 0,
       encoding: outputEncoding(options, 'buffer'),
