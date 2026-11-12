@@ -583,9 +583,23 @@ func runESModule(filename string) error {
 	}
 	defer rt.Dispose()
 
+	// Preload -r modules, as for a CommonJS entry.
+	for _, mod := range requireModules {
+		requireCode := fmt.Sprintf("require(%q);", mod)
+		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
+			return fmt.Errorf("failed to require %s: %w", mod, err)
+		}
+	}
+
 	// Preload --import modules (e.g. loader-hook registrars) before the entry.
 	for _, mod := range importModules {
 		if err := esmLoader.Preload(mod); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}
 	}
@@ -657,6 +671,10 @@ func runCodeAndReturn(source, origin string) (string, error) {
 	for _, mod := range requireModules {
 		requireCode := fmt.Sprintf("require(%q);", mod)
 		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			// A preload can call process.exit, which ends the runtime with its code.
+			if ended := rt.Ended(); ended != nil {
+				return "", ended
+			}
 			return "", fmt.Errorf("failed to require %s: %w", mod, err)
 		}
 	}
@@ -776,6 +794,10 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 	for _, mod := range requireModules {
 		requireCode := fmt.Sprintf("require(%q);", mod)
 		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			// A preload can call process.exit, which ends the runtime with its code.
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("failed to require %s: %w", mod, err)
 		}
 	}
@@ -784,6 +806,9 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 	// script runs, so their hooks apply to modules the script imports.
 	for _, mod := range importModules {
 		if err := esmLoader.Preload(mod); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}
 	}
