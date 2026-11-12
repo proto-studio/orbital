@@ -1,0 +1,120 @@
+{
+  "stdinBuffer": "410042ff0043",
+  "stdinLeadingNul": "000001",
+  "stdinAllBytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+  "stdinLatin1": "410042ff43",
+  "stdinBinary": "410042ff43",
+  "stdinUtf8": "410042c3bf43",
+  "stdinHexEncoding": "410042ff0043",
+  "stdinUint8Array": "010002ff00",
+  "stdinWritesInOrder": "0100000002c3a900ff00",
+  "stdout": [
+    0,
+    "410042ff0043"
+  ],
+  "stderr": [
+    0,
+    "410042ff0043"
+  ],
+  "readableEvent": "410042ff0043",
+  "setEncoding": "string:hé",
+  "shellOption": [
+    0,
+    "410042ff0043"
+  ],
+  "megabyteThroughCat": [
+    0,
+    1048576,
+    true
+  ],
+  "pipeBetweenChildren": "410042ff0043",
+  "stdioAtSpawn": [
+    "number",
+    true,
+    true,
+    true,
+    3
+  ],
+  "eventOrder": {
+    "events": [
+      "spawn",
+      "stdout end after 6",
+      "close 3 null"
+    ],
+    "exit": [
+      3,
+      null
+    ]
+  },
+  "closeWithUnreadOutput": 0,
+  "writeCallbacks": [
+    "write",
+    "finish"
+  ],
+  "writeToClosedStdin": [
+    0,
+    [
+      "EPIPE write"
+    ]
+  ],
+  "writeAfterExit": [
+    "callback ERR_STREAM_DESTROYED"
+  ],
+  "failedSpawn": [
+    "stdout true",
+    "error",
+    "close number"
+  ],
+  "killResult": [
+    true,
+    true,
+    false
+  ],
+  "execDefaultsToUtf8": [
+    null,
+    "hé",
+    "string"
+  ],
+  "execBuffer": [
+    true,
+    "410042ff0043"
+  ],
+  "execNullEncoding": [
+    true,
+    "410042ff0043"
+  ],
+  "execFileLatin1": "410042ff0043",
+  "execSyncDefaultsToBuffer": [
+    true,
+    "410042ff0043"
+  ],
+  "execSyncUtf8": "hé",
+  "execSyncInput": "410042ff0043",
+  "execFileSyncDefaultsToBuffer": [
+    true,
+    "410042ff0043"
+  ],
+  "execFileSyncInputAllBytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+  "execFileSyncInputUint8Array": "000100",
+  "execFileSyncInputDataView": "0042ff",
+  "execFileSyncInputString": "4100c3a9",
+  "execFileSyncInputLatin1": "4100ff",
+  "invalidInput": "ERR_INVALID_ARG_TYPE",
+  "spawnSync": {
+    "stdoutIsBuffer": true,
+    "stdout": "410042ff0043",
+    "stderr": "410042ff0043",
+    "status": 4,
+    "signal": null,
+    "outputIsBuffers": [
+      null,
+      true,
+      true
+    ]
+  },
+  "spawnSyncEncoding": [
+    "hé",
+    "hé"
+  ],
+  "spawnSyncInput": "410042ff0043"
+}

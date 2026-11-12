@@ -280,7 +280,8 @@
         throw makeError('TLS socket connection must be securely established', 'ERR_TLS_INVALID_STATE');
       }
       const encodedContext = context === undefined ? null : Buffer.from(context).toString('base64');
-      return Buffer.from(internal.exportKeyingMaterial(this._id, length, String(label), encodedContext), 'base64');
+      const encodedLabel = Buffer.from(String(label)).toString('base64');
+      return Buffer.from(internal.exportKeyingMaterial(this._id, length, encodedLabel, encodedContext), 'base64');
     }
 
     // Session resumption tickets are not exposed.

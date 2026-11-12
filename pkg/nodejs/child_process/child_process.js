@@ -3,7 +3,41 @@
   'use strict';
 
   const EventEmitter = global.__events_module.EventEmitter;
+  const { Readable, Writable } = global.__stream_module;
   const internal = global.__child_process_internal;
+
+  function codedError(Type, code, message) {
+    const err = new Type(message);
+    err.code = code;
+    return err;
+  }
+
+  // Process output crosses from Go as base64, so every byte survives.
+  function decodeOutput(encoded, encoding) {
+    const buf = encoded ? Buffer.from(encoded, 'base64') : Buffer.alloc(0);
+    return encoding === 'buffer' ? buf : buf.toString(encoding);
+  }
+
+  // Node's encoding option: 'buffer' or null mean Buffers.
+  function outputEncoding(options, fallback) {
+    const { encoding } = options;
+    if (encoding === undefined) return fallback;
+    return encoding === null ? 'buffer' : encoding;
+  }
+
+  // The input option of the synchronous calls, as base64 for Go.
+  function encodeInput(options) {
+    const { input, encoding } = options;
+    if (input === undefined || input === null) return undefined;
+    if (typeof input === 'string') {
+      return Buffer.from(input, encoding && encoding !== 'buffer' ? encoding : 'utf8').toString('base64');
+    }
+    if (ArrayBuffer.isView(input)) {
+      return Buffer.from(input.buffer, input.byteOffset, input.byteLength).toString('base64');
+    }
+    throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+      'The "options.stdio[0]" property must be of type string or an instance of Buffer, TypedArray, or DataView.');
+  }
 
   /**
    * ChildProcess class - Represents a spawned child process.
@@ -24,6 +58,7 @@
       this.stdout = null;
       this.stderr = null;
       this.stdio = [null, null, null];
+      this._closesGot = 0;
     }
 
     get pid() { return this._pid; }
@@ -97,15 +132,29 @@
     }
 
     /**
-     * Internal: Set up streams after spawn.
+     * Internal: Create stdio. A null id means the process did not start.
      */
     _setupStreams() {
-      // Create readable streams for stdout/stderr
+      this.stdin = new ProcessWritableStream(this._id);
       this.stdout = new ProcessReadableStream(this._id, 'stdout');
       this.stderr = new ProcessReadableStream(this._id, 'stderr');
-      this.stdin = new ProcessWritableStream(this._id);
-      
       this.stdio = [this.stdin, this.stdout, this.stderr];
+
+      // As in Node, 'close' waits for the exit and for all of stdio to close.
+      for (const stream of this.stdio) stream.once('close', () => this._maybeClose());
+    }
+
+    _maybeClose() {
+      this._closesGot++;
+      if (this._closesGot === this.stdio.length + 1) {
+        this.emit('close', this._exitCode, this._signalCode);
+      }
+    }
+
+    // Output nobody is reading would otherwise keep 'close' from firing.
+    _flushStdio() {
+      if (!this.stdout.readableFlowing) this.stdout.resume();
+      if (!this.stderr.readableFlowing) this.stderr.resume();
     }
 
     /**
@@ -115,14 +164,11 @@
       internal.wait(this._id, (err, exitCode, signalCode) => {
         this._exitCode = exitCode;
         this._signalCode = signalCode;
-        
-        // Close streams
-        if (this.stdout) this.stdout.push(null);
-        if (this.stderr) this.stderr.push(null);
-        if (this.stdin) this.stdin.end();
-        
+
+        this.stdin.destroy();
         this.emit('exit', exitCode, signalCode);
-        this.emit('close', exitCode, signalCode);
+        process.nextTick(() => this._flushStdio());
+        this._maybeClose();
       });
     }
   }
@@ -130,151 +176,73 @@
   /**
    * Readable stream for process output.
    */
-  class ProcessReadableStream extends EventEmitter {
+  class ProcessReadableStream extends Readable {
     constructor(processId, type) {
       super();
       this._processId = processId;
       this._type = type;
-      this._flowing = false;
-      this._buffer = [];
-      this._ended = false;
-
-      this._startReading();
+      this._reading = false;
     }
 
-    _startReading() {
-      if (this._ended) return;
-
-      internal.read(this._processId, this._type, (err, data) => {
-        if (err || data === null) {
-          this._ended = true;
-          this.emit('end');
-          return;
-        }
-
-        const buf = Buffer.from(data, 'binary');
-        
-        if (this._flowing) {
-          this.emit('data', buf);
-        } else {
-          this._buffer.push(buf);
-        }
-
-        this._startReading();
-      });
-    }
-
-    read(size) {
-      if (this._buffer.length === 0) return null;
-      return this._buffer.shift();
-    }
-
-    push(data) {
-      if (data === null) {
-        this._ended = true;
-        this.emit('end');
+    _read() {
+      if (this._processId === null) {
+        this.push(null);
         return;
       }
-      this._buffer.push(data);
-      if (this._flowing) {
-        this.emit('data', data);
-      }
-    }
-
-    resume() {
-      this._flowing = true;
-      while (this._buffer.length > 0) {
-        this.emit('data', this._buffer.shift());
-      }
-      return this;
-    }
-
-    pause() {
-      this._flowing = false;
-      return this;
-    }
-
-    pipe(destination, options) {
-      this.on('data', (chunk) => destination.write(chunk));
-      this.on('end', () => {
-        if (!options || options.end !== false) {
-          destination.end();
-        }
+      if (this._reading) return;
+      this._reading = true;
+      internal.read(this._processId, this._type, (data) => {
+        this._reading = false;
+        if (this.destroyed) return;
+        this.push(data === null ? null : Buffer.from(data, 'base64'));
       });
-      this.resume();
-      return destination;
     }
 
-    setEncoding(encoding) {
-      return this;
+    _destroy(err, callback) {
+      if (this._processId !== null) internal.closeOutput(this._processId, this._type);
+      callback(err);
     }
   }
 
   /**
-   * Writable stream for process input.
+   * Writable stream for process input. The base class hands over one chunk at a time
+   * and calls _final only after the last one, so writes stay in order and all arrive
+   * before stdin closes.
    */
-  class ProcessWritableStream extends EventEmitter {
+  class ProcessWritableStream extends Writable {
     constructor(processId) {
       super();
       this._processId = processId;
-      this._ended = false;
-      this._writable = true;
     }
 
-    get writable() { return this._writable; }
-
-    write(chunk, encoding, callback) {
-      if (typeof encoding === 'function') {
-        callback = encoding;
-        encoding = undefined;
+    _write(chunk, encoding, callback) {
+      if (this._processId === null) {
+        callback(codedError(Error, 'ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed'));
+        return;
       }
-
-      if (this._ended) {
-        if (callback) callback(new Error('Stream ended'));
-        return false;
-      }
-
-      const data = Buffer.isBuffer(chunk) ? chunk.toString('binary') : chunk;
-      
-      internal.write(this._processId, data, (err) => {
-        if (err) {
-          this.emit('error', new Error(err));
-          if (callback) callback(new Error(err));
-        } else {
-          this.emit('drain');
-          if (callback) callback();
+      internal.write(this._processId, chunk.toString('base64'), (message, code) => {
+        // As in Node, a write handed over before the stream closed reports no error.
+        if (!message || this.destroyed) {
+          callback();
+          return;
         }
+        const err = new Error(message);
+        if (code) {
+          err.code = code;
+          err.syscall = 'write';
+        }
+        callback(err);
       });
-
-      return true;
     }
 
-    end(chunk, encoding, callback) {
-      if (typeof chunk === 'function') {
-        callback = chunk;
-        chunk = undefined;
-      }
-
-      if (chunk) {
-        this.write(chunk, encoding);
-      }
-
-      this._ended = true;
-      this._writable = false;
-
-      internal.closeStdin(this._processId);
-
-      if (callback) this.once('finish', callback);
-      this.emit('finish');
-
-      return this;
+    _final(callback) {
+      if (this._processId !== null) internal.closeStdin(this._processId);
+      callback();
     }
 
-    destroy(error) {
-      this._ended = true;
-      this._writable = false;
-      if (error) this.emit('error', error);
-      return this;
+    _destroy(err, callback) {
+      if (this._processId !== null) internal.closeStdin(this._processId);
+      callback(err);
     }
   }
 
@@ -323,22 +291,24 @@
       detached: options.detached || false
     };
 
-    child._id = internal.spawn(command, args, JSON.stringify(spawnOptions), (err, pid) => {
-      if (err) {
-        process.nextTick(() => {
-          child.emit('error', new Error(err));
-        });
-        return;
-      }
-
-      child._pid = pid;
+    const started = internal.spawn(command, args, JSON.stringify(spawnOptions));
+    if (started.error) {
+      child._exitCode = -1;
       child._setupStreams();
-      child._waitForExit();
-
+      child.stdin.destroy();
       process.nextTick(() => {
-        child.emit('spawn');
+        child.emit('error', new Error(started.error));
+        child._flushStdio();
+        child._maybeClose();
       });
-    });
+      return child;
+    }
+
+    child._id = started.id;
+    child._pid = started.pid;
+    child._setupStreams();
+    child._waitForExit();
+    process.nextTick(() => child.emit('spawn'));
 
     return child;
   }
@@ -359,7 +329,7 @@
       env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
       timeout: options.timeout || 0,
       maxBuffer: options.maxBuffer || 1024 * 1024,
-      encoding: options.encoding || 'utf8'
+      encoding: outputEncoding(options, 'utf8')
     };
 
     const child = new ChildProcess();
@@ -368,11 +338,8 @@
 
     internal.exec(command, JSON.stringify(execOptions), (err, stdout, stderr, exitCode) => {
       if (callback) {
-        const stdoutBuf = stdout ? Buffer.from(stdout, 'binary') : Buffer.alloc(0);
-        const stderrBuf = stderr ? Buffer.from(stderr, 'binary') : Buffer.alloc(0);
-
-        const stdoutStr = execOptions.encoding === 'buffer' ? stdoutBuf : stdoutBuf.toString(execOptions.encoding);
-        const stderrStr = execOptions.encoding === 'buffer' ? stderrBuf : stderrBuf.toString(execOptions.encoding);
+        const stdoutStr = decodeOutput(stdout, execOptions.encoding);
+        const stderrStr = decodeOutput(stderr, execOptions.encoding);
 
         if (err) {
           const error = new Error(err);
@@ -426,7 +393,7 @@
       env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
       timeout: options.timeout || 0,
       maxBuffer: options.maxBuffer || 1024 * 1024,
-      encoding: options.encoding || 'utf8'
+      encoding: outputEncoding(options, 'utf8')
     };
 
     const child = new ChildProcess();
@@ -435,11 +402,8 @@
 
     internal.execFile(file, args, JSON.stringify(execOptions), (err, stdout, stderr, exitCode) => {
       if (callback) {
-        const stdoutBuf = stdout ? Buffer.from(stdout, 'binary') : Buffer.alloc(0);
-        const stderrBuf = stderr ? Buffer.from(stderr, 'binary') : Buffer.alloc(0);
-
-        const stdoutStr = execOptions.encoding === 'buffer' ? stdoutBuf : stdoutBuf.toString(execOptions.encoding);
-        const stderrStr = execOptions.encoding === 'buffer' ? stderrBuf : stderrBuf.toString(execOptions.encoding);
+        const stdoutStr = decodeOutput(stdout, execOptions.encoding);
+        const stderrStr = decodeOutput(stderr, execOptions.encoding);
 
         if (err) {
           const error = new Error(err);
@@ -497,7 +461,8 @@
       cwd: options.cwd || process.cwd(),
       env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
       timeout: options.timeout || 0,
-      encoding: options.encoding || 'utf8'
+      encoding: outputEncoding(options, 'buffer'),
+      input: encodeInput(options)
     };
 
     const result = internal.execSync(command, JSON.stringify(execOptions));
@@ -505,17 +470,12 @@
     if (result.error) {
       const error = new Error(result.error);
       error.status = result.exitCode;
-      error.stdout = result.stdout ? Buffer.from(result.stdout, 'binary') : Buffer.alloc(0);
-      error.stderr = result.stderr ? Buffer.from(result.stderr, 'binary') : Buffer.alloc(0);
+      error.stdout = decodeOutput(result.stdout, execOptions.encoding);
+      error.stderr = decodeOutput(result.stderr, execOptions.encoding);
       throw error;
     }
 
-    const stdout = result.stdout ? Buffer.from(result.stdout, 'binary') : Buffer.alloc(0);
-    
-    if (execOptions.encoding === 'buffer') {
-      return stdout;
-    }
-    return stdout.toString(execOptions.encoding);
+    return decodeOutput(result.stdout, execOptions.encoding);
   }
 
   /**
@@ -533,7 +493,8 @@
       cwd: options.cwd || process.cwd(),
       env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
       timeout: options.timeout || 0,
-      encoding: options.encoding || 'utf8'
+      encoding: outputEncoding(options, 'buffer'),
+      input: encodeInput(options)
     };
 
     const result = internal.execFileSync(file, args, JSON.stringify(execOptions));
@@ -541,17 +502,12 @@
     if (result.error) {
       const error = new Error(result.error);
       error.status = result.exitCode;
-      error.stdout = result.stdout ? Buffer.from(result.stdout, 'binary') : Buffer.alloc(0);
-      error.stderr = result.stderr ? Buffer.from(result.stderr, 'binary') : Buffer.alloc(0);
+      error.stdout = decodeOutput(result.stdout, execOptions.encoding);
+      error.stderr = decodeOutput(result.stderr, execOptions.encoding);
       throw error;
     }
 
-    const stdout = result.stdout ? Buffer.from(result.stdout, 'binary') : Buffer.alloc(0);
-
-    if (execOptions.encoding === 'buffer') {
-      return stdout;
-    }
-    return stdout.toString(execOptions.encoding);
+    return decodeOutput(result.stdout, execOptions.encoding);
   }
 
   /**
@@ -570,16 +526,19 @@
       env: options.env ? Object.entries(options.env).map(([k, v]) => `${k}=${v}`) : null,
       shell: options.shell || false,
       timeout: options.timeout || 0,
-      encoding: options.encoding || 'utf8'
+      encoding: outputEncoding(options, 'buffer'),
+      input: encodeInput(options)
     };
 
     const result = internal.spawnSync(command, args, JSON.stringify(spawnOptions));
+    const stdout = decodeOutput(result.stdout, spawnOptions.encoding);
+    const stderr = decodeOutput(result.stderr, spawnOptions.encoding);
 
     return {
       pid: result.pid || 0,
-      output: [null, result.stdout, result.stderr],
-      stdout: result.stdout ? Buffer.from(result.stdout, 'binary') : Buffer.alloc(0),
-      stderr: result.stderr ? Buffer.from(result.stderr, 'binary') : Buffer.alloc(0),
+      output: [null, stdout, stderr],
+      stdout,
+      stderr,
       status: result.exitCode,
       signal: result.signal || null,
       error: result.error ? new Error(result.error) : undefined
