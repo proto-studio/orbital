@@ -155,8 +155,15 @@ jobs:
           # that push leaves the glue alone, so the pin stays. `gh run view` resolves
           # the id within this repo (the checkout's remote), so a run id from another
           # repo 404s here; we additionally assert the run url is under this repo.
+          # Only the workflows that call glue.yml can pin. Any other workflow could upload
+          # artifacts and a matching job name, and then be deleted before the merge.
+          run_path="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .path)"
+          case "$run_path" in
+            .github/workflows/update-v8.yml|.github/workflows/ci.yml) ;;
+            *) echo "ERROR: run $RUN_ID comes from $run_path, which does not pin artifacts" >&2; exit 1 ;;
+          esac
           run_json="$(gh run view "$RUN_ID" --json jobs,headSha,url)"
-          concl="$(echo "$run_json" | jq -r '[.jobs[] | select(.name | endswith("Pin artifacts in manifest"))][0].conclusion')"
+          concl="$(echo "$run_json" | jq -r '[.jobs[] | select(.name == "Glue / Pin artifacts in manifest")][0].conclusion')"
           head_sha="$(echo "$run_json" | jq -r .headSha)"
           run_url="$(echo "$run_json" | jq -r .url)"
           echo "Pin job: $concl, head: $head_sha, run: $run_url"

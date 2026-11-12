@@ -230,10 +230,18 @@ jobs:
           [ "$(bash scripts/glue-inputs.sh)" = "$(jq -r .glue_inputs "$f")" ] \
             || rebuild "the glue's inputs changed."
           run_id="$(jq -r .source_run_id "$f")"
-          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '"\(.event) \(.head_sha)"')" \
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+            --jq '"\(.path) \(.head_repository.full_name) \(.event) \(.head_sha)"')" \
             || rebuild "couldn't look up run $run_id."
-          event="${run% *}"
-          run_sha="${run#* }"
+          read -r run_path run_repo event run_sha <<< "$run"
+          # Only a run of this workflow counts. Another workflow could upload artifacts
+          # with the same names and then be deleted, leaving nothing here to compare.
+          [ "$run_path" = .github/workflows/update-v8.yml ] && [ "$run_repo" = "$GITHUB_REPOSITORY" ] \
+            || rebuild "run $run_id is not an Update V8 run in this repository ($run_path in $run_repo)."
+          pinned="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+            --jq '.jobs[] | select(.name == "Glue / Pin artifacts in manifest") | .conclusion')" \
+            || rebuild "couldn't list the jobs of run $run_id."
+          [ "$pinned" = success ] || rebuild "run $run_id did not pin its artifacts."
           git diff --quiet "$run_sha" HEAD -- .github/workflows/update-v8.yml .github/workflows/glue.yml .github/actions \
             || rebuild "the workflows that build the artifacts changed since $run_sha, or that commit is missing."
           # A scheduled or dispatched run starts on main, then builds the branch it opens,
