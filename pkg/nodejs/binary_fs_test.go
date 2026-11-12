@@ -146,7 +146,10 @@ const fd = fs.openSync('/fd', 'w');
 fs.writeSync(fd, bin);
 fs.writeSync(fd, 'X\0');
 fs.closeSync(fd);
-fs.writeFile('/async', bin, (err) => {
+fs.writeFile('/async', bin, async (err) => {
+  // Opening a file for writing without truncating it, then closing it, keeps its contents.
+  const handle = await require('fs/promises').open('/file', 'r+');
+  await handle.close();
   done({ err, read: fs.readFileSync('/file').toString('hex') });
 });`)
 	wantJSON(t, got, map[string]any{"err": nil, "read": "410042ff0043410042ff0043"})

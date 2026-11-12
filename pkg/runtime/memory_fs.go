@@ -324,14 +324,28 @@ func (f *memFileHandle) Write(p []byte) (n int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	if len(p) == 0 {
+		// An empty write changes nothing, even at an offset past the end.
+		return 0, nil
+	}
 	if f.append {
 		f.pos = int64(len(mf.data))
 	}
 	end := f.pos + int64(len(p))
 	if end > int64(len(mf.data)) {
-		grown := make([]byte, end)
-		copy(grown, mf.data)
-		mf.data = grown
+		if end > int64(cap(mf.data)) {
+			// Grow geometrically, as append does, so writing a file in chunks costs
+			// linear time rather than copying the whole file on every write.
+			grown := make([]byte, len(mf.data), max(end, 2*int64(cap(mf.data))))
+			copy(grown, mf.data)
+			mf.data = grown
+		}
+		// Bytes between the old end and the offset read as zeros, as in a sparse file.
+		old := int64(len(mf.data))
+		mf.data = mf.data[:end]
+		if old < f.pos {
+			clear(mf.data[old:f.pos])
+		}
 	}
 	copy(mf.data[f.pos:], p)
 	f.pos = end

@@ -54,6 +54,14 @@
   },
   "nul_path": {
     "basename": "n\u0000m.t",
+    "basenameSuffix": [
+      "a\u0000",
+      "a",
+      "a.",
+      "aaa",
+      "",
+      ""
+    ],
     "extname": ".t\u0000x",
     "join": "a/n\u0000m",
     "parse": {
@@ -191,6 +199,7 @@
       "syscall": "open"
     }
   },
+  "sync_flags": "onetwo",
   "writeFileSync_bad_flag": {
     "error": {
       "code": "ERR_INVALID_ARG_VALUE",
