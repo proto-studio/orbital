@@ -1,0 +1,240 @@
+{
+  "after_wx": "one",
+  "appendFileSync_flag_ax_existing": {
+    "error": {
+      "code": "EEXIST",
+      "errno": -17,
+      "isError": true,
+      "message": "EEXIST: file already exists, open '\u003cdir\u003e/excl'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/excl",
+      "syscall": "open"
+    }
+  },
+  "appendFileSync_flag_w": "two",
+  "appendFileSync_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "mode_600": "600",
+  "mode_append": "600",
+  "mode_string": "640",
+  "nul_appendFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_existsSync": false,
+  "nul_left_file": false,
+  "nul_mkdirSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_openSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_path": {
+    "basename": "n\u0000m.t",
+    "extname": ".t\u0000x",
+    "join": "a/n\u0000m",
+    "parse": {
+      "base": "a\u0000b.c",
+      "dir": "/x",
+      "ext": ".c",
+      "name": "a\u0000b",
+      "root": "/"
+    },
+    "relative": "n\u0000m"
+  },
+  "nul_promises_readFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_promises_writeFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_readFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_readFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_renameSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'newPath' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_statSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_unlinkSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_writeFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_writeFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "promises_flag_a": "onetwothree",
+  "promises_writeFile_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "readFileSync_directory": {
+    "error": {
+      "code": "EISDIR",
+      "errno": -21,
+      "isError": true,
+      "message": "EISDIR: illegal operation on a directory, read",
+      "name": "Error",
+      "syscall": "read"
+    }
+  },
+  "readFileSync_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nothing",
+      "syscall": "open"
+    }
+  },
+  "readFile_directory": {
+    "error": {
+      "code": "EISDIR",
+      "errno": -21,
+      "isError": true,
+      "message": "EISDIR: illegal operation on a directory, read",
+      "name": "Error",
+      "syscall": "read"
+    }
+  },
+  "readFile_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nothing",
+      "syscall": "open"
+    }
+  },
+  "writeFileSync_bad_flag": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'flags' is invalid. Received 'zz'",
+      "name": "TypeError"
+    }
+  },
+  "writeFileSync_flag_a": "onetwo",
+  "writeFileSync_flag_wx_existing": {
+    "error": {
+      "code": "EEXIST",
+      "errno": -17,
+      "isError": true,
+      "message": "EEXIST: file already exists, open '\u003cdir\u003e/excl'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/excl",
+      "syscall": "open"
+    }
+  },
+  "writeFileSync_flag_wx_new": {
+    "value": null
+  },
+  "writeFileSync_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "writeFile_flag_a": "onetwo",
+  "writeFile_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  }
+}
