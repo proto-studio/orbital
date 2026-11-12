@@ -250,3 +250,34 @@ func TestURL_Name(t *testing.T) {
 		t.Errorf("Name() should return 'url', got %q", u.Name())
 	}
 }
+
+// The legacy parser keeps an IPv6 literal's brackets in host and drops them from hostname,
+// as Node does. It used to treat the bracket as an invalid hostname character and move the
+// whole host into the pathname, so http clients sent "GET [::1]/x" to localhost.
+func TestURL_LegacyParseIPv6(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	// Expected values are what Node 20.18.1 returns for the same calls.
+	result, err := rt.RunScript(`
+		const url = globalThis.__url_module;
+		const parts = (u) => { const p = url.parse(u, false, true); return [p.host, p.hostname, p.port, p.pathname, p.path]; };
+		JSON.stringify([
+			parts('http://[::1]:8080/x?a=1'),
+			parts('http://[::1]/x'),
+			parts('https://user:pw@[2001:db8::1]:443/p#h'),
+			parts('//[::1]:9/x'),
+			url.format({ protocol: 'http:', hostname: '::1', port: 80, pathname: '/x' }),
+			url.format(url.parse('http://[::1]:8080/x')),
+		]);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["[::1]:8080","::1","8080","/x","/x?a=1"],["[::1]","::1",null,"/x","/x"],` +
+		`["[2001:db8::1]:443","2001:db8::1","443","/p","/p"],["[::1]:9","::1","9","/x","/x"],` +
+		`"http://[::1]:80/x","http://[::1]:8080/x"]`
+	if got := result.String(); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
