@@ -207,7 +207,7 @@ func TestBinaryStdio_MatchesNode(t *testing.T) {
 	if !capture {
 		want = readExpected(t, "testdata/binary_stdio.node.json")
 	}
-	for _, name := range []string{"binary_stdio", "binary_stdio_large", "binary_stdio_exit"} {
+	for _, name := range []string{"binary_stdio", "binary_stdio_large", "binary_stdio_exit", "small_diffs"} {
 		path := filepath.Join("testdata", name+".js")
 		if capture {
 			expected[name] = runForStdio(t, exec.Command("node", path))
