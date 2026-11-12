@@ -45,6 +45,11 @@ type childProc struct {
 	// A process may exit before its output has been read, so its entry stays until
 	// it has exited and JavaScript has closed every reader. Guarded by mu.
 	exited bool
+
+	// held says the wait for this process keeps the event loop running, and unrefd that
+	// child.unref() asked it not to. Guarded by mu.
+	held   bool
+	unrefd bool
 }
 
 // New creates a new ChildProcess module.
@@ -235,6 +240,7 @@ type spawnOptions struct {
 	Env      []string     `json:"env"`
 	Shell    bool         `json:"shell"`
 	Detached bool         `json:"detached"`
+	Argv0    string       `json:"argv0"`
 	Stdio    []stdioEntry `json:"stdio"`
 
 	// spawnSync only. JavaScript watches the time and the buffers of an asynchronous
@@ -294,6 +300,7 @@ func (c *ChildProcess) start(command string, cmdArgs []string, opts *spawnOption
 		Env:      opts.Env,
 		Shell:    opts.Shell,
 		Detached: opts.Detached,
+		Argv0:    opts.Argv0,
 	}
 	for _, entry := range opts.Stdio {
 		switch entry.Type {
@@ -568,21 +575,29 @@ func (c *ChildProcess) waitFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	c.rt.EventLoop().AddPendingWork()
+	c.mu.Lock()
+	if !proc.unrefd && !proc.held {
+		c.rt.EventLoop().AddPendingWork()
+		proc.held = true
+	}
+	c.mu.Unlock()
 	go func() {
-		defer c.rt.EventLoop().DonePendingWork()
-
 		exitCode, err := proc.proc.Wait()
 		signal := proc.proc.ExitSignal()
 
 		c.mu.Lock()
 		proc.exited = true
+		held := proc.held
+		proc.held = false
 		c.releaseIfDone(id, proc)
 		c.mu.Unlock()
 
 		c.deliver(func(ctx *v8.Context) {
 			c.rt.MakeCallback(callback, ctx.Undefined(), jsError(ctx, err), ctx.NewNumber(float64(exitCode)), ctx.NewNumber(float64(signal)))
 		})
+		if held {
+			c.rt.EventLoop().DonePendingWork()
+		}
 	}()
 
 	return nil
@@ -656,6 +671,7 @@ func (c *ChildProcess) closeOutputFunc(info *v8.FunctionCallbackInfo) *v8.Value 
 	}
 	reader, open := proc.readers[fd]
 	delete(proc.readers, fd)
+	c.updateHold(proc)
 	c.releaseIfDone(id, proc)
 	c.mu.Unlock()
 
@@ -749,14 +765,44 @@ func (c *ChildProcess) closeInputFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// refFunc handles ref() calls from JavaScript (no-op for now).
+// refFunc backs child.ref(): waiting for the child keeps the event loop running again.
 func (c *ChildProcess) refFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	// No-op for now
+	c.setRef(info, true)
 	return nil
 }
 
-// unrefFunc handles unref() calls from JavaScript (no-op for now).
+// unrefFunc backs child.unref(): the event loop can end while the child still runs.
 func (c *ChildProcess) unrefFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	// No-op for now
+	c.setRef(info, false)
 	return nil
+}
+
+func (c *ChildProcess) setRef(info *v8.FunctionCallbackInfo, ref bool) {
+	args := info.Args()
+	if len(args) < 1 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	proc, ok := c.processes[int64(args[0].Integer())]
+	if !ok || proc.exited {
+		return
+	}
+	proc.unrefd = !ref
+	c.updateHold(proc)
+}
+
+// updateHold makes the wait for proc keep the event loop running, or not. As in Node, an
+// unref'd child still holds the loop while its output pipes are open, because Node reads
+// them from the start. The caller holds mu.
+func (c *ChildProcess) updateHold(proc *childProc) {
+	want := !proc.exited && (!proc.unrefd || len(proc.readers) > 0)
+	switch {
+	case want && !proc.held:
+		c.rt.EventLoop().AddPendingWork()
+		proc.held = true
+	case !want && proc.held:
+		proc.held = false
+		c.rt.EventLoop().DonePendingWork()
+	}
 }

@@ -150,7 +150,17 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		}
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", shellCmd)
 	} else {
-		cmd = exec.CommandContext(ctx, command, args...)
+		// As in Node, a bare name is looked up on the PATH the child is given, if any.
+		path := command
+		if pathList, ok := envValue(options.Env, "PATH"); ok && !strings.Contains(command, "/") {
+			resolved, err := lookPathIn(command, pathList)
+			if err != nil {
+				return nil, err
+			}
+			path = resolved
+		}
+		cmd = exec.CommandContext(ctx, path, args...)
+		cmd.Args[0] = command
 		if options.Argv0 != "" {
 			cmd.Args[0] = options.Argv0
 		}
@@ -158,6 +168,11 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 
 	if options.Cwd != "" {
 		cmd.Dir = options.Cwd
+	}
+
+	// Node makes a detached child the leader of a new session and process group.
+	if options.Detached {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	}
 
 	// A nil Env means the host's environment. An empty one means an empty environment.
@@ -168,6 +183,31 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 	}
 
 	return startProcess(cmd, options.Stdio)
+}
+
+// envValue returns the value of name in an environment list, and whether it is set.
+func envValue(env []string, name string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		if value, ok := strings.CutPrefix(env[i], name+"="); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+// lookPathIn finds an executable named file in the directories of pathList, as
+// exec.LookPath does with the process's own PATH.
+func lookPathIn(file, pathList string) (string, error) {
+	for _, dir := range filepath.SplitList(pathList) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, file)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
 }
 
 // startProcess connects a command's file descriptors as stdio asks and starts it.

@@ -238,8 +238,11 @@
       throw invalidArgType('options.shell', 'boolean or string', shell);
     }
 
+    if (options.argv0 !== undefined && options.argv0 !== null && typeof options.argv0 !== 'string') {
+      throw invalidArgType('options.argv0', 'string', options.argv0);
+    }
     let spawnfile = file;
-    let spawnargs = [file, ...args];
+    let spawnargs = [typeof options.argv0 === 'string' ? options.argv0 : file, ...args];
     let command = file;
     let nativeShell = false;
     if (shell) {
@@ -267,7 +270,8 @@
         cwd: cwd || process.cwd(),
         env,
         shell: nativeShell,
-        detached: !!options.detached
+        detached: !!options.detached,
+        argv0: !shell && typeof options.argv0 === 'string' ? options.argv0 : ''
       }
     };
   }
@@ -570,8 +574,52 @@
     child._setupStreams(stdio);
     child._waitForExit();
     process.nextTick(() => child.emit('spawn'));
+    watchTimeoutAndSignal(child, normalized.options);
 
     return child;
+  }
+
+  // spawn's timeout and signal options: either kills the child with killSignal, and an abort
+  // also emits an AbortError, as Node does.
+  function watchTimeoutAndSignal(child, options) {
+    validateTimeout(options.timeout);
+    const killSignal = sanitizeKillSignal(options.killSignal) || 'SIGTERM';
+    if (options.timeout > 0) {
+      let timeoutId = setTimeout(() => {
+        if (!timeoutId) return;
+        timeoutId = null;
+        try {
+          child.kill(killSignal);
+        } catch (err) {
+          child.emit('error', err);
+        }
+      }, options.timeout);
+      child.once('exit', () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = null;
+      });
+    }
+    const signal = options.signal;
+    if (signal !== undefined && signal !== null) {
+      if (typeof signal !== 'object' || !('aborted' in signal)) {
+        throw invalidArgType('options.signal', 'AbortSignal', signal);
+      }
+      const onAbort = () => {
+        if (child.kill(killSignal)) {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          err.code = 'ABORT_ERR';
+          if (signal.reason !== undefined) err.cause = signal.reason;
+          child.emit('error', err);
+        }
+      };
+      if (signal.aborted) {
+        process.nextTick(onAbort);
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true });
+        child.once('exit', () => signal.removeEventListener('abort', onAbort));
+      }
+    }
   }
 
   // The (file[, args][, options][, callback]) forms of execFile and execFileSync.
