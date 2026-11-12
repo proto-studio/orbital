@@ -76,6 +76,8 @@ done({
 		"wx":           "EEXIST",
 		"missing":      "ENOENT",
 		"missingWrite": "ENOENT",
+	})
+}
 
 // fullFS is a MemoryFilesystem whose files are full: every write fails with ENOSPC.
 type fullFS struct{ *runtime.MemoryFilesystem }
