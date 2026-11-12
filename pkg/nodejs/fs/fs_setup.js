@@ -368,6 +368,164 @@
     };
   }
 
+  // fs.createWriteStream — a Writable over a descriptor from openSync. Writes go through
+  // writeSync, so they reach the file in order and keep every byte.
+  let _WriteStream = null;
+  function writeStreamClass() {
+    if (_WriteStream) return _WriteStream;
+    const streamMod = globalThis.__stream_module;
+    if (!streamMod || !streamMod.Writable) return null;
+
+    _WriteStream = class WriteStream extends streamMod.Writable {
+      constructor(path, options) {
+        if (typeof options === 'string') options = { encoding: options };
+        options = options || {};
+        super({ highWaterMark: options.highWaterMark, decodeStrings: true, emitClose: options.emitClose !== false });
+        this.path = options.fd != null ? undefined : path;
+        this.flags = options.flags === undefined ? 'w' : options.flags;
+        this.mode = options.mode === undefined ? 0o666 : options.mode;
+        this.start = options.start;
+        this.pos = typeof options.start === 'number' ? options.start : undefined;
+        this.autoClose = options.autoClose !== false;
+        this.bytesWritten = 0;
+        this.fd = null;
+        this.pending = true;
+        if (options.encoding) this.setDefaultEncoding(options.encoding);
+
+        if (options.fd != null) {
+          this.fd = options.fd;
+          this.pending = false;
+          return;
+        }
+        // Node opens asynchronously, so an open error arrives as an 'error' event.
+        let fd;
+        try {
+          fd = fs.openSync(path, this.flags, this.mode);
+        } catch (e) {
+          process.nextTick(() => this.destroy(e));
+          return;
+        }
+        this.fd = fd;
+        process.nextTick(() => {
+          this.pending = false;
+          if (this.destroyed) return;
+          this.emit('open', fd);
+          this.emit('ready');
+        });
+      }
+
+      _write(chunk, encoding, callback) {
+        try {
+          const n = fs.writeSync(this.fd, chunk, 0, chunk.length, this.pos === undefined ? null : this.pos);
+          if (this.pos !== undefined) this.pos += n;
+          this.bytesWritten += n;
+          callback();
+        } catch (e) {
+          callback(e);
+        }
+      }
+
+      _destroy(err, callback) {
+        if (this.fd === null || !this.autoClose) {
+          callback(err);
+          return;
+        }
+        const fd = this.fd;
+        this.fd = null;
+        try {
+          fs.closeSync(fd);
+        } catch (e) {
+          if (!err) err = e;
+        }
+        callback(err);
+      }
+
+      close(cb) {
+        if (typeof cb === 'function') {
+          if (this.closed) process.nextTick(cb);
+          else this.once('close', cb);
+        }
+        if (!this.writableEnded) this.end();
+        else if (!this.destroyed) this.destroy();
+      }
+    };
+    return _WriteStream;
+  }
+  if (typeof fs.createWriteStream !== 'function') {
+    Object.defineProperty(fs, 'WriteStream', {
+      configurable: true,
+      enumerable: true,
+      get() { return writeStreamClass(); }
+    });
+    fs.createWriteStream = function (path, options) {
+      const C = writeStreamClass();
+      if (!C) throw new Error('fs.createWriteStream requires the stream module');
+      return new C(path, options);
+    };
+  }
+
+  // Callback forms of the synchronous calls. They run the synchronous call on this thread and
+  // call back on the next tick, as Node's always call back asynchronously.
+  function callbackForm(sync, shape) {
+    return function () {
+      const args = Array.prototype.slice.call(arguments);
+      const callback = args.pop();
+      checkCallback(callback);
+      let result;
+      try {
+        result = sync.apply(fs, args);
+      } catch (e) {
+        process.nextTick(callback, e);
+        return;
+      }
+      const values = shape ? shape(result, args) : (result === undefined ? [] : [result]);
+      process.nextTick(() => callback(null, ...values));
+    };
+  }
+  const CALLBACK_FORMS = {
+    appendFile: 'appendFileSync', open: 'openSync', close: 'closeSync', fstat: 'fstatSync',
+    mkdir: 'mkdirSync', rmdir: 'rmdirSync', unlink: 'unlinkSync', rename: 'renameSync',
+    readdir: 'readdirSync', copyFile: 'copyFileSync', realpath: 'realpathSync'
+  };
+  for (const name of Object.keys(CALLBACK_FORMS)) {
+    const sync = fs[CALLBACK_FORMS[name]];
+    if (typeof fs[name] !== 'function' && typeof sync === 'function') fs[name] = callbackForm(sync);
+  }
+  if (typeof fs.appendFile === 'function') {
+    // appendFile(path, data[, options], callback): the options are optional.
+    const appendFile = fs.appendFile;
+    fs.appendFile = function (path, data, options, callback) {
+      if (typeof options === 'function') return appendFile(path, data, undefined, options);
+      return appendFile(path, data, options, callback);
+    };
+  }
+  // write calls back with (err, bytesWritten, buffer or string); read with (err, bytesRead, buffer).
+  if (typeof fs.write !== 'function') {
+    fs.write = callbackForm(fs.writeSync, (n, args) => [n, args[1]]);
+  }
+  if (typeof fs.read !== 'function') {
+    const read = callbackForm(fs.readSync, (n, args) => [n, args[1]]);
+    fs.read = function (fd, buffer, offset, length, position, callback) {
+      // read(fd, callback) and read(fd, options, callback) read into a new 16 KiB buffer.
+      if (typeof buffer === 'function' || (buffer && !ArrayBuffer.isView(buffer) && typeof offset === 'function')) {
+        const options = typeof buffer === 'function' ? {} : buffer;
+        callback = typeof buffer === 'function' ? buffer : offset;
+        const target = options.buffer || Buffer.alloc(16384);
+        return read(fd, target, options.offset || 0, options.length === undefined ? target.byteLength - (options.offset || 0) : options.length,
+          options.position === undefined ? null : options.position, callback);
+      }
+      return read.apply(this, arguments);
+    };
+  }
+
+  if (!fs.constants) {
+    fs.constants = {
+      F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+      O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+      COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4
+    };
+  }
+
   // A path reaches the filesystem as a C string, which ends at the first NUL, so 'a\0b' would
   // name the file 'a'. Node refuses such paths everywhere, before touching the disk.
   function quoted(value) {

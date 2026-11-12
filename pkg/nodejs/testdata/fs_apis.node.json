@@ -1,0 +1,111 @@
+{
+  "appendFile_missing": {
+    "err": {
+      "code": "ENOENT",
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/x'",
+      "syscall": "open"
+    },
+    "values": []
+  },
+  "appendFile_new": {
+    "err": null,
+    "values": []
+  },
+  "appendFile_options": {
+    "err": null,
+    "values": []
+  },
+  "callback_is_async": true,
+  "close": {
+    "err": null,
+    "values": []
+  },
+  "constants": {
+    "F_OK": 0,
+    "R_OK": 4,
+    "W_OK": 2,
+    "X_OK": 1
+  },
+  "file:fd.bin": "0203686579",
+  "file:piped.bin": "4100ff7465787400656e64",
+  "file:start.txt": "616258595a66676821",
+  "file:stream.bin": "4100ff7465787400656e64",
+  "mkdir": {
+    "err": null,
+    "values": []
+  },
+  "open": {
+    "err": null,
+    "isNumber": true
+  },
+  "open_missing": {
+    "err": {
+      "code": "ENOENT",
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "syscall": "open"
+    },
+    "values": []
+  },
+  "promises_same": true,
+  "read": {
+    "bytes": 5,
+    "data": "020368657900",
+    "err": null,
+    "same": true
+  },
+  "readdir": [
+    "renamed.txt"
+  ],
+  "rename": {
+    "err": null,
+    "values": []
+  },
+  "types": [
+    "createWriteStream:function",
+    "appendFile:function",
+    "write:function",
+    "read:function",
+    "open:function",
+    "close:function",
+    "mkdir:function",
+    "readdir:function"
+  ],
+  "unlink": {
+    "err": null,
+    "values": []
+  },
+  "write_buffer": {
+    "buffer": true,
+    "bytes": 2,
+    "err": null
+  },
+  "write_string": {
+    "bytes": 3,
+    "err": null,
+    "string": "hey"
+  },
+  "ws_bytesWritten": 11,
+  "ws_events": [
+    "open",
+    "ready",
+    "finish",
+    "close"
+  ],
+  "ws_instance": true,
+  "ws_missing_dir": [
+    "error ENOENT",
+    "close"
+  ],
+  "ws_path": "\u003cdir\u003e/stream.bin",
+  "ws_pending": true,
+  "ws_start": {
+    "events": [
+      "open",
+      "ready",
+      "finish",
+      "close"
+    ],
+    "written": 3
+  },
+  "ws_write_returns": true
+}

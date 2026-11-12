@@ -386,5 +386,8 @@
 
   // Export
   global.__fs_promises_module = fsPromises;
+  if (fs && !fs.promises) {
+    Object.defineProperty(fs, 'promises', { configurable: true, enumerable: true, value: fsPromises });
+  }
 
 })(globalThis);

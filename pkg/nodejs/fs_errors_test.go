@@ -76,3 +76,32 @@ done({
 		"missingWrite": "ENOENT",
 	})
 }
+
+// fs.createWriteStream and the callback forms behave as in Node, and leave the same files.
+func TestFSAPIs_MatchesNode(t *testing.T) {
+	const scriptPath, expectedPath = "testdata/fs_apis.js", "testdata/fs_apis.node.json"
+	dir := t.TempDir()
+
+	if captureFromNode(t) {
+		output, err := exec.Command("node", scriptPath, dir).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		filesOnDisk(t, dir, results)
+		writeExpected(t, expectedPath, results)
+		return
+	}
+
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &runtime.Config{Timeout: 60 * time.Second}
+	got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", dir, script))
+	filesOnDisk(t, dir, got)
+	wantJSON(t, got, readExpected(t, expectedPath))
+}

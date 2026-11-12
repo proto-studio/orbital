@@ -161,7 +161,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   rather than per address.
 - **`dgram.getRecvBufferSize` and `getSendBufferSize`** report the size last set, or a default,
   rather than asking the OS.
-- **`fs.createWriteStream` does not exist,** so a stream cannot be piped to a file.
+- **`fs` callback calls run synchronously.** `fs.appendFile`, `open`, `write`, `read`, `mkdir`
+  and the other callback forms, and `fs.createWriteStream`'s writes, do their work on the
+  JavaScript thread and call back on the next tick. Only `readFile`, `writeFile`, `stat`,
+  `access` and read streams run off the thread.
+- **Some `fs` calls are still missing,** including `rm`, `rmSync`, `accessSync`, `truncate`,
+  `ftruncate`, `fsync`, `chmod`, `utimes`, `mkdtemp`, and the `fs.Stats` and `fs.Dirent` classes.
 
 ## Node features found missing during development
 
