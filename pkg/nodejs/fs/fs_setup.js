@@ -108,6 +108,7 @@
       e.code = result.code;
       e.syscall = result.syscall;
       e.path = result.path;
+      if (result.dest !== undefined) e.dest = result.dest;
       throw e;
     }
     return result;
@@ -136,6 +137,16 @@
   fs.openSync = function () {
     return check(_openSync.apply(this, arguments));
   };
+
+  // These calls return a failure description too.
+  for (const name of ['mkdirSync', 'rmdirSync', 'unlinkSync', 'readdirSync', 'renameSync', 'copyFileSync']) {
+    const native = fs[name];
+    if (typeof native === 'function') {
+      fs[name] = function () {
+        return check(native.apply(this, arguments));
+      };
+    }
+  }
 
   const _readFileSync = fs.readFileSync;
   fs.readFileSync = function (p, options) {
@@ -425,7 +436,7 @@
       }
 
       _destroy(err, callback) {
-        if (this.fd === null || !this.autoClose) {
+        if (this.fd === null || (!this.autoClose && !this._closeRequested)) {
           callback(err);
           return;
         }
@@ -439,11 +450,13 @@
         callback(err);
       }
 
+      // An explicit close closes the descriptor even with autoClose off, as in Node.
       close(cb) {
         if (typeof cb === 'function') {
           if (this.closed) process.nextTick(cb);
           else this.once('close', cb);
         }
+        this._closeRequested = true;
         if (!this.writableEnded) this.end();
         else if (!this.destroyed) this.destroy();
       }
@@ -465,14 +478,16 @@
 
   // Callback forms of the synchronous calls. They run the synchronous call on this thread and
   // call back on the next tick, as Node's always call back asynchronously.
-  function callbackForm(sync, shape) {
+  // The synchronous function is looked up on each call, so the checks wrapped around it
+  // later, such as refusing a path with a NUL, apply here too.
+  function callbackForm(syncName, shape) {
     return function () {
       const args = Array.prototype.slice.call(arguments);
       const callback = args.pop();
       checkCallback(callback);
       let result;
       try {
-        result = sync.apply(fs, args);
+        result = fs[syncName].apply(fs, args);
       } catch (e) {
         process.nextTick(callback, e);
         return;
@@ -488,7 +503,7 @@
   };
   for (const name of Object.keys(CALLBACK_FORMS)) {
     const sync = fs[CALLBACK_FORMS[name]];
-    if (typeof fs[name] !== 'function' && typeof sync === 'function') fs[name] = callbackForm(sync);
+    if (typeof fs[name] !== 'function' && typeof sync === 'function') fs[name] = callbackForm(CALLBACK_FORMS[name]);
   }
   if (typeof fs.appendFile === 'function') {
     // appendFile(path, data[, options], callback): the options are optional.
@@ -500,10 +515,10 @@
   }
   // write calls back with (err, bytesWritten, buffer or string); read with (err, bytesRead, buffer).
   if (typeof fs.write !== 'function') {
-    fs.write = callbackForm(fs.writeSync, (n, args) => [n, args[1]]);
+    fs.write = callbackForm('writeSync', (n, args) => [n, args[1]]);
   }
   if (typeof fs.read !== 'function') {
-    const read = callbackForm(fs.readSync, (n, args) => [n, args[1]]);
+    const read = callbackForm('readSync', (n, args) => [n, args[1]]);
     fs.read = function (fd, buffer, offset, length, position, callback) {
       // read(fd, callback) and read(fd, options, callback) read into a new 16 KiB buffer.
       if (typeof buffer === 'function' || (buffer && !ArrayBuffer.isView(buffer) && typeof offset === 'function')) {
@@ -528,7 +543,9 @@
   // A path reaches the filesystem as a C string, which ends at the first NUL, so 'a\0b' would
   // name the file 'a'. Node refuses such paths everywhere, before touching the disk.
   function quoted(value) {
-    return "'" + value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00') + "'";
+    const text = "'" + value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00') + "'";
+    // Node shortens a long value in this message to 128 characters.
+    return text.length > 128 ? text.slice(0, 128) + '...' : text;
   }
   function checkPath(value, name) {
     const text = typeof value === 'string' ? value
@@ -544,7 +561,9 @@
     readdirSync: ['path'], statSync: ['path'], lstatSync: ['path'], accessSync: ['path'],
     realpathSync: ['path'], renameSync: ['oldPath', 'newPath'], copyFileSync: ['src', 'dest'],
     readFile: ['path'], writeFile: ['path'], appendFile: ['path'], stat: ['path'], lstat: ['path'],
-    access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path']
+    access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path'],
+    mkdir: ['path'], rmdir: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
+    rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest']
   };
   for (const name of Object.keys(PATH_ARGUMENTS)) {
     const original = fs[name];

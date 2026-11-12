@@ -424,7 +424,7 @@ func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "mkdir", path)
 	}
 
 	return nil
@@ -454,7 +454,7 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "rmdir", path)
 	}
 
 	return nil
@@ -467,8 +467,9 @@ func (f *FS) unlinkSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Remove(args[0].String()); err != nil {
-		return nil
+	path := args[0].String()
+	if err := f.fs().Remove(path); err != nil {
+		return fsFailure(info.Context(), err, "unlink", path)
 	}
 
 	return nil
@@ -482,9 +483,10 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	entries, err := f.fs().ReadDir(args[0].String())
+	path := args[0].String()
+	entries, err := f.fs().ReadDir(path)
 	if err != nil {
-		return nil
+		return fsFailure(ctx, err, "scandir", path)
 	}
 
 	// Detect the { withFileTypes: true } option, which asks for Dirent-like
@@ -794,7 +796,7 @@ func (f *FS) renameSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err := f.fs().Rename(args[0].String(), args[1].String()); err != nil {
-		return nil
+		return fsFailureTo(info.Context(), err, "rename", args[0].String(), args[1].String())
 	}
 
 	return nil
@@ -808,7 +810,7 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err := f.fs().Copy(args[0].String(), args[1].String()); err != nil {
-		return nil
+		return fsFailureTo(info.Context(), err, "copyfile", args[0].String(), args[1].String())
 	}
 
 	return nil

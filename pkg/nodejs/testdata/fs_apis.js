@@ -95,6 +95,39 @@ async function testCallbacks() {
   results.callback_is_async = !(await order);
 }
 
+async function testFailures() {
+  const codeOf = (fn, ...args) => new Promise((resolve) => {
+    try {
+      fn(...args, (e) => resolve(e ? [e.code, e.syscall, local(e.path), local(e.dest), local(e.message)] : null));
+    } catch (e) {
+      resolve(['threw', e.code]);
+    }
+  });
+  fs.writeFileSync(file('victim'), 'keep');
+  results.fail_unlink_nul = await codeOf(fs.unlink, file('victim\0suffix'));
+  results.fail_victim_kept = fs.existsSync(file('victim'));
+  results.fail_rename_nul = await codeOf(fs.rename, file('victim'), file('a\0b'));
+  results.fail_copy_missing = await codeOf(fs.copyFile, file('nothing'), file('dest'));
+  fs.mkdirSync(file('dir'));
+  results.fail_mkdir_existing = await codeOf(fs.mkdir, file('dir'));
+  results.fail_rmdir_missing = await codeOf(fs.rmdir, file('nodir'));
+  results.fail_readdir_missing = await codeOf(fs.readdir, file('nodir'));
+  results.fail_rename_missing = await codeOf(fs.rename, file('nothing'), file('x'));
+  results.fail_unlink_missing = await codeOf(fs.unlink, file('nothing'));
+  try { fs.mkdirSync(file('dir')); } catch (e) { results.fail_mkdirSync = [e.code, e.syscall, local(e.message)]; }
+
+  // An explicit close closes the descriptor even with autoClose off.
+  const ws = fs.createWriteStream(file('autoclose'), { autoClose: false });
+  ws.write('x');
+  await new Promise((resolve) => ws.close(resolve));
+  try {
+    fs.closeSync(ws.fd);
+    results.fail_fd_still_open = true;
+  } catch (e) {
+    results.fail_fd_still_open = false;
+  }
+}
+
 function testExports() {
   results.promises_same = fs.promises === require('fs/promises');
   results.constants = { F_OK: fs.constants.F_OK, R_OK: fs.constants.R_OK, W_OK: fs.constants.W_OK, X_OK: fs.constants.X_OK };
@@ -105,6 +138,7 @@ function testExports() {
 async function main() {
   await testWriteStream();
   await testCallbacks();
+  await testFailures();
   testExports();
   return results;
 }

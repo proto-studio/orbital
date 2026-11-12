@@ -26,10 +26,69 @@
     "W_OK": 2,
     "X_OK": 1
   },
+  "fail_copy_missing": [
+    "ENOENT",
+    "copyfile",
+    "\u003cdir\u003e/nothing",
+    "\u003cdir\u003e/dest",
+    "ENOENT: no such file or directory, copyfile '\u003cdir\u003e/nothing' -\u003e '\u003cdir\u003e/dest'"
+  ],
+  "fail_fd_still_open": false,
+  "fail_mkdirSync": [
+    "EEXIST",
+    "mkdir",
+    "EEXIST: file already exists, mkdir '\u003cdir\u003e/dir'"
+  ],
+  "fail_mkdir_existing": [
+    "EEXIST",
+    "mkdir",
+    "\u003cdir\u003e/dir",
+    null,
+    "EEXIST: file already exists, mkdir '\u003cdir\u003e/dir'"
+  ],
+  "fail_readdir_missing": [
+    "ENOENT",
+    "scandir",
+    "\u003cdir\u003e/nodir",
+    null,
+    "ENOENT: no such file or directory, scandir '\u003cdir\u003e/nodir'"
+  ],
+  "fail_rename_missing": [
+    "ENOENT",
+    "rename",
+    "\u003cdir\u003e/nothing",
+    "\u003cdir\u003e/x",
+    "ENOENT: no such file or directory, rename '\u003cdir\u003e/nothing' -\u003e '\u003cdir\u003e/x'"
+  ],
+  "fail_rename_nul": [
+    "threw",
+    "ERR_INVALID_ARG_VALUE"
+  ],
+  "fail_rmdir_missing": [
+    "ENOENT",
+    "rmdir",
+    "\u003cdir\u003e/nodir",
+    null,
+    "ENOENT: no such file or directory, rmdir '\u003cdir\u003e/nodir'"
+  ],
+  "fail_unlink_missing": [
+    "ENOENT",
+    "unlink",
+    "\u003cdir\u003e/nothing",
+    null,
+    "ENOENT: no such file or directory, unlink '\u003cdir\u003e/nothing'"
+  ],
+  "fail_unlink_nul": [
+    "threw",
+    "ERR_INVALID_ARG_VALUE"
+  ],
+  "fail_victim_kept": true,
+  "file:autoclose": "78",
   "file:fd.bin": "0203686579",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
   "file:stream.bin": "4100ff7465787400656e64",
+  "file:victim": "6b656570",
   "mkdir": {
     "err": null,
     "values": []
