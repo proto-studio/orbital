@@ -1,0 +1,38 @@
+{
+  "abort_before": [
+    null,
+    "SIGTERM"
+  ],
+  "abort_before_errors": [
+    "ABORT_ERR"
+  ],
+  "abort_errors": [
+    [
+      "AbortError",
+      "ABORT_ERR",
+      "The operation was aborted"
+    ]
+  ],
+  "abort_exit": [
+    null,
+    "SIGTERM"
+  ],
+  "argv0": "custom0",
+  "attached_leader": false,
+  "detached_leader": true,
+  "env_path": "custom-path-tool",
+  "killSignal": [
+    null,
+    "SIGINT"
+  ],
+  "spawnargs": [
+    "named",
+    "x"
+  ],
+  "timeout": [
+    null,
+    "SIGTERM"
+  ],
+  "timeout_fast": true,
+  "unref_pid": true
+}
