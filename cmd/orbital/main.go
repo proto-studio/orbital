@@ -714,12 +714,18 @@ func runESModuleSource(source, origin string) error {
 func finalizeExit(rt *runtime.Runtime) {
 	codeVal, err := rt.RunScript(`(function () {
 		try {
-			if (typeof process !== 'undefined' && typeof process.emit === 'function') {
+			if (typeof process !== 'undefined' && typeof process.emit === 'function' && !process._exiting) {
+				process._exiting = true;
 				process.emit('exit', process.exitCode || 0);
 			}
 		} catch (e) {}
 		return (typeof process !== 'undefined' && process.exitCode) ? Number(process.exitCode) : 0;
 	})();`, "[exit]")
+	// An 'exit' listener can call process.exit, which ends the runtime with its own code.
+	if exit := rt.ExitError(); exit != nil {
+		rt.Dispose()
+		os.Exit(exit.Code)
+	}
 	if err != nil || codeVal == nil {
 		return
 	}

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"errors"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -305,5 +306,17 @@ func TestProcess_Name(t *testing.T) {
 	p := New()
 	if p.Name() != "process" {
 		t.Errorf("Name() should return 'process', got %q", p.Name())
+	}
+}
+
+// process.exit works without the events module, which the process module can be registered
+// without: there are no 'exit' listeners to run, and the runtime still ends with the code.
+func TestExitWithoutEvents(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	_, err := rt.Run(`try { process.exit(5); } catch (e) { globalThis.caught = String(e); }`, "exit.js")
+	var exit *runtime.ExitError
+	if !errors.As(err, &exit) || exit.Code != 5 {
+		t.Fatalf("Run returned %v, want an *ExitError with code 5", err)
 	}
 }

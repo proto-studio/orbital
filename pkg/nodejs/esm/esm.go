@@ -139,6 +139,10 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 
 	result, err := mod.Evaluate()
 	if err != nil {
+		// A top-level process.exit() ends evaluation, which V8 reports as an error.
+		if ended := e.rt.Ended(); ended != nil {
+			return nil, ended
+		}
 		return nil, err
 	}
 

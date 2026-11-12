@@ -72,3 +72,25 @@ w.on('exit', (code) => {
 });`)
 	wantJSON(t, got, map[string]any{"events": []any{"exit 5"}, "parent": "still running"})
 }
+
+// A top-level process.exit in an ES module ends evaluation, and RunModule reports the exit,
+// not the evaluation error V8 gives for it.
+func TestProcessExit_InModule(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.ESM.RunModule(`globalThis.before = true; process.exit(5); globalThis.after = true;`, "/exit.mjs")
+	var exit *runtime.ExitError
+	if !errors.As(runErr, &exit) || exit.Code != 5 {
+		t.Fatalf("RunModule returned %v, want an *ExitError with code 5", runErr)
+	}
+	ran, err := inst.Runtime.RunScript("JSON.stringify([globalThis.before, globalThis.after])", "read.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran.String() != "[true,null]" {
+		t.Fatalf("ran %s, want only the code before process.exit", ran.String())
+	}
+}

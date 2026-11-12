@@ -277,7 +277,10 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 				if (code !== undefined) process.exitCode = code;
 				if (!process._exiting) {
 					process._exiting = true;
-					process.emit('exit', Number(process.exitCode) || 0);
+					// Without the events module there is no emit, and nothing to notify.
+					if (typeof process.emit === 'function') {
+						process.emit('exit', Number(process.exitCode) || 0);
+					}
 				}
 				process.reallyExit(Number(process.exitCode) || 0);
 				// reallyExit asked V8 to stop, but V8 only stops at its next interrupt check,
