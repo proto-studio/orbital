@@ -195,11 +195,11 @@
 			if (str.length > opts.maxStringLength) {
 				str = str.slice(0, opts.maxStringLength) + '...';
 			}
-			// inspectQuote is the quoting util shares with console; util.go passes it in.
-			return inspectQuote.quote(str);
+			// inspectShared is the formatting util shares with console; util.go passes it in.
+			return inspectShared.quote(str);
 		}
 
-		const formatKey = inspectQuote.key;
+		const formatKey = inspectShared.key;
 
 		function formatFunction(fn) {
 			const name = fn.name || '(anonymous)';
@@ -381,7 +381,8 @@
 		}
 
 		function formatTypedArray(arr) {
-			if (typeof Buffer === 'function' && Buffer.isBuffer(arr)) return formatBuffer(arr);
+			const shown = inspectShared.view(arr, opts.maxArrayLength);
+			if (shown !== null) return shown;
 			const name = arr.constructor.name;
 			const len = arr.length;
 			if (len === 0) return `${name}(0) []`;
@@ -394,17 +395,6 @@
 		}
 
 		return inspectValue(obj, 0);
-	}
-
-	// Buffers print as Node's <Buffer 01 02>, up to 50 bytes.
-	function formatBuffer(buf) {
-		const max = 50;
-		const hex = [];
-		for (let i = 0; i < Math.min(buf.length, max); i++) {
-			hex.push(buf[i].toString(16).padStart(2, '0'));
-		}
-		const more = buf.length > max ? ` ... ${buf.length - max} more byte${buf.length - max > 1 ? 's' : ''}` : '';
-		return '<Buffer ' + hex.join(' ') + more + '>';
 	}
 
 	// Add custom inspect symbol

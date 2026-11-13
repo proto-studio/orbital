@@ -357,8 +357,8 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	if err != nil {
 		return err
 	}
-	// console_inspect.js quotes with the code it shares with util, passed in as inspectQuote.
-	c.inspect, err = rt.RunScript("(function (inspectQuote) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.QuoteJS+")", "console_inspect.js")
+	// console_inspect.js formats with the code it shares with util, passed in as inspectShared.
+	c.inspect, err = rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.JS+")", "console_inspect.js")
 	if err != nil {
 		return err
 	}

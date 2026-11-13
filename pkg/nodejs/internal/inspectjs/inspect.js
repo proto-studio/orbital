@@ -1,6 +1,7 @@
-// Quoting strings and object keys the way Node's util.inspect does. The console and util modules
-// share it, since an embedder can register either one without the other. Evaluates to
-// { quote, key }.
+// The parts of Node's util.inspect that the console and util modules both need: quoting strings
+// and object keys, and printing Buffers and typed arrays. They share one copy, and each loads it
+// itself, since an embedder can register either one without the other. Evaluates to
+// { quote, key, view }.
 (function () {
   // META[c] is how util.inspect writes control character c (0x00-0x1F) inside a quoted string:
   // \b, \t, \n, \f and \r for those five, and \xNN for the rest.
@@ -46,5 +47,26 @@
   // A key prints bare only when it is an identifier.
   const key = (k) => (/^[a-zA-Z_][a-zA-Z_0-9]*$/.test(k) ? k : quote(k));
 
-  return { quote, key };
+  // One element of a typed array: a BigInt keeps its n suffix, and negative zero prints as -0.
+  const element = (v) => (typeof v === 'bigint' ? v + 'n' : Object.is(v, -0) ? '-0' : String(v));
+
+  // view prints a Buffer as <Buffer 01 02> and any other typed array as Name(length) [ ... ],
+  // showing at most 50 bytes or maxArrayLength elements. It answers null for anything else,
+  // including a DataView.
+  function view(value, maxArrayLength = 100) {
+    if (!ArrayBuffer.isView(value) || value instanceof DataView) return null;
+    if (typeof Buffer === 'function' && Buffer.isBuffer(value)) {
+      const hex = [];
+      for (let i = 0; i < Math.min(value.length, 50); i++) hex.push(value[i].toString(16).padStart(2, '0'));
+      const extra = value.length - 50;
+      return '<Buffer ' + hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') + '>';
+    }
+    const name = value.constructor.name;
+    if (value.length === 0) return `${name}(0) []`;
+    const items = Array.from(value.subarray(0, maxArrayLength), element);
+    const extra = value.length - maxArrayLength;
+    return `${name}(${value.length}) [ ${items.join(', ')}${extra > 0 ? `, ... ${extra} more item${extra > 1 ? 's' : ''}` : ''} ]`;
+  }
+
+  return { quote, key, view };
 })()

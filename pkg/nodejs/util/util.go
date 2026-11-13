@@ -28,10 +28,10 @@ func (u *Util) Name() string {
 func (u *Util) Register(rt *runtime.Runtime) error {
 	setupCode := `
 		(function() {
-			// util.js quotes with the code it shares with console, passed in as inspectQuote.
-			const utilModule = (function (inspectQuote) { return (
+			// util.js formats with the code it shares with console, passed in as inspectShared.
+			const utilModule = (function (inspectShared) { return (
 ` + utilJS + `
-); })(` + inspectjs.QuoteJS + `);
+); })(` + inspectjs.JS + `);
 			globalThis.__util_module = utilModule;
 		})();
 	`

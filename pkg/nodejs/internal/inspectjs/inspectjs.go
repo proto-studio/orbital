@@ -4,8 +4,9 @@ package inspectjs
 
 import _ "embed"
 
-// QuoteJS is a JavaScript expression evaluating to { quote, key }: quote(str) quotes a string,
-// and key(k) formats an object key, as util.inspect does.
+// JS is a JavaScript expression evaluating to { quote, key, view }: quote(str) quotes a string,
+// key(k) formats an object key, and view(v, maxArrayLength) prints a Buffer or typed array, as
+// util.inspect does.
 //
-//go:embed quote.js
-var QuoteJS string
+//go:embed inspect.js
+var JS string
