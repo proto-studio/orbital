@@ -188,10 +188,36 @@
     return flag;
   }
 
+  // How Node's errors describe a value of the wrong type after "Received".
+  function receivedType(value) {
+    if (typeof value === 'function') return 'function ' + value.name;
+    if (typeof value === 'object') {
+      const name = value.constructor && value.constructor.name;
+      return name ? 'an instance of ' + name : 'an instance of Object';
+    }
+    return 'type ' + typeof value + ' (' + String(value) + ')';
+  }
+
+  // A write's mode, checked as Node checks it before touching the file: an integer from 0 to
+  // 2^32 - 1, or a string of octal digits.
   function writeMode(options) {
-    const mode = options && typeof options === 'object' ? options.mode : undefined;
+    let mode = options && typeof options === 'object' ? options.mode : undefined;
     if (mode === undefined || mode === null) return 0o666;
-    return typeof mode === 'string' ? parseInt(mode, 8) : mode;
+    if (typeof mode === 'string') {
+      if (!/^[0-7]+$/.test(mode)) {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+          "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '" + mode + "'");
+      }
+      mode = parseInt(mode, 8);
+    }
+    if (typeof mode !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "mode" argument must be of type number. Received ' + receivedType(mode));
+    }
+    if (!Number.isInteger(mode)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "mode" is out of range. It must be an integer. Received ' + mode);
+    }
+    checkRange('mode', mode, 4294967295);
+    return mode;
   }
 
   const _readFileSync = fs.readFileSync;

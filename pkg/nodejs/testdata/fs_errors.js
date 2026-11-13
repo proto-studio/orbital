@@ -88,6 +88,26 @@ function testModes() {
   results.mode_append = mode('mode_append');
 }
 
+// An invalid mode throws before the file is created or truncated.
+async function testInvalidModes() {
+  fs.writeFileSync(file('mode_keep'), 'kept');
+  const bad = [['negative', -1], ['fraction', 1.5], ['too_big', 4294967296], ['nan', NaN],
+    ['infinity', Infinity], ['octal_8', '8'], ['prefixed', '0o644'], ['hex', '0x1'], ['spaced', ' 644'],
+    ['empty', ''], ['boolean', true], ['object', {}]];
+  for (const [name, value] of bad) {
+    attempt('mode_writeFileSync_' + name, () => fs.writeFileSync(file('mode_new_' + name), 'x', { mode: value }));
+    results['mode_created_' + name] = fs.existsSync(file('mode_new_' + name));
+  }
+  attempt('mode_writeFileSync_existing', () => fs.writeFileSync(file('mode_keep'), 'x', { mode: -1 }));
+  attempt('mode_appendFileSync', () => fs.appendFileSync(file('mode_keep'), 'x', { mode: -1 }));
+  attempt('mode_writeFile', () => fs.writeFile(file('mode_keep'), 'x', { mode: -1 }, () => {}));
+  await attemptAsync('mode_promises_writeFile', () => fsp.writeFile(file('mode_keep'), 'x', { mode: -1 }));
+  await attemptAsync('mode_promises_appendFile', () => fsp.appendFile(file('mode_keep'), 'x', { mode: '9' }));
+  results.mode_keep = read('mode_keep');
+  fs.writeFileSync(file('mode_zero_string'), 'x', { mode: '0' });
+  results.mode_zero_string = mode('mode_zero_string');
+}
+
 async function testNulPaths() {
   const bad = file('n\0m');
   attempt('nul_writeFileSync', () => fs.writeFileSync(bad, 'x'));
@@ -125,6 +145,7 @@ async function main() {
   await testAsyncErrors();
   await testFlags();
   testModes();
+  await testInvalidModes();
   await testNulPaths();
   return results;
 }
