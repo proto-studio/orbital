@@ -579,7 +579,14 @@
         if (options.encoding) this.setDefaultEncoding(options.encoding);
 
         if (options.fd != null) {
-          this.fd = options.fd;
+          // A FileHandle from fs.promises.open writes through its descriptor, and the stream
+          // closes it by closing the handle.
+          if (typeof options.fd === 'object' && typeof options.fd.close === 'function') {
+            this._handle = options.fd;
+            this.fd = options.fd.fd;
+          } else {
+            this.fd = options.fd;
+          }
           this.pending = false;
           return;
         }
@@ -677,6 +684,12 @@
         }
         const fd = this.fd;
         this.fd = null;
+        if (this._handle) {
+          const handle = this._handle;
+          this._handle = null;
+          handle.close().then(() => callback(err), (e) => callback(err || e));
+          return;
+        }
         try {
           fs.closeSync(fd);
         } catch (e) {

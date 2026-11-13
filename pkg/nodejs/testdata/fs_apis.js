@@ -229,6 +229,14 @@ async function testFailures() {
       ws.write('x', callback('write1'));
     });
   });
+
+  // A FileHandle given as fd is written through, and closed with the stream.
+  const handle = await fs.promises.open(file('handle_stream'), 'w');
+  results.ws_filehandle = await openOutcome('handle_stream', { fd: handle }, (ws, callback) => {
+    ws.write('through ', callback('write1'));
+    ws.end('the handle', callback('end'));
+  });
+  results.ws_filehandle_closed = handle.fd;
 }
 
 // writeFile and appendFile given a descriptor write to it at its offset, and create no file

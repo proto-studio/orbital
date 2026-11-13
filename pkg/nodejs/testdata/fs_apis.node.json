@@ -194,6 +194,7 @@
   "file:fd.bin": "0203686579",
   "file:flags.txt": "637574",
   "file:flags_new.txt": "6e6577",
+  "file:handle_stream": "7468726f756768207468652068616e646c65",
   "file:mode_0": "78",
   "file:mode_open": "",
   "file:open_end": "",
@@ -321,6 +322,18 @@
     "finish",
     "close"
   ],
+  "ws_filehandle": {
+    "destroyed": true,
+    "events": [
+      "write1 ok",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_filehandle_closed": -1,
   "ws_instance": true,
   "ws_missing_dir": [
     "error ENOENT",
