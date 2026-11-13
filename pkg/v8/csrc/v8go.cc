@@ -1699,13 +1699,16 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
                             const_cast<char*>(referrer.c_str()),
                             &resolved_source, &resolved_name);
     if (r != 0 || !resolved_source || !resolved_name) {
+        if (resolved_source) free(resolved_source);
+        if (resolved_name) free(resolved_name);
+        // Loading the module may have run code (a CommonJS dependency) that called
+        // process.exit(). Leave the termination pending rather than reject.
+        if (isolate->IsExecutionTerminating()) return MaybeLocal<Promise>();
         Local<Value> err = Exception::Error(
             String::NewFromUtf8(isolate,
                 (std::string("Cannot find module '") + spec_str + "'").c_str())
                 .ToLocalChecked());
         resolver->Reject(context, err).Check();
-        if (resolved_source) free(resolved_source);
-        if (resolved_name) free(resolved_name);
         return promise;
     }
 
@@ -1717,6 +1720,14 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
     free(resolved_name);
 
     if (maybe_module.IsEmpty()) {
+        // The module called process.exit(), which terminates execution. That is not an
+        // exception to reject import() with: rejecting swallows the termination, so the
+        // importer would carry on with a null reason. Rethrow it and return no promise,
+        // as V8 expects with an exception pending, so it keeps unwinding the caller too.
+        if (try_catch.HasTerminated() || isolate->IsExecutionTerminating()) {
+            try_catch.ReThrow();
+            return MaybeLocal<Promise>();
+        }
         Local<Value> exc = try_catch.HasCaught()
             ? try_catch.Exception()
             : Exception::Error(String::NewFromUtf8(isolate,
