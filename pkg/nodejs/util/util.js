@@ -195,13 +195,11 @@
 			if (str.length > opts.maxStringLength) {
 				str = str.slice(0, opts.maxStringLength) + '...';
 			}
-			return strEscape(str);
+			// inspectQuote is the quoting util shares with console; util.go passes it in.
+			return inspectQuote.quote(str);
 		}
 
-		// Node prints a key bare only when it is an identifier.
-		function formatKey(key) {
-			return /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(key) ? key : strEscape(key);
-		}
+		const formatKey = inspectQuote.key;
 
 		function formatFunction(fn) {
 			const name = fn.name || '(anonymous)';
@@ -396,40 +394,6 @@
 		}
 
 		return inspectValue(obj, 0);
-	}
-
-	// Quotes a string the way Node does: single quotes unless the string holds one, control
-	// characters and lone surrogates escaped.
-	const META = [
-		'\\x00', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06', '\\x07',
-		'\\b', '\\t', '\\n', '\\x0B', '\\f', '\\r', '\\x0E', '\\x0F',
-		'\\x10', '\\x11', '\\x12', '\\x13', '\\x14', '\\x15', '\\x16', '\\x17',
-		'\\x18', '\\x19', '\\x1A', '\\x1B', '\\x1C', '\\x1D', '\\x1E', '\\x1F'
-	];
-	function strEscape(str) {
-		let quote = "'";
-		if (str.includes("'")) {
-			if (!str.includes('"')) quote = '"';
-			else if (!str.includes('`') && !str.includes('${')) quote = '`';
-		}
-		let out = '';
-		for (let i = 0; i < str.length; i++) {
-			const code = str.charCodeAt(i);
-			if (code < 0x20) out += META[code];
-			else if (code === 0x7f) out += '\\x7F';
-			else if (code === 0x5c) out += '\\\\';
-			else if (str[i] === quote) out += '\\' + quote;
-			else if (code >= 0xd800 && code <= 0xdfff) {
-				const next = str.charCodeAt(i + 1);
-				if (code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
-					out += str[i] + str[i + 1];
-					i++;
-				} else {
-					out += '\\u' + code.toString(16);
-				}
-			} else out += str[i];
-		}
-		return quote + out + quote;
 	}
 
 	// Buffers print as Node's <Buffer 01 02>, up to 50 bytes.

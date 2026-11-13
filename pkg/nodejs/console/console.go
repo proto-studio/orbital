@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/inspectjs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -356,7 +357,8 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	if err != nil {
 		return err
 	}
-	c.inspect, err = rt.RunScript(consoleInspectJS, "console_inspect.js")
+	// console_inspect.js quotes with the code it shares with util, passed in as inspectQuote.
+	c.inspect, err = rt.RunScript("(function (inspectQuote) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.QuoteJS+")", "console_inspect.js")
 	if err != nil {
 		return err
 	}
