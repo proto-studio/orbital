@@ -77,6 +77,21 @@ async function testFlags() {
   results.promises_flag_a = read('promise_append');
 
   attempt('writeFileSync_bad_flag', () => fs.writeFileSync(file('bad'), 'x', { flag: 'zz' }));
+
+  // A numeric flag that isn't a 32-bit integer throws before the file is opened, and a falsy
+  // one means the default.
+  fs.writeFileSync(file('flag_keep'), 'kept');
+  for (const [name, flag] of [['fraction', 577.9], ['too_big', 2 ** 31], ['too_small', -(2 ** 31) - 1], ['infinity', Infinity]]) {
+    attempt('writeFileSync_flag_' + name, () => fs.writeFileSync(file('flag_keep'), 'x', { flag }));
+    attempt('appendFileSync_flag_' + name, () => fs.appendFileSync(file('flag_keep'), 'x', { flag }));
+  }
+  attempt('writeFile_flag_fraction', () => fs.writeFile(file('flag_keep'), 'x', { flag: 577.9 }, () => {}));
+  await attemptAsync('promises_writeFile_flag_fraction', () => fsp.writeFile(file('flag_keep'), 'x', { flag: 577.9 }));
+  results.flag_keep = read('flag_keep');
+  fs.writeFileSync(file('flag_nan'), 'one');
+  fs.writeFileSync(file('flag_nan'), 'two', { flag: NaN });
+  fs.appendFileSync(file('flag_nan'), 'three', { flag: 0 });
+  results.flag_falsy = read('flag_nan');
 }
 
 function testModes() {

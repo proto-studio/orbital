@@ -180,8 +180,19 @@
 
   // The flag and mode a write was given, with Node's defaults.
   function writeFlag(options, fallback) {
-    const flag = options && typeof options === 'object' && options.flag != null ? options.flag : fallback;
-    if (typeof flag === 'number') return flag;
+    // Node falls back on any falsy flag, so 0 and NaN mean the default too.
+    const flag = options && typeof options === 'object' && options.flag ? options.flag : fallback;
+    if (typeof flag === 'number') {
+      // A numeric flag must be a 32-bit signed integer, checked before the file is opened.
+      if (!Number.isInteger(flag)) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "flags" is out of range. It must be an integer. Received ' + flag);
+      }
+      if (flag < -2147483648 || flag > 2147483647) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+          'The value of "flags" is out of range. It must be >= -2147483648 && <= 2147483647. Received ' + flag);
+      }
+      return flag;
+    }
     if (!OPEN_FLAGS.includes(flag)) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'flags' is invalid. Received " + JSON.stringify(flag).replace(/"/g, "'"));
     }

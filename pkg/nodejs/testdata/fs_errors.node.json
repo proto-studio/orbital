@@ -11,6 +11,38 @@
       "syscall": "open"
     }
   },
+  "appendFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
   "appendFileSync_flag_w": "two",
   "appendFileSync_missing_dir": {
     "error": {
@@ -23,6 +55,8 @@
       "syscall": "open"
     }
   },
+  "flag_falsy": "twothree",
+  "flag_keep": "kept",
   "long_readFileSync": {
     "error": {
       "code": "ENAMETOOLONG",
@@ -350,6 +384,14 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
   "promises_writeFile_missing_dir": {
     "error": {
       "code": "ENOENT",
@@ -413,6 +455,38 @@
     }
   },
   "writeFileSync_flag_a": "onetwo",
+  "writeFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
   "writeFileSync_flag_wx_existing": {
     "error": {
       "code": "EEXIST",
@@ -439,6 +513,14 @@
     }
   },
   "writeFile_flag_a": "onetwo",
+  "writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
   "writeFile_missing_dir": {
     "error": {
       "code": "ENOENT",
