@@ -480,9 +480,10 @@
 					result.host = hostPart;
 				}
 
-				// Port
+				// Port. An IPv6 literal's own colons are inside its brackets.
+				const bracketEnd = result.host.startsWith('[') ? result.host.indexOf(']') : -1;
 				const colonIdx = result.host.lastIndexOf(':');
-				if (colonIdx !== -1) {
+				if (colonIdx !== -1 && colonIdx > bracketEnd) {
 					result.hostname = result.host.slice(0, colonIdx);
 					result.port = result.host.slice(colonIdx + 1);
 				} else {
@@ -498,7 +499,12 @@
 		// stop at the first label containing a character invalid in a hostname
 		// (e.g. the "'" in "google.com'.bb.com"). The invalid remainder is moved
 		// onto the pathname, which is what prevents redirect allow-list bypasses.
-		if (result.hostname) {
+		// An IPv6 literal skips that check, and as in Node its hostname loses the brackets
+		// that its host keeps.
+		const ipv6 = !!result.hostname && result.hostname[0] === '[' && result.hostname[result.hostname.length - 1] === ']';
+		if (ipv6) {
+			result.hostname = result.hostname.slice(1, -1).toLowerCase();
+		} else if (result.hostname) {
 			const partPattern = /^[+a-z0-9A-Z_-]{0,63}$/;
 			const partStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/;
 			const parts = result.hostname.split('.');
@@ -554,7 +560,8 @@
 			result += urlObject.host;
 		} else {
 			if (urlObject.hostname) {
-				result += urlObject.hostname;
+				const hostname = String(urlObject.hostname);
+				result += hostname.includes(':') && hostname[0] !== '[' ? '[' + hostname + ']' : hostname;
 			}
 			if (urlObject.port) {
 				result += ':' + urlObject.port;

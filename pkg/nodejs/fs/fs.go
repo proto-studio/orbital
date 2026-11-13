@@ -1235,10 +1235,14 @@ func (f *FS) readStreamCloseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// readSyscall names the call Node reports for a failed read: reading a directory fails at
-// read, and anything else at open.
+// readSyscall names the call Node reports for a failed read: the one that failed, open or
+// read. Reading a directory always fails at read, as in Node, which opens it first.
 func readSyscall(err error) string {
 	if errors.Is(err, syscall.EISDIR) {
+		return "read"
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Op == "read" {
 		return "read"
 	}
 	return "open"

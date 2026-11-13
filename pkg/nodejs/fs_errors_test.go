@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -18,6 +19,13 @@ import (
 func TestFSErrors_MatchesNode(t *testing.T) {
 	const scriptPath, expectedPath = "testdata/fs_errors.js", "testdata/fs_errors.node.json"
 	dir := t.TempDir()
+	// A symlink loop, for ELOOP. Orbital has no fs.symlinkSync to make it from the script.
+	if err := os.Symlink(filepath.Join(dir, "loop_b"), filepath.Join(dir, "loop_a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "loop_a"), filepath.Join(dir, "loop_b")); err != nil {
+		t.Fatal(err)
+	}
 
 	if captureFromNode(t) {
 		output, err := exec.Command("node", scriptPath, dir).Output()

@@ -15,6 +15,7 @@
 					} else if (code < 0x800) {
 						bytes.push(0xc0 | (code >> 6));
 						bytes.push(0x80 | (code & 0x3f));
+					// 0xD800-0xDBFF is a UTF-16 high surrogate and 0xDC00-0xDFFF a low one; a high followed by a low is a pair.
 					} else if (code >= 0xd800 && code < 0xdc00 && str.charCodeAt(i + 1) >= 0xdc00 && str.charCodeAt(i + 1) < 0xe000) {
 						// Surrogate pair
 						i++;
@@ -24,8 +25,10 @@
 						bytes.push(0x80 | ((code >> 12) & 0x3f));
 						bytes.push(0x80 | ((code >> 6) & 0x3f));
 						bytes.push(0x80 | (code & 0x3f));
+					// 0xD800-0xDFFF is the UTF-16 surrogate range; a surrogate that reaches here is unpaired.
 					} else if (code >= 0xd800 && code < 0xe000) {
 						// An unpaired surrogate becomes U+FFFD.
+						// 0xEF 0xBF 0xBD is U+FFFD, the replacement character, in UTF-8.
 						bytes.push(0xef, 0xbf, 0xbd);
 					} else {
 						bytes.push(0xe0 | (code >> 12));
@@ -110,33 +113,51 @@
 					}
 					let needed = 0;
 					let code = 0;
+					// 0x80 (10000000) is the lowest valid UTF-8 continuation byte.
 					let lower = 0x80;
+					// 0xBF (10111111) is the highest valid UTF-8 continuation byte.
 					let upper = 0xbf;
+					// 0xC2-0xDF lead a 2-byte sequence; 0xC0 and 0xC1 could only start overlong encodings.
 					if (b >= 0xc2 && b <= 0xdf) {
 						needed = 1;
+						// 0x1F keeps the 5 payload bits of a 2-byte lead (110xxxxx).
 						code = b & 0x1f;
+					// 0xE0-0xEF lead a 3-byte sequence.
 					} else if (b >= 0xe0 && b <= 0xef) {
 						needed = 2;
+						// 0x0F keeps the 4 payload bits of a 3-byte lead (1110xxxx).
 						code = b & 0x0f;
+						// After 0xE0 the next byte must be at least 0xA0; anything lower is an overlong encoding.
 						if (b === 0xe0) lower = 0xa0;
+						// After 0xED the next byte must be at most 0x9F; anything higher encodes a UTF-16 surrogate (U+D800-U+DFFF).
 						if (b === 0xed) upper = 0x9f;
+					// 0xF0-0xF4 lead a 4-byte sequence; 0xF5 and up would go past U+10FFFF.
 					} else if (b >= 0xf0 && b <= 0xf4) {
 						needed = 3;
+						// 0x07 keeps the 3 payload bits of a 4-byte lead (11110xxx).
 						code = b & 0x07;
+						// After 0xF0 the next byte must be at least 0x90; anything lower is an overlong encoding.
 						if (b === 0xf0) lower = 0x90;
+						// After 0xF4 the next byte must be at most 0x8F; anything higher is past U+10FFFF.
 						if (b === 0xf4) upper = 0x8f;
 					} else {
+						// \ufffd is U+FFFD, the replacement character for a malformed sequence.
 						str += '\ufffd';
 						continue;
 					}
 					while (needed > 0 && i < bytes.length && bytes[i] >= lower && bytes[i] <= upper) {
+						// 0x3F keeps the 6 payload bits of a continuation byte (10xxxxxx).
 						code = (code << 6) | (bytes[i++] & 0x3f);
+						// Later continuation bytes take the full range again, from 0x80 (10000000)...
 						lower = 0x80;
+						// ...to 0xBF (10111111).
 						upper = 0xbf;
 						needed--;
 					}
 					if (needed > 0) {
+						// \ufffd is U+FFFD, the replacement character for a malformed sequence.
 						str += '\ufffd';
+					// Code points above 0xFFFF, past the Basic Multilingual Plane, need a UTF-16 surrogate pair.
 					} else if (code > 0xffff) {
 						const offset = code - 0x10000;
 						str += String.fromCharCode(0xd800 + (offset >> 10), 0xdc00 + (offset & 0x3ff));
@@ -586,6 +607,7 @@
 				case 'ascii':
 					let ascii = '';
 					for (let i = 0; i < slice.length; i++) {
+						// 0x7F clears the high bit, keeping each byte in 7-bit ASCII, as Node's 'ascii' decoding does.
 						ascii += String.fromCharCode(slice[i] & 0x7f);
 					}
 					return ascii;

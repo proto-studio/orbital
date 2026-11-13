@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/inspectjs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -356,7 +357,8 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	if err != nil {
 		return err
 	}
-	c.inspect, err = rt.RunScript(consoleInspectJS, "console_inspect.js")
+	// console_inspect.js formats with the code it shares with util, passed in as inspectShared.
+	c.inspect, err = rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.JS+")", "console_inspect.js")
 	if err != nil {
 		return err
 	}
@@ -391,6 +393,7 @@ func (c *Console) text(v *v8.Value) string {
 		}
 		parts[i] = piece.String()
 	}
+	// \x00 is NUL: the string was split at each NUL, so joining with it puts them back.
 	return strings.Join(parts, "\x00")
 }
 
@@ -399,6 +402,7 @@ func (c *Console) quoted(v *v8.Value) string {
 	if s, ok := c.inspectCall("quote", v); ok {
 		return s
 	}
+	// \x00 is NUL, which Node prints inside a nested string as the escape \x00.
 	return "'" + strings.ReplaceAll(c.text(v), "\x00", `\x00`) + "'"
 }
 

@@ -77,6 +77,21 @@ async function testFlags() {
   results.promises_flag_a = read('promise_append');
 
   attempt('writeFileSync_bad_flag', () => fs.writeFileSync(file('bad'), 'x', { flag: 'zz' }));
+
+  // A numeric flag that isn't a 32-bit integer throws before the file is opened, and a falsy
+  // one means the default.
+  fs.writeFileSync(file('flag_keep'), 'kept');
+  for (const [name, flag] of [['fraction', 577.9], ['too_big', 2 ** 31], ['too_small', -(2 ** 31) - 1], ['infinity', Infinity]]) {
+    attempt('writeFileSync_flag_' + name, () => fs.writeFileSync(file('flag_keep'), 'x', { flag }));
+    attempt('appendFileSync_flag_' + name, () => fs.appendFileSync(file('flag_keep'), 'x', { flag }));
+  }
+  attempt('writeFile_flag_fraction', () => fs.writeFile(file('flag_keep'), 'x', { flag: 577.9 }, () => {}));
+  await attemptAsync('promises_writeFile_flag_fraction', () => fsp.writeFile(file('flag_keep'), 'x', { flag: 577.9 }));
+  results.flag_keep = read('flag_keep');
+  fs.writeFileSync(file('flag_nan'), 'one');
+  fs.writeFileSync(file('flag_nan'), 'two', { flag: NaN });
+  fs.appendFileSync(file('flag_nan'), 'three', { flag: 0 });
+  results.flag_falsy = read('flag_nan');
 }
 
 function testModes() {
@@ -86,6 +101,26 @@ function testModes() {
   results.mode_string = mode('mode_string');
   fs.appendFileSync(file('mode_append'), 'x', { mode: 0o600 });
   results.mode_append = mode('mode_append');
+}
+
+// An invalid mode throws before the file is created or truncated.
+async function testInvalidModes() {
+  fs.writeFileSync(file('mode_keep'), 'kept');
+  const bad = [['negative', -1], ['fraction', 1.5], ['too_big', 4294967296], ['nan', NaN],
+    ['infinity', Infinity], ['octal_8', '8'], ['prefixed', '0o644'], ['hex', '0x1'], ['spaced', ' 644'],
+    ['empty', ''], ['boolean', true], ['object', {}]];
+  for (const [name, value] of bad) {
+    attempt('mode_writeFileSync_' + name, () => fs.writeFileSync(file('mode_new_' + name), 'x', { mode: value }));
+    results['mode_created_' + name] = fs.existsSync(file('mode_new_' + name));
+  }
+  attempt('mode_writeFileSync_existing', () => fs.writeFileSync(file('mode_keep'), 'x', { mode: -1 }));
+  attempt('mode_appendFileSync', () => fs.appendFileSync(file('mode_keep'), 'x', { mode: -1 }));
+  attempt('mode_writeFile', () => fs.writeFile(file('mode_keep'), 'x', { mode: -1 }, () => {}));
+  await attemptAsync('mode_promises_writeFile', () => fsp.writeFile(file('mode_keep'), 'x', { mode: -1 }));
+  await attemptAsync('mode_promises_appendFile', () => fsp.appendFile(file('mode_keep'), 'x', { mode: '9' }));
+  results.mode_keep = read('mode_keep');
+  fs.writeFileSync(file('mode_zero_string'), 'x', { mode: '0' });
+  results.mode_zero_string = mode('mode_zero_string');
 }
 
 async function testNulPaths() {
@@ -120,11 +155,34 @@ async function testNulPaths() {
   results.sync_flags = read('sync_flag');
 }
 
+// Errors outside the common few keep their own code. Their errno differs between Linux and
+// macOS, so only its sign is compared. The Go test makes loop_a and loop_b, two symlinks
+// pointing at each other.
+function testOtherErrnos() {
+  const long = file('x'.repeat(300));
+  const cases = [['loop_readFileSync', () => fs.readFileSync(file('loop_a'))],
+    ['loop_writeFileSync', () => fs.writeFileSync(file('loop_a'), 'x')],
+    ['long_readFileSync', () => fs.readFileSync(long)],
+    ['long_writeFileSync', () => fs.writeFileSync(long, 'x')]];
+  for (const [name, fn] of cases) {
+    try {
+      fn();
+      results[name] = { value: null };
+    } catch (e) {
+      const d = describe(e);
+      d.errno = typeof e.errno === 'number' && e.errno < 0 ? 'negative' : e.errno;
+      results[name] = { error: d };
+    }
+  }
+}
+
 async function main() {
   testMissingDirectory();
   await testAsyncErrors();
   await testFlags();
   testModes();
+  await testInvalidModes();
+  testOtherErrnos();
   await testNulPaths();
   return results;
 }
