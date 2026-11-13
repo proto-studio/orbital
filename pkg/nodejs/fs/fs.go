@@ -428,11 +428,17 @@ func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
+	// fs_setup.js passes the mode, already checked, as a number; Node's default is 0o777.
+	perm := fs.FileMode(0o777)
+	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
+		perm = dirMode(args[2].Integer())
+	}
+
 	var err error
 	if recursive {
-		err = f.fs().MkdirAll(path, 0755)
+		err = f.fs().MkdirAll(path, perm)
 	} else {
-		err = f.fs().Mkdir(path, 0755)
+		err = f.fs().Mkdir(path, perm)
 	}
 
 	if err != nil {
@@ -440,6 +446,22 @@ func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	return nil
+}
+
+// dirMode turns a Unix mode into Go's FileMode, whose setuid, setgid and sticky bits are not
+// the Unix ones.
+func dirMode(mode int64) fs.FileMode {
+	perm := fs.FileMode(mode & 0o777)
+	if mode&0o4000 != 0 {
+		perm |= fs.ModeSetuid
+	}
+	if mode&0o2000 != 0 {
+		perm |= fs.ModeSetgid
+	}
+	if mode&0o1000 != 0 {
+		perm |= fs.ModeSticky
+	}
+	return perm
 }
 
 // rmdirSyncFunc implements fs.rmdirSync

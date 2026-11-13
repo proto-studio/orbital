@@ -197,6 +197,21 @@ async function testRm() {
   await attemptAsync('promises_rm_notdir_force', () => fsp.rm(file('rm_file/child'), { force: true }));
 }
 
+// mkdir honors its mode in every form, given as a number, an octal string or an option, and
+// refuses a bad one before making the directory: the callback form throws it.
+async function testMkdirModes() {
+  const made = (name) => mode(name);
+  await attemptAsync('mkdir_mode_option', () => callback((cb) => fs.mkdir(file('mk_1'), { mode: 0o700 }, cb)).then(() => made('mk_1')));
+  await attemptAsync('mkdir_mode_number', () => callback((cb) => fs.mkdir(file('mk_2'), 0o711, cb)).then(() => made('mk_2')));
+  await attemptAsync('mkdir_mode_recursive', () => callback((cb) => fs.mkdir(file('mk_3/a'), { recursive: true, mode: 0o700 }, cb))
+    .then(() => [made('mk_3'), made('mk_3/a')]));
+  await attemptAsync('promises_mkdir_mode', () => fsp.mkdir(file('mk_4'), { mode: '750' }).then(() => made('mk_4')));
+  attempt('mkdirSync_mode', () => { fs.mkdirSync(file('mk_5'), 0o701); return made('mk_5'); });
+  attempt('mkdirSync_mode_invalid', () => fs.mkdirSync(file('mk_6'), { mode: 'abc' }));
+  attempt('mkdir_mode_invalid', () => fs.mkdir(file('mk_7'), { mode: 1.5 }, () => {}));
+  results.mkdir_invalid_made = ['mk_6', 'mk_7'].filter((name) => fs.existsSync(file(name)));
+}
+
 async function main() {
   testMissingDirectory();
   await testAsyncErrors();
@@ -206,6 +221,7 @@ async function main() {
   testOtherErrnos();
   await testNulPaths();
   await testRm();
+  await testMkdirModes();
   return results;
 }
 

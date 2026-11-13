@@ -112,6 +112,38 @@
       "syscall": "open"
     }
   },
+  "mkdirSync_mode": {
+    "value": "701"
+  },
+  "mkdirSync_mode_invalid": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'",
+      "name": "TypeError"
+    }
+  },
+  "mkdir_invalid_made": [],
+  "mkdir_mode_invalid": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "mkdir_mode_number": {
+    "value": "711"
+  },
+  "mkdir_mode_option": {
+    "value": "700"
+  },
+  "mkdir_mode_recursive": {
+    "value": [
+      "700",
+      "700"
+    ]
+  },
   "mode_600": "600",
   "mode_append": "600",
   "mode_appendFileSync": {
@@ -395,6 +427,9 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_mkdir_mode": {
+    "value": "750"
+  },
   "promises_rm_dangling_force": {
     "value": null
   },

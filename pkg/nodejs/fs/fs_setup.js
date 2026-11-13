@@ -278,6 +278,22 @@
     }
   }
 
+  // mkdirSync(path[, mode]) or mkdirSync(path[, { recursive, mode }]). The mode is checked as
+  // Node checks it, before the directory is made, and defaults to 0o777.
+  function mkdirOptions(options) {
+    const object = options !== null && typeof options === 'object';
+    const mode = object ? options.mode : options;
+    return {
+      recursive: object && !!options.recursive,
+      mode: mode === undefined || mode === null ? 0o777 : writeMode({ mode })
+    };
+  }
+  const _mkdirSync = fs.mkdirSync;
+  fs.mkdirSync = function (path, options) {
+    const { recursive, mode } = mkdirOptions(options);
+    return _mkdirSync.call(this, path, { recursive }, mode);
+  };
+
   const _readFileSync = fs.readFileSync;
   fs.readFileSync = function (p, options) {
     const encoding = encodingOf(options);
@@ -742,6 +758,15 @@
   for (const name of Object.keys(CALLBACK_FORMS)) {
     const sync = fs[CALLBACK_FORMS[name]];
     if (typeof fs[name] !== 'function' && typeof sync === 'function') fs[name] = callbackForm(CALLBACK_FORMS[name]);
+  }
+  if (typeof fs.mkdir === 'function') {
+    // Like Node, a bad mode throws rather than reaching the callback.
+    const mkdir = fs.mkdir;
+    fs.mkdir = function (path, options, callback) {
+      if (typeof options === 'function') return mkdir(path, options);
+      mkdirOptions(options);
+      return mkdir(path, options, callback);
+    };
   }
   if (typeof fs.appendFile === 'function') {
     // appendFile(path, data[, options], callback): the options are optional.
