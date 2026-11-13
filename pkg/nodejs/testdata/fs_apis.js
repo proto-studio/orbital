@@ -187,6 +187,36 @@ async function testDescriptorWrites() {
   results.fd_listing = fs.readdirSync(file('fdwrites'));
 }
 
+// The numeric open flags in fs.constants open files as their names say. Their values differ
+// between platforms, so only what they do is compared.
+async function testOpenFlags() {
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND } = fs.constants;
+  results.flag_types = [O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND].map((v) => typeof v);
+  const target = file('flags.txt');
+  fs.writeFileSync(target, 'base');
+  let fd = fs.openSync(target, O_WRONLY | O_APPEND);
+  fs.writeSync(fd, '+append');
+  fs.closeSync(fd);
+  results.flag_append = fs.readFileSync(target, 'utf8');
+  fs.appendFileSync(target, '+again', { flag: O_WRONLY | O_APPEND });
+  results.flag_append_option = fs.readFileSync(target, 'utf8');
+  const stream = fs.createWriteStream(target, { flags: O_WRONLY | O_APPEND });
+  await new Promise((resolve) => { stream.on('close', resolve); stream.end('+stream'); });
+  results.flag_append_stream = fs.readFileSync(target, 'utf8');
+  try {
+    fs.openSync(target, O_WRONLY | O_CREAT | O_EXCL);
+    results.flag_excl = 'opened';
+  } catch (e) {
+    results.flag_excl = e.code;
+  }
+  fd = fs.openSync(file('flags_new.txt'), O_RDWR | O_CREAT | O_TRUNC);
+  fs.writeSync(fd, 'new');
+  fs.closeSync(fd);
+  fs.writeFileSync(target, 'cut', { flag: O_WRONLY | O_TRUNC });
+  results.flag_trunc = fs.readFileSync(target, 'utf8');
+  results.flag_promises_same = fs.promises.constants === fs.constants;
+}
+
 function testExports() {
   results.promises_same = fs.promises === require('fs/promises');
   results.constants = { F_OK: fs.constants.F_OK, R_OK: fs.constants.R_OK, W_OK: fs.constants.W_OK, X_OK: fs.constants.X_OK };
@@ -199,6 +229,7 @@ async function main() {
   await testCallbacks();
   await testFailures();
   await testDescriptorWrites();
+  await testOpenFlags();
   testExports();
   return results;
 }

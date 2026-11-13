@@ -310,6 +310,15 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// The open flags fs.constants exports, which fs_setup.js adds to it.
+	openFlags, err := openFlagConstants(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fsObj.Set("__openFlags", openFlags); err != nil {
+		return err
+	}
+
 	// Set fs as global module
 	if err := rt.SetGlobal("__fs_module", fsObj); err != nil {
 		return err
@@ -575,7 +584,36 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	return obj
 }
 
-// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags.
+// openFlagConstants returns the open flags for fs.constants. They are the platform's own
+// values, which differ between Linux and macOS, and the ones parseOpenFlags passes a numeric
+// flag straight through with, so O_WRONLY | O_APPEND opens for appending.
+func openFlagConstants(ctx *v8.Context) (*v8.Value, error) {
+	obj, err := ctx.NewObject()
+	if err != nil {
+		return nil, err
+	}
+	for _, flag := range []struct {
+		name  string
+		value int
+	}{
+		{"O_RDONLY", os.O_RDONLY},
+		{"O_WRONLY", os.O_WRONLY},
+		{"O_RDWR", os.O_RDWR},
+		{"O_CREAT", os.O_CREATE},
+		{"O_EXCL", os.O_EXCL},
+		{"O_TRUNC", os.O_TRUNC},
+		{"O_APPEND", os.O_APPEND},
+		{"O_SYNC", os.O_SYNC},
+	} {
+		if err := obj.Set(flag.name, ctx.NewInteger(int64(flag.value))); err != nil {
+			return nil, err
+		}
+	}
+	return obj, nil
+}
+
+// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags. A number is
+// made of the flags in fs.constants, which are os's own, so it passes through unchanged.
 func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v == nil {
 		return os.O_RDONLY, true

@@ -174,3 +174,22 @@ fs.readFile('/dir', (err) => require('fs/promises').readFile('/dir').catch((perr
 		"missing":  []any{"ENOENT", "open", "ENOENT: no such file or directory, open '/nothing'"},
 	})
 }
+
+// fs.constants holds this platform's open flags, as Node's does: O_APPEND and O_CREAT, for
+// one, differ between Linux and macOS.
+func TestFS_OpenFlagConstants(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const { constants } = require('fs');
+done(Object.fromEntries(['O_RDONLY', 'O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_EXCL', 'O_TRUNC', 'O_APPEND', 'O_SYNC']
+  .map((name) => [name, constants[name]])));`)
+	wantJSON(t, got, map[string]any{
+		"O_RDONLY": float64(syscall.O_RDONLY),
+		"O_WRONLY": float64(syscall.O_WRONLY),
+		"O_RDWR":   float64(syscall.O_RDWR),
+		"O_CREAT":  float64(syscall.O_CREAT),
+		"O_EXCL":   float64(syscall.O_EXCL),
+		"O_TRUNC":  float64(syscall.O_TRUNC),
+		"O_APPEND": float64(syscall.O_APPEND),
+		"O_SYNC":   float64(syscall.O_SYNC),
+	})
+}

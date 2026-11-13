@@ -619,13 +619,12 @@
     };
   }
 
+  // The open flags come from Go, because their values depend on the platform.
   if (!fs.constants) {
-    fs.constants = {
-      F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
-      O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
-      COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4
-    };
+    fs.constants = Object.assign({ F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 }, fs.__openFlags,
+      { COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4 });
   }
+  delete fs.__openFlags;
 
   // A path reaches the filesystem as a C string, which ends at the first NUL, so 'a\0b' would
   // name the file 'a'. Node refuses such paths everywhere, before touching the disk.

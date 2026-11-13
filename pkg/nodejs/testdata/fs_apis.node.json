@@ -192,11 +192,28 @@
   "file:excl_new": "6e6577",
   "file:excl_src": "6e6577",
   "file:fd.bin": "0203686579",
+  "file:flags.txt": "637574",
+  "file:flags_new.txt": "6e6577",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
   "file:stream.bin": "4100ff7465787400656e64",
   "file:target.txt": "6162636465213f",
   "file:victim": "6b656570",
+  "flag_append": "base+append",
+  "flag_append_option": "base+append+again",
+  "flag_append_stream": "base+append+again+stream",
+  "flag_excl": "EEXIST",
+  "flag_promises_same": true,
+  "flag_trunc": "cut",
+  "flag_types": [
+    "number",
+    "number",
+    "number",
+    "number",
+    "number",
+    "number",
+    "number"
+  ],
   "mkdir": {
     "err": null,
     "values": []

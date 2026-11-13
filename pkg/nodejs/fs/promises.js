@@ -372,16 +372,8 @@
       });
     },
 
-    // Constants
-    constants: {
-      F_OK: 0,
-      R_OK: 4,
-      W_OK: 2,
-      X_OK: 1,
-      COPYFILE_EXCL: 1,
-      COPYFILE_FICLONE: 2,
-      COPYFILE_FICLONE_FORCE: 4
-    }
+    // The same object as fs.constants, as in Node.
+    constants: fs.constants
   };
 
   // Export
