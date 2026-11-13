@@ -196,6 +196,7 @@
   "file:flags_new.txt": "6e6577",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
+  "file:start_bad.txt": "6b656570",
   "file:stream.bin": "4100ff7465787400656e64",
   "file:target.txt": "6162636465213f",
   "file:victim": "6b656570",
@@ -329,5 +330,37 @@
     ],
     "written": 3
   },
+  "ws_start_invalid": [
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 9007199254740991. Received -1"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be an integer. Received 1.5"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"start\" argument must be of type number. Received type string ('2')"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"start\" argument must be of type number. Received null"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be an integer. Received NaN"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 9007199254740991. Received 9_007_199_254_740_992"
+    ]
+  ],
   "ws_write_returns": true
 }

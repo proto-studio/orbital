@@ -153,10 +153,30 @@
     }
   }
 
+  // How Node's range errors print a number: integers past 2^32 with _ between thousands.
+  function receivedNumber(value) {
+    if (!Number.isInteger(value) || Math.abs(value) <= 2 ** 32) return String(value);
+    const digits = String(Math.abs(value));
+    let out = '';
+    for (let i = digits.length; i > 0; i -= 3) out = digits.slice(Math.max(0, i - 3), i) + (out ? '_' + out : '');
+    return (value < 0 ? '-' : '') + out;
+  }
+
   function checkRange(name, value, max) {
     if (!Number.isInteger(value) || value < 0 || value > max) {
-      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be >= 0 && <= ' + max + '. Received ' + value);
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be >= 0 && <= ' + max + '. Received ' + receivedNumber(value));
     }
+  }
+
+  // Node's validateInteger(value, name, 0): a number, an integer, from 0 to 2^53 - 1.
+  function checkInteger(name, value) {
+    if (typeof value !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "' + name + '" argument must be of type number. Received ' + receivedType(value));
+    }
+    if (!Number.isInteger(value)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be an integer. Received ' + value);
+    }
+    checkRange(name, value, Number.MAX_SAFE_INTEGER);
   }
 
   const positionArg = (position) => (typeof position === 'number' ? position : -1);
@@ -202,7 +222,13 @@
 
   // How Node's errors describe a value of the wrong type after "Received".
   function receivedType(value) {
+    if (value === null || value === undefined) return String(value);
     if (typeof value === 'function') return 'function ' + value.name;
+    if (typeof value === 'string') {
+      // Node quotes the string, then cuts anything past 28 characters to its first 25.
+      const quotedValue = "'" + value + "'";
+      return 'type string (' + (quotedValue.length > 28 ? quotedValue.slice(0, 25) + '...' : quotedValue) + ')';
+    }
     if (typeof value === 'object') {
       const name = value.constructor && value.constructor.name;
       return name ? 'an instance of ' + name : 'an instance of Object';
@@ -510,6 +536,9 @@
       constructor(path, options) {
         if (typeof options === 'string') options = { encoding: options };
         options = options || {};
+        // Node checks start before anything else, so a bad one throws without opening, and
+        // so without truncating, the file.
+        if (options.start !== undefined) checkInteger('start', options.start);
         // autoClose is Writable's autoDestroy: with it off, finishing or failing leaves the
         // stream, and its descriptor, open.
         super({
@@ -520,7 +549,7 @@
         this.flags = options.flags === undefined ? 'w' : options.flags;
         this.mode = options.mode === undefined ? 0o666 : options.mode;
         this.start = options.start;
-        this.pos = typeof options.start === 'number' ? options.start : undefined;
+        this.pos = options.start;
         this.autoClose = options.autoClose !== false;
         this.bytesWritten = 0;
         this.fd = null;

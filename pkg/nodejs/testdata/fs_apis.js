@@ -45,6 +45,17 @@ async function testWriteStream() {
   await atDone;
   results.ws_start = { events: atEvents, written: at.bytesWritten };
 
+  // A bad start throws before the file is opened, so the file keeps its contents.
+  fs.writeFileSync(file('start_bad.txt'), 'keep');
+  results.ws_start_invalid = [-1, 1.5, '2', null, NaN, 2 ** 53].map((start) => {
+    try {
+      fs.createWriteStream(file('start_bad.txt'), { start }).destroy();
+      return 'opened';
+    } catch (e) {
+      return [e.name, e.code, e.message];
+    }
+  });
+
   const append = fs.createWriteStream(file('start.txt'), { flags: 'a' });
   const appendDone = streamDone(append, []);
   append.end('!');
