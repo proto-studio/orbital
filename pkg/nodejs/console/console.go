@@ -391,6 +391,7 @@ func (c *Console) text(v *v8.Value) string {
 		}
 		parts[i] = piece.String()
 	}
+	// \x00 is NUL: the string was split at each NUL, so joining with it puts them back.
 	return strings.Join(parts, "\x00")
 }
 
@@ -399,6 +400,7 @@ func (c *Console) quoted(v *v8.Value) string {
 	if s, ok := c.inspectCall("quote", v); ok {
 		return s
 	}
+	// \x00 is NUL, which Node prints inside a nested string as the escape \x00.
 	return "'" + strings.ReplaceAll(c.text(v), "\x00", `\x00`) + "'"
 }
 

@@ -4,6 +4,7 @@
 //   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestBinaryStdio_MatchesNode'
 const { Console } = require('console');
 
+// 0x41 'A', NUL, 0x42 'B', 0xFF (never valid in UTF-8), NUL, 0x43 'C'.
 const bin = Buffer.from([0x41, 0, 0x42, 0xff, 0, 0x43]);
 const all = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
 
@@ -12,13 +13,17 @@ function testWrite(stream) {
   stream.write(all);
   stream.write(all.subarray(250, 256));
   stream.write(new Uint8Array([1, 0, 2, 255, 0]));
+  // NUL and 0xFF (never valid in UTF-8) between 9s; the subarray writes only the middle two.
   stream.write(new Uint8Array([9, 0, 0xff, 9]).subarray(1, 3));
   stream.write(Buffer.alloc(0));
   stream.write('');
   stream.write('A\0Bÿ€😀');
+  // \ud800 is a lone UTF-16 high surrogate, which UTF-8 can't encode.
   stream.write('a\ud800b');
   stream.write('\0');
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   stream.write('A\0B\xffC', 'latin1');
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   stream.write('A\0B\xffC', 'binary');
   stream.write('410042ff0043', 'hex');
   stream.write('QQBC/wBD', 'base64');
@@ -66,6 +71,7 @@ function testConsole() {
   console.log('%s|%s', 'a\0b', 'c');
   console.log('x\0%s', 'y');
   console.log('é\0€😀');
+  // \ud800 is a lone UTF-16 high surrogate, which UTF-8 can't encode.
   console.log('a\ud800b');
   console.log(['a\0b', 'c']);
   console.log({ key: 'a\0b' });
@@ -92,7 +98,9 @@ async function main() {
   await testCallbacks(process.stdout, 'out');
   await testCallbacks(process.stderr, 'err');
   testConsole();
+  // NUL, then 0xFE (never valid in UTF-8).
   process.stdout.write(Buffer.from([0, 0xfe]));
+  // 0xFF (never valid in UTF-8), then NUL.
   process.stdout.end(Buffer.from([0xff, 0]));
 }
 

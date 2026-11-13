@@ -139,6 +139,7 @@ func TestBinaryFS_MemoryFilesystem(t *testing.T) {
 	memory := runtime.NewMemoryFilesystem()
 	got := runJS(t, &runtime.Config{Filesystem: memory}, `
 const fs = require('fs');
+// 0x41 'A', NUL, 0x42 'B', 0xFF (never valid in UTF-8), NUL, 0x43 'C'.
 const bin = Buffer.from([0x41, 0, 0x42, 0xff, 0, 0x43]);
 fs.writeFileSync('/file', bin);
 fs.appendFileSync('/file', bin);
@@ -154,8 +155,11 @@ fs.writeFile('/async', bin, async (err) => {
 });`)
 	wantJSON(t, got, map[string]any{"err": nil, "read": "410042ff0043410042ff0043"})
 	for path, want := range map[string][]byte{
-		"/file":  {0x41, 0, 0x42, 0xff, 0, 0x43, 0x41, 0, 0x42, 0xff, 0, 0x43},
-		"/fd":    {0x41, 0, 0x42, 0xff, 0, 0x43, 'X', 0},
+		// The bytes above twice: 0x41 'A', NUL, 0x42 'B', 0xFF (never valid in UTF-8), NUL, 0x43 'C'.
+		"/file": {0x41, 0, 0x42, 0xff, 0, 0x43, 0x41, 0, 0x42, 0xff, 0, 0x43},
+		// The bytes above, then 'X' and NUL from the string write.
+		"/fd": {0x41, 0, 0x42, 0xff, 0, 0x43, 'X', 0},
+		// The bytes above once: 0x41 'A', NUL, 0x42 'B', 0xFF (never valid in UTF-8), NUL, 0x43 'C'.
 		"/async": {0x41, 0, 0x42, 0xff, 0, 0x43},
 	} {
 		data, err := memory.ReadFile(path)

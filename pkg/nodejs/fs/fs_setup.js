@@ -55,17 +55,25 @@
     const out = [];
     for (let i = 0; i < str.length; i++) {
       let c = str.charCodeAt(i);
+      // 0xD800-0xDBFF is a UTF-16 high surrogate, the first half of a pair.
       if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
         const next = str.charCodeAt(i + 1);
+        // 0xDC00-0xDFFF is a UTF-16 low surrogate, the second half of a pair.
         if (next >= 0xdc00 && next <= 0xdfff) {
+          // Combine the pair into one code point. 0x10000 is the first code point past the Basic Multilingual Plane.
           c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
           i++;
         }
       }
+      // A lone surrogate (0xD800-0xDFFF) becomes 0xFFFD, U+FFFD the replacement character.
       if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+      // Below 0x80 is ASCII, written as one byte.
       if (c < 0x80) out.push(c);
+      // Below 0x800 takes two bytes: 0xC0 marks a 2-byte lead (110xxxxx) and 0x80 a continuation byte (10xxxxxx).
       else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      // Below 0x10000 takes three bytes: 0xE0 marks a 3-byte lead (1110xxxx), then two 0x80 continuation bytes.
       else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      // Anything else takes four bytes: 0xF0 marks a 4-byte lead (11110xxx), then three 0x80 continuation bytes.
       else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
     }
     return new Uint8Array(out);
@@ -172,18 +180,55 @@
 
   // The flag and mode a write was given, with Node's defaults.
   function writeFlag(options, fallback) {
-    const flag = options && typeof options === 'object' && options.flag != null ? options.flag : fallback;
-    if (typeof flag === 'number') return flag;
+    // Node falls back on any falsy flag, so 0 and NaN mean the default too.
+    const flag = options && typeof options === 'object' && options.flag ? options.flag : fallback;
+    if (typeof flag === 'number') {
+      // A numeric flag must be a 32-bit signed integer, checked before the file is opened.
+      if (!Number.isInteger(flag)) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "flags" is out of range. It must be an integer. Received ' + flag);
+      }
+      if (flag < -2147483648 || flag > 2147483647) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+          'The value of "flags" is out of range. It must be >= -2147483648 && <= 2147483647. Received ' + flag);
+      }
+      return flag;
+    }
     if (!OPEN_FLAGS.includes(flag)) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'flags' is invalid. Received " + JSON.stringify(flag).replace(/"/g, "'"));
     }
     return flag;
   }
 
+  // How Node's errors describe a value of the wrong type after "Received".
+  function receivedType(value) {
+    if (typeof value === 'function') return 'function ' + value.name;
+    if (typeof value === 'object') {
+      const name = value.constructor && value.constructor.name;
+      return name ? 'an instance of ' + name : 'an instance of Object';
+    }
+    return 'type ' + typeof value + ' (' + String(value) + ')';
+  }
+
+  // A write's mode, checked as Node checks it before touching the file: an integer from 0 to
+  // 2^32 - 1, or a string of octal digits.
   function writeMode(options) {
-    const mode = options && typeof options === 'object' ? options.mode : undefined;
+    let mode = options && typeof options === 'object' ? options.mode : undefined;
     if (mode === undefined || mode === null) return 0o666;
-    return typeof mode === 'string' ? parseInt(mode, 8) : mode;
+    if (typeof mode === 'string') {
+      if (!/^[0-7]+$/.test(mode)) {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+          "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '" + mode + "'");
+      }
+      mode = parseInt(mode, 8);
+    }
+    if (typeof mode !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "mode" argument must be of type number. Received ' + receivedType(mode));
+    }
+    if (!Number.isInteger(mode)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "mode" is out of range. It must be an integer. Received ' + mode);
+    }
+    checkRange('mode', mode, 4294967295);
+    return mode;
   }
 
   const _openSync = fs.openSync;

@@ -11,6 +11,38 @@
       "syscall": "open"
     }
   },
+  "appendFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
   "appendFileSync_flag_w": "two",
   "appendFileSync_missing_dir": {
     "error": {
@@ -23,9 +55,205 @@
       "syscall": "open"
     }
   },
+  "flag_falsy": "twothree",
+  "flag_keep": "kept",
+  "long_readFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "long_writeFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "loop_readFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
+  "loop_writeFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
   "mode_600": "600",
   "mode_append": "600",
+  "mode_appendFileSync": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_created_boolean": false,
+  "mode_created_empty": false,
+  "mode_created_fraction": false,
+  "mode_created_hex": false,
+  "mode_created_infinity": false,
+  "mode_created_nan": false,
+  "mode_created_negative": false,
+  "mode_created_object": false,
+  "mode_created_octal_8": false,
+  "mode_created_prefixed": false,
+  "mode_created_spaced": false,
+  "mode_created_too_big": false,
+  "mode_keep": "kept",
+  "mode_promises_appendFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9'",
+      "name": "TypeError"
+    }
+  },
+  "mode_promises_writeFile": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
   "mode_string": "640",
+  "mode_writeFile": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_boolean": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "isError": true,
+      "message": "The \"mode\" argument must be of type number. Received type boolean (true)",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_empty": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received ''",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_existing": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_hex": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '0x1'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_nan": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received NaN",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_negative": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_object": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "isError": true,
+      "message": "The \"mode\" argument must be of type number. Received an instance of Object",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_octal_8": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '8'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_prefixed": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '0o644'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_spaced": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received ' 644'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received 4294967296",
+      "name": "RangeError"
+    }
+  },
+  "mode_zero_string": "0",
   "nul_appendFileSync": {
     "error": {
       "code": "ERR_INVALID_ARG_VALUE",
@@ -156,6 +384,14 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
   "promises_writeFile_missing_dir": {
     "error": {
       "code": "ENOENT",
@@ -219,6 +455,38 @@
     }
   },
   "writeFileSync_flag_a": "onetwo",
+  "writeFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
   "writeFileSync_flag_wx_existing": {
     "error": {
       "code": "EEXIST",
@@ -245,6 +513,14 @@
     }
   },
   "writeFile_flag_a": "onetwo",
+  "writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
   "writeFile_missing_dir": {
     "error": {
       "code": "ENOENT",
