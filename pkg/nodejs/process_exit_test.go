@@ -98,6 +98,44 @@ func TestProcessExit_InModule(t *testing.T) {
 	}
 }
 
+// runExitModule writes files to a temporary directory and runs entry.mjs from it as an ES
+// module, which is expected to call process.exit. It returns the exit code and what the
+// files recorded in globalThis.log.
+func runExitModule(t *testing.T, files map[string]string) (int, string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("globalThis.log = [];", "init.js"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs"))
+	var exit *runtime.ExitError
+	if !errors.As(runErr, &exit) {
+		t.Fatalf("RunModuleFile returned %v, want an *ExitError", runErr)
+	}
+	logged, err := inst.Runtime.RunScript("JSON.stringify(globalThis.log)", "read.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exit.Code, logged.String()
+}
+
+// exitingModule logs, registers an 'exit' listener and calls process.exit(code), then
+// logs again if execution carries on.
+func exitingModule(code int) string {
+	return fmt.Sprintf(`process.on('exit', (c) => log.push('exit ' + c));
+log.push('dep'); process.exit(%d); log.push('dep after');`, code)
+}
+
 // process.exit in a CommonJS module that an ES module imports statically runs while the
 // import is instantiated, before the entry evaluates. RunModuleFile reports the exit, not
 // the failed import, and the 'exit' listeners run once. The expected values are what
@@ -105,37 +143,41 @@ func TestProcessExit_InModule(t *testing.T) {
 func TestProcessExit_InImportedCommonJS(t *testing.T) {
 	for _, code := range []int{5, 0} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
-			dir := t.TempDir()
-			files := map[string]string{
-				"dep.cjs": fmt.Sprintf(`process.on('exit', (c) => log.push('exit ' + c));
-log.push('dep'); process.exit(%d); log.push('dep after');`, code),
+			got, log := runExitModule(t, map[string]string{
+				"dep.cjs":   exitingModule(code),
 				"entry.mjs": `import './dep.cjs'; log.push('entry');`,
-			}
-			for name, src := range files {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer inst.Runtime.Dispose()
-			if _, err := inst.Runtime.RunScript("globalThis.log = [];", "init.js"); err != nil {
-				t.Fatal(err)
-			}
-			_, runErr := inst.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs"))
-			var exit *runtime.ExitError
-			if !errors.As(runErr, &exit) || exit.Code != code {
-				t.Fatalf("RunModuleFile returned %v, want an *ExitError with code %d", runErr, code)
-			}
-			logged, err := inst.Runtime.RunScript("JSON.stringify(globalThis.log)", "read.js")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := fmt.Sprintf(`["dep","exit %d"]`, code); logged.String() != want {
-				t.Fatalf("logged %s, want %s", logged.String(), want)
+			})
+			if want := fmt.Sprintf(`["dep","exit %d"]`, code); got != code || log != want {
+				t.Fatalf("exit %d with log %s, want exit %d with log %s", got, log, code, want)
 			}
 		})
+	}
+}
+
+// process.exit in an ES module loaded by import() ends the program there: the import
+// neither rejects nor resolves, and nothing after it in the importer runs. The expected
+// values are what Node 20.18.1 logs and exits with for the same files.
+func TestProcessExit_InDynamicImport(t *testing.T) {
+	entries := map[string]string{
+		"promise": `import('./dep.mjs').then(() => log.push('resolved'), (e) => log.push('rejected ' + e));`,
+		"top-level await": `try { await import('./dep.mjs'); log.push('resolved'); } catch (e) { log.push('rejected ' + e); }
+log.push('entry after');`,
+		"from a timer": `setTimeout(async () => {
+  try { await import('./dep.mjs'); log.push('resolved'); } catch (e) { log.push('rejected ' + e); }
+  log.push('timer after');
+}, 0);`,
+	}
+	for name, entry := range entries {
+		for _, code := range []int{5, 0} {
+			t.Run(fmt.Sprintf("%s/%d", name, code), func(t *testing.T) {
+				got, log := runExitModule(t, map[string]string{
+					"dep.mjs":   exitingModule(code),
+					"entry.mjs": entry,
+				})
+				if want := fmt.Sprintf(`["dep","exit %d"]`, code); got != code || log != want {
+					t.Fatalf("exit %d with log %s, want exit %d with log %s", got, log, code, want)
+				}
+			})
+		}
 	}
 }
