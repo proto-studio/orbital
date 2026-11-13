@@ -293,9 +293,11 @@ func TestFSWithoutBuffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The lone surrogate is written as U+FFFD, as Node writes it.
+	// \x00 is NUL and \uFFFD is U+FFFD, the replacement character.
 	want := "A\x00é€😀 \uFFFD end"
 	result, err := rt.RunScript(`
 		const fs = __fs_module;
+		// \ud800 is a lone UTF-16 high surrogate, which UTF-8 can't encode.
 		fs.writeFileSync('/text', 'A\0é€😀 \ud800 end');
 		fs.writeFileSync('/bytes', new Uint8Array([0, 1, 255, 254]));
 		fs.appendFileSync('/bytes', new Uint8Array([7]));
