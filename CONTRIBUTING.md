@@ -384,6 +384,8 @@ workflow publishes the new pin as a patch release.
     `automated/update-v8-*` branch, which does a full build.
 - `.github/workflows/update-v8.yml` — Weekly or by hand, detects a newer stable V8 and
   (create-only) opens a **draft** PR early, so a PR exists no matter what happens next.
+  If the branch already exists but its PR was closed, the run stops with an error; reopen
+  the PR or delete the branch, then run it again.
   It builds the V8 libraries and glue SDK for every target, calls `glue.yml` to compile the glue
   against the new headers, and calls `test.yml`, then marks the PR ready. A failure leaves
   it a draft. If the build or tests fail, clone the `automated/update-v8-*` branch, fix it,

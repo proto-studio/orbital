@@ -1963,6 +1963,7 @@
   }
 
   const kError = Symbol('kError');
+  const kResponse = Symbol('kResponse');
   ClientRequest.prototype._IncomingMessageClass = IncomingMessage;
 
   function getTimerDuration(msecs) {
@@ -2280,6 +2281,7 @@
       }
 
       const res = new server.ServerResponse(req, { highWaterMark: socket.writableHighWaterMark });
+      req[kResponse] = res;
       res.shouldKeepAlive = info.shouldKeepAlive && res.shouldKeepAlive;
       res._keepAliveTimeout = server.keepAliveTimeout;
       res._maxRequestsPerSocket = server.maxRequestsPerSocket;
@@ -2342,10 +2344,10 @@
         res.destroyed = true;
         res._closed = true;
         res.emit('close');
+        // As in Node, the request closes after its response, and not before it has been read.
+        if (req.readableEnded) req.destroy();
+        else req.once('end', () => req.destroy());
       });
-      // A request's own 'close' waits until it has been read.
-      if (req.readableEnded) req.destroy();
-      else req.once('end', () => req.destroy());
 
       if (res._last) {
         if (typeof socket.destroySoon === 'function') socket.destroySoon();
@@ -2364,7 +2366,20 @@
     // Requests whose responses have not finished end with their connection.
     function abortActive() {
       for (const req of conn.active) {
-        if (!req.destroyed) req.destroy(connResetException('aborted'));
+        if (req.destroyed) continue;
+        if (!req.complete || !req.readableEnded) {
+          req.destroy(connResetException('aborted'));
+          continue;
+        }
+        // A fully read request has nothing to abort; Node has already closed it.
+        const res = req[kResponse];
+        if (res && res.finished && !res._closed) {
+          // Its response has ended and only waits for the write callback, which the peer's FIN
+          // can beat. Node's 'finish' comes at once for such a write, so the response closes first.
+          res.once('close', () => req.destroy());
+        } else {
+          req.destroy();
+        }
       }
       conn.active.clear();
     }

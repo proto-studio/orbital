@@ -623,6 +623,28 @@ out.events = await new Promise(async (resolve) => {
   http.get(target(s), (p) => p.resume());
 });
 
+// A client that half-closes as it sends lets its FIN race the response's write callback.
+out.finFirst = await new Promise(async (resolve) => {
+  const seen = new Set();
+  let left = 20;
+  const s = await serve((q, p) => {
+    const ev = [];
+    q.on('end', () => ev.push('req end'));
+    q.on('close', () => ev.push('req close'));
+    p.on('close', () => { ev.push('res close'); setTimeout(() => {
+      seen.add(ev.join(', '));
+      if (--left) go(); else { s.close(); resolve([...seen]); }
+    }, 5); });
+    q.resume();
+    p.end('x');
+  });
+  const go = () => {
+    const c = net.connect(s.address().port, '127.0.0.1', () => c.end('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'));
+    c.resume();
+  };
+  go();
+});
+
 out.disconnect = await new Promise(async (resolve) => {
   const ev = [];
   const s = await serve((q, p) => {
@@ -685,6 +707,7 @@ done(out);`)
 		"types":            []any{true, true, true},
 		"props":            []any{float64(5000), float64(60000), float64(300000), float64(0)},
 		"events":           []any{"req end", "res close", "req close"},
+		"finFirst":         []any{"req end, res close, req close"},
 		"disconnect":       []any{"aborted", "res close:false", "ECONNRESET"},
 		"closeIdle":        "closed",
 		"closeAll":         "ECONNRESET",

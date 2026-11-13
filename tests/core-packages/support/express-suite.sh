@@ -39,6 +39,7 @@ export NODE_ENV=test
 export NO_DEPRECATION='body-parser,express'
 
 specs=(
+  "$CORE_PKG_DIR/support/listen-loopback.js"
   test/support/env.js
   test/Route.js
   test/Router.js
