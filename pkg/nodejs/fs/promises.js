@@ -24,6 +24,19 @@
     return new Promise((resolve) => resolve(operation()));
   }
 
+  // What writeFile and appendFile write to: a path, or the descriptor of a FileHandle. Unlike
+  // the callback forms, these refuse a bare descriptor, as Node's do.
+  function target(path) {
+    if (typeof path === 'number') {
+      const e = new TypeError('The "path" argument must be of type string or an instance of Buffer or URL. Received type number (' + path + ')');
+      e.code = 'ERR_INVALID_ARG_TYPE';
+      throw e;
+    }
+    if (path && typeof path === 'object' && handles.has(path)) return path.fd;
+    return path;
+  }
+  const handles = new WeakSet();
+
   // A FileHandle over a real descriptor, so it shares the file offset and byte handling of
   // fs.readSync and fs.writeSync.
   function fileHandle(fd, path) {
@@ -101,6 +114,7 @@
         });
       },
     };
+    handles.add(handle);
     return handle;
   }
 
@@ -124,26 +138,12 @@
 
     // Write file contents
     writeFile: function(path, data, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.writeFileSync(path, data, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.writeFileSync(target(path), data, options));
     },
 
     // Append to file
     appendFile: function(path, data, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.appendFileSync(path, data, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.appendFileSync(target(path), data, options));
     },
 
     // Delete file
@@ -208,18 +208,7 @@
 
     // Remove file or directory (recursive)
     rm: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          if (options && options.recursive) {
-            fs.rmdirSync(path, { recursive: true });
-          } else {
-            fs.unlinkSync(path);
-          }
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.rmSync(path, options));
     },
 
     // Read directory contents
@@ -372,19 +361,14 @@
       });
     },
 
-    // Constants
-    constants: {
-      F_OK: 0,
-      R_OK: 4,
-      W_OK: 2,
-      X_OK: 1,
-      COPYFILE_EXCL: 1,
-      COPYFILE_FICLONE: 2,
-      COPYFILE_FICLONE_FORCE: 4
-    }
+    // The same object as fs.constants, as in Node.
+    constants: fs.constants
   };
 
   // Export
   global.__fs_promises_module = fsPromises;
+  if (fs && !fs.promises) {
+    Object.defineProperty(fs, 'promises', { configurable: true, enumerable: true, value: fsPromises });
+  }
 
 })(globalThis);

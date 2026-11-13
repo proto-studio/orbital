@@ -26,6 +26,23 @@ func TestFSErrors_MatchesNode(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "loop_a"), filepath.Join(dir, "loop_b")); err != nil {
 		t.Fatal(err)
 	}
+	// Links for rm to remove: some pointing at nothing, some at a directory.
+	if err := os.MkdirAll(filepath.Join(dir, "rm_target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rm_target", "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 4; i++ {
+		if err := os.Symlink(filepath.Join(dir, "rm_nowhere"), filepath.Join(dir, fmt.Sprintf("rm_dangling_%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		if err := os.Symlink(filepath.Join(dir, "rm_target"), filepath.Join(dir, fmt.Sprintf("rm_dirlink_%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if captureFromNode(t) {
 		output, err := exec.Command("node", scriptPath, dir).Output()
@@ -85,6 +102,35 @@ done({
 		"missing":      "ENOENT",
 		"missingWrite": "ENOENT",
 	})
+}
+
+// fs.createWriteStream and the callback forms behave as in Node, and leave the same files.
+func TestFSAPIs_MatchesNode(t *testing.T) {
+	const scriptPath, expectedPath = "testdata/fs_apis.js", "testdata/fs_apis.node.json"
+	dir := t.TempDir()
+
+	if captureFromNode(t) {
+		output, err := exec.Command("node", scriptPath, dir).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		filesOnDisk(t, dir, results)
+		writeExpected(t, expectedPath, results)
+		return
+	}
+
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &runtime.Config{Timeout: 60 * time.Second}
+	got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", dir, script))
+	filesOnDisk(t, dir, got)
+	wantJSON(t, got, readExpected(t, expectedPath))
 }
 
 // fullFS is a MemoryFilesystem whose files are full: every write fails with ENOSPC.
@@ -151,5 +197,24 @@ fs.readFile('/dir', (err) => require('fs/promises').readFile('/dir').catch((perr
 		"callback": []any{"EISDIR", "read", "EISDIR: illegal operation on a directory, read"},
 		"promise":  "EISDIR",
 		"missing":  []any{"ENOENT", "open", "ENOENT: no such file or directory, open '/nothing'"},
+	})
+}
+
+// fs.constants holds this platform's open flags, as Node's does: O_APPEND and O_CREAT, for
+// one, differ between Linux and macOS.
+func TestFS_OpenFlagConstants(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const { constants } = require('fs');
+done(Object.fromEntries(['O_RDONLY', 'O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_EXCL', 'O_TRUNC', 'O_APPEND', 'O_SYNC']
+  .map((name) => [name, constants[name]])));`)
+	wantJSON(t, got, map[string]any{
+		"O_RDONLY": float64(syscall.O_RDONLY),
+		"O_WRONLY": float64(syscall.O_WRONLY),
+		"O_RDWR":   float64(syscall.O_RDWR),
+		"O_CREAT":  float64(syscall.O_CREAT),
+		"O_EXCL":   float64(syscall.O_EXCL),
+		"O_TRUNC":  float64(syscall.O_TRUNC),
+		"O_APPEND": float64(syscall.O_APPEND),
+		"O_SYNC":   float64(syscall.O_SYNC),
 	})
 }

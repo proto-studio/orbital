@@ -255,6 +255,9 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	if err := regFn("fstatSync", f.fstatSyncFunc); err != nil {
 		return err
 	}
+	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
+		return err
+	}
 
 	// Native async metadata ops. Node's stat/lstat/access are asynchronous; run
 	// the syscall on a goroutine and deliver a Node-shaped result (real Error
@@ -307,6 +310,15 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 	if err := fsObj.Set("writeFile", writeFileVal); err != nil {
+		return err
+	}
+
+	// The open flags fs.constants exports, which fs_setup.js adds to it.
+	openFlags, err := openFlagConstants(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fsObj.Set("__openFlags", openFlags); err != nil {
 		return err
 	}
 
@@ -416,18 +428,40 @@ func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
+	// fs_setup.js passes the mode, already checked, as a number; Node's default is 0o777.
+	perm := fs.FileMode(0o777)
+	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
+		perm = dirMode(args[2].Integer())
+	}
+
 	var err error
 	if recursive {
-		err = f.fs().MkdirAll(path, 0755)
+		err = f.fs().MkdirAll(path, perm)
 	} else {
-		err = f.fs().Mkdir(path, 0755)
+		err = f.fs().Mkdir(path, perm)
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "mkdir", path)
 	}
 
 	return nil
+}
+
+// dirMode turns a Unix mode into Go's FileMode, whose setuid, setgid and sticky bits are not
+// the Unix ones.
+func dirMode(mode int64) fs.FileMode {
+	perm := fs.FileMode(mode & 0o777)
+	if mode&0o4000 != 0 {
+		perm |= fs.ModeSetuid
+	}
+	if mode&0o2000 != 0 {
+		perm |= fs.ModeSetgid
+	}
+	if mode&0o1000 != 0 {
+		perm |= fs.ModeSticky
+	}
+	return perm
 }
 
 // rmdirSyncFunc implements fs.rmdirSync
@@ -446,7 +480,20 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
-	var err error
+	// Remove deletes files too, but rmdir only takes a directory: anything else, a symbolic
+	// link included, is ENOTDIR and kept, as in Node. Node's recursive form looks first with
+	// lstat, so a missing path is reported as lstat.
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		if recursive {
+			return fsFailure(info.Context(), err, "lstat", path)
+		}
+		return fsFailure(info.Context(), err, "rmdir", path)
+	}
+	if !stat.IsDir {
+		return fsFailure(info.Context(), syscall.ENOTDIR, "rmdir", path)
+	}
+
 	if recursive {
 		err = f.fs().RemoveAll(path)
 	} else {
@@ -454,7 +501,7 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "rmdir", path)
 	}
 
 	return nil
@@ -467,8 +514,9 @@ func (f *FS) unlinkSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Remove(args[0].String()); err != nil {
-		return nil
+	path := args[0].String()
+	if err := f.fs().Remove(path); err != nil {
+		return fsFailure(info.Context(), err, "unlink", path)
 	}
 
 	return nil
@@ -482,9 +530,10 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	entries, err := f.fs().ReadDir(args[0].String())
+	path := args[0].String()
+	entries, err := f.fs().ReadDir(path)
 	if err != nil {
-		return nil
+		return fsFailure(ctx, err, "scandir", path)
 	}
 
 	// Detect the { withFileTypes: true } option, which asks for Dirent-like
@@ -527,6 +576,22 @@ func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
+	return f.createStatObject(ctx, stat)
+}
+
+// rmTargetSyncFunc describes the path rm is to remove, as Node's rm does with lstat: a
+// symbolic link is described, and so removed, itself. On failure it returns an fsFailure.
+func (f *FS) rmTargetSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	path := args[0].String()
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		return fsFailure(ctx, err, "lstat", path)
+	}
 	return f.createStatObject(ctx, stat)
 }
 
@@ -573,7 +638,36 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	return obj
 }
 
-// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags.
+// openFlagConstants returns the open flags for fs.constants. They are the platform's own
+// values, which differ between Linux and macOS, and the ones parseOpenFlags passes a numeric
+// flag straight through with, so O_WRONLY | O_APPEND opens for appending.
+func openFlagConstants(ctx *v8.Context) (*v8.Value, error) {
+	obj, err := ctx.NewObject()
+	if err != nil {
+		return nil, err
+	}
+	for _, flag := range []struct {
+		name  string
+		value int
+	}{
+		{"O_RDONLY", os.O_RDONLY},
+		{"O_WRONLY", os.O_WRONLY},
+		{"O_RDWR", os.O_RDWR},
+		{"O_CREAT", os.O_CREATE},
+		{"O_EXCL", os.O_EXCL},
+		{"O_TRUNC", os.O_TRUNC},
+		{"O_APPEND", os.O_APPEND},
+		{"O_SYNC", os.O_SYNC},
+	} {
+		if err := obj.Set(flag.name, ctx.NewInteger(int64(flag.value))); err != nil {
+			return nil, err
+		}
+	}
+	return obj, nil
+}
+
+// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags. A number is
+// made of the flags in fs.constants, which are os's own, so it passes through unchanged.
 func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v == nil {
 		return os.O_RDONLY, true
@@ -678,10 +772,10 @@ func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	f.fdMu.Unlock()
 
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, close")
+		return fsFailure(ctx, syscall.EBADF, "close", "")
 	}
 	if err := file.Close(); err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "close", "")
 	}
 	return nil
 }
@@ -724,21 +818,21 @@ func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if _, open := f.fileForFD(fd); !open {
 			n, err := std.Write(data)
 			if err != nil {
-				return ctx.Throw(err.Error())
+				return fsFailure(ctx, err, "write", "")
 			}
 			return ctx.NewInteger(int64(n))
 		}
 	}
 	file, ok := f.fileForFD(fd)
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, write")
+		return fsFailure(ctx, syscall.EBADF, "write", "")
 	}
 
 	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
 		return file.Write(data)
 	})
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "write", "")
 	}
 	return ctx.NewInteger(int64(n))
 }
@@ -753,7 +847,7 @@ func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	file, ok := f.fileForFD(int(args[0].Integer()))
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, read")
+		return fsFailure(ctx, syscall.EBADF, "read", "")
 	}
 
 	buf := make([]byte, args[1].Integer())
@@ -761,7 +855,7 @@ func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return file.Read(buf)
 	})
 	if err != nil && err != io.EOF && n == 0 {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "read", "")
 	}
 	val, _ := ctx.NewString(fileContents(buf[:n], false))
 	return val
@@ -777,11 +871,11 @@ func (f *FS) fstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	fd := int(args[0].Integer())
 	file, ok := f.fileForFD(fd)
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, fstat")
+		return fsFailure(ctx, syscall.EBADF, "fstat", "")
 	}
 	stat, err := file.Stat()
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "fstat", "")
 	}
 	return f.createStatObject(ctx, stat)
 }
@@ -794,7 +888,7 @@ func (f *FS) renameSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err := f.fs().Rename(args[0].String(), args[1].String()); err != nil {
-		return nil
+		return fsFailureTo(info.Context(), err, "rename", args[0].String(), args[1].String())
 	}
 
 	return nil
@@ -807,8 +901,13 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Copy(args[0].String(), args[1].String()); err != nil {
-		return nil
+	src, dest := args[0].String(), args[1].String()
+	// COPYFILE_EXCL: refuse to replace an existing destination.
+	if len(args) >= 3 && args[2].IsNumber() && args[2].Integer()&1 != 0 && f.fs().Exists(dest) {
+		return fsFailureTo(info.Context(), syscall.EEXIST, "copyfile", src, dest)
+	}
+	if err := f.fs().Copy(src, dest); err != nil {
+		return fsFailureTo(info.Context(), err, "copyfile", src, dest)
 	}
 
 	return nil

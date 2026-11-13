@@ -90,6 +90,17 @@
       "syscall": "open"
     }
   },
+  "loop_rmSync_force": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, lstat '\u003cdir\u003e/loop_a/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a/child",
+      "syscall": "lstat"
+    }
+  },
   "loop_writeFileSync": {
     "error": {
       "code": "ELOOP",
@@ -100,6 +111,38 @@
       "path": "\u003cdir\u003e/loop_a",
       "syscall": "open"
     }
+  },
+  "mkdirSync_mode": {
+    "value": "701"
+  },
+  "mkdirSync_mode_invalid": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'",
+      "name": "TypeError"
+    }
+  },
+  "mkdir_invalid_made": [],
+  "mkdir_mode_invalid": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "mkdir_mode_number": {
+    "value": "711"
+  },
+  "mkdir_mode_option": {
+    "value": "700"
+  },
+  "mkdir_mode_recursive": {
+    "value": [
+      "700",
+      "700"
+    ]
   },
   "mode_600": "600",
   "mode_append": "600",
@@ -384,6 +427,34 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_mkdir_mode": {
+    "value": "750"
+  },
+  "promises_rm_dangling_force": {
+    "value": null
+  },
+  "promises_rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "promises_rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
   "promises_writeFile_flag_fraction": {
     "error": {
       "code": "ERR_OUT_OF_RANGE",
@@ -445,6 +516,72 @@
       "syscall": "open"
     }
   },
+  "rmSync_dangling": {
+    "value": null
+  },
+  "rmSync_dangling_force": {
+    "value": null
+  },
+  "rmSync_dirlink": {
+    "value": null
+  },
+  "rmSync_dirlink_recursive": {
+    "value": null
+  },
+  "rmSync_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_dangling": {
+    "value": null
+  },
+  "rm_links_left": [
+    "rm_target"
+  ],
+  "rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_target_left": [
+    "keep"
+  ],
+  "rmdirSync_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file_kept": "x",
   "sync_flags": "onetwo",
   "writeFileSync_bad_flag": {
     "error": {

@@ -103,6 +103,25 @@ func (l *LocalFilesystem) Stat(path string) (*FileInfo, error) {
 	}, nil
 }
 
+// Lstat returns file information like Stat, but describes a final symbolic link itself.
+func (l *LocalFilesystem) Lstat(path string) (*FileInfo, error) {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return &FileInfo{
+		Name:    info.Name(),
+		Size:    info.Size(),
+		Mode:    info.Mode(),
+		ModTime: info.ModTime(),
+		IsDir:   info.IsDir(),
+	}, nil
+}
+
 // Exists checks if a path exists.
 func (l *LocalFilesystem) Exists(path string) bool {
 	resolved, err := l.resolvePath(path)

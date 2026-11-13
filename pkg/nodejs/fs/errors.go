@@ -86,7 +86,7 @@ func fsErrorMessage(code, description, syscallName, path string) string {
 // closes work on a descriptor, so their errors name none.
 func errorPath(syscallName, path string) string {
 	switch syscallName {
-	case "read", "write", "close":
+	case "read", "write", "close", "fstat":
 		return ""
 	}
 	return path
@@ -109,6 +109,18 @@ func fsFailure(ctx *v8.Context, err error, syscallName, path string) *v8.Value {
 		set("path", p)
 	}
 	obj.Set("errno", ctx.NewInteger(int64(errno)))
+	return obj
+}
+
+// fsFailureTo describes a failed call on two paths, such as rename, whose message names both:
+// "ENOENT: no such file or directory, rename 'a' -> 'b'".
+func fsFailureTo(ctx *v8.Context, err error, syscallName, path, dest string) *v8.Value {
+	obj := fsFailure(ctx, err, syscallName, path)
+	code, description, _ := errnoOf(err)
+	message, _ := ctx.NewString(fmt.Sprintf("%s: %s, %s '%s' -> '%s'", code, description, syscallName, path, dest))
+	obj.Set("message", message)
+	destVal, _ := ctx.NewString(dest)
+	obj.Set("dest", destVal)
 	return obj
 }
 
