@@ -2,6 +2,9 @@ package nodejs
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -92,5 +95,47 @@ func TestProcessExit_InModule(t *testing.T) {
 	}
 	if ran.String() != "[true,null]" {
 		t.Fatalf("ran %s, want only the code before process.exit", ran.String())
+	}
+}
+
+// process.exit in a CommonJS module that an ES module imports statically runs while the
+// import is instantiated, before the entry evaluates. RunModuleFile reports the exit, not
+// the failed import, and the 'exit' listeners run once. The expected values are what
+// Node 20.18.1 logs and exits with for the same files.
+func TestProcessExit_InImportedCommonJS(t *testing.T) {
+	for _, code := range []int{5, 0} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{
+				"dep.cjs": fmt.Sprintf(`process.on('exit', (c) => log.push('exit ' + c));
+log.push('dep'); process.exit(%d); log.push('dep after');`, code),
+				"entry.mjs": `import './dep.cjs'; log.push('entry');`,
+			}
+			for name, src := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			if _, err := inst.Runtime.RunScript("globalThis.log = [];", "init.js"); err != nil {
+				t.Fatal(err)
+			}
+			_, runErr := inst.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs"))
+			var exit *runtime.ExitError
+			if !errors.As(runErr, &exit) || exit.Code != code {
+				t.Fatalf("RunModuleFile returned %v, want an *ExitError with code %d", runErr, code)
+			}
+			logged, err := inst.Runtime.RunScript("JSON.stringify(globalThis.log)", "read.js")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := fmt.Sprintf(`["dep","exit %d"]`, code); logged.String() != want {
+				t.Fatalf("logged %s, want %s", logged.String(), want)
+			}
+		})
 	}
 }
