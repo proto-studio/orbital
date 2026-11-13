@@ -161,43 +161,92 @@
 
   const positionArg = (position) => (typeof position === 'number' ? position : -1);
 
-  // readFileSync: Node ALWAYS throws when a read fails (ENOENT for a missing
-  // path, etc.); libraries lean on that catchable error (e.g. y18n does
-  // `JSON.parse(readFileSync(...))` inside a try/catch and treats an ENOENT as
-  // "no locale file"). The native layer returns `undefined` on any read failure
-  // instead of throwing, so a missing file silently became `JSON.parse(undefined)`
-  // -> SyntaxError. Convert that sentinel back into a real Node-style error.
-  const _readFileSync = fs.readFileSync;
-  if (typeof _readFileSync === 'function') {
-    fs.readFileSync = function (p, options) {
-      const encoding = encodingOf(options);
-      const result = _readFileSync.call(this, p, isUtf8(encoding));
-      if (result === null || result === undefined) {
-        const path = typeof p === 'string' ? p : String(p);
-        const exists = typeof fs.existsSync === 'function' && fs.existsSync(path);
-        const e = new Error(
-          (exists
-            ? "EISDIR: illegal operation on a directory, read"
-            : "ENOENT: no such file or directory, open '" + path + "'")
-        );
-        e.code = exists ? 'EISDIR' : 'ENOENT';
-        e.errno = exists ? -21 : -2;
-        e.syscall = exists ? 'read' : 'open';
-        e.path = path;
-        throw e;
-      }
-      return decodeContents(result, encoding);
-    };
+  // The native calls return a description of a failure rather than throwing, because they
+  // can only throw a string. This throws it as Node's Error.
+  function check(result) {
+    if (result && result.__fsError) {
+      const e = new Error(result.message);
+      e.errno = result.errno;
+      e.code = result.code;
+      e.syscall = result.syscall;
+      e.path = result.path;
+      throw e;
+    }
+    return result;
   }
+
+  const OPEN_FLAGS = ['r', 'rs', 'sr', 'r+', 'rs+', 'sr+', 'w', 'wx', 'xw', 'w+', 'wx+', 'xw+',
+    'a', 'ax', 'xa', 'as', 'sa', 'a+', 'ax+', 'xa+', 'as+', 'sa+'];
+
+  // The flag and mode a write was given, with Node's defaults.
+  function writeFlag(options, fallback) {
+    // Node falls back on any falsy flag, so 0 and NaN mean the default too.
+    const flag = options && typeof options === 'object' && options.flag ? options.flag : fallback;
+    if (typeof flag === 'number') {
+      // A numeric flag must be a 32-bit signed integer, checked before the file is opened.
+      if (!Number.isInteger(flag)) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "flags" is out of range. It must be an integer. Received ' + flag);
+      }
+      if (flag < -2147483648 || flag > 2147483647) {
+        throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+          'The value of "flags" is out of range. It must be >= -2147483648 && <= 2147483647. Received ' + flag);
+      }
+      return flag;
+    }
+    if (!OPEN_FLAGS.includes(flag)) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', "The argument 'flags' is invalid. Received " + JSON.stringify(flag).replace(/"/g, "'"));
+    }
+    return flag;
+  }
+
+  // How Node's errors describe a value of the wrong type after "Received".
+  function receivedType(value) {
+    if (typeof value === 'function') return 'function ' + value.name;
+    if (typeof value === 'object') {
+      const name = value.constructor && value.constructor.name;
+      return name ? 'an instance of ' + name : 'an instance of Object';
+    }
+    return 'type ' + typeof value + ' (' + String(value) + ')';
+  }
+
+  // A write's mode, checked as Node checks it before touching the file: an integer from 0 to
+  // 2^32 - 1, or a string of octal digits.
+  function writeMode(options) {
+    let mode = options && typeof options === 'object' ? options.mode : undefined;
+    if (mode === undefined || mode === null) return 0o666;
+    if (typeof mode === 'string') {
+      if (!/^[0-7]+$/.test(mode)) {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+          "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '" + mode + "'");
+      }
+      mode = parseInt(mode, 8);
+    }
+    if (typeof mode !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "mode" argument must be of type number. Received ' + receivedType(mode));
+    }
+    if (!Number.isInteger(mode)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "mode" is out of range. It must be an integer. Received ' + mode);
+    }
+    checkRange('mode', mode, 4294967295);
+    return mode;
+  }
+
+  const _readFileSync = fs.readFileSync;
+  fs.readFileSync = function (p, options) {
+    const encoding = encodingOf(options);
+    return decodeContents(check(_readFileSync.call(this, p, isUtf8(encoding))), encoding);
+  };
 
   const _writeFileSync = fs.writeFileSync;
   fs.writeFileSync = function (path, data, options) {
-    _writeFileSync.call(this, path, base64Of(dataBytes(data, encodingOf(options))));
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
+    check(_writeFileSync.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options)));
   };
 
   const _appendFileSync = fs.appendFileSync;
   fs.appendFileSync = function (path, data, options) {
-    _appendFileSync.call(this, path, base64Of(dataBytes(data, encodingOf(options))));
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
+    check(_appendFileSync.call(this, path, bytes, writeFlag(options, 'a'), writeMode(options)));
   };
 
   const _readFile = fs.readFile;
@@ -221,7 +270,8 @@
       options = undefined;
     }
     checkCallback(callback);
-    _writeFile.call(this, path, base64Of(dataBytes(data, encodingOf(options))), callback);
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
+    _writeFile.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options), callback);
   };
 
   // writeSync(fd, buffer[, offset[, length[, position]]]), writeSync(fd, buffer[, options])
@@ -410,4 +460,40 @@
       return new C(path, options);
     };
   }
+
+  // A path reaches the filesystem as a C string, which ends at the first NUL, so 'a\0b' would
+  // name the file 'a'. Node refuses such paths everywhere, before touching the disk.
+  function quoted(value) {
+    return "'" + value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00') + "'";
+  }
+  function checkPath(value, name) {
+    const text = typeof value === 'string' ? value
+      : (ArrayBuffer.isView(value) ? Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('latin1') : null);
+    if (text !== null && text.includes('\0')) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+        "The argument '" + name + "' must be a string, Uint8Array, or URL without null bytes. Received " + quoted(text));
+    }
+  }
+  const PATH_ARGUMENTS = {
+    readFileSync: ['path'], writeFileSync: ['path'], appendFileSync: ['path'], openSync: ['path'],
+    mkdirSync: ['path'], rmdirSync: ['path'], rmSync: ['path'], unlinkSync: ['path'],
+    readdirSync: ['path'], statSync: ['path'], lstatSync: ['path'], accessSync: ['path'],
+    realpathSync: ['path'], renameSync: ['oldPath', 'newPath'], copyFileSync: ['src', 'dest'],
+    readFile: ['path'], writeFile: ['path'], appendFile: ['path'], stat: ['path'], lstat: ['path'],
+    access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path']
+  };
+  for (const name of Object.keys(PATH_ARGUMENTS)) {
+    const original = fs[name];
+    if (typeof original !== 'function') continue;
+    const names = PATH_ARGUMENTS[name];
+    fs[name] = function () {
+      names.forEach((argName, i) => checkPath(arguments[i], argName));
+      return original.apply(this, arguments);
+    };
+  }
+  const _existsSync = fs.existsSync;
+  fs.existsSync = function (path) {
+    if (typeof path === 'string' && path.includes('\0')) return false;
+    return _existsSync.apply(this, arguments);
+  };
 })();

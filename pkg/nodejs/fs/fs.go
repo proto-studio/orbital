@@ -4,11 +4,13 @@ package fs
 import (
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -346,7 +348,7 @@ func fileContents(data []byte, asText bool) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-// readFileSyncFunc backs fs.readFileSync(path, asText).
+// readFileSyncFunc backs fs.readFileSync(path, asText). On failure it returns an fsFailure.
 func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -354,16 +356,18 @@ func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	data, err := f.fs().ReadFile(args[0].String())
+	path := args[0].String()
+	data, err := f.fs().ReadFile(path)
 	if err != nil {
-		return nil
+		return fsFailure(ctx, err, readSyscall(err), path)
 	}
 
 	val, _ := ctx.NewString(fileContents(data, args[1].Boolean()))
 	return val
 }
 
-// writeFileSyncFunc backs fs.writeFileSync(path, base64Data).
+// writeFileSyncFunc backs fs.writeFileSync(path, base64Data, flag, mode) and
+// fs.appendFileSync, which passes an append flag. On failure it returns an fsFailure.
 func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -375,10 +379,10 @@ func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return info.Context().Throw(err.Error())
 	}
 
-	if err := f.fs().WriteFile(args[0].String(), data, 0644); err != nil {
-		return nil
+	path := args[0].String()
+	if failed, err := f.writeWithFlags(path, data, argAt(args, 2), modeArg(args, 3)); err != nil {
+		return fsFailure(info.Context(), err, failed, path)
 	}
-
 	return nil
 }
 
@@ -577,11 +581,16 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v.IsNumber() {
 		return int(v.Integer()), true
 	}
+	// Node's flags; the s forms add O_SYNC, so a write reaches the disk before it returns.
 	switch strings.TrimSpace(v.String()) {
-	case "r", "rs":
+	case "r":
 		return os.O_RDONLY, true
-	case "r+", "rs+":
+	case "rs", "sr":
+		return os.O_RDONLY | os.O_SYNC, true
+	case "r+":
 		return os.O_RDWR, true
+	case "rs+", "sr+":
+		return os.O_RDWR | os.O_SYNC, true
 	case "w":
 		return os.O_WRONLY | os.O_CREATE | os.O_TRUNC, true
 	case "wx", "xw":
@@ -594,10 +603,14 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE, true
 	case "ax", "xa":
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as", "sa":
+		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	case "a+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE, true
 	case "ax+", "xa+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as+", "sa+":
+		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	default:
 		return 0, false
 	}
@@ -790,23 +803,10 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// appendFileSyncFunc backs fs.appendFileSync(path, base64Data).
+// appendFileSyncFunc backs fs.appendFileSync(path, base64Data, flag, mode). It is
+// writeFileSync with Node's default flag for appending.
 func (f *FS) appendFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	data, err := decodeData(args[1])
-	if err != nil {
-		return info.Context().Throw(err.Error())
-	}
-
-	if err := f.fs().AppendFile(args[0].String(), data); err != nil {
-		return nil
-	}
-
-	return nil
+	return f.writeFileSyncFunc(info)
 }
 
 // readFileFunc backs fs.readFile(path, asText, callback).
@@ -836,8 +836,7 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				errVal, _ := ctx.NewString(err.Error())
-				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, readSyscall(err), path), ctx.Null())
 			} else {
 				dataVal, _ := ctx.NewString(contents)
 				f.rt.MakeCallback(callback, nil, ctx.Null(), dataVal)
@@ -848,16 +847,19 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// writeFileFunc backs fs.writeFile(path, base64Data, callback).
+// writeFileFunc backs fs.writeFile(path, base64Data, flag, mode, callback) and
+// fs.appendFile, which passes an append flag.
 func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 3 || !args[2].IsFunction() {
+	if len(args) < 5 || !args[4].IsFunction() {
 		return nil
 	}
 
 	path := args[0].String()
 	encoded := args[1].String()
-	callback := args[2]
+	flags, flagsOK := parseOpenFlags(args[2])
+	perm := modeArg(args, 3)
+	callback := args[4]
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -867,15 +869,18 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
+		failed := "open"
 		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err == nil && !flagsOK {
+			err = syscall.EINVAL
+		}
 		if err == nil {
-			err = fsys.WriteFile(path, data, fs.FileMode(0644))
+			failed, err = writeFile(fsys, path, data, flags, perm)
 		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				errVal, _ := ctx.NewString(err.Error())
-				f.rt.MakeCallback(callback, nil, errVal)
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, failed, path))
 			} else {
 				f.rt.MakeCallback(callback, nil, ctx.Null())
 			}
@@ -1172,4 +1177,17 @@ func (f *FS) readStreamCloseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		h.file.Close()
 	}
 	return nil
+}
+
+// readSyscall names the call Node reports for a failed read: the one that failed, open or
+// read. Reading a directory always fails at read, as in Node, which opens it first.
+func readSyscall(err error) string {
+	if errors.Is(err, syscall.EISDIR) {
+		return "read"
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Op == "read" {
+		return "read"
+	}
+	return "open"
 }

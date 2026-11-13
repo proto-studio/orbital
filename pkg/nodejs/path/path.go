@@ -2,6 +2,7 @@
 package path
 
 import (
+	_ "embed"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
+
+//go:embed keep_nul.js
+var nulJS string
 
 // Path provides path manipulation functionality.
 type Path struct {
@@ -188,7 +192,11 @@ func (p *Path) Register(rt *runtime.Runtime) error {
 	}
 
 	// Set path as global module
-	return rt.SetGlobal("__path_module", pathObj)
+	if err := rt.SetGlobal("__path_module", pathObj); err != nil {
+		return err
+	}
+	_, err = rt.RunScript(nulJS, "path/keep_nul.js")
+	return err
 }
 
 func (p *Path) basenameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
