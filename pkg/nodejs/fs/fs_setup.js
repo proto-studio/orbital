@@ -565,27 +565,64 @@
           this.pending = false;
           return;
         }
-        // Node opens asynchronously, so an open error arrives as an 'error' event.
-        let fd;
+        // Node opens asynchronously: the outcome arrives on a later tick, and writes and the
+        // final flush wait for it, so a failed open reaches them too.
+        this._opening = true;
+        this._openError = null;
+        this._waiting = null;
         try {
-          fd = fs.openSync(path, this.flags, this.mode);
+          this.fd = fs.openSync(path, this.flags, this.mode);
         } catch (e) {
-          process.nextTick(() => {
-            if (this.autoClose) this.destroy(e);
-            else this.emit('error', e);
-          });
+          this._openError = e;
+        }
+        process.nextTick(() => this._opened());
+      }
+
+      _opened() {
+        this._opening = false;
+        const waiting = this._waiting;
+        this._waiting = null;
+        const error = this._openError;
+        if (!error) this.pending = false;
+        if (this.destroyed) {
+          if (waiting) waiting(codedError(Error, 'ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed'));
           return;
         }
-        this.fd = fd;
-        process.nextTick(() => {
-          this.pending = false;
-          if (this.destroyed) return;
-          this.emit('open', fd);
-          this.emit('ready');
-        });
+        if (error) {
+          this._openErrorReported = true;
+          // With autoClose off, Node only reports the error, and the writes wait for good.
+          if (!this.autoClose) {
+            this._waiting = waiting;
+            this.emit('error', error);
+          } else if (waiting) {
+            // The write fails with the open's error, which fails the writes queued behind it
+            // and destroys the stream, so 'error' is emitted once.
+            waiting(error);
+          } else {
+            this.destroy(error);
+          }
+          return;
+        }
+        this.emit('open', this.fd);
+        this.emit('ready');
+        if (waiting) waiting(null);
+      }
+
+      // Node's writes call back asynchronously, so their callbacks come before 'prefinish'.
+      // These write synchronously, so the final step waits a tick to keep that order.
+      _final(callback) {
+        if (this._opening || this._openError) {
+          this._waiting = callback;
+          return;
+        }
+        process.nextTick(callback);
       }
 
       _write(chunk, encoding, callback) {
+        if (this._opening || this._openError) {
+          this._waiting = (err) => (err ? callback(err) : this._write(chunk, encoding, callback));
+          return;
+        }
         try {
           const n = fs.writeSync(this.fd, chunk, 0, chunk.length, this.pos === undefined ? null : this.pos);
           if (this.pos !== undefined) this.pos += n;
@@ -599,7 +636,8 @@
       // Destroying closes the descriptor whatever autoClose says, as in Node.
       _destroy(err, callback) {
         if (this.fd === null) {
-          callback(err);
+          // Destroyed before a failed open was reported: Node still reports it.
+          callback(err || (this._openErrorReported ? null : this._openError));
           return;
         }
         const fd = this.fd;

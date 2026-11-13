@@ -187,6 +187,34 @@ async function testFailures() {
   badOpen.on('close', () => badOpenEvents.push('close'));
   await tick();
   results.autoclose_open_error = { events: badOpenEvents, destroyed: badOpen.destroyed };
+
+  // Writes made before a failed open finishes wait for it and fail with its error, or, with
+  // autoClose off, wait for good. Writes and an end before a good open wait for it too.
+  const openOutcome = async (name, options, use) => {
+    const events = [];
+    const ws = fs.createWriteStream(file(name), options);
+    for (const event of ['open', 'ready', 'prefinish', 'finish', 'error', 'close']) {
+      ws.on(event, (e) => events.push(event === 'error' ? 'error ' + e.code : event));
+    }
+    const callback = (label) => (e) => events.push(label + ' ' + (e ? e.code : 'ok'));
+    use(ws, callback);
+    await tick();
+    return { events, destroyed: ws.destroyed, pending: ws.writableLength };
+  };
+  const writeTwiceAndEnd = (ws, callback) => {
+    ws.write('a', callback('write1'));
+    ws.write('b', callback('write2'));
+    ws.end('c', callback('end'));
+  };
+  results.ws_open_error_writes = await openOutcome('missing/z', {}, writeTwiceAndEnd);
+  results.ws_open_error_writes_kept = await openOutcome('missing/z', { autoClose: false }, writeTwiceAndEnd);
+  results.ws_open_error_end = await openOutcome('missing/z', {}, (ws, callback) => ws.end(callback('end')));
+  results.ws_open_error_destroyed = await openOutcome('missing/z', {}, (ws, callback) => {
+    ws.write('a', callback('write1'));
+    ws.destroy();
+  });
+  results.ws_open_writes = await openOutcome('open_writes', {}, writeTwiceAndEnd);
+  results.ws_open_end = await openOutcome('open_end', {}, (ws, callback) => ws.end(callback('end')));
 }
 
 // writeFile and appendFile given a descriptor write to it at its offset, and create no file

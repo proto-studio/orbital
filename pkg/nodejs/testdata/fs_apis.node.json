@@ -196,6 +196,8 @@
   "file:flags_new.txt": "6e6577",
   "file:mode_0": "78",
   "file:mode_open": "",
+  "file:open_end": "",
+  "file:open_writes": "616263",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
   "file:start_bad.txt": "6b656570",
@@ -352,6 +354,68 @@
       ]
     ]
   ],
+  "ws_open_end": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_destroyed": {
+    "destroyed": true,
+    "events": [
+      "write1 ERR_STREAM_DESTROYED",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_end": {
+    "destroyed": true,
+    "events": [
+      "end ENOENT",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_writes": {
+    "destroyed": true,
+    "events": [
+      "write1 ENOENT",
+      "write2 ENOENT",
+      "end ENOENT",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_writes_kept": {
+    "destroyed": false,
+    "events": [
+      "error ENOENT"
+    ],
+    "pending": 3
+  },
+  "ws_open_writes": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "write1 ok",
+      "write2 ok",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
   "ws_path": "\u003cdir\u003e/stream.bin",
   "ws_pending": true,
   "ws_start": {
