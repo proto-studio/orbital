@@ -23,6 +23,50 @@
       "syscall": "open"
     }
   },
+  "long_readFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "long_writeFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "loop_readFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
+  "loop_writeFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
   "mode_600": "600",
   "mode_append": "600",
   "mode_appendFileSync": {

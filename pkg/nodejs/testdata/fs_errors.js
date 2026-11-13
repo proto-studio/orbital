@@ -140,12 +140,34 @@ async function testNulPaths() {
   results.sync_flags = read('sync_flag');
 }
 
+// Errors outside the common few keep their own code. Their errno differs between Linux and
+// macOS, so only its sign is compared. The Go test makes loop_a and loop_b, two symlinks
+// pointing at each other.
+function testOtherErrnos() {
+  const long = file('x'.repeat(300));
+  const cases = [['loop_readFileSync', () => fs.readFileSync(file('loop_a'))],
+    ['loop_writeFileSync', () => fs.writeFileSync(file('loop_a'), 'x')],
+    ['long_readFileSync', () => fs.readFileSync(long)],
+    ['long_writeFileSync', () => fs.writeFileSync(long, 'x')]];
+  for (const [name, fn] of cases) {
+    try {
+      fn();
+      results[name] = { value: null };
+    } catch (e) {
+      const d = describe(e);
+      d.errno = typeof e.errno === 'number' && e.errno < 0 ? 'negative' : e.errno;
+      results[name] = { error: d };
+    }
+  }
+}
+
 async function main() {
   testMissingDirectory();
   await testAsyncErrors();
   await testFlags();
   testModes();
   await testInvalidModes();
+  testOtherErrnos();
   await testNulPaths();
   return results;
 }
