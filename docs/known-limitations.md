@@ -97,12 +97,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## Uncaught exceptions and rejections (`pkg/runtime/uncaught.go`, `uncaught.js`)
 
-- **[gap] Needs a V8 release with the new glue.** `unhandledRejection` and the thrown value of
-  a main-script exception depend on `v8go_set_promise_reject_handler` and
-  `v8go_context_take_last_script_exception` in `v8go.cc`, which only ship in a V8 release. Until
-  the pinned release has them, weak stubs in `pkg/v8/promise_reject.go` keep the build linking:
-  rejections are not reported at all, and a handler for a main-script exception gets an `Error`
-  rebuilt from its text, with no custom properties. Delete the stubs when the pin moves.
 - **[approx] The printed error has no source-line header.** Node prints `file:line`, the source
   line and a caret above the stack, and its version below it. Orbital prints the stack.
 - **[gap] Only the default `throw` rejection mode.** There is no `--unhandled-rejections` flag,
