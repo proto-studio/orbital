@@ -194,6 +194,8 @@
   "file:fd.bin": "0203686579",
   "file:flags.txt": "637574",
   "file:flags_new.txt": "6e6577",
+  "file:mode_0": "78",
+  "file:mode_open": "",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
   "file:start_bad.txt": "6b656570",
@@ -223,6 +225,7 @@
     "err": null,
     "isNumber": true
   },
+  "openSync_string_mode": "640",
   "open_missing": {
     "err": {
       "code": "ENOENT",
@@ -318,6 +321,36 @@
   "ws_missing_dir": [
     "error ENOENT",
     "close"
+  ],
+  "ws_modes": [
+    [
+      "600",
+      "600"
+    ],
+    [
+      "abc",
+      [
+        "TypeError",
+        "ERR_INVALID_ARG_VALUE",
+        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'"
+      ]
+    ],
+    [
+      1.5,
+      [
+        "RangeError",
+        "ERR_OUT_OF_RANGE",
+        "The value of \"mode\" is out of range. It must be an integer. Received 1.5"
+      ]
+    ],
+    [
+      true,
+      [
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        "The \"mode\" argument must be of type number. Received type boolean (true)"
+      ]
+    ]
   ],
   "ws_path": "\u003cdir\u003e/stream.bin",
   "ws_pending": true,

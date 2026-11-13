@@ -56,6 +56,22 @@ async function testWriteStream() {
     }
   });
 
+  // An octal string mode works as the number does, and a bad mode arrives as an 'error' event.
+  results.ws_modes = [];
+  for (const mode of ['600', 'abc', 1.5, true]) {
+    const target = file('mode_' + results.ws_modes.length);
+    const ws = fs.createWriteStream(target, { mode });
+    const outcome = await new Promise((resolve) => {
+      let error = null;
+      ws.on('error', (e) => { error = [e.name, e.code, e.message]; });
+      ws.on('close', () => resolve(error || (fs.statSync(target).mode & 0o777).toString(8)));
+      ws.end('x');
+    });
+    results.ws_modes.push([ws.mode, outcome]);
+  }
+  fs.closeSync(fs.openSync(file('mode_open'), 'w', '640'));
+  results.openSync_string_mode = (fs.statSync(file('mode_open')).mode & 0o777).toString(8);
+
   const append = fs.createWriteStream(file('start.txt'), { flags: 'a' });
   const appendDone = streamDone(append, []);
   append.end('!');

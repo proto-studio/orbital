@@ -258,9 +258,13 @@
     return mode;
   }
 
+  // The native open takes only a numeric mode, so an octal string such as '600' is parsed and
+  // a bad mode refused here, as Node does.
   const _openSync = fs.openSync;
   fs.openSync = function () {
-    return check(_openSync.apply(this, arguments));
+    const args = Array.prototype.slice.call(arguments);
+    if (args.length >= 3) args[2] = writeMode({ mode: args[2] });
+    return check(_openSync.apply(this, args));
   };
 
   // These calls return a failure description too.
