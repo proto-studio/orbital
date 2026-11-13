@@ -480,7 +480,20 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
-	var err error
+	// Remove deletes files too, but rmdir only takes a directory: anything else, a symbolic
+	// link included, is ENOTDIR and kept, as in Node. Node's recursive form looks first with
+	// lstat, so a missing path is reported as lstat.
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		if recursive {
+			return fsFailure(info.Context(), err, "lstat", path)
+		}
+		return fsFailure(info.Context(), err, "rmdir", path)
+	}
+	if !stat.IsDir {
+		return fsFailure(info.Context(), syscall.ENOTDIR, "rmdir", path)
+	}
+
 	if recursive {
 		err = f.fs().RemoveAll(path)
 	} else {

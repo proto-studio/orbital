@@ -212,6 +212,15 @@ async function testMkdirModes() {
   results.mkdir_invalid_made = ['mk_6', 'mk_7'].filter((name) => fs.existsSync(file(name)));
 }
 
+// rmdir removes only a directory: a file is ENOTDIR and kept, in every form.
+async function testRmdirFile() {
+  fs.writeFileSync(file('rmdir_file'), 'x');
+  await attemptAsync('rmdir_file', () => callback((cb) => fs.rmdir(file('rmdir_file'), cb)));
+  attempt('rmdirSync_file', () => fs.rmdirSync(file('rmdir_file')));
+  await attemptAsync('promises_rmdir_file', () => fsp.rmdir(file('rmdir_file')));
+  results.rmdir_file_kept = read('rmdir_file');
+}
+
 async function main() {
   testMissingDirectory();
   await testAsyncErrors();
@@ -222,6 +231,7 @@ async function main() {
   await testNulPaths();
   await testRm();
   await testMkdirModes();
+  await testRmdirFile();
   return results;
 }
 

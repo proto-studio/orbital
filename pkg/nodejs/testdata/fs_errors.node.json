@@ -444,6 +444,17 @@
       "syscall": "lstat"
     }
   },
+  "promises_rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
   "promises_writeFile_flag_fraction": {
     "error": {
       "code": "ERR_OUT_OF_RANGE",
@@ -548,6 +559,29 @@
   "rm_target_left": [
     "keep"
   ],
+  "rmdirSync_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file_kept": "x",
   "sync_flags": "onetwo",
   "writeFileSync_bad_flag": {
     "error": {
