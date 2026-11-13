@@ -563,7 +563,8 @@
         // stream, and its descriptor, open.
         super({
           highWaterMark: options.highWaterMark, decodeStrings: true,
-          emitClose: options.emitClose !== false, autoDestroy: options.autoClose !== false
+          emitClose: options.emitClose !== false, autoDestroy: options.autoClose !== false,
+          signal: options.signal
         });
         this.path = options.fd != null ? undefined : path;
         this.flags = options.flags === undefined ? 'w' : options.flags;
@@ -571,6 +572,7 @@
         this.start = options.start;
         this.pos = options.start;
         this.autoClose = options.autoClose !== false;
+        this._emitClose = options.emitClose !== false;
         this.bytesWritten = 0;
         this.fd = null;
         this.pending = true;
@@ -588,6 +590,7 @@
         this._waiting = null;
         try {
           this.fd = fs.openSync(path, this.flags, this.mode);
+          this._openedFd = this.fd;
         } catch (e) {
           this._openError = e;
         }
@@ -601,7 +604,23 @@
         const error = this._openError;
         if (!error) this.pending = false;
         if (this.destroyed) {
-          if (waiting) waiting(codedError(Error, 'ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed'));
+          const fail = () => {
+            if (waiting) waiting(codedError(Error, 'ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed'));
+          };
+          if (error) {
+            fail();
+            return;
+          }
+          // A good open that finishes after the stream was destroyed, by an abort signal say,
+          // is still announced, after the destroy's own events, as in Node.
+          const fd = this.fd === null ? this._openedFd : this.fd;
+          const announce = () => {
+            fail();
+            this.emit('open', fd);
+            this.emit('ready');
+          };
+          if (this._emitClose) this.once('close', () => process.nextTick(announce));
+          else process.nextTick(announce);
           return;
         }
         if (error) {
@@ -663,7 +682,8 @@
         } catch (e) {
           if (!err) err = e;
         }
-        callback(err);
+        // Node closes asynchronously, so 'error' and 'close' come a tick later.
+        process.nextTick(callback, err);
       }
 
       // An explicit close ends the stream and then closes the descriptor even with autoClose

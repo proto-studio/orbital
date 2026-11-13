@@ -215,6 +215,20 @@ async function testFailures() {
   });
   results.ws_open_writes = await openOutcome('open_writes', {}, writeTwiceAndEnd);
   results.ws_open_end = await openOutcome('open_end', {}, (ws, callback) => ws.end(callback('end')));
+
+  // An abort signal destroys the stream with an AbortError, before or after the open.
+  const aborted = new AbortController();
+  aborted.abort();
+  results.ws_signal_aborted = await openOutcome('signal_aborted', { signal: aborted.signal }, (ws, callback) => {
+    ws.write('x', callback('write1'));
+  });
+  const later = new AbortController();
+  results.ws_signal_later = await openOutcome('signal_later', { signal: later.signal }, (ws, callback) => {
+    ws.on('ready', () => {
+      later.abort();
+      ws.write('x', callback('write1'));
+    });
+  });
 }
 
 // writeFile and appendFile given a descriptor write to it at its offset, and create no file

@@ -199,6 +199,8 @@
   "file:open_end": "",
   "file:open_writes": "616263",
   "file:piped.bin": "4100ff7465787400656e64",
+  "file:signal_aborted": "",
+  "file:signal_later": "",
   "file:start.txt": "616258595a66676821",
   "file:start_bad.txt": "6b656570",
   "file:stream.bin": "4100ff7465787400656e64",
@@ -418,6 +420,28 @@
   },
   "ws_path": "\u003cdir\u003e/stream.bin",
   "ws_pending": true,
+  "ws_signal_aborted": {
+    "destroyed": true,
+    "events": [
+      "error ABORT_ERR",
+      "close",
+      "write1 ERR_STREAM_DESTROYED",
+      "open",
+      "ready"
+    ],
+    "pending": 0
+  },
+  "ws_signal_later": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "write1 ERR_STREAM_DESTROYED",
+      "error ABORT_ERR",
+      "close"
+    ],
+    "pending": 0
+  },
   "ws_start": {
     "events": [
       "open",
