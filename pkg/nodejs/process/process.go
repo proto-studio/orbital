@@ -295,17 +295,25 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 			var out = [];
 			for (var i = 0; i < str.length; i++) {
 				var c = str.charCodeAt(i);
+				// 0xD800-0xDBFF is a UTF-16 high surrogate, the first half of a pair.
 				if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
 					var next = str.charCodeAt(i + 1);
+					// 0xDC00-0xDFFF is a UTF-16 low surrogate, the second half of a pair.
 					if (next >= 0xdc00 && next <= 0xdfff) {
+						// Combine the pair into one code point. 0x10000 is the first code point past the Basic Multilingual Plane.
 						c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
 						i++;
 					}
 				}
+				// A lone surrogate (0xD800-0xDFFF) becomes 0xFFFD, U+FFFD the replacement character.
 				if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+				// Below 0x80 is ASCII, written as one byte.
 				if (c < 0x80) out.push(c);
+				// Below 0x800 takes two bytes: 0xC0 marks a 2-byte lead (110xxxxx) and 0x80 a continuation byte (10xxxxxx).
 				else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+				// Below 0x10000 takes three bytes: 0xE0 marks a 3-byte lead (1110xxxx), then two 0x80 continuation bytes.
 				else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+				// Anything else takes four bytes: 0xF0 marks a 4-byte lead (11110xxx), then three 0x80 continuation bytes.
 				else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
 			}
 			return new Uint8Array(out);
