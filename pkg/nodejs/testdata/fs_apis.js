@@ -162,6 +162,31 @@ async function testFailures() {
   results.autoclose_open_error = { events: badOpenEvents, destroyed: badOpen.destroyed };
 }
 
+// writeFile and appendFile given a descriptor write to it at its offset, and create no file
+// named after the number.
+async function testDescriptorWrites() {
+  fs.mkdirSync(file('fdwrites'));
+  const target = file('fdwrites/target.txt');
+  fs.writeFileSync(target, 'start');
+  const fd = fs.openSync(target, 'r+');
+  fs.writeFileSync(fd, 'ab');
+  fs.appendFileSync(fd, 'c', { flag: 'w' });
+  results.fd_writeFile = await call(fs.writeFile, fd, Buffer.from('d'));
+  results.fd_appendFile = await call(fs.appendFile, fd, 'e', 'utf8');
+  fs.closeSync(fd);
+  results.fd_writeFile_bad = await call(fs.writeFile, 9999, 'x');
+  results.fd_appendFile_bad = await call(fs.appendFile, 9999, 'x');
+  try { fs.writeFileSync(9999, 'x'); } catch (e) { results.fd_writeFileSync_bad = errorOf(e); }
+
+  const handle = await fs.promises.open(target, 'a');
+  await fs.promises.appendFile(handle, '!');
+  await fs.promises.writeFile(handle, '?');
+  await handle.close();
+  results.fd_promises_number = await fs.promises.writeFile(9999, 'x').then(() => null, (e) => [e.code, e.message]);
+  results.fd_contents = fs.readFileSync(target, 'utf8');
+  results.fd_listing = fs.readdirSync(file('fdwrites'));
+}
+
 function testExports() {
   results.promises_same = fs.promises === require('fs/promises');
   results.constants = { F_OK: fs.constants.F_OK, R_OK: fs.constants.R_OK, W_OK: fs.constants.W_OK, X_OK: fs.constants.X_OK };
@@ -173,6 +198,7 @@ async function main() {
   await testWriteStream();
   await testCallbacks();
   await testFailures();
+  await testDescriptorWrites();
   testExports();
   return results;
 }

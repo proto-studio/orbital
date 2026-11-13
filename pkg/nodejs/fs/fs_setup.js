@@ -209,14 +209,23 @@
     return decodeContents(check(_readFileSync.call(this, p, isUtf8(encoding))), encoding);
   };
 
+  // writeFile and appendFile given a descriptor write to it at its current offset, as Node
+  // does, ignoring the flag; the native calls take only a path.
+  function writeToDescriptor(fd, data, options) {
+    const bytes = dataBytes(data, encodingOf(options));
+    fs.writeSync(fd, bytes, 0, bytes.byteLength, null);
+  }
+
   const _writeFileSync = fs.writeFileSync;
   fs.writeFileSync = function (path, data, options) {
+    if (typeof path === 'number') return writeToDescriptor(path, data, options);
     const bytes = base64Of(dataBytes(data, encodingOf(options)));
     check(_writeFileSync.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options)));
   };
 
   const _appendFileSync = fs.appendFileSync;
   fs.appendFileSync = function (path, data, options) {
+    if (typeof path === 'number') return writeToDescriptor(path, data, options);
     const bytes = base64Of(dataBytes(data, encodingOf(options)));
     check(_appendFileSync.call(this, path, bytes, writeFlag(options, 'a'), writeMode(options)));
   };
@@ -242,6 +251,17 @@
       options = undefined;
     }
     checkCallback(callback);
+    if (typeof path === 'number') {
+      const bytes = dataBytes(data, encodingOf(options));
+      try {
+        writeToDescriptor(path, bytes);
+      } catch (e) {
+        process.nextTick(callback, e);
+        return;
+      }
+      process.nextTick(callback, null);
+      return;
+    }
     const bytes = base64Of(dataBytes(data, encodingOf(options)));
     _writeFile.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options), callback);
   };

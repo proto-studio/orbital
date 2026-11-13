@@ -149,6 +149,43 @@
     null,
     "EBADF: bad file descriptor, write"
   ],
+  "fd_appendFile": {
+    "err": null,
+    "values": []
+  },
+  "fd_appendFile_bad": {
+    "err": {
+      "code": "EBADF",
+      "message": "EBADF: bad file descriptor, write",
+      "syscall": "write"
+    },
+    "values": []
+  },
+  "fd_contents": "abcde!?",
+  "fd_listing": [
+    "target.txt"
+  ],
+  "fd_promises_number": [
+    "ERR_INVALID_ARG_TYPE",
+    "The \"path\" argument must be of type string or an instance of Buffer or URL. Received type number (9999)"
+  ],
+  "fd_writeFile": {
+    "err": null,
+    "values": []
+  },
+  "fd_writeFileSync_bad": {
+    "code": "EBADF",
+    "message": "EBADF: bad file descriptor, write",
+    "syscall": "write"
+  },
+  "fd_writeFile_bad": {
+    "err": {
+      "code": "EBADF",
+      "message": "EBADF: bad file descriptor, write",
+      "syscall": "write"
+    },
+    "values": []
+  },
   "file:autoclose": "78",
   "file:autoclose_kept": "6b657074",
   "file:excl_dest": "6f6c64",
@@ -158,6 +195,7 @@
   "file:piped.bin": "4100ff7465787400656e64",
   "file:start.txt": "616258595a66676821",
   "file:stream.bin": "4100ff7465787400656e64",
+  "file:target.txt": "6162636465213f",
   "file:victim": "6b656570",
   "mkdir": {
     "err": null,
