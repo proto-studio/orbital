@@ -217,10 +217,33 @@ async function testOpenFlags() {
   results.flag_promises_same = fs.promises.constants === fs.constants;
 }
 
+// rm with force ignores a missing path in every form, and reports anything else.
+async function testRm() {
+  const missing = file('rm_missing');
+  const describe = (e) => (e ? [e.name, e.code, e.syscall, local(e.path), local(e.message)] : null);
+  const attempt = (fn) => { try { fn(); return null; } catch (e) { return describe(e); } };
+  const promised = (promise) => promise.then(() => null, describe);
+  results.rm_promises_force = await promised(fs.promises.rm(missing, { force: true }));
+  results.rm_promises_recursive_force = await promised(fs.promises.rm(missing, { recursive: true, force: true }));
+  results.rm_promises_missing = await promised(fs.promises.rm(missing));
+  results.rmSync_force = attempt(() => fs.rmSync(missing, { force: true }));
+  results.rmSync_missing = attempt(() => fs.rmSync(missing));
+  results.rm_force = (await call(fs.rm, missing, { force: true })).err;
+  results.rm_missing = (await call(fs.rm, missing)).err;
+
+  fs.mkdirSync(file('rm_dir/inner'), { recursive: true });
+  fs.writeFileSync(file('rm_dir/inner/f'), 'x');
+  fs.writeFileSync(file('rm_file'), 'x');
+  results.rmSync_dir = attempt(() => fs.rmSync(file('rm_dir'), { force: true }));
+  results.rm_file = (await call(fs.rm, file('rm_file'))).err;
+  results.rm_dir_recursive = await promised(fs.promises.rm(file('rm_dir'), { recursive: true }));
+  results.rm_left = ['rm_dir', 'rm_file'].map((name) => fs.existsSync(file(name)));
+}
+
 function testExports() {
   results.promises_same = fs.promises === require('fs/promises');
   results.constants = { F_OK: fs.constants.F_OK, R_OK: fs.constants.R_OK, W_OK: fs.constants.W_OK, X_OK: fs.constants.X_OK };
-  results.types = ['createWriteStream', 'appendFile', 'write', 'read', 'open', 'close', 'mkdir', 'readdir']
+  results.types = ['createWriteStream', 'appendFile', 'write', 'read', 'open', 'close', 'mkdir', 'readdir', 'rm', 'rmSync']
     .map((name) => name + ':' + typeof fs[name]);
 }
 
@@ -230,6 +253,7 @@ async function main() {
   await testFailures();
   await testDescriptorWrites();
   await testOpenFlags();
+  await testRm();
   testExports();
   return results;
 }

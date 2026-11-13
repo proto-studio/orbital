@@ -563,6 +563,35 @@
     };
   }
 
+  // rmSync(path[, { force, recursive }]): unlink a file, or with recursive a directory too.
+  // force ignores a path that does not exist, and nothing else.
+  if (typeof fs.rmSync !== 'function') {
+    fs.rmSync = function (path, options) {
+      const force = !!(options && options.force);
+      const recursive = !!(options && options.recursive);
+      const stats = fs.statSync(path);
+      if (!stats) {
+        if (force) return;
+        throw fs.__makeFsError("ENOENT: no such file or directory, lstat '" + path + "'", 'ENOENT', String(path), 'lstat');
+      }
+      if (stats.isDirectory() && !recursive) {
+        const e = new Error('Path is a directory: rm returned EISDIR (is a directory) ' + path);
+        e.name = 'SystemError';
+        e.code = 'ERR_FS_EISDIR';
+        e.errno = 21;
+        e.syscall = 'rm';
+        e.path = String(path);
+        throw e;
+      }
+      try {
+        if (stats.isDirectory()) fs.rmdirSync(path, { recursive: true });
+        else fs.unlinkSync(path);
+      } catch (e) {
+        if (!(force && e.code === 'ENOENT')) throw e;
+      }
+    };
+  }
+
   // Callback forms of the synchronous calls. They run the synchronous call on this thread and
   // call back on the next tick, as Node's always call back asynchronously.
   // The synchronous function is looked up on each call, so the checks wrapped around it
@@ -585,7 +614,7 @@
   }
   const CALLBACK_FORMS = {
     appendFile: 'appendFileSync', open: 'openSync', close: 'closeSync', fstat: 'fstatSync',
-    mkdir: 'mkdirSync', rmdir: 'rmdirSync', unlink: 'unlinkSync', rename: 'renameSync',
+    mkdir: 'mkdirSync', rmdir: 'rmdirSync', rm: 'rmSync', unlink: 'unlinkSync', rename: 'renameSync',
     readdir: 'readdirSync', copyFile: 'copyFileSync', realpath: 'realpathSync'
   };
   for (const name of Object.keys(CALLBACK_FORMS)) {
@@ -648,7 +677,7 @@
     realpathSync: ['path'], renameSync: ['oldPath', 'newPath'], copyFileSync: ['src', 'dest'],
     readFile: ['path'], writeFile: ['path'], appendFile: ['path'], stat: ['path'], lstat: ['path'],
     access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path'],
-    mkdir: ['path'], rmdir: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
+    mkdir: ['path'], rmdir: ['path'], rm: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
     rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest']
   };
   for (const name of Object.keys(PATH_ARGUMENTS)) {

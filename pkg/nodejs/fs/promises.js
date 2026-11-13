@@ -208,18 +208,7 @@
 
     // Remove file or directory (recursive)
     rm: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          if (options && options.recursive) {
-            fs.rmdirSync(path, { recursive: true });
-          } else {
-            fs.unlinkSync(path);
-          }
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.rmSync(path, options));
     },
 
     // Read directory contents

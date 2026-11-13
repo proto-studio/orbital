@@ -163,9 +163,11 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   rather than asking the OS.
 - **`fs` callback calls run synchronously.** `fs.appendFile`, `open`, `write`, `read`, `mkdir`
   and the other callback forms, and `fs.createWriteStream`'s writes, do their work on the
-  JavaScript thread and call back on the next tick. Only `readFile`, `writeFile`, `stat`,
-  `access` and read streams run off the thread.
-- **Some `fs` calls are still missing,** including `rm`, `rmSync`, `accessSync`, `truncate`,
+  JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a path,
+  `stat`, `access` and read streams run off the thread.
+- **`fs.rm` and `rmSync` look a path up with `stat`,** so a symbolic link to a directory counts
+  as a directory.
+- **Some `fs` calls are still missing,** including `accessSync`, `truncate`,
   `ftruncate`, `fsync`, `chmod`, `utimes`, `mkdtemp`, and the `fs.Stats` and `fs.Dirent` classes.
 
 ## Node features found missing during development

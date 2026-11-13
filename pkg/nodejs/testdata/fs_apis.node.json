@@ -244,6 +244,42 @@
     "err": null,
     "values": []
   },
+  "rmSync_dir": [
+    "SystemError",
+    "ERR_FS_EISDIR",
+    "rm",
+    "\u003cdir\u003e/rm_dir",
+    "Path is a directory: rm returned EISDIR (is a directory) \u003cdir\u003e/rm_dir"
+  ],
+  "rmSync_force": null,
+  "rmSync_missing": [
+    "Error",
+    "ENOENT",
+    "lstat",
+    "\u003cdir\u003e/rm_missing",
+    "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'"
+  ],
+  "rm_dir_recursive": null,
+  "rm_file": null,
+  "rm_force": null,
+  "rm_left": [
+    false,
+    false
+  ],
+  "rm_missing": {
+    "code": "ENOENT",
+    "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'",
+    "syscall": "lstat"
+  },
+  "rm_promises_force": null,
+  "rm_promises_missing": [
+    "Error",
+    "ENOENT",
+    "lstat",
+    "\u003cdir\u003e/rm_missing",
+    "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'"
+  ],
+  "rm_promises_recursive_force": null,
   "types": [
     "createWriteStream:function",
     "appendFile:function",
@@ -252,7 +288,9 @@
     "open:function",
     "close:function",
     "mkdir:function",
-    "readdir:function"
+    "readdir:function",
+    "rm:function",
+    "rmSync:function"
   ],
   "unlink": {
     "err": null,
