@@ -11,8 +11,10 @@ const file = (name) => path.join(dir, name);
 const seed = file('seed.bin'); // Written by the Go test: bytes 0 to 255.
 const results = {};
 
+// 0x41 'A', NUL, 0x42 'B', 0xFF (never valid in UTF-8), NUL, 0x43 'C'.
 const bin = Buffer.from([0x41, 0, 0x42, 0xff, 0, 0x43]);
 const all = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+// 0x41 'A', NUL and 0xFF (never valid in UTF-8), with 9s around them as padding.
 const backing = new Uint8Array([9, 9, 0x41, 0, 0xff, 9]);
 
 // [name, data, encoding or options]
@@ -24,20 +26,25 @@ const dataCases = [
   ['uint8array', new Uint8Array([1, 0, 2, 255, 0])],
   ['subarray', backing.subarray(2, 5)],
   ['buffer_slice', all.subarray(250, 256)],
+  // Two 16-bit values, stored little-endian as the bytes 0x41 0x00 0x00 0xFF.
   ['uint16array', new Uint16Array([0x0041, 0xff00])],
   ['dataview', new DataView(backing.buffer, 2, 3)],
   ['empty_buffer', Buffer.alloc(0)],
   ['empty_string', ''],
   ['utf8', 'A\0Bÿ€😀'],
+  // \ud800 is a lone UTF-16 high surrogate, which UTF-8 can't encode.
   ['lone_surrogate', 'a\ud800b'],
   ['named_utf8', 'é\0', 'utf8'],
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   ['latin1', 'A\0B\xffC', 'latin1'],
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   ['binary', 'A\0B\xffC', 'binary'],
   ['hex', '410042ff0043', 'hex'],
   ['base64', 'QQBC/wBD', 'base64'],
   ['utf16le', 'A\0B', 'utf16le'],
   ['ucs2', 'é', 'ucs2'],
   ['ascii', 'A\0é', 'ascii'],
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   ['options_encoding', 'A\0B\xff', { encoding: 'latin1' }],
   ['options_null', 'é\0', { encoding: null }],
   ['options_no_encoding', 'é\0', {}],
@@ -64,6 +71,7 @@ function testWrites() {
     fs.writeFileSync(file('appendFileSync_' + name), 'prefix\0');
     fs.appendFileSync(file('appendFileSync_' + name), ...args);
   }
+  // 16 bytes of 0xFF, which the shorter write below must fully replace.
   fs.writeFileSync(file('overwrite'), Buffer.alloc(16, 0xff));
   fs.writeFileSync(file('overwrite'), bin);
   fs.appendFileSync(file('append_new'), bin);
@@ -97,7 +105,9 @@ function testWriteSync() {
   n.buffer_offset = fs.writeSync(fd, bin, 1);
   n.buffer_offset_length = fs.writeSync(fd, bin, 1, 2);
   n.options = fs.writeSync(fd, bin, { offset: 3, length: 2 });
+  // 0xFE (never valid in UTF-8), then NUL.
   n.uint8 = fs.writeSync(fd, new Uint8Array([0xfe, 0]));
+  // One 16-bit value, written little-endian as the bytes 0xFF 0x00.
   n.uint16 = fs.writeSync(fd, new Uint16Array([0x00ff]));
   n.dataview = fs.writeSync(fd, new DataView(backing.buffer, 2, 2));
   n.empty = fs.writeSync(fd, Buffer.alloc(0));
@@ -105,6 +115,7 @@ function testWriteSync() {
 
   fd = fs.openSync(file('writeSync_string'), 'w');
   n.string = fs.writeSync(fd, 'a\0é');
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   n.string_latin1 = fs.writeSync(fd, 'b\0\xff', null, 'latin1');
   n.string_hex = fs.writeSync(fd, '00ff00', null, 'hex');
   n.string_utf16 = fs.writeSync(fd, 'c', undefined, 'utf16le');
@@ -115,6 +126,7 @@ function testWriteSync() {
   n.position_1 = fs.writeSync(fd, 'abcdef');
   n.position_2 = fs.writeSync(fd, 'X', 0);
   n.position_3 = fs.writeSync(fd, Buffer.from([0]), 0, 1, 1);
+  // A single 0xFF byte, easy to spot at the position it lands on.
   n.position_4 = fs.writeSync(fd, Buffer.from([0xff]), { position: 2 });
   n.position_5 = fs.writeSync(fd, 'end');
   fs.closeSync(fd);
@@ -145,6 +157,7 @@ function testRead() {
   r.length = fs.readFileSync(seed).length;
   r.empty = show(fs.readFileSync(file('writeFileSync_empty_buffer')));
   r.empty_utf8 = show(fs.readFileSync(file('writeFileSync_empty_buffer'), 'utf8'));
+  // 0xEF 0xBB 0xBF is the UTF-8 byte order mark, then 0x41 'A'.
   fs.writeFileSync(file('bom'), Buffer.from([0xef, 0xbb, 0xbf, 0x41]));
   r.bom = show(fs.readFileSync(file('bom'), 'utf8'));
   fs.writeFileSync(file('nul_text'), 'p\0q');
@@ -156,8 +169,11 @@ function testRead() {
   // Without an encoding the bytes decode in Buffer, not as a read of UTF-8 text does.
   r.to_string_all_bytes = show(fs.readFileSync(seed).toString());
   r.utf8_read_all_bytes = show(fs.readFileSync(seed, 'utf8'));
+  // 0xFF can't start a UTF-8 sequence; 0xE2 0x82 and 0xF0 0x9F are sequences cut short; 0x41 is 'A'.
   for (const [name, bytes] of [['lead_only', [0xff, 0x41]], ['truncated', [0xe2, 0x82]], ['truncated_then_ascii', [0xf0, 0x9f, 0x41]],
+    // 0xC0 0x80 and 0xE0 0x80 0x80 are overlong encodings of NUL, 0xED 0xA0 0x80 encodes the surrogate U+D800, and 0xF4 0x90 0x80 0x80 is past U+10FFFF.
     ['overlong', [0xc0, 0x80]], ['overlong_3', [0xe0, 0x80, 0x80]], ['surrogate', [0xed, 0xa0, 0x80]], ['too_high', [0xf4, 0x90, 0x80, 0x80]],
+    // Valid: 0xC3 0xA9 'é', 0xE2 0x82 0xAC '€', 0xF0 0x9F 0x98 0x80 '😀', NUL, 0x41 'A'. 0xEF 0xBB 0xBF is the UTF-8 byte order mark.
     ['valid', [0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 0, 0x41]], ['bom', [0xef, 0xbb, 0xbf, 0x41]]]) {
     fs.writeFileSync(file('decode_' + name), Buffer.from(bytes));
     r['decode_' + name] = show(fs.readFileSync(file('decode_' + name)).toString());
@@ -187,6 +203,7 @@ async function testAsyncRead() {
 function testReadSync() {
   const r = {};
   const fd = fs.openSync(seed, 'r');
+  // 0xEE fills the buffer so bytes the read doesn't touch stand out.
   const fill = () => Buffer.alloc(6, 0xee);
 
   let buf = fill();
@@ -268,13 +285,17 @@ async function testFileHandle() {
   h.write_buffer = (await handle.write(bin)).bytesWritten;
   h.write_range = (await handle.write(bin, 1, 2)).bytesWritten;
   h.write_string = (await handle.write('é\0')).bytesWritten;
+  // \xff is U+00FF 'ÿ', the single byte 0xFF in latin1.
   h.write_string_latin1 = (await handle.write('\xff\0', null, 'latin1')).bytesWritten;
+  // 0x7A is 'z'.
   h.write_position = (await handle.write(Buffer.from([0x7a]), 0, 1, 0)).bytesWritten;
+  // NUL, then 0xFE (never valid in UTF-8).
   await handle.writeFile(Buffer.from([0, 0xfe]));
   h.stat_size = (await handle.stat()).size;
   await handle.close();
 
   handle = await fsp.open(seed);
+  // 0xEE fills the buffer so bytes the read doesn't touch stand out.
   const buf = Buffer.alloc(6, 0xee);
   h.read_n = (await handle.read(buf, 1, 3, 254)).bytesRead;
   h.read_same_buffer = (await handle.read(buf, 1, 3, 254)).buffer === buf;
