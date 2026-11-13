@@ -15,6 +15,29 @@
     "err": null,
     "values": []
   },
+  "autoclose_destroyed": {
+    "destroyed": true,
+    "events": [
+      "finish",
+      "close"
+    ],
+    "fd": null,
+    "fdOpen": false
+  },
+  "autoclose_finished": {
+    "closed": false,
+    "destroyed": false,
+    "events": [
+      "finish"
+    ],
+    "fdOpen": true
+  },
+  "autoclose_open_error": {
+    "destroyed": false,
+    "events": [
+      "error ENOENT"
+    ]
+  },
   "callback_is_async": true,
   "close": {
     "err": null,
@@ -127,6 +150,7 @@
     "EBADF: bad file descriptor, write"
   ],
   "file:autoclose": "78",
+  "file:autoclose_kept": "6b657074",
   "file:excl_dest": "6f6c64",
   "file:excl_new": "6e6577",
   "file:excl_src": "6e6577",

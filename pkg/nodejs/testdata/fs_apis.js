@@ -139,6 +139,27 @@ async function testFailures() {
   } catch (e) {
     results.fail_fd_still_open = false;
   }
+
+  // With autoClose off, finishing leaves the stream and its descriptor open, and a later
+  // destroy closes them. A failed open emits only the error.
+  const isOpen = (fd) => { try { fs.fstatSync(fd); return true; } catch (e) { return false; } };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const kept = fs.createWriteStream(file('autoclose_kept'), { autoClose: false });
+  const keptEvents = [];
+  for (const name of ['finish', 'close']) kept.on(name, () => keptEvents.push(name));
+  kept.end('kept');
+  await tick();
+  const keptFd = kept.fd;
+  results.autoclose_finished = { events: keptEvents.slice(), destroyed: kept.destroyed, closed: kept.closed, fdOpen: isOpen(keptFd) };
+  kept.destroy();
+  await tick();
+  results.autoclose_destroyed = { events: keptEvents, destroyed: kept.destroyed, fd: kept.fd, fdOpen: isOpen(keptFd) };
+  const badOpen = fs.createWriteStream(file('missing/y'), { autoClose: false });
+  const badOpenEvents = [];
+  badOpen.on('error', (e) => badOpenEvents.push('error ' + e.code));
+  badOpen.on('close', () => badOpenEvents.push('close'));
+  await tick();
+  results.autoclose_open_error = { events: badOpenEvents, destroyed: badOpen.destroyed };
 }
 
 function testExports() {

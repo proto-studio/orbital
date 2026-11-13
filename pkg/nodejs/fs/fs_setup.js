@@ -445,7 +445,12 @@
       constructor(path, options) {
         if (typeof options === 'string') options = { encoding: options };
         options = options || {};
-        super({ highWaterMark: options.highWaterMark, decodeStrings: true, emitClose: options.emitClose !== false });
+        // autoClose is Writable's autoDestroy: with it off, finishing or failing leaves the
+        // stream, and its descriptor, open.
+        super({
+          highWaterMark: options.highWaterMark, decodeStrings: true,
+          emitClose: options.emitClose !== false, autoDestroy: options.autoClose !== false
+        });
         this.path = options.fd != null ? undefined : path;
         this.flags = options.flags === undefined ? 'w' : options.flags;
         this.mode = options.mode === undefined ? 0o666 : options.mode;
@@ -467,7 +472,10 @@
         try {
           fd = fs.openSync(path, this.flags, this.mode);
         } catch (e) {
-          process.nextTick(() => this.destroy(e));
+          process.nextTick(() => {
+            if (this.autoClose) this.destroy(e);
+            else this.emit('error', e);
+          });
           return;
         }
         this.fd = fd;
@@ -490,8 +498,9 @@
         }
       }
 
+      // Destroying closes the descriptor whatever autoClose says, as in Node.
       _destroy(err, callback) {
-        if (this.fd === null || (!this.autoClose && !this._closeRequested)) {
+        if (this.fd === null) {
           callback(err);
           return;
         }
@@ -505,15 +514,18 @@
         callback(err);
       }
 
-      // An explicit close closes the descriptor even with autoClose off, as in Node.
+      // An explicit close ends the stream and then closes the descriptor even with autoClose
+      // off, as in Node. Like Node's, it does nothing more once the stream has finished.
       close(cb) {
         if (typeof cb === 'function') {
-          if (this.closed) process.nextTick(cb);
-          else this.once('close', cb);
+          if (this.closed) {
+            process.nextTick(cb);
+            return;
+          }
+          this.on('close', cb);
         }
-        this._closeRequested = true;
-        if (!this.writableEnded) this.end();
-        else if (!this.destroyed) this.destroy();
+        if (!this.autoClose) this.on('finish', this.destroy);
+        this.end();
       }
     };
     return _WriteStream;
