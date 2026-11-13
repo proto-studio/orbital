@@ -255,6 +255,9 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	if err := regFn("fstatSync", f.fstatSyncFunc); err != nil {
 		return err
 	}
+	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
+		return err
+	}
 
 	// Native async metadata ops. Node's stat/lstat/access are asynchronous; run
 	// the syscall on a goroutine and deliver a Node-shaped result (real Error
@@ -538,6 +541,22 @@ func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
+	return f.createStatObject(ctx, stat)
+}
+
+// rmTargetSyncFunc describes the path rm is to remove, as Node's rm does with lstat: a
+// symbolic link is described, and so removed, itself. On failure it returns an fsFailure.
+func (f *FS) rmTargetSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	path := args[0].String()
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		return fsFailure(ctx, err, "lstat", path)
+	}
 	return f.createStatObject(ctx, stat)
 }
 

@@ -680,15 +680,21 @@
   }
 
   // rmSync(path[, { force, recursive }]): unlink a file, or with recursive a directory too.
-  // force ignores a path that does not exist, and nothing else.
-  if (typeof fs.rmSync !== 'function') {
+  // force ignores a path that does not exist, and nothing else. Like Node, it looks at the path
+  // with lstat, so a symbolic link is removed itself, even one whose target is missing or a
+  // directory.
+  const _rmTargetSync = fs.__rmTargetSync;
+  delete fs.__rmTargetSync;
+  if (typeof fs.rmSync !== 'function' && typeof _rmTargetSync === 'function') {
     fs.rmSync = function (path, options) {
       const force = !!(options && options.force);
       const recursive = !!(options && options.recursive);
-      const stats = fs.statSync(path);
-      if (!stats) {
-        if (force) return;
-        throw fs.__makeFsError("ENOENT: no such file or directory, lstat '" + path + "'", 'ENOENT', String(path), 'lstat');
+      let stats;
+      try {
+        stats = addStatsMethods(check(_rmTargetSync.call(fs, path)));
+      } catch (e) {
+        if (force && e.code === 'ENOENT') return;
+        throw e;
       }
       if (stats.isDirectory() && !recursive) {
         const e = new Error('Path is a directory: rm returned EISDIR (is a directory) ' + path);

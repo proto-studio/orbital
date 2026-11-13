@@ -75,6 +75,11 @@ func (m *MemoryFilesystem) Stat(path string) (*FileInfo, error) {
 	}, nil
 }
 
+// Lstat is Stat: the in-memory filesystem has no symbolic links.
+func (m *MemoryFilesystem) Lstat(path string) (*FileInfo, error) {
+	return m.Stat(path)
+}
+
 // Exists checks if a path exists.
 func (m *MemoryFilesystem) Exists(path string) bool {
 	m.mu.RLock()

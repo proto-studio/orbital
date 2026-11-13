@@ -26,6 +26,23 @@ func TestFSErrors_MatchesNode(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "loop_a"), filepath.Join(dir, "loop_b")); err != nil {
 		t.Fatal(err)
 	}
+	// Links for rm to remove: some pointing at nothing, some at a directory.
+	if err := os.MkdirAll(filepath.Join(dir, "rm_target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rm_target", "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 4; i++ {
+		if err := os.Symlink(filepath.Join(dir, "rm_nowhere"), filepath.Join(dir, fmt.Sprintf("rm_dangling_%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		if err := os.Symlink(filepath.Join(dir, "rm_target"), filepath.Join(dir, fmt.Sprintf("rm_dirlink_%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if captureFromNode(t) {
 		output, err := exec.Command("node", scriptPath, dir).Output()

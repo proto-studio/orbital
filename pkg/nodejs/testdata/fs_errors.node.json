@@ -90,6 +90,17 @@
       "syscall": "open"
     }
   },
+  "loop_rmSync_force": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, lstat '\u003cdir\u003e/loop_a/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a/child",
+      "syscall": "lstat"
+    }
+  },
   "loop_writeFileSync": {
     "error": {
       "code": "ELOOP",
@@ -384,6 +395,20 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_rm_dangling_force": {
+    "value": null
+  },
+  "promises_rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
   "promises_writeFile_flag_fraction": {
     "error": {
       "code": "ERR_OUT_OF_RANGE",
@@ -445,6 +470,49 @@
       "syscall": "open"
     }
   },
+  "rmSync_dangling": {
+    "value": null
+  },
+  "rmSync_dangling_force": {
+    "value": null
+  },
+  "rmSync_dirlink": {
+    "value": null
+  },
+  "rmSync_dirlink_recursive": {
+    "value": null
+  },
+  "rmSync_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_dangling": {
+    "value": null
+  },
+  "rm_links_left": [
+    "rm_target"
+  ],
+  "rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_target_left": [
+    "keep"
+  ],
   "sync_flags": "onetwo",
   "writeFileSync_bad_flag": {
     "error": {

@@ -31,6 +31,21 @@ type File interface {
 	Stat() (*FileInfo, error)
 }
 
+// LstatFilesystem is implemented by a Filesystem that can describe a symbolic link itself
+// rather than what it points to. It is optional: callers fall back to Stat without it.
+type LstatFilesystem interface {
+	Lstat(path string) (*FileInfo, error)
+}
+
+// Lstat describes path without following a final symbolic link, if fsys can, and otherwise
+// as Stat does.
+func Lstat(fsys Filesystem, path string) (*FileInfo, error) {
+	if l, ok := fsys.(LstatFilesystem); ok {
+		return l.Lstat(path)
+	}
+	return fsys.Stat(path)
+}
+
 // Filesystem defines the interface for filesystem operations.
 type Filesystem interface {
 	// Read operations
