@@ -320,3 +320,17 @@ func TestExitWithoutEvents(t *testing.T) {
 		t.Fatalf("Run returned %v, want an *ExitError with code 5", err)
 	}
 }
+
+// An embedder can register process without the buffer module, and writing to stdout still
+// works.
+func TestStdoutWithoutBuffer(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	result, err := rt.RunScript(`String(process.stdout.write('') && process.stdout.write(new Uint8Array(0)))`, "test.js")
+	if err != nil {
+		t.Fatalf("write threw: %v", err)
+	}
+	if result.String() != "true" {
+		t.Fatalf("write returned %s", result.String())
+	}
+}

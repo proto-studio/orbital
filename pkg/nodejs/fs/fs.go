@@ -3,11 +3,14 @@ package fs
 
 import (
 	_ "embed"
+	"encoding/base64"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -252,6 +255,9 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	if err := regFn("fstatSync", f.fstatSyncFunc); err != nil {
 		return err
 	}
+	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
+		return err
+	}
 
 	// Native async metadata ops. Node's stat/lstat/access are asynchronous; run
 	// the syscall on a goroutine and deliver a Node-shaped result (real Error
@@ -307,6 +313,15 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// The open flags fs.constants exports, which fs_setup.js adds to it.
+	openFlags, err := openFlagConstants(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fsObj.Set("__openFlags", openFlags); err != nil {
+		return err
+	}
+
 	// Set fs as global module
 	if err := rt.SetGlobal("__fs_module", fsObj); err != nil {
 		return err
@@ -326,57 +341,60 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	return nil
 }
 
-// readFileSyncFunc implements fs.readFileSync
-func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
+// File contents cross between JavaScript and Go as base64, because Value.String() stops at
+// the first NUL and goes through UTF-8. The functions below take and return base64; the
+// wrappers in fs_setup.js give them Node's signatures and handle encodings. Only a read that
+// asks for UTF-8 text skips base64, since NewString keeps every byte of its input and most
+// reads are of source files.
 
-	path := args[0].String()
-
-	// Check for encoding option
-	encoding := ""
-	if len(args) >= 2 {
-		if args[1].IsString() {
-			encoding = args[1].String()
-		} else if args[1].IsObject() {
-			if encVal, err := args[1].Get("encoding"); err == nil && encVal != nil {
-				encoding = encVal.String()
-			}
-		}
-	}
-
-	data, err := f.fs().ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	if encoding == "utf8" || encoding == "utf-8" {
-		val, _ := ctx.NewString(string(data))
-		return val
-	}
-
-	// Return as string for now
-	val, _ := ctx.NewString(string(data))
-	return val
+// decodeData reads a base64 argument.
+func decodeData(v *v8.Value) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(v.String())
 }
 
-// writeFileSyncFunc implements fs.writeFileSync
-func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// fileContents is what a read hands to JavaScript: UTF-8 text or base64.
+func fileContents(data []byte, asText bool) string {
+	if asText {
+		return string(data)
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// readFileSyncFunc backs fs.readFileSync(path, asText). On failure it returns an fsFailure.
+func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
 	}
 
 	path := args[0].String()
-	data := args[1].String()
+	data, err := f.fs().ReadFile(path)
+	if err != nil {
+		return fsFailure(ctx, err, readSyscall(err), path)
+	}
 
-	if err := f.fs().WriteFile(path, []byte(data), 0644); err != nil {
+	val, _ := ctx.NewString(fileContents(data, args[1].Boolean()))
+	return val
+}
+
+// writeFileSyncFunc backs fs.writeFileSync(path, base64Data, flag, mode) and
+// fs.appendFileSync, which passes an append flag. On failure it returns an fsFailure.
+func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
 		return nil
 	}
 
+	data, err := decodeData(args[1])
+	if err != nil {
+		return info.Context().Throw(err.Error())
+	}
+
+	path := args[0].String()
+	if failed, err := f.writeWithFlags(path, data, argAt(args, 2), modeArg(args, 3)); err != nil {
+		return fsFailure(info.Context(), err, failed, path)
+	}
 	return nil
 }
 
@@ -410,18 +428,40 @@ func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
+	// fs_setup.js passes the mode, already checked, as a number; Node's default is 0o777.
+	perm := fs.FileMode(0o777)
+	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
+		perm = dirMode(args[2].Integer())
+	}
+
 	var err error
 	if recursive {
-		err = f.fs().MkdirAll(path, 0755)
+		err = f.fs().MkdirAll(path, perm)
 	} else {
-		err = f.fs().Mkdir(path, 0755)
+		err = f.fs().Mkdir(path, perm)
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "mkdir", path)
 	}
 
 	return nil
+}
+
+// dirMode turns a Unix mode into Go's FileMode, whose setuid, setgid and sticky bits are not
+// the Unix ones.
+func dirMode(mode int64) fs.FileMode {
+	perm := fs.FileMode(mode & 0o777)
+	if mode&0o4000 != 0 {
+		perm |= fs.ModeSetuid
+	}
+	if mode&0o2000 != 0 {
+		perm |= fs.ModeSetgid
+	}
+	if mode&0o1000 != 0 {
+		perm |= fs.ModeSticky
+	}
+	return perm
 }
 
 // rmdirSyncFunc implements fs.rmdirSync
@@ -440,7 +480,20 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
-	var err error
+	// Remove deletes files too, but rmdir only takes a directory: anything else, a symbolic
+	// link included, is ENOTDIR and kept, as in Node. Node's recursive form looks first with
+	// lstat, so a missing path is reported as lstat.
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		if recursive {
+			return fsFailure(info.Context(), err, "lstat", path)
+		}
+		return fsFailure(info.Context(), err, "rmdir", path)
+	}
+	if !stat.IsDir {
+		return fsFailure(info.Context(), syscall.ENOTDIR, "rmdir", path)
+	}
+
 	if recursive {
 		err = f.fs().RemoveAll(path)
 	} else {
@@ -448,7 +501,7 @@ func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err != nil {
-		return nil
+		return fsFailure(info.Context(), err, "rmdir", path)
 	}
 
 	return nil
@@ -461,8 +514,9 @@ func (f *FS) unlinkSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Remove(args[0].String()); err != nil {
-		return nil
+	path := args[0].String()
+	if err := f.fs().Remove(path); err != nil {
+		return fsFailure(info.Context(), err, "unlink", path)
 	}
 
 	return nil
@@ -476,9 +530,10 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	entries, err := f.fs().ReadDir(args[0].String())
+	path := args[0].String()
+	entries, err := f.fs().ReadDir(path)
 	if err != nil {
-		return nil
+		return fsFailure(ctx, err, "scandir", path)
 	}
 
 	// Detect the { withFileTypes: true } option, which asks for Dirent-like
@@ -521,6 +576,22 @@ func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
+	return f.createStatObject(ctx, stat)
+}
+
+// rmTargetSyncFunc describes the path rm is to remove, as Node's rm does with lstat: a
+// symbolic link is described, and so removed, itself. On failure it returns an fsFailure.
+func (f *FS) rmTargetSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	path := args[0].String()
+	stat, err := runtime.Lstat(f.fs(), path)
+	if err != nil {
+		return fsFailure(ctx, err, "lstat", path)
+	}
 	return f.createStatObject(ctx, stat)
 }
 
@@ -567,7 +638,36 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	return obj
 }
 
-// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags.
+// openFlagConstants returns the open flags for fs.constants. They are the platform's own
+// values, which differ between Linux and macOS, and the ones parseOpenFlags passes a numeric
+// flag straight through with, so O_WRONLY | O_APPEND opens for appending.
+func openFlagConstants(ctx *v8.Context) (*v8.Value, error) {
+	obj, err := ctx.NewObject()
+	if err != nil {
+		return nil, err
+	}
+	for _, flag := range []struct {
+		name  string
+		value int
+	}{
+		{"O_RDONLY", os.O_RDONLY},
+		{"O_WRONLY", os.O_WRONLY},
+		{"O_RDWR", os.O_RDWR},
+		{"O_CREAT", os.O_CREATE},
+		{"O_EXCL", os.O_EXCL},
+		{"O_TRUNC", os.O_TRUNC},
+		{"O_APPEND", os.O_APPEND},
+		{"O_SYNC", os.O_SYNC},
+	} {
+		if err := obj.Set(flag.name, ctx.NewInteger(int64(flag.value))); err != nil {
+			return nil, err
+		}
+	}
+	return obj, nil
+}
+
+// parseOpenFlags maps a Node open-flag string (or numeric flag) to os flags. A number is
+// made of the flags in fs.constants, which are os's own, so it passes through unchanged.
 func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v == nil {
 		return os.O_RDONLY, true
@@ -575,11 +675,16 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 	if v.IsNumber() {
 		return int(v.Integer()), true
 	}
+	// Node's flags; the s forms add O_SYNC, so a write reaches the disk before it returns.
 	switch strings.TrimSpace(v.String()) {
-	case "r", "rs":
+	case "r":
 		return os.O_RDONLY, true
-	case "r+", "rs+":
+	case "rs", "sr":
+		return os.O_RDONLY | os.O_SYNC, true
+	case "r+":
 		return os.O_RDWR, true
+	case "rs+", "sr+":
+		return os.O_RDWR | os.O_SYNC, true
 	case "w":
 		return os.O_WRONLY | os.O_CREATE | os.O_TRUNC, true
 	case "wx", "xw":
@@ -592,10 +697,14 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE, true
 	case "ax", "xa":
 		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as", "sa":
+		return os.O_WRONLY | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	case "a+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE, true
 	case "ax+", "xa+":
 		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_EXCL, true
+	case "as+", "sa+":
+		return os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_SYNC, true
 	default:
 		return 0, false
 	}
@@ -626,7 +735,7 @@ func (f *FS) openSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	file, err := f.fs().OpenFile(path, flags, perm)
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "open", path)
 	}
 
 	f.fdMu.Lock()
@@ -663,82 +772,93 @@ func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	f.fdMu.Unlock()
 
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, close")
+		return fsFailure(ctx, syscall.EBADF, "close", "")
 	}
 	if err := file.Close(); err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "close", "")
 	}
 	return nil
 }
 
-// writeSyncFunc implements the string form of fs.writeSync:
-//
-//	writeSync(fd, string[, position[, encoding]])
-//
-// and a best-effort buffer form writeSync(fd, data[, offset[, length[, position]]])
-// where data is coerced to its string contents.
+// atPosition runs op with the file at position, then puts the offset back, because a read or
+// write at a position leaves the current offset alone. A negative position means the current
+// offset.
+func atPosition(file runtime.File, position int64, op func() (int, error)) (int, error) {
+	if position < 0 {
+		return op()
+	}
+	saved, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := file.Seek(position, io.SeekStart); err != nil {
+		return 0, err
+	}
+	n, opErr := op()
+	if _, err := file.Seek(saved, io.SeekStart); err != nil && opErr == nil {
+		opErr = err
+	}
+	return n, opErr
+}
+
+// writeSyncFunc backs fs.writeSync(fd, base64Data, position) and returns the bytes written.
 func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 2 {
-		return ctx.Throw("writeSync: fd and data are required")
+	if len(args) < 3 {
+		return ctx.Throw("writeSync: fd, data and position are required")
 	}
 	fd := int(args[0].Integer())
-	file, ok := f.fileForFD(fd)
-	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, write")
-	}
-
-	data := []byte(args[1].String())
-
-	// Optional explicit position (3rd arg, when numeric) seeks before writing;
-	// otherwise the write continues at the current offset.
-	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
-		if _, err := file.Seek(args[2].Integer(), 0); err != nil {
-			return ctx.Throw(err.Error())
-		}
-	}
-
-	n, err := file.Write(data)
+	data, err := decodeData(args[1])
 	if err != nil {
 		return ctx.Throw(err.Error())
+	}
+	// Descriptors 1 and 2 are the process's own stdout and stderr, as process.stdout uses.
+	if std := map[int]*os.File{1: os.Stdout, 2: os.Stderr}[fd]; std != nil {
+		if _, open := f.fileForFD(fd); !open {
+			n, err := std.Write(data)
+			if err != nil {
+				return fsFailure(ctx, err, "write", "")
+			}
+			return ctx.NewInteger(int64(n))
+		}
+	}
+	file, ok := f.fileForFD(fd)
+	if !ok {
+		return fsFailure(ctx, syscall.EBADF, "write", "")
+	}
+
+	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
+		return file.Write(data)
+	})
+	if err != nil {
+		return fsFailure(ctx, err, "write", "")
 	}
 	return ctx.NewInteger(int64(n))
 }
 
-// readSyncFunc implements a minimal fs.readSync(fd, buffer, offset, length, position).
-// Orbital buffers are string-backed here, so it returns the bytes read and the
-// caller is expected to use the string form where possible.
+// readSyncFunc backs fs.readSync(fd, length, position) and returns the bytes read as base64,
+// empty at the end of the file.
 func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 1 {
-		return ctx.Throw("readSync: fd is required")
+	if len(args) < 3 {
+		return ctx.Throw("readSync: fd, length and position are required")
 	}
-	fd := int(args[0].Integer())
-	file, ok := f.fileForFD(fd)
+	file, ok := f.fileForFD(int(args[0].Integer()))
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, read")
+		return fsFailure(ctx, syscall.EBADF, "read", "")
 	}
 
-	length := 0
-	if len(args) >= 4 && args[3] != nil && args[3].IsNumber() {
-		length = int(args[3].Integer())
+	buf := make([]byte, args[1].Integer())
+	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
+		return file.Read(buf)
+	})
+	if err != nil && err != io.EOF && n == 0 {
+		return fsFailure(ctx, err, "read", "")
 	}
-	if len(args) >= 5 && args[4] != nil && args[4].IsNumber() {
-		if _, err := file.Seek(args[4].Integer(), 0); err != nil {
-			return ctx.Throw(err.Error())
-		}
-	}
-	if length <= 0 {
-		return ctx.NewInteger(0)
-	}
-	buf := make([]byte, length)
-	n, err := file.Read(buf)
-	if err != nil && n == 0 {
-		return ctx.NewInteger(0)
-	}
-	return ctx.NewInteger(int64(n))
+	val, _ := ctx.NewString(fileContents(buf[:n], false))
+	return val
 }
 
 // fstatSyncFunc implements fs.fstatSync(fd).
@@ -751,11 +871,11 @@ func (f *FS) fstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	fd := int(args[0].Integer())
 	file, ok := f.fileForFD(fd)
 	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, fstat")
+		return fsFailure(ctx, syscall.EBADF, "fstat", "")
 	}
 	stat, err := file.Stat()
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "fstat", "")
 	}
 	return f.createStatObject(ctx, stat)
 }
@@ -768,7 +888,7 @@ func (f *FS) renameSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if err := f.fs().Rename(args[0].String(), args[1].String()); err != nil {
-		return nil
+		return fsFailureTo(info.Context(), err, "rename", args[0].String(), args[1].String())
 	}
 
 	return nil
@@ -781,55 +901,34 @@ func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	if err := f.fs().Copy(args[0].String(), args[1].String()); err != nil {
-		return nil
+	src, dest := args[0].String(), args[1].String()
+	// COPYFILE_EXCL: refuse to replace an existing destination.
+	if len(args) >= 3 && args[2].IsNumber() && args[2].Integer()&1 != 0 && f.fs().Exists(dest) {
+		return fsFailureTo(info.Context(), syscall.EEXIST, "copyfile", src, dest)
+	}
+	if err := f.fs().Copy(src, dest); err != nil {
+		return fsFailureTo(info.Context(), err, "copyfile", src, dest)
 	}
 
 	return nil
 }
 
-// appendFileSyncFunc implements fs.appendFileSync
+// appendFileSyncFunc backs fs.appendFileSync(path, base64Data, flag, mode). It is
+// writeFileSync with Node's default flag for appending.
 func (f *FS) appendFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	if err := f.fs().AppendFile(args[0].String(), []byte(args[1].String())); err != nil {
-		return nil
-	}
-
-	return nil
+	return f.writeFileSyncFunc(info)
 }
 
-// readFileFunc implements fs.readFile (async)
+// readFileFunc backs fs.readFile(path, asText, callback).
 func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 2 {
+	if len(args) < 3 || !args[2].IsFunction() {
 		return nil
 	}
 
 	path := args[0].String()
-	var callback *v8.Value
-	encoding := ""
-
-	// Handle (path, callback) or (path, options, callback)
-	if len(args) == 2 {
-		callback = args[1]
-	} else if len(args) >= 3 {
-		if args[1].IsString() {
-			encoding = args[1].String()
-		} else if args[1].IsObject() {
-			if encVal, err := args[1].Get("encoding"); err == nil && encVal != nil {
-				encoding = encVal.String()
-			}
-		}
-		callback = args[2]
-	}
-
-	if callback == nil || !callback.IsFunction() {
-		return nil
-	}
+	asText := args[1].Boolean()
+	callback := args[2]
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -840,18 +939,16 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer f.rt.EventLoop().DonePendingWork()
 
 		data, err := fsys.ReadFile(path)
+		contents := ""
+		if err == nil {
+			contents = fileContents(data, asText)
+		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				errVal, _ := ctx.NewString(err.Error())
-				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, readSyscall(err), path), ctx.Null())
 			} else {
-				var dataVal *v8.Value
-				if encoding == "utf8" || encoding == "utf-8" {
-					dataVal, _ = ctx.NewString(string(data))
-				} else {
-					dataVal, _ = ctx.NewString(string(data))
-				}
+				dataVal, _ := ctx.NewString(contents)
 				f.rt.MakeCallback(callback, nil, ctx.Null(), dataVal)
 			}
 		})
@@ -860,20 +957,19 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return nil
 }
 
-// writeFileFunc implements fs.writeFile (async)
+// writeFileFunc backs fs.writeFile(path, base64Data, flag, mode, callback) and
+// fs.appendFile, which passes an append flag.
 func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
-	if len(args) < 3 {
+	if len(args) < 5 || !args[4].IsFunction() {
 		return nil
 	}
 
 	path := args[0].String()
-	data := args[1].String()
-	callback := args[len(args)-1]
-
-	if !callback.IsFunction() {
-		return nil
-	}
+	encoded := args[1].String()
+	flags, flagsOK := parseOpenFlags(args[2])
+	perm := modeArg(args, 3)
+	callback := args[4]
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -883,12 +979,18 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		err := fsys.WriteFile(path, []byte(data), fs.FileMode(0644))
+		failed := "open"
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err == nil && !flagsOK {
+			err = syscall.EINVAL
+		}
+		if err == nil {
+			failed, err = writeFile(fsys, path, data, flags, perm)
+		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				errVal, _ := ctx.NewString(err.Error())
-				f.rt.MakeCallback(callback, nil, errVal)
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, failed, path))
 			} else {
 				f.rt.MakeCallback(callback, nil, ctx.Null())
 			}
@@ -1185,4 +1287,17 @@ func (f *FS) readStreamCloseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		h.file.Close()
 	}
 	return nil
+}
+
+// readSyscall names the call Node reports for a failed read: the one that failed, open or
+// read. Reading a directory always fails at read, as in Node, which opens it first.
+func readSyscall(err error) string {
+	if errors.Is(err, syscall.EISDIR) {
+		return "read"
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Op == "read" {
+		return "read"
+	}
+	return "open"
 }

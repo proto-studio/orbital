@@ -19,6 +19,105 @@
     };
   }
 
+  // Runs a synchronous operation as a promise.
+  function attempt(operation) {
+    return new Promise((resolve) => resolve(operation()));
+  }
+
+  // What writeFile and appendFile write to: a path, or the descriptor of a FileHandle. Unlike
+  // the callback forms, these refuse a bare descriptor, as Node's do.
+  function target(path) {
+    if (typeof path === 'number') {
+      const e = new TypeError('The "path" argument must be of type string or an instance of Buffer or URL. Received type number (' + path + ')');
+      e.code = 'ERR_INVALID_ARG_TYPE';
+      throw e;
+    }
+    if (path && typeof path === 'object' && handles.has(path)) return path.fd;
+    return path;
+  }
+  const handles = new WeakSet();
+
+  // A FileHandle over a real descriptor, so it shares the file offset and byte handling of
+  // fs.readSync and fs.writeSync.
+  function fileHandle(fd, path) {
+    const readAll = () => {
+      const chunks = [];
+      for (;;) {
+        const chunk = Buffer.alloc(65536);
+        const n = fs.readSync(fd, chunk, 0, chunk.length, null);
+        if (n === 0) return Buffer.concat(chunks);
+        chunks.push(chunk.subarray(0, n));
+      }
+    };
+    const encodingOf = (options) => (typeof options === 'string' ? options : options && options.encoding);
+    const handle = {
+      fd,
+      path,
+
+      // read(buffer[, offset[, length[, position]]]), read(buffer, options) or read(options).
+      read(buffer, offset, length, position) {
+        return attempt(() => {
+          if (!ArrayBuffer.isView(buffer)) {
+            ({ buffer = Buffer.alloc(16384), offset, length, position } = buffer || {});
+          } else if (offset !== null && typeof offset === 'object') {
+            ({ offset, length, position } = offset);
+          }
+          const start = offset === undefined || offset === null ? 0 : offset;
+          const count = length === undefined || length === null ? buffer.byteLength - start : length;
+          const bytesRead = fs.readSync(fd, buffer, start, count, position === undefined ? null : position);
+          return { bytesRead, buffer };
+        });
+      },
+
+      write(data, ...args) {
+        return attempt(() => ({ bytesWritten: fs.writeSync(fd, data, ...args), buffer: data }));
+      },
+
+      close() {
+        return attempt(() => {
+          if (handle.fd !== -1) {
+            handle.fd = -1;
+            fs.closeSync(fd);
+          }
+        });
+      },
+
+      stat() {
+        return attempt(() => fs.fstatSync(fd));
+      },
+
+      truncate(len) {
+        return fsPromises.truncate(path, len);
+      },
+
+      sync() {
+        return Promise.resolve();
+      },
+
+      datasync() {
+        return Promise.resolve();
+      },
+
+      // These two work from the current offset, unlike their fs.promises namesakes.
+      readFile(options) {
+        return attempt(() => {
+          const contents = readAll();
+          const encoding = encodingOf(options);
+          return encoding ? contents.toString(encoding) : contents;
+        });
+      },
+
+      writeFile(data, options) {
+        return attempt(() => {
+          const encoding = encodingOf(options);
+          fs.writeSync(fd, typeof data === 'string' ? Buffer.from(data, encoding || 'utf8') : data);
+        });
+      },
+    };
+    handles.add(handle);
+    return handle;
+  }
+
   // Promise-based versions of fs functions
   const fsPromises = {
     // Read file contents
@@ -39,26 +138,12 @@
 
     // Write file contents
     writeFile: function(path, data, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.writeFileSync(path, data, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.writeFileSync(target(path), data, options));
     },
 
     // Append to file
     appendFile: function(path, data, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.appendFileSync(path, data, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.appendFileSync(target(path), data, options));
     },
 
     // Delete file
@@ -123,18 +208,7 @@
 
     // Remove file or directory (recursive)
     rm: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          if (options && options.recursive) {
-            fs.rmdirSync(path, { recursive: true });
-          } else {
-            fs.unlinkSync(path);
-          }
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.rmSync(path, options));
     },
 
     // Read directory contents
@@ -202,13 +276,12 @@
     truncate: function(path, len) {
       return new Promise((resolve, reject) => {
         try {
-          // Read, truncate, write back
-          let content = '';
-          if (fs.existsSync(path)) {
-            content = fs.readFileSync(path, 'utf8') || '';
-          }
-          content = content.substring(0, len || 0);
-          fs.writeFileSync(path, content);
+          // Read, truncate, write back. Growing a file pads it with NUL bytes.
+          const size = len || 0;
+          const content = fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0);
+          const resized = Buffer.alloc(size);
+          content.copy(resized, 0, 0, Math.min(size, content.length));
+          fs.writeFileSync(path, resized);
           resolve();
         } catch (e) {
           reject(e);
@@ -260,65 +333,14 @@
 
     // Open file handle
     open: function(path, flags, mode) {
-      // Return a file handle object
       return new Promise((resolve, reject) => {
         try {
-          if (!fs.existsSync(path) && !flags.includes('w') && !flags.includes('a')) {
-            reject(new Error(`ENOENT: no such file or directory, open '${path}'`));
+          const openFlags = flags === undefined || flags === null ? 'r' : flags;
+          if (!fs.existsSync(path) && String(openFlags).startsWith('r')) {
+            reject(fs.__makeFsError(`ENOENT: no such file or directory, open '${path}'`, 'ENOENT', path, 'open'));
             return;
           }
-          
-          // Create a simple file handle
-          const handle = {
-            fd: Math.floor(Math.random() * 1000000),
-            path: path,
-            
-            read: function(buffer, offset, length, position) {
-              return fsPromises.readFile(path).then(data => {
-                const bytes = typeof data === 'string' ? 
-                  new TextEncoder().encode(data) : data;
-                return { bytesRead: bytes.length, buffer: bytes };
-              });
-            },
-            
-            write: function(buffer, offset, length, position) {
-              const data = typeof buffer === 'string' ? buffer : 
-                new TextDecoder().decode(buffer);
-              return fsPromises.writeFile(path, data).then(() => {
-                return { bytesWritten: data.length, buffer };
-              });
-            },
-            
-            close: function() {
-              return Promise.resolve();
-            },
-            
-            stat: function() {
-              return fsPromises.stat(path);
-            },
-            
-            truncate: function(len) {
-              return fsPromises.truncate(path, len);
-            },
-            
-            sync: function() {
-              return Promise.resolve();
-            },
-            
-            datasync: function() {
-              return Promise.resolve();
-            },
-            
-            readFile: function(options) {
-              return fsPromises.readFile(path, options);
-            },
-            
-            writeFile: function(data, options) {
-              return fsPromises.writeFile(path, data, options);
-            }
-          };
-          
-          resolve(handle);
+          resolve(fileHandle(fs.openSync(path, openFlags, mode), path));
         } catch (e) {
           reject(e);
         }
@@ -339,19 +361,14 @@
       });
     },
 
-    // Constants
-    constants: {
-      F_OK: 0,
-      R_OK: 4,
-      W_OK: 2,
-      X_OK: 1,
-      COPYFILE_EXCL: 1,
-      COPYFILE_FICLONE: 2,
-      COPYFILE_FICLONE_FORCE: 4
-    }
+    // The same object as fs.constants, as in Node.
+    constants: fs.constants
   };
 
   // Export
   global.__fs_promises_module = fsPromises;
+  if (fs && !fs.promises) {
+    Object.defineProperty(fs, 'promises', { configurable: true, enumerable: true, value: fsPromises });
+  }
 
 })(globalThis);

@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/inspectjs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed console_module.js
 var consoleModuleJS string
+
+//go:embed console_inspect.js
+var consoleInspectJS string
 
 // Console provides console logging functionality.
 type Console struct {
@@ -32,6 +36,11 @@ type Console struct {
 	// JSON.stringify, which drops non-enumerable Error fields and yields {}.
 	skipErrorFormat bool
 	errorTracking   bool
+
+	// splitNUL is the function compiled from splitAtNUL.
+	splitNUL *v8.Value
+	// inspect holds the functions from console_inspect.js.
+	inspect *v8.Value
 }
 
 // New creates a new Console module with default settings.
@@ -344,12 +353,83 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	c.splitNUL, err = rt.RunScript(splitAtNUL, "console_text.js")
+	if err != nil {
+		return err
+	}
+	// console_inspect.js formats with the code it shares with util, passed in as inspectShared.
+	c.inspect, err = rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.JS+")", "console_inspect.js")
+	if err != nil {
+		return err
+	}
+
 	// Expose require('console') with a Console class (see console_module.js).
 	if _, err := rt.RunScript(consoleModuleJS, "console_module.js"); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// splitAtNUL is called from text. It answers null for the usual string without a NUL.
+const splitAtNUL = `(s) => s.includes('\0') ? s.split('\0') : null`
+
+// text returns the string form of a value. Value.String() stops at the first NUL, so a string
+// holding one is read a piece at a time. Each piece comes back as UTF-8, which is what Node's
+// console writes.
+func (c *Console) text(v *v8.Value) string {
+	if !v.IsString() || c.splitNUL == nil {
+		return v.String()
+	}
+	pieces, err := c.splitNUL.Call(nil, v)
+	if err != nil || pieces == nil || !pieces.IsArray() {
+		return v.String()
+	}
+	parts := make([]string, pieces.ArrayLength())
+	for i := range parts {
+		piece, err := pieces.GetIndex(i)
+		if err != nil {
+			return v.String()
+		}
+		parts[i] = piece.String()
+	}
+	// \x00 is NUL: the string was split at each NUL, so joining with it puts them back.
+	return strings.Join(parts, "\x00")
+}
+
+// quoted renders a string nested in an array or object, quoted and escaped as Node does.
+func (c *Console) quoted(v *v8.Value) string {
+	if s, ok := c.inspectCall("quote", v); ok {
+		return s
+	}
+	// \x00 is NUL, which Node prints inside a nested string as the escape \x00.
+	return "'" + strings.ReplaceAll(c.text(v), "\x00", `\x00`) + "'"
+}
+
+// inspectCall calls a function from console_inspect.js. It reports false if the function
+// returned anything but a string.
+func (c *Console) inspectCall(name string, args ...*v8.Value) (string, bool) {
+	result := c.inspectValue(name, args...)
+	if result == nil || !result.IsString() {
+		return "", false
+	}
+	return result.String(), true
+}
+
+// inspectValue calls a function from console_inspect.js and returns its result.
+func (c *Console) inspectValue(name string, args ...*v8.Value) *v8.Value {
+	if c.inspect == nil {
+		return nil
+	}
+	fn, err := c.inspect.Get(name)
+	if err != nil || fn == nil || !fn.IsFunction() {
+		return nil
+	}
+	result, err := fn.Call(nil, args...)
+	if err != nil {
+		return nil
+	}
+	return result
 }
 
 // createLogFunc creates a logging function for the given level.
@@ -383,7 +463,7 @@ func (c *Console) formatLog(args []*v8.Value) string {
 
 	first := args[0]
 	if first != nil && first.IsString() {
-		f := first.String()
+		f := c.text(first)
 		if strings.IndexByte(f, '%') >= 0 {
 			var b strings.Builder
 			argi := 1
@@ -474,7 +554,7 @@ func (c *Console) specString(v *v8.Value) string {
 		return "undefined"
 	}
 	if v.IsString() {
-		return v.String()
+		return c.text(v)
 	}
 	if v.IsObject() && !v.IsFunction() {
 		return c.formatValue(v)
@@ -518,7 +598,7 @@ func (c *Console) formatValue(v *v8.Value) string {
 	if v.IsString() {
 		// For runtime.log, strings are printed without quotes and without color
 		// Only in inspect/dir mode do strings get quoted and colored
-		return v.String()
+		return c.text(v)
 	}
 	if v.IsFunction() {
 		return c.formatter.FormatValue("[Function]", runtime.TypeFunction)
@@ -556,7 +636,7 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 	}
 	if v.IsString() {
 		// In arrays/objects, strings are quoted and colored
-		quoted := fmt.Sprintf("'%s'", v.String())
+		quoted := c.quoted(v)
 		return c.formatter.FormatValue(quoted, runtime.TypeString)
 	}
 	if v.IsFunction() {
@@ -614,6 +694,9 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if s, ok := c.tryFormatError(v, depth); ok {
 		return s
 	}
+	if s, ok := c.inspectCall("view", v); ok {
+		return s
+	}
 	if depth <= 0 {
 		return "[Object]"
 	}
@@ -635,10 +718,13 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		if err != nil || keyVal == nil {
 			continue
 		}
-		key := keyVal.String()
+		key, ok := c.inspectCall("key", keyVal)
+		if !ok {
+			key = keyVal.String()
+		}
 
-		val, err := v.Get(key)
-		if err != nil || val == nil {
+		val := c.inspectValue("get", v, keyVal)
+		if val == nil {
 			continue
 		}
 
@@ -652,7 +738,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		} else if val.IsNumber() {
 			valStr = c.formatter.FormatValue(val.String(), runtime.TypeNumber)
 		} else if val.IsString() {
-			quoted := fmt.Sprintf("'%s'", val.String())
+			quoted := c.quoted(val)
 			valStr = c.formatter.FormatValue(quoted, runtime.TypeString)
 		} else if val.IsFunction() {
 			valStr = c.formatter.FormatValue("[Function]", runtime.TypeFunction)
@@ -707,7 +793,7 @@ func (c *Console) clearFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (c *Console) countFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	label := "default"
 	if len(info.Args()) > 0 {
-		label = info.Args()[0].String()
+		label = c.text(info.Args()[0])
 	}
 
 	c.counts[label]++
@@ -719,7 +805,7 @@ func (c *Console) countFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (c *Console) countResetFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	label := "default"
 	if len(info.Args()) > 0 {
-		label = info.Args()[0].String()
+		label = c.text(info.Args()[0])
 	}
 
 	if _, exists := c.counts[label]; exists {
@@ -734,7 +820,7 @@ func (c *Console) countResetFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (c *Console) timeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	label := "default"
 	if len(info.Args()) > 0 {
-		label = info.Args()[0].String()
+		label = c.text(info.Args()[0])
 	}
 
 	if _, exists := c.timers[label]; exists {
@@ -750,7 +836,7 @@ func (c *Console) timeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (c *Console) timeEndFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	label := "default"
 	if len(info.Args()) > 0 {
-		label = info.Args()[0].String()
+		label = c.text(info.Args()[0])
 	}
 
 	start, exists := c.timers[label]
@@ -770,7 +856,7 @@ func (c *Console) timeLogFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	label := "default"
 	if len(args) > 0 {
-		label = args[0].String()
+		label = c.text(args[0])
 	}
 
 	start, exists := c.timers[label]
@@ -937,7 +1023,7 @@ func (c *Console) formatValueDeep(v *v8.Value, depth int) string {
 		return c.formatter.FormatValue(v.String(), runtime.TypeNumber)
 	}
 	if v.IsString() {
-		quoted := fmt.Sprintf("'%s'", v.String())
+		quoted := c.quoted(v)
 		return c.formatter.FormatValue(quoted, runtime.TypeString)
 	}
 	if v.IsFunction() {

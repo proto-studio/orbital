@@ -1,0 +1,500 @@
+{
+  "appendFile_missing": {
+    "err": {
+      "code": "ENOENT",
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/x'",
+      "syscall": "open"
+    },
+    "values": []
+  },
+  "appendFile_new": {
+    "err": null,
+    "values": []
+  },
+  "appendFile_options": {
+    "err": null,
+    "values": []
+  },
+  "autoclose_destroyed": {
+    "destroyed": true,
+    "events": [
+      "finish",
+      "close"
+    ],
+    "fd": null,
+    "fdOpen": false
+  },
+  "autoclose_finished": {
+    "closed": false,
+    "destroyed": false,
+    "events": [
+      "finish"
+    ],
+    "fdOpen": true
+  },
+  "autoclose_open_error": {
+    "destroyed": false,
+    "events": [
+      "error ENOENT"
+    ]
+  },
+  "callback_is_async": true,
+  "close": {
+    "err": null,
+    "values": []
+  },
+  "constants": {
+    "F_OK": 0,
+    "R_OK": 4,
+    "W_OK": 2,
+    "X_OK": 1
+  },
+  "copy_excl_new": null,
+  "fail_closeSync_bad": [
+    "EBADF",
+    "close",
+    "EBADF: bad file descriptor, close",
+    true
+  ],
+  "fail_close_bad": [
+    "EBADF",
+    "close",
+    null,
+    null,
+    "EBADF: bad file descriptor, close"
+  ],
+  "fail_copy_excl": [
+    "EEXIST",
+    "copyfile",
+    "\u003cdir\u003e/excl_src",
+    "\u003cdir\u003e/excl_dest",
+    "EEXIST: file already exists, copyfile '\u003cdir\u003e/excl_src' -\u003e '\u003cdir\u003e/excl_dest'"
+  ],
+  "fail_copy_excl_kept": "old",
+  "fail_copy_missing": [
+    "ENOENT",
+    "copyfile",
+    "\u003cdir\u003e/nothing",
+    "\u003cdir\u003e/dest",
+    "ENOENT: no such file or directory, copyfile '\u003cdir\u003e/nothing' -\u003e '\u003cdir\u003e/dest'"
+  ],
+  "fail_fd_still_open": false,
+  "fail_fstat_bad": [
+    "EBADF",
+    "fstat",
+    null,
+    null,
+    "EBADF: bad file descriptor, fstat"
+  ],
+  "fail_mkdirSync": [
+    "EEXIST",
+    "mkdir",
+    "EEXIST: file already exists, mkdir '\u003cdir\u003e/dir'"
+  ],
+  "fail_mkdir_existing": [
+    "EEXIST",
+    "mkdir",
+    "\u003cdir\u003e/dir",
+    null,
+    "EEXIST: file already exists, mkdir '\u003cdir\u003e/dir'"
+  ],
+  "fail_read_bad": [
+    "EBADF",
+    "read",
+    null,
+    null,
+    "EBADF: bad file descriptor, read"
+  ],
+  "fail_readdir_missing": [
+    "ENOENT",
+    "scandir",
+    "\u003cdir\u003e/nodir",
+    null,
+    "ENOENT: no such file or directory, scandir '\u003cdir\u003e/nodir'"
+  ],
+  "fail_rename_missing": [
+    "ENOENT",
+    "rename",
+    "\u003cdir\u003e/nothing",
+    "\u003cdir\u003e/x",
+    "ENOENT: no such file or directory, rename '\u003cdir\u003e/nothing' -\u003e '\u003cdir\u003e/x'"
+  ],
+  "fail_rename_nul": [
+    "threw",
+    "ERR_INVALID_ARG_VALUE"
+  ],
+  "fail_rmdir_missing": [
+    "ENOENT",
+    "rmdir",
+    "\u003cdir\u003e/nodir",
+    null,
+    "ENOENT: no such file or directory, rmdir '\u003cdir\u003e/nodir'"
+  ],
+  "fail_unlink_missing": [
+    "ENOENT",
+    "unlink",
+    "\u003cdir\u003e/nothing",
+    null,
+    "ENOENT: no such file or directory, unlink '\u003cdir\u003e/nothing'"
+  ],
+  "fail_unlink_nul": [
+    "threw",
+    "ERR_INVALID_ARG_VALUE"
+  ],
+  "fail_victim_kept": true,
+  "fail_write_bad": [
+    "EBADF",
+    "write",
+    null,
+    null,
+    "EBADF: bad file descriptor, write"
+  ],
+  "fd_appendFile": {
+    "err": null,
+    "values": []
+  },
+  "fd_appendFile_bad": {
+    "err": {
+      "code": "EBADF",
+      "message": "EBADF: bad file descriptor, write",
+      "syscall": "write"
+    },
+    "values": []
+  },
+  "fd_contents": "abcde!?",
+  "fd_listing": [
+    "target.txt"
+  ],
+  "fd_promises_number": [
+    "ERR_INVALID_ARG_TYPE",
+    "The \"path\" argument must be of type string or an instance of Buffer or URL. Received type number (9999)"
+  ],
+  "fd_writeFile": {
+    "err": null,
+    "values": []
+  },
+  "fd_writeFileSync_bad": {
+    "code": "EBADF",
+    "message": "EBADF: bad file descriptor, write",
+    "syscall": "write"
+  },
+  "fd_writeFile_bad": {
+    "err": {
+      "code": "EBADF",
+      "message": "EBADF: bad file descriptor, write",
+      "syscall": "write"
+    },
+    "values": []
+  },
+  "file:autoclose": "78",
+  "file:autoclose_kept": "6b657074",
+  "file:excl_dest": "6f6c64",
+  "file:excl_new": "6e6577",
+  "file:excl_src": "6e6577",
+  "file:fd.bin": "0203686579",
+  "file:flags.txt": "637574",
+  "file:flags_new.txt": "6e6577",
+  "file:handle_stream": "7468726f756768207468652068616e646c65",
+  "file:mode_0": "78",
+  "file:mode_open": "",
+  "file:open_end": "",
+  "file:open_writes": "616263",
+  "file:piped.bin": "4100ff7465787400656e64",
+  "file:signal_aborted": "",
+  "file:signal_later": "",
+  "file:start.txt": "616258595a66676821",
+  "file:start_bad.txt": "6b656570",
+  "file:stream.bin": "4100ff7465787400656e64",
+  "file:target.txt": "6162636465213f",
+  "file:victim": "6b656570",
+  "flag_append": "base+append",
+  "flag_append_option": "base+append+again",
+  "flag_append_stream": "base+append+again+stream",
+  "flag_excl": "EEXIST",
+  "flag_promises_same": true,
+  "flag_trunc": "cut",
+  "flag_types": [
+    "number",
+    "number",
+    "number",
+    "number",
+    "number",
+    "number",
+    "number"
+  ],
+  "mkdir": {
+    "err": null,
+    "values": []
+  },
+  "open": {
+    "err": null,
+    "isNumber": true
+  },
+  "openSync_string_mode": "640",
+  "open_missing": {
+    "err": {
+      "code": "ENOENT",
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "syscall": "open"
+    },
+    "values": []
+  },
+  "promises_same": true,
+  "read": {
+    "bytes": 5,
+    "data": "020368657900",
+    "err": null,
+    "same": true
+  },
+  "readdir": [
+    "renamed.txt"
+  ],
+  "rename": {
+    "err": null,
+    "values": []
+  },
+  "rmSync_dir": [
+    "SystemError",
+    "ERR_FS_EISDIR",
+    "rm",
+    "\u003cdir\u003e/rm_dir",
+    "Path is a directory: rm returned EISDIR (is a directory) \u003cdir\u003e/rm_dir"
+  ],
+  "rmSync_force": null,
+  "rmSync_missing": [
+    "Error",
+    "ENOENT",
+    "lstat",
+    "\u003cdir\u003e/rm_missing",
+    "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'"
+  ],
+  "rm_dir_recursive": null,
+  "rm_file": null,
+  "rm_force": null,
+  "rm_left": [
+    false,
+    false
+  ],
+  "rm_missing": {
+    "code": "ENOENT",
+    "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'",
+    "syscall": "lstat"
+  },
+  "rm_promises_force": null,
+  "rm_promises_missing": [
+    "Error",
+    "ENOENT",
+    "lstat",
+    "\u003cdir\u003e/rm_missing",
+    "ENOENT: no such file or directory, lstat '\u003cdir\u003e/rm_missing'"
+  ],
+  "rm_promises_recursive_force": null,
+  "types": [
+    "createWriteStream:function",
+    "appendFile:function",
+    "write:function",
+    "read:function",
+    "open:function",
+    "close:function",
+    "mkdir:function",
+    "readdir:function",
+    "rm:function",
+    "rmSync:function"
+  ],
+  "unlink": {
+    "err": null,
+    "values": []
+  },
+  "write_buffer": {
+    "buffer": true,
+    "bytes": 2,
+    "err": null
+  },
+  "write_string": {
+    "bytes": 3,
+    "err": null,
+    "string": "hey"
+  },
+  "ws_bytesWritten": 11,
+  "ws_events": [
+    "open",
+    "ready",
+    "finish",
+    "close"
+  ],
+  "ws_filehandle": {
+    "destroyed": true,
+    "events": [
+      "write1 ok",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_filehandle_closed": -1,
+  "ws_instance": true,
+  "ws_missing_dir": [
+    "error ENOENT",
+    "close"
+  ],
+  "ws_modes": [
+    [
+      "600",
+      "600"
+    ],
+    [
+      "abc",
+      [
+        "TypeError",
+        "ERR_INVALID_ARG_VALUE",
+        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'"
+      ]
+    ],
+    [
+      1.5,
+      [
+        "RangeError",
+        "ERR_OUT_OF_RANGE",
+        "The value of \"mode\" is out of range. It must be an integer. Received 1.5"
+      ]
+    ],
+    [
+      true,
+      [
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        "The \"mode\" argument must be of type number. Received type boolean (true)"
+      ]
+    ]
+  ],
+  "ws_open_end": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_destroyed": {
+    "destroyed": true,
+    "events": [
+      "write1 ERR_STREAM_DESTROYED",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_end": {
+    "destroyed": true,
+    "events": [
+      "end ENOENT",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_writes": {
+    "destroyed": true,
+    "events": [
+      "write1 ENOENT",
+      "write2 ENOENT",
+      "end ENOENT",
+      "error ENOENT",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_open_error_writes_kept": {
+    "destroyed": false,
+    "events": [
+      "error ENOENT"
+    ],
+    "pending": 3
+  },
+  "ws_open_writes": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "write1 ok",
+      "write2 ok",
+      "prefinish",
+      "end ok",
+      "finish",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_path": "\u003cdir\u003e/stream.bin",
+  "ws_pending": true,
+  "ws_signal_aborted": {
+    "destroyed": true,
+    "events": [
+      "error ABORT_ERR",
+      "close",
+      "write1 ERR_STREAM_DESTROYED",
+      "open",
+      "ready"
+    ],
+    "pending": 0
+  },
+  "ws_signal_later": {
+    "destroyed": true,
+    "events": [
+      "open",
+      "ready",
+      "write1 ERR_STREAM_DESTROYED",
+      "error ABORT_ERR",
+      "close"
+    ],
+    "pending": 0
+  },
+  "ws_start": {
+    "events": [
+      "open",
+      "ready",
+      "finish",
+      "close"
+    ],
+    "written": 3
+  },
+  "ws_start_invalid": [
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 9007199254740991. Received -1"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be an integer. Received 1.5"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"start\" argument must be of type number. Received type string ('2')"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"start\" argument must be of type number. Received null"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be an integer. Received NaN"
+    ],
+    [
+      "RangeError",
+      "ERR_OUT_OF_RANGE",
+      "The value of \"start\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 9007199254740991. Received 9_007_199_254_740_992"
+    ]
+  ],
+  "ws_write_returns": true
+}

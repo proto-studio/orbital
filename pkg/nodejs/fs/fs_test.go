@@ -243,15 +243,14 @@ func TestFS_ReadFileSync_NoEncoding(t *testing.T) {
 	result, err := rt.RunScript(`
 		__fs_module.writeFileSync('/buffer.txt', 'test');
 		const content = __fs_module.readFileSync('/buffer.txt');
-		// Should return something (either Buffer or string depending on implementation)
-		content !== undefined && content !== null;
+		Buffer.isBuffer(content) && content.toString() === 'test';
 	`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
 
 	if !result.Boolean() {
-		t.Error("readFileSync should return content")
+		t.Error("readFileSync without an encoding should return a Buffer of the content")
 	}
 }
 
@@ -278,5 +277,48 @@ func TestFS_Name(t *testing.T) {
 	f := New()
 	if f.Name() != "fs" {
 		t.Errorf("Name() should return 'fs', got %q", f.Name())
+	}
+}
+
+// An embedder can register fs without the buffer module. Strings and typed arrays are then
+// written as their exact UTF-8 or raw bytes, and a read with no encoding gives a Uint8Array.
+func TestFSWithoutBuffer(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	rt, err := runtime.New(&runtime.Config{Filesystem: memory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if err := New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	// The lone surrogate is written as U+FFFD, as Node writes it.
+	// \x00 is NUL and \uFFFD is U+FFFD, the replacement character.
+	want := "A\x00é€😀 \uFFFD end"
+	result, err := rt.RunScript(`
+		const fs = __fs_module;
+		// \ud800 is a lone UTF-16 high surrogate, which UTF-8 can't encode.
+		fs.writeFileSync('/text', 'A\0é€😀 \ud800 end');
+		fs.writeFileSync('/bytes', new Uint8Array([0, 1, 255, 254]));
+		fs.appendFileSync('/bytes', new Uint8Array([7]));
+		const raw = fs.readFileSync('/bytes');
+		JSON.stringify({
+			text: fs.readFileSync('/text', 'utf8') === 'A\0é€😀 � end',
+			type: raw instanceof Uint8Array,
+			raw: Array.from(raw),
+		});
+	`, "test.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.String(), `{"text":true,"type":true,"raw":[0,1,255,254,7]}`; got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+	data, err := memory.ReadFile("/text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Errorf("file holds %x, want %x", data, want)
 	}
 }

@@ -1,0 +1,672 @@
+{
+  "after_wx": "one",
+  "appendFileSync_flag_ax_existing": {
+    "error": {
+      "code": "EEXIST",
+      "errno": -17,
+      "isError": true,
+      "message": "EEXIST: file already exists, open '\u003cdir\u003e/excl'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/excl",
+      "syscall": "open"
+    }
+  },
+  "appendFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
+  "appendFileSync_flag_w": "two",
+  "appendFileSync_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "flag_falsy": "twothree",
+  "flag_keep": "kept",
+  "long_readFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "long_writeFileSync": {
+    "error": {
+      "code": "ENAMETOOLONG",
+      "errno": "negative",
+      "isError": true,
+      "message": "ENAMETOOLONG: name too long, open '\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "syscall": "open"
+    }
+  },
+  "loop_readFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
+  "loop_rmSync_force": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, lstat '\u003cdir\u003e/loop_a/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a/child",
+      "syscall": "lstat"
+    }
+  },
+  "loop_writeFileSync": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "negative",
+      "isError": true,
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/loop_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop_a",
+      "syscall": "open"
+    }
+  },
+  "mkdirSync_mode": {
+    "value": "701"
+  },
+  "mkdirSync_mode_invalid": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'",
+      "name": "TypeError"
+    }
+  },
+  "mkdir_invalid_made": [],
+  "mkdir_mode_invalid": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "mkdir_mode_number": {
+    "value": "711"
+  },
+  "mkdir_mode_option": {
+    "value": "700"
+  },
+  "mkdir_mode_recursive": {
+    "value": [
+      "700",
+      "700"
+    ]
+  },
+  "mode_600": "600",
+  "mode_append": "600",
+  "mode_appendFileSync": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_created_boolean": false,
+  "mode_created_empty": false,
+  "mode_created_fraction": false,
+  "mode_created_hex": false,
+  "mode_created_infinity": false,
+  "mode_created_nan": false,
+  "mode_created_negative": false,
+  "mode_created_object": false,
+  "mode_created_octal_8": false,
+  "mode_created_prefixed": false,
+  "mode_created_spaced": false,
+  "mode_created_too_big": false,
+  "mode_keep": "kept",
+  "mode_promises_appendFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9'",
+      "name": "TypeError"
+    }
+  },
+  "mode_promises_writeFile": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_string": "640",
+  "mode_writeFile": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_boolean": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "isError": true,
+      "message": "The \"mode\" argument must be of type number. Received type boolean (true)",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_empty": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received ''",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_existing": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_hex": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '0x1'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_nan": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be an integer. Received NaN",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_negative": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "mode_writeFileSync_object": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "isError": true,
+      "message": "The \"mode\" argument must be of type number. Received an instance of Object",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_octal_8": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '8'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_prefixed": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '0o644'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_spaced": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received ' 644'",
+      "name": "TypeError"
+    }
+  },
+  "mode_writeFileSync_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received 4294967296",
+      "name": "RangeError"
+    }
+  },
+  "mode_zero_string": "0",
+  "nul_appendFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_existsSync": false,
+  "nul_left_file": false,
+  "nul_mkdirSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_openSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_path": {
+    "basename": "n\u0000m.t",
+    "basenameSuffix": [
+      "a\u0000",
+      "a",
+      "a.",
+      "aaa",
+      "",
+      "",
+      "",
+      "aaa"
+    ],
+    "extname": ".t\u0000x",
+    "formatInherited": "/tmp/report.txt",
+    "join": "a/n\u0000m",
+    "parse": {
+      "base": "a\u0000b.c",
+      "dir": "/x",
+      "ext": ".c",
+      "name": "a\u0000b",
+      "root": "/"
+    },
+    "parseKeys": [
+      "root",
+      "dir",
+      "base",
+      "ext",
+      "name"
+    ],
+    "relative": "n\u0000m"
+  },
+  "nul_promises_readFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_promises_writeFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_readFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_readFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_renameSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'newPath' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_statSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_unlinkSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_writeFile": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "nul_writeFileSync": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '\u003cdir\u003e/n\\x00m'",
+      "name": "TypeError"
+    }
+  },
+  "promises_flag_a": "onetwothree",
+  "promises_mkdir_mode": {
+    "value": "750"
+  },
+  "promises_rm_dangling_force": {
+    "value": null
+  },
+  "promises_rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "promises_rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "promises_writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "promises_writeFile_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "readFileSync_directory": {
+    "error": {
+      "code": "EISDIR",
+      "errno": -21,
+      "isError": true,
+      "message": "EISDIR: illegal operation on a directory, read",
+      "name": "Error",
+      "syscall": "read"
+    }
+  },
+  "readFileSync_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nothing",
+      "syscall": "open"
+    }
+  },
+  "readFile_directory": {
+    "error": {
+      "code": "EISDIR",
+      "errno": -21,
+      "isError": true,
+      "message": "EISDIR: illegal operation on a directory, read",
+      "name": "Error",
+      "syscall": "read"
+    }
+  },
+  "readFile_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/nothing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nothing",
+      "syscall": "open"
+    }
+  },
+  "rmSync_dangling": {
+    "value": null
+  },
+  "rmSync_dangling_force": {
+    "value": null
+  },
+  "rmSync_dirlink": {
+    "value": null
+  },
+  "rmSync_dirlink_recursive": {
+    "value": null
+  },
+  "rmSync_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_dangling": {
+    "value": null
+  },
+  "rm_links_left": [
+    "rm_target"
+  ],
+  "rm_notdir_force": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/rm_file/child'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rm_file/child",
+      "syscall": "lstat"
+    }
+  },
+  "rm_target_left": [
+    "keep"
+  ],
+  "rmdirSync_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/rmdir_file'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/rmdir_file",
+      "syscall": "rmdir"
+    }
+  },
+  "rmdir_file_kept": "x",
+  "sync_flags": "onetwo",
+  "writeFileSync_bad_flag": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "isError": true,
+      "message": "The argument 'flags' is invalid. Received 'zz'",
+      "name": "TypeError"
+    }
+  },
+  "writeFileSync_flag_a": "onetwo",
+  "writeFileSync_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_infinity": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received Infinity",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_big": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_too_small": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be \u003e= -2147483648 \u0026\u0026 \u003c= 2147483647. Received -2147483649",
+      "name": "RangeError"
+    }
+  },
+  "writeFileSync_flag_wx_existing": {
+    "error": {
+      "code": "EEXIST",
+      "errno": -17,
+      "isError": true,
+      "message": "EEXIST: file already exists, open '\u003cdir\u003e/excl'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/excl",
+      "syscall": "open"
+    }
+  },
+  "writeFileSync_flag_wx_new": {
+    "value": null
+  },
+  "writeFileSync_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  },
+  "writeFile_flag_a": "onetwo",
+  "writeFile_flag_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "isError": true,
+      "message": "The value of \"flags\" is out of range. It must be an integer. Received 577.9",
+      "name": "RangeError"
+    }
+  },
+  "writeFile_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/f",
+      "syscall": "open"
+    }
+  }
+}

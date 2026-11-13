@@ -1,13 +1,13 @@
 package runtime
 
 import (
-	"bytes"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -47,8 +47,11 @@ func (m *MemoryFilesystem) ReadFile(path string) ([]byte, error) {
 
 	path = m.normalizePath(path)
 	f, ok := m.files[path]
-	if !ok || f.isDir {
-		return nil, fs.ErrNotExist
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ENOENT}
+	}
+	if f.isDir {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: syscall.EISDIR}
 	}
 	return append([]byte(nil), f.data...), nil
 }
@@ -70,6 +73,11 @@ func (m *MemoryFilesystem) Stat(path string) (*FileInfo, error) {
 		ModTime: f.modTime,
 		IsDir:   f.isDir,
 	}, nil
+}
+
+// Lstat is Stat: the in-memory filesystem has no symbolic links.
+func (m *MemoryFilesystem) Lstat(path string) (*FileInfo, error) {
+	return m.Stat(path)
 }
 
 // Exists checks if a path exists.
@@ -275,21 +283,35 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 }
 
 // memFileHandle implements File interface for memory filesystem.
+// memFileHandle is an open file. Like a real descriptor it has its own offset, and its writes
+// reach the file at once, so other handles and ReadFile see them.
 type memFileHandle struct {
 	fs       *MemoryFilesystem
 	path     string
-	buf      *bytes.Buffer
 	writable bool
+	append   bool
 	pos      int64
+}
+
+// file returns the file this handle refers to. The caller holds f.fs.mu.
+func (f *memFileHandle) file() (*memFile, error) {
+	mf, ok := f.fs.files[f.path]
+	if !ok {
+		return nil, &fs.PathError{Op: "read", Path: f.path, Err: fs.ErrNotExist}
+	}
+	return mf, nil
 }
 
 func (f *memFileHandle) Read(p []byte) (n int, err error) {
 	f.fs.mu.RLock()
 	defer f.fs.mu.RUnlock()
 
-	mf, ok := f.fs.files[f.path]
-	if !ok {
-		return 0, fs.ErrNotExist
+	mf, err := f.file()
+	if err != nil {
+		return 0, err
+	}
+	if mf.isDir {
+		return 0, &fs.PathError{Op: "read", Path: f.path, Err: syscall.EISDIR}
 	}
 	if f.pos >= int64(len(mf.data)) {
 		return 0, io.EOF
@@ -301,43 +323,72 @@ func (f *memFileHandle) Read(p []byte) (n int, err error) {
 
 func (f *memFileHandle) Write(p []byte) (n int, err error) {
 	if !f.writable {
-		return 0, fs.ErrPermission
+		return 0, &fs.PathError{Op: "write", Path: f.path, Err: syscall.EBADF}
 	}
-	return f.buf.Write(p)
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+
+	mf, err := f.file()
+	if err != nil {
+		return 0, err
+	}
+	if len(p) == 0 {
+		// An empty write changes nothing, even at an offset past the end.
+		return 0, nil
+	}
+	if f.append {
+		f.pos = int64(len(mf.data))
+	}
+	end := f.pos + int64(len(p))
+	if end > int64(len(mf.data)) {
+		if end > int64(cap(mf.data)) {
+			// Grow geometrically, as append does, so writing a file in chunks costs
+			// linear time rather than copying the whole file on every write.
+			grown := make([]byte, len(mf.data), max(end, 2*int64(cap(mf.data))))
+			copy(grown, mf.data)
+			mf.data = grown
+		}
+		// Bytes between the old end and the offset read as zeros, as in a sparse file.
+		old := int64(len(mf.data))
+		mf.data = mf.data[:end]
+		if old < f.pos {
+			clear(mf.data[old:f.pos])
+		}
+	}
+	copy(mf.data[f.pos:], p)
+	f.pos = end
+	mf.modTime = time.Now()
+	return len(p), nil
 }
 
 func (f *memFileHandle) Close() error {
-	if f.writable && f.buf != nil {
-		f.fs.mu.Lock()
-		f.fs.files[f.path] = &memFile{
-			data:    f.buf.Bytes(),
-			mode:    0644,
-			modTime: time.Now(),
-			isDir:   false,
-		}
-		f.fs.mu.Unlock()
-	}
 	return nil
 }
 
 func (f *memFileHandle) Seek(offset int64, whence int) (int64, error) {
 	f.fs.mu.RLock()
-	mf, ok := f.fs.files[f.path]
+	mf, err := f.file()
 	f.fs.mu.RUnlock()
-
-	if !ok {
-		return 0, fs.ErrNotExist
+	if err != nil {
+		return 0, err
 	}
 
+	var pos int64
 	switch whence {
 	case io.SeekStart:
-		f.pos = offset
+		pos = offset
 	case io.SeekCurrent:
-		f.pos += offset
+		pos = f.pos + offset
 	case io.SeekEnd:
-		f.pos = int64(len(mf.data)) + offset
+		pos = int64(len(mf.data)) + offset
+	default:
+		return 0, &fs.PathError{Op: "seek", Path: f.path, Err: syscall.EINVAL}
 	}
-	return f.pos, nil
+	if pos < 0 {
+		return 0, &fs.PathError{Op: "seek", Path: f.path, Err: syscall.EINVAL}
+	}
+	f.pos = pos
+	return pos, nil
 }
 
 func (f *memFileHandle) Stat() (*FileInfo, error) {
@@ -346,43 +397,44 @@ func (f *memFileHandle) Stat() (*FileInfo, error) {
 
 // Open opens a file for reading.
 func (m *MemoryFilesystem) Open(path string) (File, error) {
-	path = m.normalizePath(path)
-	if !m.Exists(path) {
-		return nil, fs.ErrNotExist
-	}
-	return &memFileHandle{fs: m, path: path}, nil
+	return m.OpenFile(path, os.O_RDONLY, 0)
 }
 
-// Create creates a file for writing.
+// Create creates or truncates a file for writing.
 func (m *MemoryFilesystem) Create(path string) (File, error) {
+	return m.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
+}
+
+// OpenFile opens a file with the given flags, as os.OpenFile does. Parent directories are not
+// checked, because WriteFile has never required them here.
+func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (File, error) {
 	path = m.normalizePath(path)
+	writable := flag&(os.O_WRONLY|os.O_RDWR) != 0
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	mf, exists := m.files[path]
+	switch {
+	case exists && flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0:
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EEXIST}
+	case !exists && flag&os.O_CREATE == 0:
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ENOENT}
+	case exists && mf.isDir && writable:
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
+	case !exists:
+		mf = &memFile{mode: perm & fs.ModePerm, modTime: time.Now()}
+		m.files[path] = mf
+	}
+	if writable && flag&os.O_TRUNC != 0 {
+		mf.data = nil
+		mf.modTime = time.Now()
+	}
+
 	return &memFileHandle{
 		fs:       m,
 		path:     path,
-		buf:      new(bytes.Buffer),
-		writable: true,
-	}, nil
-}
-
-// OpenFile opens a file with the given flags.
-func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (File, error) {
-	path = m.normalizePath(path)
-	writable := flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC|os.O_APPEND) != 0
-
-	handle := &memFileHandle{
-		fs:       m,
-		path:     path,
 		writable: writable,
-	}
-
-	if writable {
-		handle.buf = new(bytes.Buffer)
-		if flag&os.O_APPEND != 0 {
-			if data, err := m.ReadFile(path); err == nil {
-				handle.buf.Write(data)
-			}
-		}
-	}
-
-	return handle, nil
+		append:   flag&os.O_APPEND != 0,
+	}, nil
 }
