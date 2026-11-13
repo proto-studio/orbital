@@ -195,8 +195,11 @@
 			if (str.length > opts.maxStringLength) {
 				str = str.slice(0, opts.maxStringLength) + '...';
 			}
-			return "'" + str.replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + "'";
+			// inspectShared is the formatting util shares with console; util.go passes it in.
+			return inspectShared.quote(str);
 		}
+
+		const formatKey = inspectShared.key;
 
 		function formatFunction(fn) {
 			const name = fn.name || '(anonymous)';
@@ -241,7 +244,7 @@
 
 			const items = keys.map(key => {
 				const value = inspectValue(obj[key], depth + 1);
-				return `${key}: ${value}`;
+				return `${formatKey(key)}: ${value}`;
 			});
 
 			const proto = Object.getPrototypeOf(obj);
@@ -344,7 +347,7 @@
 
 			const parts = [];
 			for (const key of keys) {
-				parts.push(key + ': ' + inspectValue(err[key], depth + 1));
+				parts.push(formatKey(key) + ': ' + inspectValue(err[key], depth + 1));
 			}
 			for (const key of hidden) {
 				parts.push('[' + key + ']: ' + inspectValue(err[key], depth + 1));
@@ -378,6 +381,8 @@
 		}
 
 		function formatTypedArray(arr) {
+			const shown = inspectShared.view(arr, opts.maxArrayLength);
+			if (shown !== null) return shown;
 			const name = arr.constructor.name;
 			const len = arr.length;
 			if (len === 0) return `${name}(0) []`;

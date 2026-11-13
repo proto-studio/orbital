@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/inspectjs"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed console_module.js
 var consoleModuleJS string
+
+//go:embed console_inspect.js
+var consoleInspectJS string
 
 // Console provides console logging functionality.
 type Console struct {
@@ -35,6 +39,8 @@ type Console struct {
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
+	// inspect holds the functions from console_inspect.js.
+	inspect *v8.Value
 }
 
 // New creates a new Console module with default settings.
@@ -351,6 +357,11 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	if err != nil {
 		return err
 	}
+	// console_inspect.js formats with the code it shares with util, passed in as inspectShared.
+	c.inspect, err = rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.JS+")", "console_inspect.js")
+	if err != nil {
+		return err
+	}
 
 	// Expose require('console') with a Console class (see console_module.js).
 	if _, err := rt.RunScript(consoleModuleJS, "console_module.js"); err != nil {
@@ -386,10 +397,39 @@ func (c *Console) text(v *v8.Value) string {
 	return strings.Join(parts, "\x00")
 }
 
-// quoted renders a string nested in an array or object, where Node escapes a NUL.
+// quoted renders a string nested in an array or object, quoted and escaped as Node does.
 func (c *Console) quoted(v *v8.Value) string {
+	if s, ok := c.inspectCall("quote", v); ok {
+		return s
+	}
 	// \x00 is NUL, which Node prints inside a nested string as the escape \x00.
 	return "'" + strings.ReplaceAll(c.text(v), "\x00", `\x00`) + "'"
+}
+
+// inspectCall calls a function from console_inspect.js. It reports false if the function
+// returned anything but a string.
+func (c *Console) inspectCall(name string, args ...*v8.Value) (string, bool) {
+	result := c.inspectValue(name, args...)
+	if result == nil || !result.IsString() {
+		return "", false
+	}
+	return result.String(), true
+}
+
+// inspectValue calls a function from console_inspect.js and returns its result.
+func (c *Console) inspectValue(name string, args ...*v8.Value) *v8.Value {
+	if c.inspect == nil {
+		return nil
+	}
+	fn, err := c.inspect.Get(name)
+	if err != nil || fn == nil || !fn.IsFunction() {
+		return nil
+	}
+	result, err := fn.Call(nil, args...)
+	if err != nil {
+		return nil
+	}
+	return result
 }
 
 // createLogFunc creates a logging function for the given level.
@@ -654,6 +694,9 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if s, ok := c.tryFormatError(v, depth); ok {
 		return s
 	}
+	if s, ok := c.inspectCall("view", v); ok {
+		return s
+	}
 	if depth <= 0 {
 		return "[Object]"
 	}
@@ -675,10 +718,13 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		if err != nil || keyVal == nil {
 			continue
 		}
-		key := keyVal.String()
+		key, ok := c.inspectCall("key", keyVal)
+		if !ok {
+			key = keyVal.String()
+		}
 
-		val, err := v.Get(key)
-		if err != nil || val == nil {
+		val := c.inspectValue("get", v, keyVal)
+		if val == nil {
 			continue
 		}
 

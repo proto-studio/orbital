@@ -641,7 +641,7 @@ func (f *FS) openSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	file, err := f.fs().OpenFile(path, flags, perm)
 	if err != nil {
-		return ctx.Throw(err.Error())
+		return fsFailure(ctx, err, "open", path)
 	}
 
 	f.fdMu.Lock()
@@ -714,13 +714,24 @@ func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 3 {
 		return ctx.Throw("writeSync: fd, data and position are required")
 	}
-	file, ok := f.fileForFD(int(args[0].Integer()))
-	if !ok {
-		return ctx.Throw("EBADF: bad file descriptor, write")
-	}
+	fd := int(args[0].Integer())
 	data, err := decodeData(args[1])
 	if err != nil {
 		return ctx.Throw(err.Error())
+	}
+	// Descriptors 1 and 2 are the process's own stdout and stderr, as process.stdout uses.
+	if std := map[int]*os.File{1: os.Stdout, 2: os.Stderr}[fd]; std != nil {
+		if _, open := f.fileForFD(fd); !open {
+			n, err := std.Write(data)
+			if err != nil {
+				return ctx.Throw(err.Error())
+			}
+			return ctx.NewInteger(int64(n))
+		}
+	}
+	file, ok := f.fileForFD(fd)
+	if !ok {
+		return ctx.Throw("EBADF: bad file descriptor, write")
 	}
 
 	n, err := atPosition(file, args[2].Integer(), func() (int, error) {

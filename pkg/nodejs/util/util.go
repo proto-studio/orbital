@@ -4,6 +4,7 @@ package util
 import (
 	_ "embed"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/inspectjs"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
@@ -27,7 +28,10 @@ func (u *Util) Name() string {
 func (u *Util) Register(rt *runtime.Runtime) error {
 	setupCode := `
 		(function() {
-			const utilModule = ` + utilJS + `;
+			// util.js formats with the code it shares with console, passed in as inspectShared.
+			const utilModule = (function (inspectShared) { return (
+` + utilJS + `
+); })(` + inspectjs.JS + `);
 			globalThis.__util_module = utilModule;
 		})();
 	`

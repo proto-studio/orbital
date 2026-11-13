@@ -466,15 +466,23 @@
 		}
 
 		static fromArrayBuffer(arrayBuffer, byteOffset, length) {
-			if (arrayBuffer instanceof ArrayBuffer) {
-				byteOffset = byteOffset || 0;
-				length = length !== undefined ? length : arrayBuffer.byteLength - byteOffset;
-				const view = new Uint8Array(arrayBuffer, byteOffset, length);
-				const buf = new Buffer(view.length);
-				for (let i = 0; i < view.length; i++) {
-					buf[i] = view[i];
+			if (arrayBuffer instanceof ArrayBuffer ||
+				(typeof SharedArrayBuffer !== 'undefined' && arrayBuffer instanceof SharedArrayBuffer)) {
+				// As in Node, the Buffer shares the ArrayBuffer's memory rather than copying it.
+				byteOffset = byteOffset === undefined ? 0 : Math.trunc(+byteOffset) || 0;
+				const available = arrayBuffer.byteLength - byteOffset;
+				if (available < 0) {
+					const e = new RangeError('"offset" is outside of buffer bounds');
+					e.code = 'ERR_BUFFER_OUT_OF_BOUNDS';
+					throw e;
 				}
-				return buf;
+				length = length === undefined ? available : Math.trunc(+length) || 0;
+				if (length > available) {
+					const e = new RangeError('"length" is outside of buffer bounds');
+					e.code = 'ERR_BUFFER_OUT_OF_BOUNDS';
+					throw e;
+				}
+				return new Buffer(arrayBuffer, byteOffset, Math.max(length, 0));
 			}
 			// TypedArray or DataView
 			const buf = new Buffer(arrayBuffer.length || arrayBuffer.byteLength);

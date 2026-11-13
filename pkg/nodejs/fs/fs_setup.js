@@ -231,6 +231,11 @@
     return mode;
   }
 
+  const _openSync = fs.openSync;
+  fs.openSync = function () {
+    return check(_openSync.apply(this, arguments));
+  };
+
   const _readFileSync = fs.readFileSync;
   fs.readFileSync = function (p, options) {
     const encoding = encodingOf(options);
