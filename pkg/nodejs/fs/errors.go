@@ -6,45 +6,46 @@ import (
 	"io/fs"
 	"syscall"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/sysconst"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
-// errnoNames gives Node's code and description for the errors a filesystem call can return.
-// The descriptions are libuv's, which Node uses in its messages.
-var errnoNames = map[syscall.Errno][2]string{
-	syscall.ENOENT:       {"ENOENT", "no such file or directory"},
-	syscall.EEXIST:       {"EEXIST", "file already exists"},
-	syscall.EACCES:       {"EACCES", "permission denied"},
-	syscall.EPERM:        {"EPERM", "operation not permitted"},
-	syscall.EISDIR:       {"EISDIR", "illegal operation on a directory"},
-	syscall.ENOTDIR:      {"ENOTDIR", "not a directory"},
-	syscall.ENOTEMPTY:    {"ENOTEMPTY", "directory not empty"},
-	syscall.EBADF:        {"EBADF", "bad file descriptor"},
-	syscall.EINVAL:       {"EINVAL", "invalid argument"},
-	syscall.EROFS:        {"EROFS", "read-only file system"},
-	syscall.EMFILE:       {"EMFILE", "too many open files"},
-	syscall.ENFILE:       {"ENFILE", "file table overflow"},
-	syscall.ENOSPC:       {"ENOSPC", "no space left on device"},
-	syscall.EIO:          {"EIO", "i/o error"},
-	syscall.ELOOP:        {"ELOOP", "too many symbolic links encountered"},
-	syscall.ENAMETOOLONG: {"ENAMETOOLONG", "name too long"},
-	syscall.EFBIG:        {"EFBIG", "file too large"},
-	syscall.EBUSY:        {"EBUSY", "resource busy or locked"},
-	syscall.EAGAIN:       {"EAGAIN", "resource temporarily unavailable"},
-	syscall.EINTR:        {"EINTR", "interrupted system call"},
-	syscall.EMLINK:       {"EMLINK", "too many links"},
-	syscall.ENODEV:       {"ENODEV", "no such device"},
-	syscall.ENXIO:        {"ENXIO", "no such device or address"},
-	syscall.ENOMEM:       {"ENOMEM", "not enough memory"},
-	syscall.ENOSYS:       {"ENOSYS", "function not implemented"},
-	syscall.ESPIPE:       {"ESPIPE", "invalid seek"},
-	syscall.ETXTBSY:      {"ETXTBSY", "text file is busy"},
-	syscall.EXDEV:        {"EXDEV", "cross-device link not permitted"},
-	syscall.EDQUOT:       {"EDQUOT", "disk quota exceeded"},
-	syscall.EOVERFLOW:    {"EOVERFLOW", "value too large for defined data type"},
-	syscall.EFAULT:       {"EFAULT", "bad address in system call argument"},
-	syscall.E2BIG:        {"E2BIG", "argument list too long"},
+// errnoDescriptions gives libuv's description, which Node uses in its messages, for the errors
+// a filesystem call can return. The code itself comes from sysconst, as os.constants.errno does.
+var errnoDescriptions = map[string]string{
+	"ENOENT":       "no such file or directory",
+	"EEXIST":       "file already exists",
+	"EACCES":       "permission denied",
+	"EPERM":        "operation not permitted",
+	"EISDIR":       "illegal operation on a directory",
+	"ENOTDIR":      "not a directory",
+	"ENOTEMPTY":    "directory not empty",
+	"EBADF":        "bad file descriptor",
+	"EINVAL":       "invalid argument",
+	"EROFS":        "read-only file system",
+	"EMFILE":       "too many open files",
+	"ENFILE":       "file table overflow",
+	"ENOSPC":       "no space left on device",
+	"EIO":          "i/o error",
+	"ELOOP":        "too many symbolic links encountered",
+	"ENAMETOOLONG": "name too long",
+	"EFBIG":        "file too large",
+	"EBUSY":        "resource busy or locked",
+	"EAGAIN":       "resource temporarily unavailable",
+	"EINTR":        "interrupted system call",
+	"EMLINK":       "too many links",
+	"ENODEV":       "no such device",
+	"ENXIO":        "no such device or address",
+	"ENOMEM":       "not enough memory",
+	"ENOSYS":       "function not implemented",
+	"ESPIPE":       "invalid seek",
+	"ETXTBSY":      "text file is busy",
+	"EXDEV":        "cross-device link not permitted",
+	"EDQUOT":       "disk quota exceeded",
+	"EOVERFLOW":    "value too large for defined data type",
+	"EFAULT":       "bad address in system call argument",
+	"E2BIG":        "argument list too long",
 }
 
 // errnoOf describes err the way Node does: its code, its description, and its errno, which
@@ -65,8 +66,10 @@ func errnoOf(err error) (code, description string, errno int) {
 			sysErr = syscall.EIO
 		}
 	}
-	if name, ok := errnoNames[sysErr]; ok {
-		return name[0], name[1], -int(sysErr)
+	if code, ok := sysconst.ErrnoName(sysErr); ok {
+		if description, ok := errnoDescriptions[code]; ok {
+			return code, description, -int(sysErr)
+		}
 	}
 	// An errno outside the table keeps its number, so the failure isn't mistaken for another.
 	return "UNKNOWN", "unknown error", -int(sysErr)

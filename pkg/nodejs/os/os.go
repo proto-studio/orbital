@@ -2,6 +2,7 @@
 package os
 
 import (
+	"proto.zip/studio/orbital/pkg/nodejs/internal/sysconst"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -80,51 +81,10 @@ func (o *OS) Register(rt *runtime.Runtime) error {
 
 	// Constants object
 	constants, _ := ctx.NewObject()
-	signalsObj, _ := ctx.NewObject()
-	// Common signals
-	signals := map[string]int{
-		"SIGHUP":  1,
-		"SIGINT":  2,
-		"SIGQUIT": 3,
-		"SIGILL":  4,
-		"SIGTRAP": 5,
-		"SIGABRT": 6,
-		"SIGFPE":  8,
-		"SIGKILL": 9,
-		"SIGSEGV": 11,
-		"SIGPIPE": 13,
-		"SIGALRM": 14,
-		"SIGTERM": 15,
-	}
-	for name, val := range signals {
-		signalsObj.Set(name, ctx.NewInteger(int64(val)))
-	}
-	constants.Set("signals", signalsObj)
-
-	// Error numbers
-	errnoObj, _ := ctx.NewObject()
-	errnos := map[string]int{
-		"EACCES":       13,
-		"ENOENT":       2,
-		"EEXIST":       17,
-		"EISDIR":       21,
-		"ENOTDIR":      20,
-		"ENOTEMPTY":    39,
-		"EPERM":        1,
-		"EBUSY":        16,
-		"EINVAL":       22,
-		"EMFILE":       24,
-		"ENFILE":       23,
-		"EBADF":        9,
-		"ENOSPC":       28,
-		"EROFS":        30,
-		"ELOOP":        40,
-		"ENAMETOOLONG": 36,
-	}
-	for name, val := range errnos {
-		errnoObj.Set(name, ctx.NewInteger(int64(val)))
-	}
-	constants.Set("errno", errnoObj)
+	// Signal and error numbers are the host's own, as in Node, so code comparing them with
+	// a signal or an error's errno agrees with the platform.
+	constants.Set("errno", constantsObject(ctx, sysconst.Errnos()))
+	constants.Set("signals", constantsObject(ctx, sysconst.Signals()))
 
 	// Priority constants
 	priorityObj, _ := ctx.NewObject()
@@ -139,6 +99,15 @@ func (o *OS) Register(rt *runtime.Runtime) error {
 	osObj.Set("constants", constants)
 
 	return rt.SetGlobal("__os_module", osObj)
+}
+
+// constantsObject builds an object of named numbers, keeping their order.
+func constantsObject(ctx *v8.Context, list []sysconst.Constant) *v8.Value {
+	obj, _ := ctx.NewObject()
+	for _, c := range list {
+		obj.Set(c.Name, ctx.NewInteger(int64(c.Value)))
+	}
+	return obj
 }
 
 func (o *OS) hostnameFunc(info *v8.FunctionCallbackInfo) *v8.Value {
