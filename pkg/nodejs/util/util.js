@@ -220,15 +220,19 @@
 			const items = [];
 			const maxLen = Math.min(arr.length, Math.max(0, layout.maxArrayLength));
 
+			// Each element is read once; whether they're all numbers decides how columns align.
+			let numbers = true;
 			for (let i = 0; i < maxLen; i++) {
-				items.push(inspectValue(arr[i], depth + 1));
+				const element = arr[i];
+				numbers = numbers && (typeof element === 'number' || typeof element === 'bigint');
+				items.push(inspectValue(element, depth + 1));
 			}
 
 			if (arr.length > maxLen) {
 				items.push(inspectShared.more(arr.length - maxLen));
 			}
 
-			return reduce(items, '[', ']', depth, { array: true, value: arr });
+			return reduce(items, '[', ']', depth, { array: true, numbers });
 		}
 
 		function formatObject(obj, depth) {

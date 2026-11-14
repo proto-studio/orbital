@@ -31,11 +31,8 @@ type Console struct {
 	// Register. classify reports whether a value is an Error; the others track
 	// object identity so a property that points back at an Error is printed as
 	// Node's [Circular *n].
-	errorTools *v8.Value
-	// skipErrorFormat keeps printf %j on the generic object path. Node's %j is
-	// JSON.stringify, which drops non-enumerable Error fields and yields {}.
-	skipErrorFormat bool
-	errorTracking   bool
+	errorTools    *v8.Value
+	errorTracking bool
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
@@ -513,14 +510,15 @@ func (c *Console) formatLog(args []*v8.Value) string {
 						b.WriteString("%f")
 					}
 				case 'j':
-					// Node's %j is JSON.stringify. Error message/stack are
-					// non-enumerable, so an Error becomes {} (plus any
-					// enumerable own data). Do not use the Error inspect path.
+					// Node's %j is JSON.stringify, so an Error, an ArrayBuffer or
+					// a DataView becomes {} plus any enumerable own data. A value
+					// JSON.stringify throws on falls back to inspection.
 					if argi < len(args) {
-						prev := c.skipErrorFormat
-						c.skipErrorFormat = true
-						b.WriteString(c.formatValue(args[argi]))
-						c.skipErrorFormat = prev
+						if s, ok := c.inspectCall("json", args[argi]); ok {
+							b.WriteString(s)
+						} else {
+							b.WriteString(c.formatValue(args[argi]))
+						}
 						argi++
 					} else {
 						b.WriteString("%j")
@@ -699,11 +697,15 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 		shown = int(n.Number())
 	}
 	parts := make([]string, 0, shown+1)
+	// Whether the elements are all numbers decides how columns align.
+	numbers := true
 	for i := 0; i < shown; i++ {
 		elem, err := v.GetIndex(i)
 		if err != nil || elem == nil {
+			numbers = false
 			parts = append(parts, c.formatter.FormatValue("undefined", runtime.TypeUndefined))
 		} else {
+			numbers = numbers && elem.IsNumber()
 			parts = append(parts, c.formatValueQuotedWithDepth(elem, depth))
 		}
 	}
@@ -712,7 +714,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 			parts = append(parts, more)
 		}
 	}
-	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), v); ok {
+	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers)); ok {
 		return s
 	}
 	return multilineBraces("[", "]", parts)
@@ -751,6 +753,11 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	length := names.ArrayLength()
 	if length == 0 {
 		return "{}"
+	}
+	// Past the depth limit, a value with properties is never expanded, which also bounds the
+	// recursion through one that holds itself.
+	if depth <= 0 {
+		return "[Object]"
 	}
 
 	c.enter(depth)
@@ -834,6 +841,14 @@ func (c *Console) integer(n int) *v8.Value {
 		return nil
 	}
 	return c.ctx.NewInteger(int64(n))
+}
+
+// boolean makes a JavaScript boolean to pass to console_inspect.js.
+func (c *Console) boolean(b bool) *v8.Value {
+	if c.ctx == nil {
+		return nil
+	}
+	return c.ctx.NewBoolean(b)
 }
 
 // enter tells inspect that the entries of an object at depth are about to be formatted, so

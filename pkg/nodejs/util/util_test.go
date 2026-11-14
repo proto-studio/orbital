@@ -355,6 +355,26 @@ func TestUtil_InspectDataView(t *testing.T) {
 	}
 }
 
+// TestUtil_InspectBinaryPastDepth checks that an ArrayBuffer past the depth limit is named
+// without reading more of it than its constructor, so a toStringTag getter that throws doesn't
+// break inspection.
+func TestUtil_InspectBinaryPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const ab = new ArrayBuffer(2);
+		Object.defineProperty(ab, Symbol.toStringTag, { get() { throw new Error('tag'); } });
+		__util_module.inspect({ x: ab }, { depth: 0 });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ x: [ArrayBuffer] }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // TestUtil_InspectBreaksLines checks that output longer than breakLength goes across lines, and
 // that an array of short numbers goes in right-aligned columns.
 func TestUtil_InspectBreaksLines(t *testing.T) {
@@ -380,5 +400,25 @@ func TestUtil_InspectBreaksLines(t *testing.T) {
 		if got := result.String(); got != tt.want {
 			t.Errorf("For %q:\ngot  %q\nwant %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// TestUtil_InspectReadsElementsOnce checks that laying an array out in columns doesn't read its
+// elements again, which would run a getter twice.
+func TestUtil_InspectReadsElementsOnce(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const arr = [0, 1, 2, 3, 4, 5, 6, 7];
+		let reads = 0;
+		Object.defineProperty(arr, 0, { get() { if (reads++) throw new Error('read twice'); return 5; }, enumerable: true });
+		__util_module.inspect(arr) + ' ' + reads;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "[\n  5, 1, 2, 3,\n  4, 5, 6, 7\n] 1"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

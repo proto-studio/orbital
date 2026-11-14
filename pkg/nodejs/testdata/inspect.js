@@ -23,6 +23,12 @@ const hooked = new ArrayBuffer(2);
 Object.defineProperty(hooked, Symbol.toStringTag, { get() { throw new Error('read the tag'); } });
 hooked[u.inspect.custom] = () => 'hooked';
 console.log(u.inspect(hooked), u.inspect({ hooked }));
+// %j is JSON.stringify, which prints an ArrayBuffer, a DataView and an Error as {} plus their
+// enumerable properties.
+const looped = { a: 1 };
+looped.self = looped;
+console.log('%j %j %j %j', new ArrayBuffer(2), dv, { list: [1, 'a'] }, Object.assign(new Error('e'), { code: 'E' }));
+console.log('%j %j', looped, undefined);
 
 // console.log prints values nested three objects deep, and cuts the ones past them short.
 const err = new Error('deep');
@@ -74,3 +80,10 @@ console.log(u.inspect({ a: 1, b: { c: 2 } }, { compact: false }), u.inspect({ a:
 console.log(u.inspect(range(8), { maxArrayLength: 3 }), u.inspect(new Set([1, 2, 3, 4]), { maxArrayLength: 2 }));
 console.log(u.inspect(new Map([['alpha', { x: 1 }], ['beta', 'b'.repeat(70)]])), u.inspect(new Set(range(20, (i) => 'item' + i))));
 console.log(u.inspect('abcdef', { maxStringLength: 3 }), u.inspect([1, 2], { maxArrayLength: 1 }));
+// Past the depth limit a Date with properties is named, even one that holds itself, and %j
+// prints every element of a long array.
+const dated = new Date(0);
+dated.self = dated;
+show({ a: { b: { c: dated } } });
+console.log(u.inspect({ a: { b: { c: /x/ } } }));
+console.log('%j', range(101, () => 0));

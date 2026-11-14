@@ -107,7 +107,7 @@
     const shown = Math.min(Math.max(0, ctx.maxArrayLength), value.length);
     const output = Array.from(value.subarray(0, shown), element);
     if (value.length > shown) output.push(more(value.length - shown));
-    return reduce(ctx, output, `${name}(${value.length}) [`, ']', level, { array: true, value });
+    return reduce(ctx, output, `${name}(${value.length}) [`, ']', level, { array: true, numbers: true });
   }
 
   // Brand checks: each getter throws for anything but its own kind of object, so they only run
@@ -135,14 +135,20 @@
     (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
 
   // The name util.inspect puts before an object's brace: the constructor's name, the kind of
-  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one.
+  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one. A
+  // toStringTag that throws is left out.
   function prefix(value, fallback) {
     let ctor = null;
     for (let obj = value; obj !== null && ctor === null; obj = Object.getPrototypeOf(obj)) {
       const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
       if (desc && typeof desc.value === 'function' && desc.value.name !== '') ctor = desc.value.name;
     }
-    const tag = value[Symbol.toStringTag];
+    let tag;
+    try {
+      tag = value[Symbol.toStringTag];
+    } catch (e) {
+      tag = undefined;
+    }
     if (ctor === null) return `[${fallback}: null prototype]`;
     if (typeof tag === 'string' && tag !== '' && tag !== ctor) return `${ctor} [${tag}]`;
     return ctor;
@@ -185,15 +191,17 @@
   }
 
   // cut names value in brackets, as util.inspect prints it past the depth limit, or answers null
-  // when Node prints it in full anyway: when it's empty, a Date, a RegExp or a Buffer. Errors
-  // are left to the caller.
+  // when Node prints it in full anyway: when it's empty, a RegExp, a Date without properties or
+  // a Buffer. Errors are left to the caller.
   function cut(value) {
-    const bin = binary(value);
+    // Only the name is needed, so no bytes are read.
+    const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
     if (Array.isArray(value)) return value.length === 0 ? null : '[Array]';
     if (value instanceof Map) return value.size === 0 ? null : '[Map]';
     if (value instanceof Set) return value.size === 0 ? null : '[Set]';
-    if (value instanceof Date || value instanceof RegExp) return null;
+    if (value instanceof RegExp) return null;
+    if (value instanceof Date) return Object.keys(value).length === 0 ? null : '[Date]';
     if (ArrayBuffer.isView(value)) {
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
       return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
@@ -252,8 +260,9 @@
   // group lays out the entries of an array at level in columns when they're short and similar in
   // length, as Node does for arrays with more than six entries. Numbers line up on the right
   // and anything else on the left. It answers the rows, or output unchanged when it doesn't
-  // group them. value is the array, which says whether its entries are numbers.
-  function group(ctx, output, level, value) {
+  // group them. numbers says whether the array's entries are all numbers or BigInts; callers
+  // work it out from the values they formatted, so that getters aren't read twice.
+  function group(ctx, output, level, numbers) {
     let totalLength = 0;
     let maxLength = 0;
     let outputLength = output.length;
@@ -290,10 +299,6 @@
         if (dataLen[j] > lineLength) lineLength = dataLen[j];
       }
       maxLineLength.push(lineLength + SEPARATOR);
-    }
-    let numbers = true;
-    for (let i = 0; numbers && value !== undefined && i < output.length; i++) {
-      numbers = typeof value[i] === 'number' || typeof value[i] === 'bigint';
     }
     const tmp = [];
     for (let i = 0; i < outputLength; i += columns) {
@@ -334,16 +339,17 @@
   const indent = (entry) => entry.replace(/\n/g, '\n  ');
 
   // reduce joins the entries of a value at level between open and close as util.inspect does.
-  // base, like an Error's stack, goes before open. Arrays' entries are grouped in columns. The
+  // base, like an Error's stack, goes before open. Arrays' entries are grouped in columns, with
+  // numbers (all numbers or BigInts) aligned right. The
   // entries go on one line when none spans lines, the value holds fewer than compact levels of
   // objects, and the line fits in breakLength. Otherwise each goes on its own line, indented
   // two spaces.
-  function reduce(ctx, output, open, close, level, { base = '', array = false, value } = {}) {
+  function reduce(ctx, output, open, close, level, { base = '', array = false, numbers = false } = {}) {
     const before = base ? `${base} ` : '';
     if (ctx.compact !== true) {
       if (typeof ctx.compact === 'number' && ctx.compact >= 1) {
         const entries = output.length;
-        if (array && entries > 6) output = group(ctx, output, level, value);
+        if (array && entries > 6) output = group(ctx, output, level, numbers);
         // Grouped rows stay on lines of their own. Node allows 10 more columns.
         if (ctx.currentDepth - level < ctx.compact && entries === output.length &&
             fits(ctx, output, output.length + level * 2 + open.length + base.length + 10, base)) {
