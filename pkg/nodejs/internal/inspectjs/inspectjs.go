@@ -4,10 +4,10 @@ package inspectjs
 
 import _ "embed"
 
-// JS is a JavaScript expression evaluating to { quote, key, view, binary, reduce }: quote(str)
-// quotes a string, key(k) formats an object key, view(v, maxArrayLength) prints a Buffer or typed
-// array, binary(v, maxArrayLength) describes an ArrayBuffer or DataView, and reduce(entries, open,
-// close, options) lays a value's entries out on one line or several, as util.inspect does.
+// JS is a JavaScript expression evaluating to { context, quote, string, key, more, view, binary,
+// cut, reduce }: the pieces of util.inspect that console and util share, from quoting strings and
+// keys to laying a value's entries out on one line or several within breakLength. inspect.js
+// describes each.
 //
 //go:embed inspect.js
 var JS string

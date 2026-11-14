@@ -1,6 +1,7 @@
 // Runs unchanged in Node and in Orbital; TestBinaryStdio_MatchesNode compares what it writes to
 // stdout and stderr with binary_stdio.node.json. Covers how console.log and util.inspect print
-// values: ArrayBuffers, DataViews, and how deep they print nested values.
+// values: ArrayBuffers, DataViews, how deep they print nested values, and how they break long
+// output across lines.
 const u = require('util');
 const show = (...values) => { for (const v of values) { console.log(v); console.log(u.inspect(v)); } };
 
@@ -31,3 +32,45 @@ console.log({ a: { b: { c: 1 } } }, { a: { b: { c: { d: 1 } } } }, [[[[1]]]]);
 const plain = new RangeError('plain');
 plain.stack = 'RangeError: plain\n    at g (file.js:2:2)';
 show({ a: { b: { c: err } } }, { a: { b: { c: plain } } });
+
+// Output longer than breakLength (80) goes one entry per line, and arrays of more than six short
+// entries go in columns: numbers aligned right, anything else left.
+const range = (n, f = (i) => i) => Array.from({ length: n }, (_, i) => f(i));
+show(range(30), { a: 'a'.repeat(20), b: 'b'.repeat(20), c: 'c'.repeat(20), d: 'd'.repeat(20) },
+  new Uint16Array(101), range(101, (i) => i * 3), range(200), range(120, (i) => 'v' + i),
+  ['apple', 'banana', 'cherry', 'date', 'elderberry', 'fig', 'grape', 'honeydew'],
+  range(26, (i) => String.fromCharCode(97 + i).repeat((i % 5) + 1)),
+  [1, -2, 3.5, 100000, NaN, 7, 8], [true, false, null, undefined, 1, 'two', 3],
+  range(10, (i) => ({ id: i, name: 'n' + i })), ['x'.repeat(30), 'y'.repeat(30), 'z'.repeat(30)],
+  new Float64Array([1.5, -2.25, 3, 4, 5, 6, 7, 8.125]), new Uint8Array(200),
+  ['一二三', '四五六', 'seven', 'eight', 'nine', 'ten', '十一']);
+// An object holding three levels of objects goes across lines even when it would fit.
+show({ first: [1, 2, 3], second: { inner: [1, 2, 3] } }, { a: { b: { c: {} } } },
+  [[1, 2, [3, 4, [5, 6]]], { k: [7, 8] }], { x: range(30), y: 'short' },
+  { arr: range(40, (i) => i * 7), deep: { deeper: { deepest: [1, 2] } } },
+  { buf: Buffer.alloc(60), view: new DataView(new ArrayBuffer(3)) },
+  { 'key with spaces': 'value', 'another-key': 'another value that is long', third: 'third value' });
+// A long string holding newlines is split after each into quoted pieces joined with +.
+const lines = 'line one\nline two\nline three is a bit longer than the others\n' + 'z'.repeat(50);
+show({ s: lines }, [lines, 'short']);
+console.log(u.inspect(lines));
+// An Error's properties go on one line after a stack with no frames, when they fit.
+const short = new Error('short');
+short.stack = 'Error: short';
+short.code = 'E_SHORT';
+const long = new Error('long');
+long.stack = 'Error: long';
+long.info = 'i'.repeat(70);
+show(short, long, { nested: short, list: [long] });
+// Each line printed inside a console.group is indented.
+console.group('group');
+console.log({ a: 'a'.repeat(20), b: 'b'.repeat(20), c: 'c'.repeat(20), d: 'd'.repeat(20) });
+console.groupEnd();
+console.dir({ s: lines });
+// breakLength, compact, maxArrayLength and maxStringLength change the layout.
+console.log(u.inspect(range(30), { breakLength: 40 }), u.inspect(range(30), { compact: 1 }));
+console.log(u.inspect({ a: 'a'.repeat(30), b: 'b'.repeat(30) }, { breakLength: Infinity }));
+console.log(u.inspect({ a: 1, b: { c: 2 } }, { compact: false }), u.inspect({ a: { b: { c: 1 } } }, { compact: 1 }));
+console.log(u.inspect(range(8), { maxArrayLength: 3 }), u.inspect(new Set([1, 2, 3, 4]), { maxArrayLength: 2 }));
+console.log(u.inspect(new Map([['alpha', { x: 1 }], ['beta', 'b'.repeat(70)]])), u.inspect(new Set(range(20, (i) => 'item' + i))));
+console.log(u.inspect('abcdef', { maxStringLength: 3 }), u.inspect([1, 2], { maxArrayLength: 1 }));

@@ -354,3 +354,31 @@ func TestUtil_InspectDataView(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestUtil_InspectBreaksLines checks that output longer than breakLength goes across lines, and
+// that an array of short numbers goes in right-aligned columns.
+func TestUtil_InspectBreaksLines(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	tests := []struct {
+		input, want string
+	}{
+		{`__util_module.inspect(Array.from({ length: 30 }, (_, i) => i))`,
+			"[\n   0,  1,  2,  3,  4,  5,  6,  7,  8,\n   9, 10, 11, 12, 13, 14, 15, 16, 17,\n  18, 19, 20, 21, 22, 23, 24, 25, 26,\n  27, 28, 29\n]"},
+		{`__util_module.inspect({ a: 'a'.repeat(20), b: 'b'.repeat(20), c: 'c'.repeat(20), d: 'd'.repeat(20) })`,
+			"{\n  a: 'aaaaaaaaaaaaaaaaaaaa',\n  b: 'bbbbbbbbbbbbbbbbbbbb',\n  c: 'cccccccccccccccccccc',\n  d: 'dddddddddddddddddddd'\n}"},
+		{`__util_module.inspect({ a: 1, b: [1, 2] })`, "{ a: 1, b: [ 1, 2 ] }"},
+		{`__util_module.inspect({ a: 'a'.repeat(30), b: 'b'.repeat(30) }, { breakLength: Infinity })`,
+			"{ a: '" + strings.Repeat("a", 30) + "', b: '" + strings.Repeat("b", 30) + "' }"},
+	}
+	for _, tt := range tests {
+		result, err := rt.RunScript(tt.input, "test.js")
+		if err != nil {
+			t.Fatalf("RunScript failed for %q: %v", tt.input, err)
+		}
+		if got := result.String(); got != tt.want {
+			t.Errorf("For %q:\ngot  %q\nwant %q", tt.input, got, tt.want)
+		}
+	}
+}
