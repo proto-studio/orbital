@@ -817,15 +817,24 @@ func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
 		}
 	}
 	for _, keyVal := range keys {
-		key, ok := c.inspectCall("key", keyVal)
-		if !ok {
-			key = keyVal.String()
-		}
-		val := c.inspectValue("get", v, keyVal)
-		if val == nil {
+		// field leaves accessors uncalled, giving a label for them instead.
+		f := c.inspectValue("field", v, keyVal)
+		if f == nil || !f.IsObject() {
 			continue
 		}
-		parts = append(parts, key+": "+c.formatValueQuotedWithDepth(val, depth))
+		name, err := f.Get("name")
+		if err != nil || name == nil {
+			continue
+		}
+		if label, err := f.Get("label"); err == nil && label != nil && label.IsString() {
+			parts = append(parts, name.String()+": "+label.String())
+			continue
+		}
+		val, err := f.Get("value")
+		if err != nil || val == nil {
+			continue
+		}
+		parts = append(parts, name.String()+": "+c.formatValueQuotedWithDepth(val, depth))
 	}
 	return c.reduce(parts, name+" {", "}", topDepth-depth, depth-c.deepest), true
 }

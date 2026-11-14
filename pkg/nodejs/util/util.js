@@ -277,7 +277,12 @@
 		function formatBinary(value, bin, depth) {
 			deepest = depth;
 			const keys = bin.keys.concat(Object.keys(value));
-			const output = bin.entries.concat(keys.map(key => `${formatKey(key)}: ${inspectValue(value[key], depth + 1)}`));
+			const output = bin.entries.concat(keys.map(key => {
+				const f = inspectShared.field(value, key);
+				return `${f.name}: ${'label' in f ? f.label : inspectValue(f.value, depth + 1)}`;
+			}));
+			// Node sorts every entry, the ones binary describes included.
+			if (opts.sorted) output.sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
 			return inspectShared.reduce(output, bin.name + ' {', '}', {
 				level: depth,
 				nested: deepest - depth,

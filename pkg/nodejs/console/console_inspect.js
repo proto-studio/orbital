@@ -19,6 +19,7 @@
     get: (obj, k) => obj[k],
     view: (value) => inspectShared.view(value),
     binary: (value) => inspectShared.binary(value),
+    field: inspectShared.field,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
     // other error JSON.stringify throws leaves it answering nothing.
     json: (value) => {

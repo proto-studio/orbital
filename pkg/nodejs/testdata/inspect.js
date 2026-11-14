@@ -22,6 +22,17 @@ const hooked = new ArrayBuffer(2);
 Object.defineProperty(hooked, Symbol.toStringTag, { get() { throw new Error('read the tag'); } });
 hooked[u.inspect.custom] = () => 'hooked';
 console.log(u.inspect(hooked), u.inspect({ hooked }));
+// Own properties that shadow the fields shown: an accessor isn't called, and one that isn't
+// enumerable is named in brackets. sorted sorts every entry.
+const shadowed = new ArrayBuffer(1);
+Object.defineProperty(shadowed, 'byteLength', { get() { throw new Error('called the getter'); } });
+const relabeled = new ArrayBuffer(1);
+Object.defineProperty(relabeled, 'byteLength', { value: 99 });
+const rebuffered = new DataView(new ArrayBuffer(1));
+Object.defineProperty(rebuffered, 'buffer', { get() { return 1; }, set(v) {} });
+show(shadowed, relabeled, rebuffered);
+console.log(u.inspect(Object.assign(new ArrayBuffer(0), { z: 1, a: 2 }), { sorted: true }));
+console.log(u.inspect(Object.assign(new DataView(new ArrayBuffer(1)), { z: 1, a: 2 }), { sorted: true }));
 // %j is JSON.stringify, which prints an ArrayBuffer, a DataView and an Error as {} plus their
 // enumerable properties.
 const looped = { a: 1 };

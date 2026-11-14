@@ -1,7 +1,8 @@
 // The parts of Node's util.inspect that the console and util modules both need: quoting strings
 // and object keys, printing Buffers, typed arrays, ArrayBuffers and DataViews, and fitting a
 // value's entries onto lines. They share one copy, and each loads it itself, since an embedder
-// can register either one without the other. Evaluates to { quote, key, view, binary, reduce }.
+// can register either one without the other. Evaluates to
+// { quote, key, view, binary, field, reduce }.
 (function () {
   // META[c] is how util.inspect writes control character c (0x00-0x1F) inside a quoted string:
   // \b, \t, \n, \f and \r for those five, and \xNN for the rest.
@@ -89,8 +90,15 @@
   const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
   // Whether value may be an ArrayBuffer or SharedArrayBuffer: it inherits from one, or from no
   // Object of this realm, like one with a null prototype or from another realm.
-  const mayBeBuffer = (value) => value instanceof ArrayBuffer || !(value instanceof Object) ||
-    (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
+  // A proxy whose getPrototypeOf trap throws is none of them.
+  const mayBeBuffer = (value) => {
+    try {
+      return value instanceof ArrayBuffer || !(value instanceof Object) ||
+        (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
+    } catch (e) {
+      return false;
+    }
+  };
 
   // The name util.inspect puts before an object's brace: the constructor's name, the kind of
   // object in brackets when its toStringTag differs, or [Kind: null prototype] without one. A
@@ -148,6 +156,18 @@
     };
   }
 
+  // field describes property k of value as util.inspect prints one of the keys binary lists:
+  // { name, value } with the value to format, or { name, label } for an accessor, which isn't
+  // called. An own property that isn't enumerable is named in brackets. A key value doesn't
+  // own, like byteLength from its prototype, is read as usual.
+  function field(value, k) {
+    const desc = Object.getOwnPropertyDescriptor(value, k);
+    if (desc === undefined) return { name: key(k), value: value[k] };
+    const name = desc.enumerable ? key(k) : `[${k}]`;
+    if ('value' in desc) return { name, value: desc.value };
+    return { name, label: desc.get === undefined ? '[Setter]' : desc.set === undefined ? '[Getter]' : '[Getter/Setter]' };
+  }
+
   // Node's colors are SGR escapes like \x1b[33m, which take no room on screen.
   const COLORS = /\u001b\[\d\d?m/g;
   const width = (s) => s.replace(COLORS, '').length;
@@ -171,5 +191,5 @@
     return `${open}\n  ${output.map((entry) => entry.replace(/\n/g, '\n  ')).join(',\n  ')}\n${close}`;
   }
 
-  return { quote, key, view, binary, reduce };
+  return { quote, key, view, binary, field, reduce };
 })()
