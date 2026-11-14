@@ -1658,55 +1658,34 @@ static MaybeLocal<Module> compileInstantiateEvaluate(
     return module;
 }
 
-// Dynamic import() host callback. V8 calls this for every import() expression;
-// we must return a Promise that resolves to the module namespace (or rejects).
-static MaybeLocal<Promise> hostImportModuleDynamically(
-    Local<Context> context,
-    Local<Data> /*host_defined_options*/,
-    Local<Value> resource_name,
-    Local<String> specifier,
-    Local<FixedArray> /*import_attributes*/) {
-
-#if V8_MAJOR_VERSION >= 15
-    Isolate* isolate = Isolate::GetCurrent();
-#else
-    Isolate* isolate = context->GetIsolate();
-#endif
-
-    ContextWrapper* cw = wrapperFromContext(context);
-    if (!cw) return MaybeLocal<Promise>();
-
-    Local<Promise::Resolver> resolver;
-    if (!Promise::Resolver::New(context).ToLocal(&resolver)) {
-        return MaybeLocal<Promise>();
-    }
-    Local<Promise> promise = resolver->GetPromise();
-
-    String::Utf8Value spec_utf8(isolate, specifier);
-    const char* spec_str = *spec_utf8 ? *spec_utf8 : "";
-
-    std::string referrer;
-    if (!resource_name.IsEmpty() && resource_name->IsString()) {
-        String::Utf8Value ref_utf8(isolate, resource_name);
-        referrer = *ref_utf8 ? *ref_utf8 : "";
-    }
-
+// Load, link and evaluate the module an import() names, then settle the import()
+// promise with its namespace or the failure. Returns false when execution is
+// terminating: the module, or a CommonJS dependency loaded for it, called
+// process.exit(). That is not an exception to reject import() with (rejecting would
+// swallow the termination and the importer would carry on with a null reason), so
+// the termination is left pending to keep unwinding and the promise is not settled.
+static bool runDynamicImport(ContextWrapper* cw, Isolate* isolate,
+                             Local<Context> context,
+                             Local<Promise::Resolver> resolver,
+                             const std::string& spec,
+                             const std::string& referrer) {
     // Resolve + load the specifier's source via the Go loader.
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
     int r = goModuleResolve(cw->dynamic_resolver_id,
-                            const_cast<char*>(spec_str),
+                            const_cast<char*>(spec.c_str()),
                             const_cast<char*>(referrer.c_str()),
                             &resolved_source, &resolved_name);
     if (r != 0 || !resolved_source || !resolved_name) {
-        Local<Value> err = Exception::Error(
-            String::NewFromUtf8(isolate,
-                (std::string("Cannot find module '") + spec_str + "'").c_str())
-                .ToLocalChecked());
-        resolver->Reject(context, err).Check();
         if (resolved_source) free(resolved_source);
         if (resolved_name) free(resolved_name);
-        return promise;
+        if (isolate->IsExecutionTerminating()) return false;
+        Local<Value> err = Exception::Error(
+            String::NewFromUtf8(isolate,
+                (std::string("Cannot find module '") + spec + "'").c_str())
+                .ToLocalChecked());
+        resolver->Reject(context, err).Check();
+        return true;
     }
 
     TryCatch try_catch(isolate);
@@ -1717,12 +1696,16 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
     free(resolved_name);
 
     if (maybe_module.IsEmpty()) {
+        if (try_catch.HasTerminated() || isolate->IsExecutionTerminating()) {
+            try_catch.ReThrow();
+            return false;
+        }
         Local<Value> exc = try_catch.HasCaught()
             ? try_catch.Exception()
             : Exception::Error(String::NewFromUtf8(isolate,
                   "dynamic import failed").ToLocalChecked());
         resolver->Reject(context, exc).Check();
-        return promise;
+        return true;
     }
 
     Local<Module> module = maybe_module.ToLocalChecked();
@@ -1745,13 +1728,108 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
         if (finisher.As<Function>()->Call(context, Undefined(isolate), 2, argv)
                 .ToLocal(&chained)) {
             resolver->Resolve(context, chained).Check();
-            return promise;
+            return true;
+        }
+        if (try_catch.HasTerminated() || isolate->IsExecutionTerminating()) {
+            try_catch.ReThrow();
+            return false;
         }
     }
 
     // No evaluation promise (or no finisher): the body already ran to
     // completion, so resolve directly with the namespace.
     resolver->Resolve(context, ns).Check();
+    return true;
+}
+
+// The deferred half of import(): a native function holding [resolver, specifier,
+// referrer] as its data, which the JS scheduler calls once the importer's current
+// code has finished.
+static void dynamicImportJob(const FunctionCallbackInfo<Value>& info) {
+    Isolate* isolate = info.GetIsolate();
+    HandleScope handle_scope(isolate);
+    Local<Context> context = isolate->GetCurrentContext();
+    ContextWrapper* cw = wrapperFromContext(context);
+    if (!cw || !info.Data()->IsArray()) return;
+
+    Local<Array> data = info.Data().As<Array>();
+    Local<Value> resolver_v, spec_v, referrer_v;
+    if (!data->Get(context, 0).ToLocal(&resolver_v) ||
+        !data->Get(context, 1).ToLocal(&spec_v) ||
+        !data->Get(context, 2).ToLocal(&referrer_v) ||
+        !resolver_v->IsPromise()) {
+        return;
+    }
+    // Run it at most once, however often the scheduler calls it.
+    if (!data->Set(context, 0, Undefined(isolate)).FromMaybe(false)) return;
+
+    String::Utf8Value spec_utf8(isolate, spec_v);
+    String::Utf8Value referrer_utf8(isolate, referrer_v);
+    std::string spec = *spec_utf8 ? *spec_utf8 : "";
+    std::string referrer = *referrer_utf8 ? *referrer_utf8 : "";
+    runDynamicImport(cw, isolate, context, resolver_v.As<Promise::Resolver>(),
+                     spec, referrer);
+}
+
+// Dynamic import() host callback. V8 calls this for every import() expression;
+// we must return a Promise that resolves to the module namespace (or rejects).
+// Node loads the module asynchronously, so the code after import() runs before the
+// module does: the load and evaluation are handed to the JS helper
+// __esmScheduleDynamicImport, which runs them from the event loop. Without the
+// helper they run here, synchronously.
+static MaybeLocal<Promise> hostImportModuleDynamically(
+    Local<Context> context,
+    Local<Data> /*host_defined_options*/,
+    Local<Value> resource_name,
+    Local<String> specifier,
+    Local<FixedArray> /*import_attributes*/) {
+
+#if V8_MAJOR_VERSION >= 15
+    Isolate* isolate = Isolate::GetCurrent();
+#else
+    Isolate* isolate = context->GetIsolate();
+#endif
+
+    ContextWrapper* cw = wrapperFromContext(context);
+    if (!cw) return MaybeLocal<Promise>();
+
+    Local<Promise::Resolver> resolver;
+    if (!Promise::Resolver::New(context).ToLocal(&resolver)) {
+        return MaybeLocal<Promise>();
+    }
+    Local<Promise> promise = resolver->GetPromise();
+
+    Local<Value> referrer_value = String::Empty(isolate);
+    if (!resource_name.IsEmpty() && resource_name->IsString()) {
+        referrer_value = resource_name;
+    }
+
+    Local<Value> scheduler;
+    if (context->Global()->Get(context, String::NewFromUtf8(isolate,
+                "__esmScheduleDynamicImport").ToLocalChecked())
+            .ToLocal(&scheduler) && scheduler->IsFunction()) {
+        Local<Value> items[3] = { resolver, specifier, referrer_value };
+        Local<Array> data = Array::New(isolate, items, 3);
+        Local<Function> job;
+        if (!Function::New(context, dynamicImportJob, data, 0,
+                           ConstructorBehavior::kThrow).ToLocal(&job)) {
+            return MaybeLocal<Promise>();
+        }
+        Local<Value> argv[1] = { job };
+        if (scheduler.As<Function>()->Call(context, Undefined(isolate), 1, argv)
+                .IsEmpty()) {
+            return MaybeLocal<Promise>();
+        }
+        return promise;
+    }
+
+    String::Utf8Value spec_utf8(isolate, specifier);
+    String::Utf8Value referrer_utf8(isolate, referrer_value);
+    std::string spec = *spec_utf8 ? *spec_utf8 : "";
+    std::string referrer = *referrer_utf8 ? *referrer_utf8 : "";
+    if (!runDynamicImport(cw, isolate, context, resolver, spec, referrer)) {
+        return MaybeLocal<Promise>();
+    }
     return promise;
 }
 
