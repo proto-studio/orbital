@@ -31,7 +31,7 @@ type Console struct {
 	// Register. classify reports whether a value is an Error; the others track
 	// object identity so a property that points back at an Error is printed as
 	// Node's [Circular *n].
-	errorTools *v8.Value
+	errorTools    *v8.Value
 	errorTracking bool
 
 	// splitNUL is the function compiled from splitAtNUL.
