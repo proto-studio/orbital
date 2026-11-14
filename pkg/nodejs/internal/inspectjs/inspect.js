@@ -1,8 +1,9 @@
 // The parts of Node's util.inspect that the console and util modules both need: quoting strings
-// and object keys, printing Buffers, typed arrays, ArrayBuffers and DataViews, and laying a
-// value's entries out on lines. They share one copy, and each loads it itself, since an embedder
+// and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
+// and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, more, view, binary, field, cut, reduce }.
+// { context, quote, string, key, primitive, more, view, binary, collection, scalar, field, cut,
+// entry, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -84,8 +85,9 @@
   // A key prints bare only when it is an identifier.
   const key = (k) => (/^[a-zA-Z_][a-zA-Z_0-9]*$/.test(k) ? k : quote(k));
 
-  // One element of a typed array: a BigInt keeps its n suffix, and negative zero prints as -0.
-  const element = (v) => (typeof v === 'bigint' ? v + 'n' : Object.is(v, -0) ? '-0' : String(v));
+  // A primitive other than a string, as util.inspect prints one: a BigInt keeps its n suffix,
+  // and negative zero prints as -0.
+  const primitive = (v) => (typeof v === 'bigint' ? v + 'n' : Object.is(v, -0) ? '-0' : String(v));
 
   // more is the entry that stands for the items an array or collection leaves out.
   const more = (n) => `... ${n} more item${n > 1 ? 's' : ''}`;
@@ -105,7 +107,7 @@
     if (value.length === 0) return `${name}(0) []`;
     ctx.currentDepth = level;
     const shown = Math.min(Math.max(0, ctx.maxArrayLength), value.length);
-    const output = Array.from(value.subarray(0, shown), element);
+    const output = Array.from(value.subarray(0, shown), primitive);
     if (value.length > shown) output.push(more(value.length - shown));
     return reduce(ctx, output, `${name}(${value.length}) [`, ']', level, { array: true, numbers: true });
   }
@@ -141,10 +143,10 @@
     }
   };
 
-  // The name util.inspect puts before an object's brace: the constructor's name, the kind of
-  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one. A
-  // toStringTag that throws is left out.
-  function prefix(value, fallback) {
+  // The name util.inspect puts before an object's brace: the constructor's name and size, the
+  // kind of object in brackets when its toStringTag differs, or [Kind: null prototype] without a
+  // constructor. A toStringTag that throws is left out.
+  function prefix(value, fallback, size = '') {
     let ctor = null;
     for (let obj = value; obj !== null && ctor === null; obj = Object.getPrototypeOf(obj)) {
       const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
@@ -156,9 +158,10 @@
     } catch (e) {
       tag = undefined;
     }
-    if (ctor === null) return `[${fallback}: null prototype]`;
-    if (typeof tag === 'string' && tag !== '' && tag !== ctor) return `${ctor} [${tag}]`;
-    return ctor;
+    const tagged = typeof tag === 'string' && tag !== '';
+    if (ctor === null) return `[${fallback}${size}: null prototype]` + (tagged && tag !== fallback ? ` [${tag}]` : '');
+    if (tagged && tag !== ctor) return `${ctor}${size} [${tag}]`;
+    return ctor + size;
   }
 
   // binary describes an ArrayBuffer, SharedArrayBuffer or DataView the way util.inspect prints
@@ -197,9 +200,58 @@
     };
   }
 
+  const mapSize = getter(Map.prototype, 'size');
+  const setSize = getter(Set.prototype, 'size');
+  const isMap = brand(mapSize);
+  const isSet = brand(setSize);
+  const isDate = brand(Date.prototype.getTime);
+
+  // collection describes a Map or Set the way util.inspect prints one, as { name, map, entries,
+  // more }: name goes before the brace, entries are what to format, at most maxArrayLength of
+  // them (all of them when it's null), keys and values taking turns for a Map, and more is how
+  // many were left out. It answers null for anything else.
+  function collection(value, maxArrayLength = 100) {
+    if (value === null || typeof value !== 'object') return null;
+    const map = isMap(value);
+    if (!map && !isSet(value)) return null;
+    if (maxArrayLength === null) maxArrayLength = Infinity;
+    const size = map ? mapSize.call(value) : setSize.call(value);
+    const shown = Math.min(Math.max(0, maxArrayLength), size);
+    const entries = [];
+    // The prototype's iterators, as a Map or Set may override its own.
+    const iterator = map ? Map.prototype.entries.call(value) : Set.prototype.values.call(value);
+    for (let i = 0; i < shown; i++) {
+      const next = iterator.next();
+      if (next.done) break;
+      if (map) entries.push(next.value[0], next.value[1]);
+      else entries.push(next.value);
+    }
+    return { name: prefix(value, map ? 'Map' : 'Set', `(${size})`), map, entries, more: size - shown };
+  }
+
+  // scalar is how util.inspect prints a Date or RegExp, before any properties of its own: an
+  // invalid Date as Invalid Date, and a subclass's name first. It answers null for anything else.
+  function scalar(value) {
+    if (value === null || typeof value !== 'object') return null;
+    let text;
+    let fallback;
+    if (isDate(value)) {
+      const time = Date.prototype.getTime.call(value);
+      text = Number.isNaN(time) ? 'Invalid Date' : Date.prototype.toISOString.call(value);
+      fallback = 'Date';
+    } else if (value instanceof RegExp) {
+      text = RegExp.prototype.toString.call(value);
+      fallback = 'RegExp';
+    } else {
+      return null;
+    }
+    const name = prefix(value, fallback);
+    return name === fallback ? text : `${name} ${text}`;
+  }
+
   // cut names value in brackets, as util.inspect prints it past the depth limit, or answers null
-  // when Node prints it in full anyway: when it's empty, a RegExp, a Date without properties or
-  // a Buffer. Errors are left to the caller. A value that throws when looked at, like a proxy
+  // when Node prints it in full anyway: when it's empty, a RegExp, which leaves its properties
+  // out, a Date without properties or a Buffer. Errors are left to the caller. A value that throws when looked at, like a proxy
   // with a throwing trap, is [Object].
   function cut(value) {
     try {
@@ -214,15 +266,16 @@
     const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
     if (Array.isArray(value)) return value.length === 0 ? null : '[Array]';
-    if (value instanceof Map) return value.size === 0 ? null : '[Map]';
-    if (value instanceof Set) return value.size === 0 ? null : '[Set]';
+    const bare = Object.keys(value).length === 0;
+    if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : '[Map]';
+    if (isSet(value)) return setSize.call(value) === 0 && bare ? null : '[Set]';
     if (value instanceof RegExp) return null;
-    if (value instanceof Date) return Object.keys(value).length === 0 ? null : '[Date]';
+    if (isDate(value)) return bare ? null : '[Date]';
     if (ArrayBuffer.isView(value)) {
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
       return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
     }
-    if (Object.keys(value).length === 0) return null;
+    if (bare) return null;
     const proto = Object.getPrototypeOf(value);
     if (proto === null) return '[Object: null prototype]';
     const name = proto.constructor && proto.constructor.name;
@@ -363,6 +416,15 @@
     return base === '' || !base.includes('\n');
   }
 
+  // entry joins an object's key, already quoted, with its formatted value. With compact: true,
+  // Node indents a value's lines three spaces in from the key's, rather than two, and starts the
+  // value on a line of its own when it's wider than breakLength.
+  function entry(ctx, name, value) {
+    if (ctx.compact !== true) return `${name}: ${value}`;
+    const nested = value.replace(/\n/g, '\n ');
+    return width(value) > ctx.breakLength ? `${name}:\n ${nested}` : `${name}: ${nested}`;
+  }
+
   // Indents the lines an entry spans along with it.
   const indent = (entry) => entry.replace(/\n/g, '\n  ');
 
@@ -394,5 +456,5 @@
     return `${open}${ln}${output.map(indent).join(',\n  ')} ${close}`;
   }
 
-  return { context, quote, string, key, more, view, binary, field, cut, reduce };
+  return { context, quote, string, key, primitive, more, view, binary, collection, scalar, field, cut, entry, reduce };
 })()

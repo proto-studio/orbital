@@ -132,14 +132,9 @@
 
 			// Primitives
 			if (type === 'boolean') return value.toString();
-			if (type === 'number') {
-				if (Object.is(value, -0)) return '-0';
-				return value.toString();
-			}
-			if (type === 'bigint') return value.toString() + 'n';
 			if (type === 'string') return inspectShared.string(layout, value, currentDepth);
-			if (type === 'symbol') return value.toString();
 			if (type === 'function') return formatFunction(value);
+			if (type !== 'object') return inspectShared.primitive(value);
 
 			// Objects
 			if (type === 'object') {
@@ -174,17 +169,15 @@
 				// Described after the custom inspector has had its chance, which may make
 				// describing it unnecessary.
 				const bin = inspectShared.binary(value, layout.maxArrayLength);
+				const coll = bin === null ? inspectShared.collection(value, layout.maxArrayLength) : null;
+				const scalar = coll === null ? inspectShared.scalar(value) : null;
 				let result;
 				if (Array.isArray(value)) {
 					result = formatArray(value, currentDepth);
-				} else if (value instanceof Date) {
-					result = value.toISOString();
-				} else if (value instanceof RegExp) {
-					result = value.toString();
-				} else if (value instanceof Map) {
-					result = formatMap(value, currentDepth);
-				} else if (value instanceof Set) {
-					result = formatSet(value, currentDepth);
+				} else if (scalar !== null) {
+					result = formatScalar(value, scalar, currentDepth);
+				} else if (coll !== null) {
+					result = formatCollection(value, coll, currentDepth);
 				} else if (value instanceof Promise) {
 					result = 'Promise { <pending> }';
 				} else if (bin !== null) {
@@ -201,9 +194,6 @@
 
 			return String(value);
 		}
-
-		const formatKey = inspectShared.key;
-
 
 		function formatFunction(fn) {
 			const name = fn.name || '(anonymous)';
@@ -248,10 +238,7 @@
 			}
 
 			layout.currentDepth = depth;
-			const items = keys.map(key => {
-				const value = inspectValue(obj[key], depth + 1);
-				return `${formatKey(key)}: ${value}`;
-			});
+			const items = keys.map(key => formatProperty(obj, key, depth));
 
 			const proto = Object.getPrototypeOf(obj);
 			let prefix = '';
@@ -269,7 +256,7 @@
 			const keys = bin.keys.concat(Object.keys(value));
 			const output = bin.entries.concat(keys.map(key => {
 				const f = inspectShared.field(value, key);
-				return `${f.name}: ${'label' in f ? f.label : inspectValue(f.value, depth + 1)}`;
+				return inspectShared.entry(layout, f.name, 'label' in f ? f.label : inspectValue(f.value, depth + 1));
 			}));
 			// Node sorts every entry, the ones binary describes included.
 			if (opts.sorted) output.sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
@@ -370,36 +357,74 @@
 			layout.currentDepth = depth;
 			const parts = [];
 			for (const key of keys) {
-				parts.push(formatKey(key) + ': ' + inspectValue(err[key], depth + 1));
+				parts.push(formatProperty(err, key, depth));
 			}
 			for (const key of hidden) {
-				parts.push('[' + key + ']: ' + inspectValue(err[key], depth + 1));
+				parts.push(inspectShared.entry(layout, '[' + key + ']', inspectValue(err[key], depth + 1)));
 			}
 
 			return reduce(parts, '{', '}', depth, { base: stack });
 		}
 
-		// formatEntries prints a Map's or Set's entries, at most maxArrayLength of them.
-		function formatEntries(name, size, entries, depth, format) {
-			if (size === 0) return `${name}(0) {}`;
+		// formatProperty prints key of obj, an object at depth: an accessor as a label, which with
+		// the getters option holds what the getter returns.
+		function formatProperty(obj, key, depth) {
+			const f = inspectShared.field(obj, key);
+			if (!('label' in f)) return inspectShared.entry(layout, f.name, inspectValue(f.value, depth + 1));
+			const desc = Object.getOwnPropertyDescriptor(obj, key);
+			const getters = opts.getters;
+			if (desc.get === undefined || !(getters === true ||
+					(getters === 'get' && desc.set === undefined) ||
+					(getters === 'set' && desc.set !== undefined))) {
+				return inspectShared.entry(layout, f.name, f.label);
+			}
+			// The label without its brackets.
+			const label = f.label.slice(1, -1);
+			let value;
+			try {
+				const got = desc.get.call(obj);
+				value = got !== null && typeof got === 'object'
+					? `[${label}] ${inspectValue(got, depth + 1)}`
+					: `[${label}: ${inspectValue(got, depth + 1)}]`;
+			} catch (e) {
+				value = `[${label}: <Inspection threw (${e && e.message})>]`;
+			}
+			return inspectShared.entry(layout, f.name, value);
+		}
+
+		// formatKeys prints first, then the own enumerable keys of value, an object at depth,
+		// between open and close, with base before them.
+		function formatKeys(value, first, open, close, depth, base) {
+			layout.currentDepth = depth;
+			const keys = Object.keys(value);
+			if (opts.sorted) keys.sort();
+			const output = first.concat(keys.map(key => formatProperty(value, key, depth)));
+			return reduce(output, open, close, depth, { base });
+		}
+
+		// formatScalar prints a Date or RegExp as text, followed by any keys of its own, which a
+		// RegExp past the depth limit leaves out.
+		function formatScalar(value, text, depth) {
+			if (Object.keys(value).length === 0 || depth > opts.depth) return text;
+			return formatKeys(value, [], '{', '}', depth, text);
+		}
+
+		// formatCollection prints the entries inspectShared.collection describes for a Map or Set,
+		// then its own keys.
+		function formatCollection(value, coll, depth) {
+			const { entries } = coll;
+			if (entries.length === 0 && coll.more === 0 && Object.keys(value).length === 0) return `${coll.name} {}`;
 			layout.currentDepth = depth;
 			const items = [];
-			const shown = Math.max(0, layout.maxArrayLength);
-			for (const entry of entries) {
-				if (items.length >= shown) break;
-				items.push(format(entry));
+			if (coll.map) {
+				for (let i = 0; i < entries.length; i += 2) {
+					items.push(`${inspectValue(entries[i], depth + 1)} => ${inspectValue(entries[i + 1], depth + 1)}`);
+				}
+			} else {
+				for (const entry of entries) items.push(inspectValue(entry, depth + 1));
 			}
-			if (size > shown) items.push(inspectShared.more(size - shown));
-			return reduce(items, `${name}(${size}) {`, '}', depth);
-		}
-
-		function formatMap(map, depth) {
-			return formatEntries('Map', map.size, map, depth,
-				([key, value]) => `${inspectValue(key, depth + 1)} => ${inspectValue(value, depth + 1)}`);
-		}
-
-		function formatSet(set, depth) {
-			return formatEntries('Set', set.size, set, depth, value => inspectValue(value, depth + 1));
+			if (coll.more > 0) items.push(inspectShared.more(coll.more));
+			return formatKeys(value, items, `${coll.name} {`, '}', depth, '');
 		}
 
 		return inspectValue(obj, 0);
