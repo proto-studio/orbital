@@ -131,17 +131,19 @@
   // but a typed array; ArrayBuffer.isView covers typed arrays and DataViews.
   const typedArrayTag = getter(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag);
   const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
-  // Whether value may be an ArrayBuffer or SharedArrayBuffer: it inherits from one, or from no
-  // Object of this realm, like one with a null prototype or from another realm.
-  // A proxy whose getPrototypeOf trap throws is none of them.
-  const mayBeBuffer = (value) => {
+  // Whether value may be a Ctor: it inherits from Ctor, or from no Object of this realm, like one
+  // with a null prototype or from another realm. It spares ordinary objects the brand checks,
+  // which throw for them, and are slow when they do. A proxy whose getPrototypeOf trap throws is
+  // no Ctor.
+  const mayBe = (value, Ctor) => {
     try {
-      return value instanceof ArrayBuffer || !(value instanceof Object) ||
-        (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
+      return value instanceof Ctor || !(value instanceof Object);
     } catch (e) {
       return false;
     }
   };
+  const mayBeBuffer = (value) => mayBe(value, ArrayBuffer) ||
+    (typeof SharedArrayBuffer === 'function' && mayBe(value, SharedArrayBuffer));
 
   // The name util.inspect puts before an object's brace: the constructor's name and size, the
   // kind of object in brackets when its toStringTag differs, or [Kind: null prototype] without a
@@ -202,19 +204,21 @@
 
   const mapSize = getter(Map.prototype, 'size');
   const setSize = getter(Set.prototype, 'size');
-  const isMap = brand(mapSize);
-  const isSet = brand(setSize);
-  const isDate = brand(Date.prototype.getTime);
+  // A brand check for Ctor, run only on values that may be one.
+  const kind = (Ctor, isBrand) => (value) => mayBe(value, Ctor) && isBrand(value);
+  const isMap = kind(Map, brand(mapSize));
+  const isSet = kind(Set, brand(setSize));
+  const isDate = kind(Date, brand(Date.prototype.getTime));
   // RegExp.prototype.global throws for anything but a RegExp, and answers undefined for
   // RegExp.prototype itself, which isn't one.
   const regExpGlobal = getter(RegExp.prototype, 'global');
-  const isRegExp = (value) => {
+  const isRegExp = kind(RegExp, (value) => {
     try {
       return regExpGlobal.call(value) !== undefined;
     } catch (e) {
       return false;
     }
-  };
+  });
 
   // collection describes a Map or Set the way util.inspect prints one, as { name, map, entries,
   // more }: name goes before the brace, entries are what to format, at most maxArrayLength of

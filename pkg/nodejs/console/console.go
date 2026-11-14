@@ -603,7 +603,7 @@ func (c *Console) specInt(v *v8.Value, spec byte) string {
 }
 
 // specFloat renders a value for %f, which is parseFloat of the value's text: negative zero
-// becomes 0, and a BigInt prints as a plain number.
+// becomes 0, and a BigInt becomes the nearest number.
 func (c *Console) specFloat(v *v8.Value) string {
 	if v != nil && v.IsNumber() {
 		if v.Number() == 0 {
@@ -612,7 +612,9 @@ func (c *Console) specFloat(v *v8.Value) string {
 		return v.String()
 	}
 	if c.isBigInt(v) {
-		return v.String()
+		if s, ok := c.inspectCall("float", v); ok {
+			return s
+		}
 	}
 	return "NaN"
 }

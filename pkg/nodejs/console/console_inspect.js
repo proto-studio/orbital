@@ -31,6 +31,8 @@
     },
     primitive: inspectShared.primitive,
     type: (value) => typeof value,
+    // float is printf's %f for a BigInt: parseFloat of its text.
+    float: (value) => String(Number.parseFloat(String(value))),
     field: inspectShared.field,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
     // other error JSON.stringify throws leaves it answering nothing.

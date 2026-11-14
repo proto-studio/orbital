@@ -123,6 +123,8 @@ show(new Map([['a', 1], ['b', { c: [1, 2] }]]), new Set([1, 'two', [3]]), new Ma
   new Map(range(120, (i) => [i, 'v'])), new Set(range(30)),
   new Map([['long', 'l'.repeat(60)], ['other', 'o'.repeat(30)]]));
 console.log('%s %d %i %f', 5n, 5n, 5n, 5n);
+// %f rounds a BigInt to the nearest number, which may be Infinity.
+console.log('%f %f %f', 9007199254740993n, 10n ** 400n, -(10n ** 400n));
 console.log('%s %d %i %f %o %O', -0, -0, -0, -0, -0, -0);
 console.log('%d %i %i %s', -1.5, -0.5, 2.7, Symbol('fmt'));
 console.log(u.inspect(new Map([[1, 2], [3, 4]]), { maxArrayLength: 1 }), u.inspect(new Map([[1, { a: 1 }]]), { depth: 0 }));
