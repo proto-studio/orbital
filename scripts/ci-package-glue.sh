@@ -37,6 +37,6 @@ tar -C "$work" -xzf "$base/$asset"
 cp "deps/v8/$platform/lib/libv8go_glue.a" "$work/lib/libv8go_glue.a"
 
 mkdir -p dist
-tar -C "$work" -czf "dist/$asset" lib
+python3 scripts/reproducible-tar.py "dist/$asset" "$work" lib
 ( cd dist && shasum -a 256 "$asset" > "$asset.sha256" )
 cat "dist/$asset.sha256"

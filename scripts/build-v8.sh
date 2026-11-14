@@ -360,12 +360,12 @@ mkdir -p "$REPO_ROOT/deps/v8/include" "$OUTPUT_DIR/include"
 cp -R include/. "$REPO_ROOT/deps/v8/include/"
 cp -R include/. "$OUTPUT_DIR/include/"
 HEADERS_ASSET="v8-headers.tar.gz"
-tar -C "$REPO_ROOT/deps/v8" -czf "$DIST_DIR/$HEADERS_ASSET" include
+python3 "$REPO_ROOT/scripts/reproducible-tar.py" "$DIST_DIR/$HEADERS_ASSET" "$REPO_ROOT/deps/v8" include
 ( cd "$DIST_DIR" && shasum -a 256 "$HEADERS_ASSET" > "$HEADERS_ASSET.sha256" )
 
 # gzip (not zstd) so the consumer-side extractor stays pure Go stdlib.
 ASSET="v8-${TARGET_OS}-${GOARCH}.tar.gz"
-tar -C "$OUTPUT_DIR" -czf "$DIST_DIR/$ASSET" lib
+python3 "$REPO_ROOT/scripts/reproducible-tar.py" "$DIST_DIR/$ASSET" "$OUTPUT_DIR" lib
 ( cd "$DIST_DIR" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
 
 # ============================================================================

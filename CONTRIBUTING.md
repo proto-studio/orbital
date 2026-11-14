@@ -365,7 +365,8 @@ workflow publishes the new pin as a patch release.
   against the pinned libraries, and if the glue changed, rebuilds it first:
   - **"Changed"** means `glue_inputs` in `internal/v8dist/manifest.json` no longer matches
     the hash from `scripts/glue-inputs.sh`, which covers the glue's sources, the scripts
-    that set up and run the compile, and the Makefile. Any Makefile change rebuilds the glue.
+    that set up, run and package the compile, and the Makefile. Any Makefile change rebuilds
+    the glue.
   - **The rebuild** needs no V8 checkout. It uses the pinned headers and glue SDK (V8's
     compile command and libc++ headers, about 2 MB), and downloads V8's own clang and
     sysroot from Chromium's buckets at the revisions that V8 pins. `update-v8.yml`
