@@ -152,7 +152,7 @@ func (c *Console) callErrorTool(name string, args ...*v8.Value) (*v8.Value, erro
 // instances: the stack (name, message, frames), then extra own properties.
 // The boolean is false when value is not an Error.
 func (c *Console) tryFormatError(v *v8.Value, depth int) (string, bool) {
-	if c.skipErrorFormat || c.errorTools == nil || v == nil {
+	if c.errorTools == nil || v == nil {
 		return "", false
 	}
 

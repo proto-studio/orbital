@@ -93,14 +93,20 @@
     (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
 
   // The name util.inspect puts before an object's brace: the constructor's name, the kind of
-  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one.
+  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one. A
+  // toStringTag that throws is left out.
   function prefix(value, fallback) {
     let ctor = null;
     for (let obj = value; obj !== null && ctor === null; obj = Object.getPrototypeOf(obj)) {
       const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
       if (desc && typeof desc.value === 'function' && desc.value.name !== '') ctor = desc.value.name;
     }
-    const tag = value[Symbol.toStringTag];
+    let tag;
+    try {
+      tag = value[Symbol.toStringTag];
+    } catch (e) {
+      tag = undefined;
+    }
     if (ctor === null) return `[${fallback}: null prototype]`;
     if (typeof tag === 'string' && tag !== '' && tag !== ctor) return `${ctor} [${tag}]`;
     return ctor;

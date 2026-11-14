@@ -32,10 +32,7 @@ type Console struct {
 	// object identity so a property that points back at an Error is printed as
 	// Node's [Circular *n].
 	errorTools *v8.Value
-	// skipErrorFormat keeps printf %j on the generic object path. Node's %j is
-	// JSON.stringify, which drops non-enumerable Error fields and yields {}.
-	skipErrorFormat bool
-	errorTracking   bool
+	errorTracking bool
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
@@ -504,14 +501,15 @@ func (c *Console) formatLog(args []*v8.Value) string {
 						b.WriteString("%f")
 					}
 				case 'j':
-					// Node's %j is JSON.stringify. Error message/stack are
-					// non-enumerable, so an Error becomes {} (plus any
-					// enumerable own data). Do not use the Error inspect path.
+					// Node's %j is JSON.stringify, so an Error, an ArrayBuffer or
+					// a DataView becomes {} plus any enumerable own data. A value
+					// JSON.stringify throws on falls back to inspection.
 					if argi < len(args) {
-						prev := c.skipErrorFormat
-						c.skipErrorFormat = true
-						b.WriteString(c.formatValue(args[argi]))
-						c.skipErrorFormat = prev
+						if s, ok := c.inspectCall("json", args[argi]); ok {
+							b.WriteString(s)
+						} else {
+							b.WriteString(c.formatValue(args[argi]))
+						}
 						argi++
 					} else {
 						b.WriteString("%j")

@@ -354,3 +354,23 @@ func TestUtil_InspectDataView(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestUtil_InspectBinaryPastDepth checks that an ArrayBuffer past the depth limit is named
+// without reading more of it than its constructor, so a toStringTag getter that throws doesn't
+// break inspection.
+func TestUtil_InspectBinaryPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const ab = new ArrayBuffer(2);
+		Object.defineProperty(ab, Symbol.toStringTag, { get() { throw new Error('tag'); } });
+		__util_module.inspect({ x: ab }, { depth: 0 });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ x: [ArrayBuffer] }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

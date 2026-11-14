@@ -22,6 +22,12 @@ const hooked = new ArrayBuffer(2);
 Object.defineProperty(hooked, Symbol.toStringTag, { get() { throw new Error('read the tag'); } });
 hooked[u.inspect.custom] = () => 'hooked';
 console.log(u.inspect(hooked), u.inspect({ hooked }));
+// %j is JSON.stringify, which prints an ArrayBuffer, a DataView and an Error as {} plus their
+// enumerable properties.
+const looped = { a: 1 };
+looped.self = looped;
+console.log('%j %j %j %j', new ArrayBuffer(2), dv, { list: [1, 'a'] }, Object.assign(new Error('e'), { code: 'E' }));
+console.log('%j %j', looped, undefined);
 
 // console.log prints values nested three objects deep, and cuts the ones past them short.
 const err = new Error('deep');
