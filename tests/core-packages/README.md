@@ -117,7 +117,7 @@ the `$CORE_PKG_DIR` env var (the absolute path to this directory). Currently:
 - `support/yargs-suite.sh` — runs **yargs**' OWN mocha suite (the real
   `test/*.cjs` spec files, driven by actual Mocha via `support/mocha-run.js` +
   chai) against that build, loading `test/before.cjs` via `--require` exactly as
-  yargs' `npm test` does. Orbital passes **782 of yargs' ~801 tests**; the 18
+  yargs' `npm test` does. Orbital passes **783 of yargs' ~801 tests**; the 17
   skipped specs (`--invert-grep`) are documented in the script and below.
 - `support/react-ssr-setup.sh` — installs the **published** `react`/`react-dom`
   bundles (pinned to the checkout's tag) into an isolated `.ssr` dir. React's
@@ -265,7 +265,7 @@ the real `test/*.cjs` spec files (the same ones `npm test` runs:
 `c8 mocha ./test/*.cjs --require ./test/before.cjs --check-leaks`), driven through
 actual Mocha via `support/mocha-run.js` + chai, loading `test/before.cjs` via
 `--require` just as yargs does (`c8`/coverage and `--check-leaks` are dropped —
-they are tooling wrappers, not assertions). Orbital passes **782 of yargs' ~801
+they are tooling wrappers, not assertions). Orbital passes **783 of yargs' ~801
 tests** (1 pending).
 
 Real Orbital gaps this surfaced (now fixed):
@@ -303,7 +303,7 @@ Real Orbital gaps this surfaced (now fixed):
   both paths raise `Cannot find module 'x'` with `code: 'MODULE_NOT_FOUND'`
   (`pkg/nodejs/module/module.js`).
 
-The 18 skipped specs (see `support/yargs-suite.sh` for the exact list) depend on
+The 17 skipped specs (see `support/yargs-suite.sh` for the exact list) depend on
 capabilities Orbital does not emulate — none are yargs bugs:
 
 - **`commandDir` (7):** yargs resolves the command directory relative to the
@@ -312,9 +312,6 @@ capabilities Orbital does not emulate — none are yargs bugs:
 - **`$0` executable name (5):** these expect `$0` to be `node` because Node's real
   test run is `node …/mocha`; on Orbital `argv[0]` is the `orbital` binary.
 - **host environment (3):** OS-locale detection and the Node.js-version guard.
-- **non-module command object (1):** the thrown message embeds `util.inspect` of
-  the object across multiple lines; Orbital's `util.inspect` does not yet wrap by
-  `breakLength`, so it stays single-line.
 - **cached-help timing (2):** async `process.exit`/`emit` ordering inside yargs'
   own process-global-mutation test harness.
 

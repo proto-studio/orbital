@@ -116,6 +116,12 @@
 		}, options);
 
 		const seen = new WeakSet();
+		// layout holds the options for laying out entries, and the level of the object whose
+		// entries were formatted last. inspectShared is the formatting util shares with
+		// console; util.go passes it in.
+		const layout = inspectShared.context(opts);
+		const reduce = (output, open, close, level, extra) =>
+			inspectShared.reduce(layout, output, open, close, level, extra);
 
 		function inspectValue(value, currentDepth) {
 			// Handle null and undefined
@@ -131,7 +137,7 @@
 				return value.toString();
 			}
 			if (type === 'bigint') return value.toString() + 'n';
-			if (type === 'string') return formatString(value);
+			if (type === 'string') return inspectShared.string(layout, value, currentDepth);
 			if (type === 'symbol') return value.toString();
 			if (type === 'function') return formatFunction(value);
 
@@ -150,10 +156,10 @@
 					return result;
 				}
 
-				// Depth check
+				// Past the depth limit, a value with entries is cut short.
 				if (currentDepth > opts.depth) {
-					if (Array.isArray(value)) return '[Array]';
-					return '[Object]';
+					const cut = inspectShared.cut(value);
+					if (cut !== null) return cut;
 				}
 
 				seen.add(value);
@@ -165,6 +171,9 @@
 					return typeof result === 'string' ? result : inspectValue(result, currentDepth);
 				}
 
+				// Described after the custom inspector has had its chance, which may make
+				// describing it unnecessary.
+				const bin = inspectShared.binary(value, layout.maxArrayLength);
 				let result;
 				if (Array.isArray(value)) {
 					result = formatArray(value, currentDepth);
@@ -178,8 +187,10 @@
 					result = formatSet(value, currentDepth);
 				} else if (value instanceof Promise) {
 					result = 'Promise { <pending> }';
+				} else if (bin !== null) {
+					result = formatBinary(value, bin, currentDepth);
 				} else if (ArrayBuffer.isView(value)) {
-					result = formatTypedArray(value);
+					result = inspectShared.view(value, layout, currentDepth);
 				} else {
 					result = formatObject(value, currentDepth);
 				}
@@ -191,15 +202,8 @@
 			return String(value);
 		}
 
-		function formatString(str) {
-			if (str.length > opts.maxStringLength) {
-				str = str.slice(0, opts.maxStringLength) + '...';
-			}
-			// inspectShared is the formatting util shares with console; util.go passes it in.
-			return inspectShared.quote(str);
-		}
-
 		const formatKey = inspectShared.key;
+
 
 		function formatFunction(fn) {
 			const name = fn.name || '(anonymous)';
@@ -211,23 +215,24 @@
 
 		function formatArray(arr, depth) {
 			if (arr.length === 0) return '[]';
-			
+			layout.currentDepth = depth;
+
 			const items = [];
-			const maxLen = Math.min(arr.length, opts.maxArrayLength);
-			
+			const maxLen = Math.min(arr.length, Math.max(0, layout.maxArrayLength));
+
+			// Each element is read once; whether they're all numbers decides how columns align.
+			let numbers = true;
 			for (let i = 0; i < maxLen; i++) {
-				items.push(inspectValue(arr[i], depth + 1));
-			}
-			
-			if (arr.length > maxLen) {
-				items.push(`... ${arr.length - maxLen} more items`);
+				const element = arr[i];
+				numbers = numbers && (typeof element === 'number' || typeof element === 'bigint');
+				items.push(inspectValue(element, depth + 1));
 			}
 
-			if (items.some(item => item.indexOf('\n') !== -1)) {
-				const lines = items.map(item => item.replace(/\n/g, '\n  '));
-				return '[\n  ' + lines.join(',\n  ') + '\n]';
+			if (arr.length > maxLen) {
+				items.push(inspectShared.more(arr.length - maxLen));
 			}
-			return '[ ' + items.join(', ') + ' ]';
+
+			return reduce(items, '[', ']', depth, { array: true, numbers });
 		}
 
 		function formatObject(obj, depth) {
@@ -242,6 +247,7 @@
 				return '{}';
 			}
 
+			layout.currentDepth = depth;
 			const items = keys.map(key => {
 				const value = inspectValue(obj[key], depth + 1);
 				return `${formatKey(key)}: ${value}`;
@@ -253,7 +259,21 @@
 				prefix = proto.constructor.name + ' ';
 			}
 
-			return prefix + '{ ' + items.join(', ') + ' }';
+			return reduce(items, prefix + '{', '}', depth);
+		}
+
+		// formatBinary prints an ArrayBuffer or DataView: what inspectShared.binary describes
+		// for it, then its own keys.
+		function formatBinary(value, bin, depth) {
+			layout.currentDepth = depth;
+			const keys = bin.keys.concat(Object.keys(value));
+			const output = bin.entries.concat(keys.map(key => {
+				const f = inspectShared.field(value, key);
+				return `${f.name}: ${'label' in f ? f.label : inspectValue(f.value, depth + 1)}`;
+			}));
+			// Node sorts every entry, the ones binary describes included.
+			if (opts.sorted) output.sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
+			return reduce(output, bin.name + ' {', '}', depth);
 		}
 
 		function errorCtorName(err) {
@@ -313,7 +333,8 @@
 			const message = err.message != null ? String(err.message) : '';
 			const rawStack = err.stack ? String(err.stack) : '';
 			let stack = rawStack || (name + (message ? ': ' + message : ''));
-			stack = improveErrorStack(stack, name, errorCtorName(err));
+			const ctor = errorCtorName(err);
+			stack = improveErrorStack(stack, name, ctor);
 
 			const from = message && stack.indexOf(message) >= 0
 				? stack.indexOf(message) + message.length
@@ -321,8 +342,6 @@
 			if (stack.indexOf('\n    at', from) === -1) {
 				stack = '[' + stack + ']';
 			}
-
-			if (depth > opts.depth) return stack;
 
 			let keys = [];
 			try { keys = Object.keys(err); } catch (e) { keys = []; }
@@ -344,7 +363,11 @@
 			} catch (e) {}
 
 			if (keys.length === 0 && hidden.length === 0) return stack;
+			// Past the depth limit, an Error with properties to print shows its constructor's
+			// name alone.
+			if (depth > opts.depth) return ctor === null ? '[Object: null prototype]' : `[${ctor}]`;
 
+			layout.currentDepth = depth;
 			const parts = [];
 			for (const key of keys) {
 				parts.push(formatKey(key) + ': ' + inspectValue(err[key], depth + 1));
@@ -353,45 +376,30 @@
 				parts.push('[' + key + ']: ' + inspectValue(err[key], depth + 1));
 			}
 
-			const multiline = stack.indexOf('\n') !== -1 ||
-				parts.some(part => part.indexOf('\n') !== -1);
-			if (multiline) {
-				const lines = parts.map(part => part.replace(/\n/g, '\n  '));
-				return stack + ' {\n  ' + lines.join(',\n  ') + '\n}';
+			return reduce(parts, '{', '}', depth, { base: stack });
+		}
+
+		// formatEntries prints a Map's or Set's entries, at most maxArrayLength of them.
+		function formatEntries(name, size, entries, depth, format) {
+			if (size === 0) return `${name}(0) {}`;
+			layout.currentDepth = depth;
+			const items = [];
+			const shown = Math.max(0, layout.maxArrayLength);
+			for (const entry of entries) {
+				if (items.length >= shown) break;
+				items.push(format(entry));
 			}
-			return stack + ' { ' + parts.join(', ') + ' }';
+			if (size > shown) items.push(inspectShared.more(size - shown));
+			return reduce(items, `${name}(${size}) {`, '}', depth);
 		}
 
 		function formatMap(map, depth) {
-			if (map.size === 0) return 'Map(0) {}';
-			const items = [];
-			map.forEach((value, key) => {
-				items.push(`${inspectValue(key, depth + 1)} => ${inspectValue(value, depth + 1)}`);
-			});
-			return `Map(${map.size}) { ${items.join(', ')} }`;
+			return formatEntries('Map', map.size, map, depth,
+				([key, value]) => `${inspectValue(key, depth + 1)} => ${inspectValue(value, depth + 1)}`);
 		}
 
 		function formatSet(set, depth) {
-			if (set.size === 0) return 'Set(0) {}';
-			const items = [];
-			set.forEach(value => {
-				items.push(inspectValue(value, depth + 1));
-			});
-			return `Set(${set.size}) { ${items.join(', ')} }`;
-		}
-
-		function formatTypedArray(arr) {
-			const shown = inspectShared.view(arr, opts.maxArrayLength);
-			if (shown !== null) return shown;
-			const name = arr.constructor.name;
-			const len = arr.length;
-			if (len === 0) return `${name}(0) []`;
-			const items = Array.from(arr.slice(0, Math.min(len, opts.maxArrayLength)));
-			let str = `${name}(${len}) [ ${items.join(', ')}`;
-			if (len > opts.maxArrayLength) {
-				str += `, ... ${len - opts.maxArrayLength} more items`;
-			}
-			return str + ' ]';
+			return formatEntries('Set', set.size, set, depth, value => inspectValue(value, depth + 1));
 		}
 
 		return inspectValue(obj, 0);

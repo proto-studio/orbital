@@ -338,3 +338,105 @@ func TestUtil_Name(t *testing.T) {
 		t.Errorf("Name() should return 'util', got %q", u.Name())
 	}
 }
+
+// TestUtil_InspectDataView checks that a DataView prints its fields and buffer, on lines of
+// their own since they don't fit on one.
+func TestUtil_InspectDataView(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`__util_module.inspect(new DataView(new ArrayBuffer(2)))`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "DataView {\n  byteLength: 2,\n  byteOffset: 0,\n  buffer: ArrayBuffer { [Uint8Contents]: <00 00>, byteLength: 2 }\n}"
+	if got := result.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestUtil_InspectBinaryPastDepth checks that an ArrayBuffer past the depth limit is named
+// without reading more of it than its constructor, so a toStringTag getter that throws doesn't
+// break inspection.
+func TestUtil_InspectBinaryPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const ab = new ArrayBuffer(2);
+		Object.defineProperty(ab, Symbol.toStringTag, { get() { throw new Error('tag'); } });
+		__util_module.inspect({ x: ab }, { depth: 0 });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ x: [ArrayBuffer] }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestUtil_InspectBreaksLines checks that output longer than breakLength goes across lines, and
+// that an array of short numbers goes in right-aligned columns.
+func TestUtil_InspectBreaksLines(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	tests := []struct {
+		input, want string
+	}{
+		{`__util_module.inspect(Array.from({ length: 30 }, (_, i) => i))`,
+			"[\n   0,  1,  2,  3,  4,  5,  6,  7,  8,\n   9, 10, 11, 12, 13, 14, 15, 16, 17,\n  18, 19, 20, 21, 22, 23, 24, 25, 26,\n  27, 28, 29\n]"},
+		{`__util_module.inspect({ a: 'a'.repeat(20), b: 'b'.repeat(20), c: 'c'.repeat(20), d: 'd'.repeat(20) })`,
+			"{\n  a: 'aaaaaaaaaaaaaaaaaaaa',\n  b: 'bbbbbbbbbbbbbbbbbbbb',\n  c: 'cccccccccccccccccccc',\n  d: 'dddddddddddddddddddd'\n}"},
+		{`__util_module.inspect({ a: 1, b: [1, 2] })`, "{ a: 1, b: [ 1, 2 ] }"},
+		{`__util_module.inspect({ a: 'a'.repeat(30), b: 'b'.repeat(30) }, { breakLength: Infinity })`,
+			"{ a: '" + strings.Repeat("a", 30) + "', b: '" + strings.Repeat("b", 30) + "' }"},
+	}
+	for _, tt := range tests {
+		result, err := rt.RunScript(tt.input, "test.js")
+		if err != nil {
+			t.Fatalf("RunScript failed for %q: %v", tt.input, err)
+		}
+		if got := result.String(); got != tt.want {
+			t.Errorf("For %q:\ngot  %q\nwant %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestUtil_InspectReadsElementsOnce checks that laying an array out in columns doesn't read its
+// elements again, which would run a getter twice.
+func TestUtil_InspectReadsElementsOnce(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const arr = [0, 1, 2, 3, 4, 5, 6, 7];
+		let reads = 0;
+		Object.defineProperty(arr, 0, { get() { if (reads++) throw new Error('read twice'); return 5; }, enumerable: true });
+		__util_module.inspect(arr) + ' ' + reads;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "[\n  5, 1, 2, 3,\n  4, 5, 6, 7\n] 1"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestUtil_InspectProxyPastDepth checks that a proxy whose getPrototypeOf trap throws can still
+// be inspected past the depth limit.
+func TestUtil_InspectProxyPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const p = new Proxy({}, { getPrototypeOf() { throw new Error('trap'); } });
+		__util_module.inspect({ x: p }, { depth: 0 });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ x: [Object] }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

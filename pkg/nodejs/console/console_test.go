@@ -418,3 +418,36 @@ func TestConsole_Name(t *testing.T) {
 		t.Errorf("Name() should return 'console', got %q", c.Name())
 	}
 }
+
+// TestConsole_LogDataView checks that console.log prints a DataView's fields and buffer rather
+// than {}.
+func TestConsole_LogDataView(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	if _, err := rt.RunScript(`console.log(new DataView(new ArrayBuffer(2)))`, "test.js"); err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "DataView {\n  byteLength: 2,\n  byteOffset: 0,\n  buffer: ArrayBuffer { [Uint8Contents]: <00 00>, byteLength: 2 }\n}\n"
+	if got := stripAnsi(stdout.String()); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestConsole_LogBreaksLines checks that console.log puts a long array in columns, and indents
+// each line of it inside a group.
+func TestConsole_LogBreaksLines(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	script := `console.group(); console.log(Array.from({ length: 30 }, (_, i) => i)); console.groupEnd()`
+	if _, err := rt.RunScript(script, "test.js"); err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "  [\n     0,  1,  2,  3,  4,  5,  6,  7,  8,\n     9, 10, 11, 12, 13, 14, 15, 16, 17,\n    18, 19, 20, 21, 22, 23, 24, 25, 26,\n    27, 28, 29\n  ]\n"
+	if got := stripAnsi(stdout.String()); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
