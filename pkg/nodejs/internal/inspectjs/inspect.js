@@ -2,7 +2,7 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers and DataViews, and laying a
 // value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, more, view, binary, cut, reduce }.
+// { context, quote, string, key, more, view, binary, field, cut, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -131,8 +131,15 @@
   const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
   // Whether value may be an ArrayBuffer or SharedArrayBuffer: it inherits from one, or from no
   // Object of this realm, like one with a null prototype or from another realm.
-  const mayBeBuffer = (value) => value instanceof ArrayBuffer || !(value instanceof Object) ||
-    (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
+  // A proxy whose getPrototypeOf trap throws is none of them.
+  const mayBeBuffer = (value) => {
+    try {
+      return value instanceof ArrayBuffer || !(value instanceof Object) ||
+        (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
+    } catch (e) {
+      return false;
+    }
+  };
 
   // The name util.inspect puts before an object's brace: the constructor's name, the kind of
   // object in brackets when its toStringTag differs, or [Kind: null prototype] without one. A
@@ -192,8 +199,17 @@
 
   // cut names value in brackets, as util.inspect prints it past the depth limit, or answers null
   // when Node prints it in full anyway: when it's empty, a RegExp, a Date without properties or
-  // a Buffer. Errors are left to the caller.
+  // a Buffer. Errors are left to the caller. A value that throws when looked at, like a proxy
+  // with a throwing trap, is [Object].
   function cut(value) {
+    try {
+      return cutName(value);
+    } catch (e) {
+      return '[Object]';
+    }
+  }
+
+  function cutName(value) {
     // Only the name is needed, so no bytes are read.
     const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
@@ -211,6 +227,18 @@
     if (proto === null) return '[Object: null prototype]';
     const name = proto.constructor && proto.constructor.name;
     return `[${name || 'Object'}]`;
+  }
+
+  // field describes property k of value as util.inspect prints one of the keys binary lists:
+  // { name, value } with the value to format, or { name, label } for an accessor, which isn't
+  // called. An own property that isn't enumerable is named in brackets. A key value doesn't
+  // own, like byteLength from its prototype, is read as usual.
+  function field(value, k) {
+    const desc = Object.getOwnPropertyDescriptor(value, k);
+    if (desc === undefined) return { name: key(k), value: value[k] };
+    const name = desc.enumerable ? key(k) : `[${k}]`;
+    if ('value' in desc) return { name, value: desc.value };
+    return { name, label: desc.get === undefined ? '[Setter]' : desc.set === undefined ? '[Getter]' : '[Getter/Setter]' };
   }
 
   // Node's colors are SGR escapes like \x1b[33m, which take no room on screen.
@@ -366,5 +394,5 @@
     return `${open}${ln}${output.map(indent).join(',\n  ')} ${close}`;
   }
 
-  return { context, quote, string, key, more, view, binary, cut, reduce };
+  return { context, quote, string, key, more, view, binary, field, cut, reduce };
 })()

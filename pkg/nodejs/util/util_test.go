@@ -422,3 +422,21 @@ func TestUtil_InspectReadsElementsOnce(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestUtil_InspectProxyPastDepth checks that a proxy whose getPrototypeOf trap throws can still
+// be inspected past the depth limit.
+func TestUtil_InspectProxyPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const p = new Proxy({}, { getPrototypeOf() { throw new Error('trap'); } });
+		__util_module.inspect({ x: p }, { depth: 0 });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ x: [Object] }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

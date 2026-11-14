@@ -826,13 +826,34 @@ func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
 		}
 		for i := 0; i < names.ArrayLength(); i++ {
 			if keyVal, err := names.GetIndex(i); err == nil && keyVal != nil {
-				if part, ok := c.formatProperty(v, keyVal, depth); ok {
+				if part, ok := c.formatField(v, keyVal, depth); ok {
 					parts = append(parts, part)
 				}
 			}
 		}
 	}
 	return c.reduce(parts, name+" {", "}", depth, ""), true
+}
+
+// formatField formats one of the keys of an ArrayBuffer or DataView at depth as inspect's field
+// describes it, which leaves accessors uncalled and gives a label for them instead.
+func (c *Console) formatField(v, keyVal *v8.Value, depth int) (string, bool) {
+	f := c.inspectValue("field", v, keyVal)
+	if f == nil || !f.IsObject() {
+		return "", false
+	}
+	name, err := f.Get("name")
+	if err != nil || name == nil {
+		return "", false
+	}
+	if label, err := f.Get("label"); err == nil && label != nil && label.IsString() {
+		return name.String() + ": " + label.String(), true
+	}
+	val, err := f.Get("value")
+	if err != nil || val == nil {
+		return "", false
+	}
+	return name.String() + ": " + c.formatValueQuotedWithDepth(val, depth), true
 }
 
 // integer makes a JavaScript number to pass to console_inspect.js.
