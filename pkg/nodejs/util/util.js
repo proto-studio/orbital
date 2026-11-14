@@ -116,6 +116,9 @@
 		}, options);
 
 		const seen = new WeakSet();
+		// deepest is the depth of the object whose entries were last formatted. Once a value's
+		// entries are formatted, it tells reduce how many levels of objects the value holds.
+		let deepest = 0;
 
 		function inspectValue(value, currentDepth) {
 			// Handle null and undefined
@@ -150,9 +153,12 @@
 					return result;
 				}
 
+				const bin = inspectShared.binary(value, opts.maxArrayLength);
+
 				// Depth check
 				if (currentDepth > opts.depth) {
 					if (Array.isArray(value)) return '[Array]';
+					if (bin !== null) return `[${bin.name}]`;
 					return '[Object]';
 				}
 
@@ -178,6 +184,8 @@
 					result = formatSet(value, currentDepth);
 				} else if (value instanceof Promise) {
 					result = 'Promise { <pending> }';
+				} else if (bin !== null) {
+					result = formatBinary(value, bin, currentDepth);
 				} else if (ArrayBuffer.isView(value)) {
 					result = formatTypedArray(value);
 				} else {
@@ -223,11 +231,7 @@
 				items.push(`... ${arr.length - maxLen} more items`);
 			}
 
-			if (items.some(item => item.indexOf('\n') !== -1)) {
-				const lines = items.map(item => item.replace(/\n/g, '\n  '));
-				return '[\n  ' + lines.join(',\n  ') + '\n]';
-			}
-			return '[ ' + items.join(', ') + ' ]';
+			return braces(items, '[', ']');
 		}
 
 		function formatObject(obj, depth) {
@@ -253,7 +257,31 @@
 				prefix = proto.constructor.name + ' ';
 			}
 
-			return prefix + '{ ' + items.join(', ') + ' }';
+			return prefix + braces(items, '{', '}');
+		}
+
+		// braces puts items between open and close: on one line, or one per line when one
+		// spans lines.
+		function braces(items, open, close) {
+			if (items.some(item => item.indexOf('\n') !== -1)) {
+				const lines = items.map(item => item.replace(/\n/g, '\n  '));
+				return open + '\n  ' + lines.join(',\n  ') + '\n' + close;
+			}
+			return open + ' ' + items.join(', ') + ' ' + close;
+		}
+
+		// formatBinary prints an ArrayBuffer or DataView: what inspectShared.binary describes
+		// for it, then its own keys.
+		function formatBinary(value, bin, depth) {
+			deepest = depth;
+			const keys = bin.keys.concat(Object.keys(value));
+			const output = bin.entries.concat(keys.map(key => `${formatKey(key)}: ${inspectValue(value[key], depth + 1)}`));
+			return inspectShared.reduce(output, bin.name + ' {', '}', {
+				level: depth,
+				nested: deepest - depth,
+				breakLength: opts.breakLength,
+				compact: opts.compact
+			});
 		}
 
 		function errorCtorName(err) {
@@ -313,7 +341,8 @@
 			const message = err.message != null ? String(err.message) : '';
 			const rawStack = err.stack ? String(err.stack) : '';
 			let stack = rawStack || (name + (message ? ': ' + message : ''));
-			stack = improveErrorStack(stack, name, errorCtorName(err));
+			const ctor = errorCtorName(err);
+			stack = improveErrorStack(stack, name, ctor);
 
 			const from = message && stack.indexOf(message) >= 0
 				? stack.indexOf(message) + message.length
@@ -321,8 +350,6 @@
 			if (stack.indexOf('\n    at', from) === -1) {
 				stack = '[' + stack + ']';
 			}
-
-			if (depth > opts.depth) return stack;
 
 			let keys = [];
 			try { keys = Object.keys(err); } catch (e) { keys = []; }
@@ -344,6 +371,9 @@
 			} catch (e) {}
 
 			if (keys.length === 0 && hidden.length === 0) return stack;
+			// Past the depth limit, an Error with properties to print shows its constructor's
+			// name alone.
+			if (depth > opts.depth) return ctor === null ? '[Object: null prototype]' : `[${ctor}]`;
 
 			const parts = [];
 			for (const key of keys) {
@@ -368,7 +398,7 @@
 			map.forEach((value, key) => {
 				items.push(`${inspectValue(key, depth + 1)} => ${inspectValue(value, depth + 1)}`);
 			});
-			return `Map(${map.size}) { ${items.join(', ')} }`;
+			return `Map(${map.size}) ` + braces(items, '{', '}');
 		}
 
 		function formatSet(set, depth) {
@@ -377,7 +407,7 @@
 			set.forEach(value => {
 				items.push(inspectValue(value, depth + 1));
 			});
-			return `Set(${set.size}) { ${items.join(', ')} }`;
+			return `Set(${set.size}) ` + braces(items, '{', '}');
 		}
 
 		function formatTypedArray(arr) {

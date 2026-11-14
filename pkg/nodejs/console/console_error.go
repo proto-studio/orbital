@@ -256,13 +256,16 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 	stack = improveStack(stack, name, info.ctor, info.nullProto)
 	stack = c.applyCauseFrames(stack, v, message)
 
-	// Past the inspect depth, Node still shows the stack but not further
-	// properties of an Error that is only reached through nesting.
-	if depth <= 0 {
-		return stack
-	}
 	if len(keys) == 0 {
 		return stack
+	}
+	// Past the inspect depth, Node shows an Error that has properties to print by its
+	// constructor's name alone.
+	if depth <= 0 {
+		if info.nullProto {
+			return "[Object: null prototype]"
+		}
+		return "[" + info.ctor + "]"
 	}
 
 	parts := make([]string, 0, len(keys))

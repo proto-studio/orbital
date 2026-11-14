@@ -338,3 +338,19 @@ func TestUtil_Name(t *testing.T) {
 		t.Errorf("Name() should return 'util', got %q", u.Name())
 	}
 }
+
+// TestUtil_InspectDataView checks that a DataView prints its fields and buffer, on lines of
+// their own since they don't fit on one.
+func TestUtil_InspectDataView(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`__util_module.inspect(new DataView(new ArrayBuffer(2)))`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "DataView {\n  byteLength: 2,\n  byteOffset: 0,\n  buffer: ArrayBuffer { [Uint8Contents]: <00 00>, byteLength: 2 }\n}"
+	if got := result.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

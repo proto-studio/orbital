@@ -41,6 +41,12 @@ type Console struct {
 	splitNUL *v8.Value
 	// inspect holds the functions from console_inspect.js.
 	inspect *v8.Value
+	// ctx makes the strings passed to inspect's reduce.
+	ctx *v8.Context
+	// deepest is the depth (counting down) of the object whose entries were last formatted.
+	// Once a value's entries are formatted, it tells reduce how many levels of objects the
+	// value holds.
+	deepest int
 }
 
 // New creates a new Console module with default settings.
@@ -107,6 +113,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 
 	iso := rt.Isolate()
 	ctx := rt.Context()
+	c.ctx = ctx
 
 	// Create console object
 	consoleObj, err := ctx.NewObject()
@@ -651,9 +658,14 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 	return v.String()
 }
 
+// topDepth is the depth a top-level value is formatted at. Depth counts down as values nest,
+// and one at depth 0 is cut short, so the values three objects in (Node's default depth of 2
+// counts from 0) are the last printed in full.
+const topDepth = 3
+
 // formatArray formats an array value with colored elements.
 func (c *Console) formatArray(v *v8.Value) string {
-	return c.formatArrayWithDepth(v, 2)
+	return c.formatArrayWithDepth(v, topDepth)
 }
 
 // formatArrayWithDepth formats an array with depth limiting.
@@ -684,7 +696,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 
 // formatObject formats an object value.
 func (c *Console) formatObject(v *v8.Value) string {
-	return c.formatObjectWithDepth(v, 2)
+	return c.formatObjectWithDepth(v, topDepth)
 }
 
 // formatObjectWithDepth formats an object with depth limiting.
@@ -695,6 +707,9 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		return s
 	}
 	if s, ok := c.inspectCall("view", v); ok {
+		return s
+	}
+	if s, ok := c.formatBinary(v, depth); ok {
 		return s
 	}
 	if depth <= 0 {
@@ -761,6 +776,102 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 		return multilineBraces("{", "}", parts)
 	}
 	return "{ " + strings.Join(parts, ", ") + " }"
+}
+
+// formatBinary prints an ArrayBuffer or DataView: the entries and keys inspect's binary
+// describes for it, then its own keys. It reports false for anything else.
+func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
+	bin := c.inspectValue("binary", v)
+	if bin == nil || !bin.IsObject() {
+		return "", false
+	}
+	nameVal, err := bin.Get("name")
+	if err != nil || nameVal == nil {
+		return "", false
+	}
+	name := nameVal.String()
+	if depth <= 0 {
+		return "[" + name + "]", true
+	}
+	c.deepest = depth
+
+	var parts []string
+	if entries, err := bin.Get("entries"); err == nil && entries != nil && entries.IsArray() {
+		for i := 0; i < entries.ArrayLength(); i++ {
+			if entry, err := entries.GetIndex(i); err == nil && entry != nil {
+				parts = append(parts, entry.String())
+			}
+		}
+	}
+	var keys []*v8.Value
+	for _, list := range []func() (*v8.Value, error){
+		func() (*v8.Value, error) { return bin.Get("keys") },
+		v.GetPropertyNames,
+	} {
+		names, err := list()
+		if err != nil || names == nil || !names.IsArray() {
+			continue
+		}
+		for i := 0; i < names.ArrayLength(); i++ {
+			if keyVal, err := names.GetIndex(i); err == nil && keyVal != nil {
+				keys = append(keys, keyVal)
+			}
+		}
+	}
+	for _, keyVal := range keys {
+		key, ok := c.inspectCall("key", keyVal)
+		if !ok {
+			key = keyVal.String()
+		}
+		val := c.inspectValue("get", v, keyVal)
+		if val == nil {
+			continue
+		}
+		parts = append(parts, key+": "+c.formatValueQuotedWithDepth(val, depth))
+	}
+	return c.reduce(parts, name+" {", "}", topDepth-depth, depth-c.deepest), true
+}
+
+// reduce lays parts out between open and close with inspect's reduce: on one line when they
+// fit, otherwise one per line. level is how many objects the value sits inside, and nested is
+// how many levels of objects it holds.
+func (c *Console) reduce(parts []string, open, close string, level, nested int) string {
+	if s, ok := c.reduceJS(parts, open, close, level, nested); ok {
+		return s
+	}
+	return multilineBraces(open, close, parts)
+}
+
+func (c *Console) reduceJS(parts []string, open, close string, level, nested int) (string, bool) {
+	if c.ctx == nil {
+		return "", false
+	}
+	arr, err := c.ctx.NewArray(len(parts))
+	if err != nil {
+		return "", false
+	}
+	for i, part := range parts {
+		s, err := c.ctx.NewString(part)
+		if err != nil || arr.SetIndex(i, s) != nil {
+			return "", false
+		}
+	}
+	openVal, err := c.ctx.NewString(open)
+	if err != nil {
+		return "", false
+	}
+	closeVal, err := c.ctx.NewString(close)
+	if err != nil {
+		return "", false
+	}
+	opts, err := c.ctx.NewObject()
+	if err != nil {
+		return "", false
+	}
+	if opts.Set("level", c.ctx.NewInteger(int64(level))) != nil || opts.Set("nested", c.ctx.NewInteger(int64(nested))) != nil {
+		return "", false
+	}
+	return c.inspectCall("reduce", arr, openVal, closeVal, opts)
 }
 
 // assertFunc implements runtime.assert.
@@ -963,7 +1074,7 @@ func (c *Console) dirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	indent := strings.Repeat("  ", c.groupDepth)
-	c.writer.Log(indent + c.formatValueDeep(args[0], 2))
+	c.writer.Log(indent + c.formatValueDeep(args[0], topDepth))
 	return nil
 }
 

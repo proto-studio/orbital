@@ -1,7 +1,7 @@
 // The parts of Node's util.inspect that the console and util modules both need: quoting strings
-// and object keys, and printing Buffers and typed arrays. They share one copy, and each loads it
-// itself, since an embedder can register either one without the other. Evaluates to
-// { quote, key, view }.
+// and object keys, printing Buffers, typed arrays, ArrayBuffers and DataViews, and fitting a
+// value's entries onto lines. They share one copy, and each loads it itself, since an embedder
+// can register either one without the other. Evaluates to { quote, key, view, binary, reduce }.
 (function () {
   // META[c] is how util.inspect writes control character c (0x00-0x1F) inside a quoted string:
   // \b, \t, \n, \f and \r for those five, and \xNN for the rest.
@@ -68,5 +68,92 @@
     return `${name}(${value.length}) [ ${items.join(', ')}${extra > 0 ? `, ... ${extra} more item${extra > 1 ? 's' : ''}` : ''} ]`;
   }
 
-  return { quote, key, view };
+  // Brand checks: each getter throws for anything but its own kind of object.
+  const getter = (proto, name) => Object.getOwnPropertyDescriptor(proto, name).get;
+  const brand = (get) => (value) => {
+    try {
+      get.call(value);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+  const isArrayBuffer = brand(getter(ArrayBuffer.prototype, 'byteLength'));
+  const isSharedArrayBuffer = typeof SharedArrayBuffer === 'function'
+    ? brand(getter(SharedArrayBuffer.prototype, 'byteLength'))
+    : () => false;
+  const isDataView = brand(getter(DataView.prototype, 'byteLength'));
+
+  // The name util.inspect puts before an object's brace: the constructor's name, the kind of
+  // object in brackets when its toStringTag differs, or [Kind: null prototype] without one.
+  function prefix(value, fallback) {
+    let ctor = null;
+    for (let obj = value; obj !== null && ctor === null; obj = Object.getPrototypeOf(obj)) {
+      const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
+      if (desc && typeof desc.value === 'function' && desc.value.name !== '') ctor = desc.value.name;
+    }
+    const tag = value[Symbol.toStringTag];
+    if (ctor === null) return `[${fallback}: null prototype]`;
+    if (typeof tag === 'string' && tag !== '' && tag !== ctor) return `${ctor} [${tag}]`;
+    return ctor;
+  }
+
+  // binary describes an ArrayBuffer, SharedArrayBuffer or DataView the way util.inspect prints
+  // one, as { name, entries, keys }: name goes before the brace (and in brackets in place of the
+  // value past the depth limit), entries come first between the braces, and keys are properties
+  // to print next, before the value's own keys. An ArrayBuffer's entries show at most
+  // maxArrayLength bytes. It answers null for anything else.
+  function binary(value, maxArrayLength = 100) {
+    if (value === null || typeof value !== 'object') return null;
+    if (isDataView(value)) {
+      // .buffer goes last, as it's the one that isn't a number.
+      return { name: prefix(value, 'DataView'), entries: [], keys: ['byteLength', 'byteOffset', 'buffer'] };
+    }
+    const shared = !isArrayBuffer(value);
+    if (shared && !isSharedArrayBuffer(value)) return null;
+    let bytes;
+    try {
+      bytes = new Uint8Array(value);
+    } catch (e) {
+      // Only a detached ArrayBuffer can't be viewed.
+      bytes = null;
+    }
+    let contents = '(detached)';
+    if (bytes !== null) {
+      const hex = [];
+      for (let i = 0; i < Math.min(maxArrayLength, bytes.length); i++) hex.push(bytes[i].toString(16).padStart(2, '0'));
+      const extra = bytes.length - maxArrayLength;
+      contents = '[Uint8Contents]: <' + hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') + '>';
+    }
+    return {
+      name: prefix(value, shared ? 'SharedArrayBuffer' : 'ArrayBuffer'),
+      entries: [contents],
+      keys: ['byteLength']
+    };
+  }
+
+  // Node's colors are SGR escapes like \x1b[33m, which take no room on screen.
+  const COLORS = /\u001b\[\d\d?m/g;
+  const width = (s) => s.replace(COLORS, '').length;
+
+  // reduce joins a value's entries between its braces as util.inspect does. They go on one line
+  // when none spans lines, the value holds fewer than compact levels of objects (nested), and the
+  // line, started level objects deep, fits in breakLength. Otherwise each entry goes on its own
+  // line, indented two spaces, along with any lines it spans.
+  function reduce(output, open, close, { level = 0, nested = 0, breakLength = 80, compact = 3 } = {}) {
+    if (typeof compact === 'number' && compact >= 1 && nested < compact) {
+      // Each level indents two columns. Node allows 10 more characters, and counts each
+      // entry's comma and space, and the commas once more before it adds up the entries.
+      let total = output.length * 2 + level * 2 + open.length + 10;
+      let fits = total + output.length <= breakLength;
+      for (let i = 0; fits && i < output.length; i++) {
+        total += width(output[i]);
+        fits = total <= breakLength && !output[i].includes('\n');
+      }
+      if (fits) return `${open} ${output.join(', ')} ${close}`;
+    }
+    return `${open}\n  ${output.map((entry) => entry.replace(/\n/g, '\n  ')).join(',\n  ')}\n${close}`;
+  }
+
+  return { quote, key, view, binary, reduce };
 })()
