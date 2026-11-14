@@ -118,6 +118,9 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	fn, err := ctx.RunScript(args[0].String(), args[1].String())
 	if err != nil || fn == nil || !fn.IsFunction() {
+		// RunScript keeps what a failed script threw for reporting an uncaught error
+		// from the main script. This failure is not one: the caller throws it again.
+		ctx.TakeLastScriptException()
 		return ctx.Undefined()
 	}
 	return fn
