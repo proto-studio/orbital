@@ -561,7 +561,14 @@ func runFile(filename string) error {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	return runCodeWithPath(string(source), filename, jsFilename, jsDirname)
+	// Name the script by its absolute path, as Node does. V8 hands that name to
+	// import() as the referrer, so the entry's import() calls resolve relative to
+	// the entry file rather than the working directory.
+	origin := filename
+	if documentRoot == "" {
+		origin = absPath
+	}
+	return runCodeWithPath(string(source), origin, jsFilename, jsDirname)
 }
 
 func runESModule(filename string) error {

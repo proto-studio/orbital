@@ -63,6 +63,20 @@ func (m *Module) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// Create the function that compiles a module's wrapper as a script named after
+	// its file
+	compileFn, err := iso.NewFunctionTemplate(m.compileWrapperFunc)
+	if err != nil {
+		return err
+	}
+	compileVal, err := compileFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rt.SetGlobal("__compileModuleWrapper", compileVal); err != nil {
+		return err
+	}
+
 	// Run the embedded module system JavaScript
 	_, err = rt.RunScript(moduleJS, "module.js")
 	return err
@@ -88,6 +102,25 @@ func (m *Module) requireFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	result, _ := ctx.NewString(string(data))
 	return result
+}
+
+// compileWrapperFunc evaluates a module's function wrapper (args: wrapper source,
+// filename) as a script whose name is the module's filename and returns the
+// function. V8 hands that name to import() as the referrer, so a module's import()
+// calls resolve relative to its own file; code compiled by eval would report the
+// script that called eval instead. It returns undefined when the wrapper does not
+// compile, leaving the caller to compile it another way and throw the real error.
+func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.Undefined()
+	}
+	fn, err := ctx.RunScript(args[0].String(), args[1].String())
+	if err != nil || fn == nil || !fn.IsFunction() {
+		return ctx.Undefined()
+	}
+	return fn
 }
 
 // resolveFunc resolves a module path.
