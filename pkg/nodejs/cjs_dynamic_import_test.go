@@ -65,3 +65,35 @@ globalThis.log = [];
 		t.Fatalf("logged %s, want %s", logged.String(), want)
 	}
 }
+
+// With a document root, the CLI names the entry by its path under that root (as
+// __filename shows it), and import() resolves relative to it there.
+func TestDynamicImport_FromCommonJSUnderDocumentRoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "x.mjs"), []byte(`export default 'x';`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{
+		EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second,
+		Filesystem: runtime.NewLocalFilesystem(dir), DocumentRoot: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	entry := `globalThis.log = [];
+import('./x.mjs').then((ns) => log.push(ns.default), (e) => log.push('failed ' + e.message));`
+	if _, err := inst.Runtime.Run(entry, "/src/index.js"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	logged, err := inst.Runtime.RunScript("JSON.stringify(globalThis.log)", "read.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `["x"]`; logged.String() != want {
+		t.Fatalf("logged %s, want %s", logged.String(), want)
+	}
+}
