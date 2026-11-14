@@ -2,8 +2,8 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, primitive, more, view, binary, collection, scalar, field, cut,
-// entry, reduce }.
+// { context, quote, string, key, primitive, more, view, binary, collection, scalar, isDate, field,
+// cut, entry, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -205,6 +205,16 @@
   const isMap = brand(mapSize);
   const isSet = brand(setSize);
   const isDate = brand(Date.prototype.getTime);
+  // RegExp.prototype.global throws for anything but a RegExp, and answers undefined for
+  // RegExp.prototype itself, which isn't one.
+  const regExpGlobal = getter(RegExp.prototype, 'global');
+  const isRegExp = (value) => {
+    try {
+      return regExpGlobal.call(value) !== undefined;
+    } catch (e) {
+      return false;
+    }
+  };
 
   // collection describes a Map or Set the way util.inspect prints one, as { name, map, entries,
   // more }: name goes before the brace, entries are what to format, at most maxArrayLength of
@@ -239,7 +249,7 @@
       const time = Date.prototype.getTime.call(value);
       text = Number.isNaN(time) ? 'Invalid Date' : Date.prototype.toISOString.call(value);
       fallback = 'Date';
-    } else if (value instanceof RegExp) {
+    } else if (isRegExp(value)) {
       text = RegExp.prototype.toString.call(value);
       fallback = 'RegExp';
     } else {
@@ -269,7 +279,7 @@
     const bare = Object.keys(value).length === 0;
     if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : '[Map]';
     if (isSet(value)) return setSize.call(value) === 0 && bare ? null : '[Set]';
-    if (value instanceof RegExp) return null;
+    if (isRegExp(value)) return null;
     if (isDate(value)) return bare ? null : '[Date]';
     if (ArrayBuffer.isView(value)) {
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
@@ -456,5 +466,5 @@
     return `${open}${ln}${output.map(indent).join(',\n  ')} ${close}`;
   }
 
-  return { context, quote, string, key, primitive, more, view, binary, collection, scalar, field, cut, entry, reduce };
+  return { context, quote, string, key, primitive, more, view, binary, collection, scalar, isDate, field, cut, entry, reduce };
 })()

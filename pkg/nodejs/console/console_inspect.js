@@ -27,7 +27,7 @@
     // scalar answers { text, date } for a Date or RegExp, date telling them apart for coloring.
     scalar: (value) => {
       const text = inspectShared.scalar(value);
-      return text === null ? null : { text, date: !(value instanceof RegExp) };
+      return text === null ? null : { text, date: inspectShared.isDate(value) };
     },
     primitive: inspectShared.primitive,
     type: (value) => typeof value,
