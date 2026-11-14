@@ -136,6 +136,15 @@ void v8go_init() {
     // MemoryPressureNotification instead.
     V8::SetFlagsFromString("--expose_gc");
 
+    // On x64 Linux with PKU hardware, NewDefaultPlatform allocates a memory
+    // protection key and V8 tags its code pages with it. Only the thread that
+    // created the platform, and threads it later spawns, can read those pages;
+    // every other thread gets SEGV_PKUERR. Go runs isolates on whichever OS
+    // thread the scheduler picks, including threads that existed before this
+    // call (or are spawned by Go's template thread), so turn the keys off.
+    // Must be set before V8::Initialize, which reads it.
+    V8::SetFlagsFromString("--no-memory-protection-keys");
+
     V8::InitializeICUDefaultLocation("");
     V8::InitializeExternalStartupData("");
     g_platform = v8::platform::NewDefaultPlatform();
