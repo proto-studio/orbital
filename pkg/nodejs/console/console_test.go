@@ -418,3 +418,19 @@ func TestConsole_Name(t *testing.T) {
 		t.Errorf("Name() should return 'console', got %q", c.Name())
 	}
 }
+
+// TestConsole_LogDataView checks that console.log prints a DataView's fields and buffer rather
+// than {}.
+func TestConsole_LogDataView(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	if _, err := rt.RunScript(`console.log(new DataView(new ArrayBuffer(2)))`, "test.js"); err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "DataView {\n  byteLength: 2,\n  byteOffset: 0,\n  buffer: ArrayBuffer { [Uint8Contents]: <00 00>, byteLength: 2 }\n}\n"
+	if got := stripAnsi(stdout.String()); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
