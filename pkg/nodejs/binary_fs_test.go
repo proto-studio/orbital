@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -190,11 +191,17 @@ func TestBinaryStdioChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Exiting here keeps the test framework's own "PASS" line off stdout. A script that calls
+	// process.exit ends the run with an *ExitError, and the child exits with its code as node does.
+	code := 0
 	if _, err := inst.Runtime.Run(string(script), "script.js"); err != nil {
-		t.Fatal(err)
+		var exit *runtime.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatal(err)
+		}
+		code = exit.Code
 	}
-	// Exiting here keeps the test framework's own "PASS" line off stdout.
-	os.Exit(0)
+	os.Exit(code)
 }
 
 func runForStdio(t *testing.T, cmd *exec.Cmd) map[string]any {

@@ -257,6 +257,11 @@ func exitWithError(err error) {
 		fmt.Fprintf(os.Stderr, "%s\n", uncaught.Message)
 		os.Exit(uncaught.ExitCode)
 	}
+	// process.exit() has already run the 'exit' listeners.
+	var exit *runtime.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.Code)
+	}
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	os.Exit(1)
 }
@@ -578,9 +583,23 @@ func runESModule(filename string) error {
 	}
 	defer rt.Dispose()
 
+	// Preload -r modules, as for a CommonJS entry.
+	for _, mod := range requireModules {
+		requireCode := fmt.Sprintf("require(%q);", mod)
+		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
+			return fmt.Errorf("failed to require %s: %w", mod, err)
+		}
+	}
+
 	// Preload --import modules (e.g. loader-hook registrars) before the entry.
 	for _, mod := range importModules {
 		if err := esmLoader.Preload(mod); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}
 	}
@@ -594,8 +613,8 @@ func runESModule(filename string) error {
 
 	// Run any pending async operations
 	rt.EventLoop().Run()
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return uncaught
+	if ended := rt.Ended(); ended != nil {
+		return ended
 	}
 
 	finalizeExit(rt)
@@ -652,6 +671,10 @@ func runCodeAndReturn(source, origin string) (string, error) {
 	for _, mod := range requireModules {
 		requireCode := fmt.Sprintf("require(%q);", mod)
 		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			// A preload can call process.exit, which ends the runtime with its code.
+			if ended := rt.Ended(); ended != nil {
+				return "", ended
+			}
 			return "", fmt.Errorf("failed to require %s: %w", mod, err)
 		}
 	}
@@ -695,8 +718,8 @@ func runESModuleSource(source, origin string) error {
 	}
 
 	rt.EventLoop().Run()
-	if uncaught := rt.UncaughtError(); uncaught != nil {
-		return uncaught
+	if ended := rt.Ended(); ended != nil {
+		return ended
 	}
 	finalizeExit(rt)
 	return nil
@@ -709,12 +732,18 @@ func runESModuleSource(source, origin string) error {
 func finalizeExit(rt *runtime.Runtime) {
 	codeVal, err := rt.RunScript(`(function () {
 		try {
-			if (typeof process !== 'undefined' && typeof process.emit === 'function') {
+			if (typeof process !== 'undefined' && typeof process.emit === 'function' && !process._exiting) {
+				process._exiting = true;
 				process.emit('exit', process.exitCode || 0);
 			}
 		} catch (e) {}
 		return (typeof process !== 'undefined' && process.exitCode) ? Number(process.exitCode) : 0;
 	})();`, "[exit]")
+	// An 'exit' listener can call process.exit, which ends the runtime with its own code.
+	if exit := rt.ExitError(); exit != nil {
+		rt.Dispose()
+		os.Exit(exit.Code)
+	}
 	if err != nil || codeVal == nil {
 		return
 	}
@@ -765,6 +794,10 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 	for _, mod := range requireModules {
 		requireCode := fmt.Sprintf("require(%q);", mod)
 		if _, err := rt.RunScript(requireCode, "[require]"); err != nil {
+			// A preload can call process.exit, which ends the runtime with its code.
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("failed to require %s: %w", mod, err)
 		}
 	}
@@ -773,6 +806,9 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 	// script runs, so their hooks apply to modules the script imports.
 	for _, mod := range importModules {
 		if err := esmLoader.Preload(mod); err != nil {
+			if ended := rt.Ended(); ended != nil {
+				return ended
+			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}
 	}
@@ -929,6 +965,9 @@ func repl() {
 		// RunScript rather than Run: a line that throws just reports it, and the session
 		// goes on.
 		result, err := rt.RunScript(code, "repl")
+		if exit := rt.ExitError(); exit != nil {
+			os.Exit(exit.Code)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			continue
@@ -936,6 +975,9 @@ func repl() {
 
 		// Run any pending async operations
 		rt.EventLoop().Run()
+		if exit := rt.ExitError(); exit != nil {
+			os.Exit(exit.Code)
+		}
 
 		if result != nil && !result.IsUndefined() {
 			fmt.Println(result.String())

@@ -122,8 +122,8 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	if err := e.ensureLoader(); err != nil {
 		return nil, err
 	}
-	if uncaught := e.rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := e.rt.Ended(); ended != nil {
+		return nil, ended
 	}
 
 	ctx := e.rt.Context()
@@ -134,12 +134,12 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	}
 
 	if err := mod.Instantiate(e.resolveModule); err != nil {
-		return nil, err
+		return nil, e.endedOr(err)
 	}
 
 	result, err := mod.Evaluate()
 	if err != nil {
-		return nil, err
+		return nil, e.endedOr(err)
 	}
 
 	// A module always evaluates to a promise (top-level-await semantics): it
@@ -154,8 +154,8 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 
 	// Run any pending async operations (timers, microtasks, top-level await).
 	e.rt.EventLoop().Run()
-	if uncaught := e.rt.UncaughtError(); uncaught != nil {
-		return nil, uncaught
+	if ended := e.rt.Ended(); ended != nil {
+		return nil, ended
 	}
 
 	if isPromise {
@@ -166,6 +166,18 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 	}
 
 	return result, nil
+}
+
+// endedOr returns what ended the runtime in place of err, a failure from loading or
+// running module code. process.exit() terminates execution, so any step that runs
+// JavaScript fails when the program exits: Instantiate when an imported CommonJS
+// module is required to build its wrapper, Evaluate for module code itself. The
+// caller must see the exit (or uncaught error), not the module error V8 reports.
+func (e *ESM) endedOr(err error) error {
+	if ended := e.rt.Ended(); ended != nil {
+		return ended
+	}
+	return err
 }
 
 // rejectionError converts a rejected module/promise reason (usually an Error
@@ -201,7 +213,7 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 
 	source, url, err := e.resolveAndLoad(absPath, "")
 	if err != nil {
-		return nil, err
+		return nil, e.endedOr(err)
 	}
 
 	return e.RunModule(source, url)
@@ -220,7 +232,7 @@ func (e *ESM) Preload(specifier string) error {
 	}
 	source, url, err := e.resolveAndLoad(specifier, "")
 	if err != nil {
-		return err
+		return e.endedOr(err)
 	}
 	_, err = e.RunModule(source, url)
 	return err
@@ -240,14 +252,17 @@ func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 	}
 
 	if err := mod.Instantiate(e.resolveModule); err != nil {
-		return nil, err
+		return nil, e.endedOr(err)
 	}
 
 	if _, err := mod.Evaluate(); err != nil {
-		return nil, err
+		return nil, e.endedOr(err)
 	}
 
 	e.rt.EventLoop().Run()
+	if ended := e.rt.Ended(); ended != nil {
+		return nil, ended
+	}
 
 	return mod.GetNamespace()
 }
