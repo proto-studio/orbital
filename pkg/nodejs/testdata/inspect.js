@@ -13,7 +13,15 @@ class Bytes extends ArrayBuffer {}
 show(new Bytes(1));
 console.log(u.inspect(new ArrayBuffer(5), { maxArrayLength: 2 }), u.inspect({ d: dv }, { depth: 0 }));
 console.log(u.inspect(dv, { breakLength: Infinity }));
-console.log(u.inspect(new ArrayBuffer(1), { compact: false }));
+console.log(u.inspect(new ArrayBuffer(1), { compact: false }), u.inspect(new ArrayBuffer(3), { maxArrayLength: null }));
+const bare = new ArrayBuffer(1);
+Object.setPrototypeOf(bare, null);
+console.log(u.inspect(bare));
+// A custom inspector replaces the description, which would throw reading this toStringTag.
+const hooked = new ArrayBuffer(2);
+Object.defineProperty(hooked, Symbol.toStringTag, { get() { throw new Error('read the tag'); } });
+hooked[u.inspect.custom] = () => 'hooked';
+console.log(u.inspect(hooked), u.inspect({ hooked }));
 
 // console.log prints values nested three objects deep, and cuts the ones past them short.
 const err = new Error('deep');

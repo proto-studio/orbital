@@ -153,11 +153,10 @@
 					return result;
 				}
 
-				const bin = inspectShared.binary(value, opts.maxArrayLength);
-
 				// Depth check
 				if (currentDepth > opts.depth) {
 					if (Array.isArray(value)) return '[Array]';
+					const bin = inspectShared.binary(value);
 					if (bin !== null) return `[${bin.name}]`;
 					return '[Object]';
 				}
@@ -171,6 +170,9 @@
 					return typeof result === 'string' ? result : inspectValue(result, currentDepth);
 				}
 
+				// Described after the custom inspector has had its chance, which may make
+				// describing it unnecessary.
+				const bin = inspectShared.binary(value, opts.maxArrayLength);
 				let result;
 				if (Array.isArray(value)) {
 					result = formatArray(value, currentDepth);

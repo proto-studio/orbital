@@ -68,7 +68,8 @@
     return `${name}(${value.length}) [ ${items.join(', ')}${extra > 0 ? `, ... ${extra} more item${extra > 1 ? 's' : ''}` : ''} ]`;
   }
 
-  // Brand checks: each getter throws for anything but its own kind of object.
+  // Brand checks: each getter throws for anything but its own kind of object, so they only run
+  // on objects that may be one.
   const getter = (proto, name) => Object.getOwnPropertyDescriptor(proto, name).get;
   const brand = (get) => (value) => {
     try {
@@ -82,7 +83,14 @@
   const isSharedArrayBuffer = typeof SharedArrayBuffer === 'function'
     ? brand(getter(SharedArrayBuffer.prototype, 'byteLength'))
     : () => false;
-  const isDataView = brand(getter(DataView.prototype, 'byteLength'));
+  // %TypedArray%.prototype[Symbol.toStringTag] answers undefined, without throwing, for anything
+  // but a typed array; ArrayBuffer.isView covers typed arrays and DataViews.
+  const typedArrayTag = getter(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag);
+  const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
+  // Whether value may be an ArrayBuffer or SharedArrayBuffer: it inherits from one, or from no
+  // Object of this realm, like one with a null prototype or from another realm.
+  const mayBeBuffer = (value) => value instanceof ArrayBuffer || !(value instanceof Object) ||
+    (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer);
 
   // The name util.inspect puts before an object's brace: the constructor's name, the kind of
   // object in brackets when its toStringTag differs, or [Kind: null prototype] without one.
@@ -102,13 +110,15 @@
   // one, as { name, entries, keys }: name goes before the brace (and in brackets in place of the
   // value past the depth limit), entries come first between the braces, and keys are properties
   // to print next, before the value's own keys. An ArrayBuffer's entries show at most
-  // maxArrayLength bytes. It answers null for anything else.
+  // maxArrayLength bytes, or all of them when it's null. It answers null for anything else.
   function binary(value, maxArrayLength = 100) {
     if (value === null || typeof value !== 'object') return null;
+    if (maxArrayLength === null) maxArrayLength = Infinity;
     if (isDataView(value)) {
       // .buffer goes last, as it's the one that isn't a number.
       return { name: prefix(value, 'DataView'), entries: [], keys: ['byteLength', 'byteOffset', 'buffer'] };
     }
+    if (!mayBeBuffer(value)) return null;
     const shared = !isArrayBuffer(value);
     if (shared && !isSharedArrayBuffer(value)) return null;
     let bytes;
