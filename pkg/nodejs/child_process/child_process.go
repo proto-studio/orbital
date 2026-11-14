@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"proto.zip/studio/orbital/pkg/nodejs/internal/sysconst"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -99,6 +100,18 @@ func (c *ChildProcess) Register(rt *runtime.Runtime) error {
 		if err := internal.Set(name, val); err != nil {
 			return err
 		}
+	}
+
+	// kill() sends real signals, so it needs the host's numbers for their names.
+	signals, err := ctx.NewObject()
+	if err != nil {
+		return err
+	}
+	for _, sig := range sysconst.Signals() {
+		signals.Set(sig.Name, ctx.NewInteger(int64(sig.Value)))
+	}
+	if err := internal.Set("signals", signals); err != nil {
+		return err
 	}
 
 	if err := rt.SetGlobal("__child_process_internal", internal); err != nil {
