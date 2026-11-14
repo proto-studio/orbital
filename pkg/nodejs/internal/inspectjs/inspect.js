@@ -272,6 +272,8 @@
   }
 
   function cutName(value) {
+    // Read first, so a proxy whose getPrototypeOf trap throws is [Object] even when empty.
+    const proto = Object.getPrototypeOf(value);
     // Only the name is needed, so no bytes are read.
     const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
@@ -286,7 +288,6 @@
       return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
     }
     if (bare) return null;
-    const proto = Object.getPrototypeOf(value);
     if (proto === null) return '[Object: null prototype]';
     const name = proto.constructor && proto.constructor.name;
     return `[${name || 'Object'}]`;
