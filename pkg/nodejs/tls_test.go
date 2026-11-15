@@ -1353,57 +1353,45 @@ done({
 
 // Certificates the default identity check must refuse as Node does: a name that only matches
 // after Unicode case folding, DNS names in a SAN extension with trailing data, and a Common
-// Name outside its CA's name constraints. Run with ORBITAL_CAPTURE_NODE=1 to check the
+// Name outside its CA's name constraints, unless another chain allows it. Run with ORBITAL_CAPTURE_NODE=1 to check the
 // expected values against node.
 func TestTLSConnect_IdentityEdgeCasesFollowNode(t *testing.T) {
 	ca := newTestCA(t)
-	constrained := func() *testCA {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		tmpl := &x509.Certificate{
-			SerialNumber:          big.NewInt(2),
-			Subject:               pkix.Name{CommonName: "Orbital Constrained CA"},
-			NotBefore:             time.Now().Add(-time.Hour),
-			NotAfter:              time.Now().Add(time.Hour),
-			IsCA:                  true,
-			BasicConstraintsValid: true,
-			KeyUsage:              x509.KeyUsageCertSign,
-			PermittedDNSDomains:   []string{"allowed.test"},
-		}
-		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		cert, err := x509.ParseCertificate(der)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return &testCA{cert: cert, key: key, pem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}
-	}()
+	constrained := issueCA(t, "Orbital Constrained CA", nil, nil, []string{"allowed.test"})
+	// An intermediate reachable both from an unconstrained root and from a constrained one.
+	interKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openRoot := issueCA(t, "Orbital Open Root", nil, nil, nil)
+	viaOpen := issueCA(t, "Orbital Intermediate", openRoot, interKey, nil)
+	viaConstrained := issueCA(t, "Orbital Intermediate", constrained, interKey, nil)
+	crossSigned := viaOpen.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" })
+	crossSigned.Certificate = append(crossSigned.Certificate, viaOpen.cert.Raw, viaConstrained.cert.Raw)
 	// SEQUENCE { [2] "wrong.test" } followed by a DER NULL.
 	sanWithTrailer := append([]byte{0x30, 0x0c, 0x82, 0x0a}, append([]byte("wrong.test"), 0x05, 0x00)...)
 	oidSAN := asn1.ObjectIdentifier{2, 5, 29, 17}
 
 	type attempt struct {
-		ca         *testCA
+		ca         string
 		cert       tls.Certificate
 		servername string
 	}
 	attempts := map[string]attempt{
-		"unicodeCN": {ca, ca.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "İ.example.test" }), "i.example.test"},
-		"sanTrailer": {ca, ca.issueTemplate(t, func(c *x509.Certificate) {
+		"unicodeCN": {ca.pem, ca.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "İ.example.test" }), "i.example.test"},
+		"sanTrailer": {ca.pem, ca.issueTemplate(t, func(c *x509.Certificate) {
 			c.Subject.CommonName = "localhost"
 			c.ExtraExtensions = []pkix.Extension{{Id: oidSAN, Value: sanWithTrailer}}
 		}), "localhost"},
-		"constrainedCN":    {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "blocked.test"},
-		"constrainedCNOK":  {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "www.allowed.test" }), "www.allowed.test"},
-		"constrainedOther": {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "www.allowed.test"},
+		"constrainedCN":    {constrained.pem, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "blocked.test"},
+		"constrainedCNOK":  {constrained.pem, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "www.allowed.test" }), "www.allowed.test"},
+		"constrainedOther": {constrained.pem, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "www.allowed.test"},
+		"crossSigned":      {openRoot.pem + constrained.pem, crossSigned, "blocked.test"},
+		"wildcardCN":       {constrained.pem, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "*.blocked.test" }), "www.blocked.test"},
 	}
 	var cases strings.Builder
 	for name, a := range attempts {
-		fmt.Fprintf(&cases, "  %q: { port: %d, ca: %q, servername: %q },\n", name, newTLSServer(t, a.cert), a.ca.pem, a.servername)
+		fmt.Fprintf(&cases, "  %q: { port: %d, ca: %q, servername: %q },\n", name, newTLSServer(t, a.cert), a.ca, a.servername)
 	}
 	script := `
 const tls = require('tls');
@@ -1424,8 +1412,20 @@ const results = {};
   else process.stdout.write(JSON.stringify(results));
 })();
 `
+	want := map[string]any{
+		"unicodeCN":        "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: i.example.test. is not cert's CN: İ.example.test",
+		"sanTrailer":       "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: localhost. is not in the cert's altnames: DNS:wrong.test",
+		"constrainedCN":    "UNSPECIFIED: permitted subtree violation",
+		"constrainedCNOK":  "authorized",
+		"constrainedOther": "UNSPECIFIED: permitted subtree violation",
+		"crossSigned":      "authorized",
+		// Orbital holds the host a wildcard Common Name is matched for to the constraints.
+		// OpenSSL skips constraints for a Common Name with a wildcard, so Node accepts this.
+		"wildcardCN": "UNSPECIFIED: permitted subtree violation",
+	}
 	var got map[string]any
 	if captureFromNode(t) {
+		want["wildcardCN"] = "authorized"
 		path := t.TempDir() + "/edges.js"
 		if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
 			t.Fatal(err)
@@ -1440,11 +1440,40 @@ const results = {};
 	} else {
 		got = runJS(t, &runtime.Config{}, script)
 	}
-	wantJSON(t, got, map[string]any{
-		"unicodeCN":        "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: i.example.test. is not cert's CN: \u0130.example.test",
-		"sanTrailer":       "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: localhost. is not in the cert's altnames: DNS:wrong.test",
-		"constrainedCN":    "UNSPECIFIED: permitted subtree violation",
-		"constrainedCNOK":  "authorized",
-		"constrainedOther": "UNSPECIFIED: permitted subtree violation",
-	})
+	wantJSON(t, got, want)
+}
+
+// issueCA makes a CA certificate signed by parent, or by itself when parent is nil, for key
+// (a new one when nil), permitting only the given DNS domains if any are given.
+func issueCA(t *testing.T, name string, parent *testCA, key *ecdsa.PrivateKey, permitted []string) *testCA {
+	t.Helper()
+	if key == nil {
+		var err error
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: name},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		PermittedDNSDomains:   permitted,
+	}
+	signer, signerKey := tmpl, any(key)
+	if parent != nil {
+		signer, signerKey = parent.cert, parent.key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, signer, &key.PublicKey, signerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &testCA{cert: cert, key: key, pem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}
 }

@@ -299,24 +299,52 @@ func (e *ConstraintError) Error() string { return e.Message }
 var dnsLikeName = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+\.?$`)
 
 // checkCommonNameConstraints applies the CAs' DNS name constraints to a leaf's Common Name
-// when the leaf has no DNS names, as OpenSSL does. crypto/x509 only applies them to SANs.
-func checkCommonNameConstraints(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+// when the leaf has no DNS names, as OpenSSL does; crypto/x509 only applies them to SANs.
+// A non-empty host is the name the Common Name will be matched against, and is held to the
+// constraints too, so a wildcard Common Name can't reach outside them. It returns the
+// chains that satisfy the constraints, which are all of them unless the leaf names its
+// host only by Common Name.
+func checkCommonNameConstraints(leaf *x509.Certificate, chains [][]*x509.Certificate, host string) ([][]*x509.Certificate, error) {
 	if len(leaf.DNSNames) > 0 {
-		return nil
+		return chains, nil
 	}
+	var names []string
 	for _, cn := range commonNames(leaf) {
-		if !dnsLikeName.MatchString(cn) {
+		if dnsLikeName.MatchString(cn) {
+			names = append(names, asciiLower(strings.TrimSuffix(cn, ".")))
+		}
+	}
+	if host != "" {
+		if _, isIP := parseHostIP(host); !isIP {
+			names = append(names, asciiLower(strings.TrimSuffix(host, ".")))
+		}
+	}
+	var ok [][]*x509.Certificate
+	var firstErr error
+	for _, chain := range chains {
+		if err := chainPermits(chain, names); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		name := asciiLower(strings.TrimSuffix(cn, "."))
-		for _, chain := range chains {
-			for _, ca := range chain[1:] {
-				if len(ca.PermittedDNSDomains) > 0 && !anyDomainMatches(name, ca.PermittedDNSDomains) {
-					return &ConstraintError{Code: "UNSPECIFIED", Message: "permitted subtree violation"}
-				}
-				if anyDomainMatches(name, ca.ExcludedDNSDomains) {
-					return &ConstraintError{Code: "UNSPECIFIED", Message: "excluded subtree violation"}
-				}
+		ok = append(ok, chain)
+	}
+	if len(ok) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return ok, nil
+}
+
+// chainPermits checks names against the DNS name constraints of a chain's CAs.
+func chainPermits(chain []*x509.Certificate, names []string) error {
+	for _, name := range names {
+		for _, ca := range chain[1:] {
+			if len(ca.PermittedDNSDomains) > 0 && !anyDomainMatches(name, ca.PermittedDNSDomains) {
+				return &ConstraintError{Code: "UNSPECIFIED", Message: "permitted subtree violation"}
+			}
+			if anyDomainMatches(name, ca.ExcludedDNSDomains) {
+				return &ConstraintError{Code: "UNSPECIFIED", Message: "excluded subtree violation"}
 			}
 		}
 	}
