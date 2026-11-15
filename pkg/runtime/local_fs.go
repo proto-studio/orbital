@@ -62,6 +62,11 @@ func (l *LocalFilesystem) checkedPath(p string, followFinal bool) (string, error
 	if err != nil {
 		return "", err
 	}
+	if textual == absRoot {
+		// The root is the directory it names, even for calls such as lstat that otherwise
+		// look at a final link itself.
+		return realRoot, nil
+	}
 	real, err := resolveLinks(textual, followFinal)
 	if err != nil {
 		return "", err

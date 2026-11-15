@@ -152,8 +152,16 @@ func TestLocalFS_NearbyLinksWork(t *testing.T) {
 			if err := l.MkdirAll("/near/"+rootName+"/sub", 0o755); err != nil {
 				t.Errorf("MkdirAll near: %v", err)
 			}
-			if _, err := l.Stat("/"); err != nil {
-				t.Errorf("Stat root: %v", err)
+			for _, p := range []string{"/", "", "/in/.."} {
+				if info, err := l.Stat(p); err != nil || !info.IsDir {
+					t.Errorf("Stat %q = %v, %v; want the root directory", p, info, err)
+				}
+				if info, err := l.Lstat(p); err != nil || !info.IsDir {
+					t.Errorf("Lstat %q = %v, %v; want the root directory", p, info, err)
+				}
+			}
+			if entries, err := l.ReadDir("/"); err != nil || !hasEntry(entries, "a.txt") {
+				t.Errorf("ReadDir root = %v, %v", entries, err)
 			}
 			// A loop fails as the OS would fail it, not with the path check's error.
 			if _, err := l.Stat("/loop"); err == nil || errors.Is(err, ErrOutsideSandbox) {
