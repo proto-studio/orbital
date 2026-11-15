@@ -434,6 +434,22 @@ func (s *FilteredUDPSocket) SetWriteBuffer(size int) error {
 	return o.SetWriteBuffer(size)
 }
 
+// ReadBufferSize delegates to the underlying socket if it reports buffer sizes.
+func (s *FilteredUDPSocket) ReadBufferSize() (int, error) {
+	if o, ok := s.underlying.(UDPSocketBufferSizes); ok {
+		return o.ReadBufferSize()
+	}
+	return 0, errors.ErrUnsupported
+}
+
+// WriteBufferSize delegates to the underlying socket if it reports buffer sizes.
+func (s *FilteredUDPSocket) WriteBufferSize() (int, error) {
+	if o, ok := s.underlying.(UDPSocketBufferSizes); ok {
+		return o.WriteBufferSize()
+	}
+	return 0, errors.ErrUnsupported
+}
+
 // FilteredHTTPClient wraps an HTTPClient with policy enforcement.
 type FilteredHTTPClient struct {
 	underlying HTTPClient

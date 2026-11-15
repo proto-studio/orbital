@@ -468,12 +468,23 @@
 
     getRecvBufferSize() {
       this._requireBufferReady();
-      return this._recvBufferSize || 65536;
+      return this._osBufferSize('recvBuffer', this._recvBufferSize);
     }
 
     getSendBufferSize() {
       this._requireBufferReady();
-      return this._sendBufferSize || 65536;
+      return this._osBufferSize('sendBuffer', this._sendBufferSize);
+    }
+
+    // Asks the OS for the size, as Node does; a socket that can't report it falls back to the
+    // size last set.
+    _osBufferSize(name, lastSet) {
+      const size = internal.bufferSize(this._id, name);
+      if (typeof size === 'number') return size;
+      if (typeof size === 'string') {
+        throw codedError(Error, 'ERR_SOCKET_BUFFER_SIZE', 'Could not get or set buffer size');
+      }
+      return lastSet || 65536;
     }
 
     _requireBufferReady() {

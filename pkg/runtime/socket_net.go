@@ -1032,6 +1032,13 @@ type UDPSocketOptions interface {
 	SetWriteBuffer(size int) error
 }
 
+// UDPSocketBufferSizes is an optional extension of UDPSocket that reports the receive and
+// send buffer sizes the operating system uses for the socket (SO_RCVBUF and SO_SNDBUF).
+type UDPSocketBufferSizes interface {
+	ReadBufferSize() (int, error)
+	WriteBufferSize() (int, error)
+}
+
 func (s *RealUDPSocket) udpConn() (*net.UDPConn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1169,4 +1176,33 @@ func (s *RealUDPSocket) SetWriteBuffer(size int) error {
 		return err
 	}
 	return conn.SetWriteBuffer(size)
+}
+
+// ReadBufferSize returns the socket's receive buffer size as the operating system reports it.
+func (s *RealUDPSocket) ReadBufferSize() (int, error) {
+	return s.sockoptInt(syscall.SO_RCVBUF)
+}
+
+// WriteBufferSize returns the socket's send buffer size as the operating system reports it.
+func (s *RealUDPSocket) WriteBufferSize() (int, error) {
+	return s.sockoptInt(syscall.SO_SNDBUF)
+}
+
+func (s *RealUDPSocket) sockoptInt(option int) (int, error) {
+	conn, err := s.udpConn()
+	if err != nil {
+		return 0, err
+	}
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var value int
+	var sockErr error
+	if err := raw.Control(func(fd uintptr) {
+		value, sockErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, option)
+	}); err != nil {
+		return 0, err
+	}
+	return value, sockErr
 }
