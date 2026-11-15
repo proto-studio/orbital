@@ -211,3 +211,21 @@ done({ code, made: fs.existsSync('/src/out') });
 `)
 	wantJSON(t, got, map[string]any{"code": "ERR_FS_CP_EINVAL", "made": false})
 }
+
+// With a root, watchFile and unwatchFile find a watcher by the path from the root, whichever
+// way it is spelled.
+func TestFS_UnwatchFileWithRoot(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	got := runJS(t, &runtime.Config{Filesystem: memory, Timeout: 10 * time.Second}, `
+const fs = require('fs');
+fs.writeFileSync('/f', 'a');
+let calls = 0;
+fs.watchFile('f', { interval: 20 }, () => { calls++; });
+setTimeout(() => {
+  fs.unwatchFile('/f');
+  fs.writeFileSync('/f', 'abcdef');
+  setTimeout(() => done({ calls }), 150);
+}, 60);
+`)
+	wantJSON(t, got, map[string]any{"calls": 0.0})
+}

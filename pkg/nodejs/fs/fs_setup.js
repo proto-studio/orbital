@@ -1470,7 +1470,7 @@
   }
   const statWatchers = new Map();
   // Watchers are found by absolute path, so another spelling of the same path finds one.
-  const watchKey = (filename) => (pathModule() ? pathModule().resolve(String(pathString(filename))) : String(filename));
+  const watchKey = (filename) => (pathModule() ? fsResolve(String(pathString(filename))) : String(filename));
   // The path a watcher polls: on a filesystem where relative paths start at the working
   // directory, made absolute once, so a later process.chdir doesn't change what is watched.
   const cwdRelative = !!fs.__cwdRelative;
