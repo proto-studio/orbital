@@ -438,7 +438,7 @@ func (l *LocalFilesystem) rootedReadDir(p string) ([]DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	dup, err := unix.Dup(int(f.Fd()))
+	dup, err := unix.FcntlInt(f.Fd(), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		return nil, &fs.PathError{Op: "readdirent", Path: p, Err: err}
 	}
