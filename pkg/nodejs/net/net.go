@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
@@ -71,6 +73,10 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 		"writeAtExit":      n.writeAtExitFunc,
 		"connect":          n.connectFunc,
 		"connectUnix":      n.connectUnixFunc,
+		"lookupAll":        n.lookupAllFunc,
+		"connectAddress":   n.connectAddressFunc,
+		"abortAttempt":     n.abortAttemptFunc,
+		"timeoutError":     n.timeoutErrorFunc,
 		"write":            n.writeFunc,
 		"read":             n.readFunc,
 		"shutdown":         n.shutdownFunc,
@@ -147,6 +153,18 @@ type Conn struct {
 	// while they are read.
 	writes     sync.WaitGroup
 	exitWrites [][]byte
+	// resolved is the host lookupAll resolved, whose addresses connectAddress dials.
+	resolved *resolvedHost
+	// attemptSeq numbers connection attempts, so one that was given up on cannot become
+	// the socket's transport when it finishes late.
+	attemptSeq    uint64
+	attemptCancel context.CancelFunc
+}
+
+type resolvedHost struct {
+	host   string
+	ips    []string
+	isName bool
 }
 
 type divertedRead struct {
@@ -343,19 +361,16 @@ func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	callback := args[4]
 
+	seq, attemptCtx := conn.beginAttempt()
 	n.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer n.rt.EventLoop().DonePendingWork()
 
-		result, err := netdial.Connect(conn.ctx, n.rt, host, port, netdial.Options{
+		result, err := netdial.Connect(attemptCtx, n.rt, host, port, netdial.Options{
 			Family:       opts.Family,
 			LocalAddress: opts.LocalAddress,
 			LocalPort:    opts.LocalPort,
-			Prepare: func(socket runtime.TCPSocket) {
-				conn.mu.Lock()
-				conn.attempt = socket
-				conn.mu.Unlock()
-			},
+			Prepare:      func(socket runtime.TCPSocket) { conn.setAttempt(seq, socket) },
 		})
 
 		var out connectResult
@@ -363,15 +378,7 @@ func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			desc := netdial.Describe(err, "connect", host, port)
 			out.Error = &desc
 		} else {
-			conn.mu.Lock()
-			closed := conn.closed
-			if !closed {
-				conn.socket = result.Socket
-			}
-			conn.attempt = nil
-			conn.mu.Unlock()
-			if closed {
-				result.Socket.Close()
+			if !conn.finishAttempt(seq, result.Socket) {
 				return
 			}
 			out.IP = result.IP
@@ -382,6 +389,181 @@ func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
 		})
 	}()
+	return nil
+}
+
+// beginAttempt starts a connection attempt and returns its number and context, which
+// abortAttempt cancels.
+func (c *Conn) beginAttempt() (uint64, context.Context) {
+	ctx, cancel := context.WithCancel(c.ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.attemptSeq++
+	c.attemptCancel = cancel
+	return c.attemptSeq, ctx
+}
+
+// setAttempt records the socket an attempt is connecting, so it can be closed to give up.
+func (c *Conn) setAttempt(seq uint64, socket runtime.TCPSocket) {
+	c.mu.Lock()
+	current := seq == c.attemptSeq && !c.closed
+	if current {
+		c.attempt = socket
+	}
+	c.mu.Unlock()
+	if !current {
+		socket.Close()
+	}
+}
+
+// finishAttempt makes a connected socket the transport, unless the socket has closed or
+// the attempt was given up on, in which case it closes it and reports false.
+func (c *Conn) finishAttempt(seq uint64, socket runtime.TCPSocket) bool {
+	c.mu.Lock()
+	current := seq == c.attemptSeq && !c.closed
+	if current {
+		c.socket = socket
+		c.attempt = nil
+	}
+	c.mu.Unlock()
+	if !current {
+		socket.Close()
+	}
+	return current
+}
+
+type lookupResult struct {
+	Error     *netdial.NodeError `json:"error,omitempty"`
+	Addresses []lookupAddress    `json:"addresses,omitempty"`
+	IsName    bool               `json:"isName"`
+}
+
+type lookupAddress struct {
+	Address string `json:"address"`
+	Family  int    `json:"family"`
+}
+
+// lookupAll(id, host, family, callback) resolves host through the injected resolver, as
+// connect does, and keeps the addresses for connectAddress. callback receives a JSON
+// lookupResult listing them, so the script can choose the order to try them in.
+func (n *Net) lookupAllFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 4 {
+		return nil
+	}
+	conn, ok := n.Conn(int64(args[0].Integer()))
+	if !ok {
+		return nil
+	}
+	host := args[1].String()
+	family := int(args[2].Integer())
+	callback := args[3]
+
+	n.rt.EventLoop().AddPendingWork()
+	go func() {
+		defer n.rt.EventLoop().DonePendingWork()
+		ips, isName, err := netdial.Resolve(conn.ctx, n.rt, host, family)
+		var out lookupResult
+		if err != nil {
+			desc := netdial.Describe(err, "connect", host, 0)
+			out.Error = &desc
+		} else {
+			conn.mu.Lock()
+			conn.resolved = &resolvedHost{host: host, ips: ips, isName: isName}
+			conn.mu.Unlock()
+			out.IsName = isName
+			for _, ip := range ips {
+				family := 4
+				if strings.Contains(ip, ":") {
+					family = 6
+				}
+				out.Addresses = append(out.Addresses, lookupAddress{Address: ip, Family: family})
+			}
+		}
+		n.deliver(func(ctx *v8.Context) {
+			n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
+		})
+	}()
+	return nil
+}
+
+// connectAddress(id, index, port, optionsJSON, callback) connects to the index-th address
+// lookupAll resolved. Only addresses resolved here can be chosen. callback receives a JSON
+// connectResult, or nothing if the attempt was given up on with abortAttempt.
+func (n *Net) connectAddressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 5 {
+		return nil
+	}
+	conn, ok := n.Conn(int64(args[0].Integer()))
+	if !ok {
+		return nil
+	}
+	index := int(args[1].Integer())
+	port := int(args[2].Integer())
+	var opts connectOptions
+	if err := json.Unmarshal([]byte(args[3].String()), &opts); err != nil {
+		return info.Context().Throw("net: invalid connect options")
+	}
+	callback := args[4]
+
+	conn.mu.Lock()
+	resolved := conn.resolved
+	conn.mu.Unlock()
+	if resolved == nil || index < 0 || index >= len(resolved.ips) {
+		return info.Context().Throw("net: no such resolved address")
+	}
+	ip := resolved.ips[index]
+
+	seq, attemptCtx := conn.beginAttempt()
+	n.rt.EventLoop().AddPendingWork()
+	go func() {
+		defer n.rt.EventLoop().DonePendingWork()
+		socket, err := netdial.DialOne(attemptCtx, n.rt, resolved.host, ip, resolved.isName, port, netdial.Options{
+			LocalAddress: opts.LocalAddress,
+			LocalPort:    opts.LocalPort,
+			Prepare:      func(socket runtime.TCPSocket) { conn.setAttempt(seq, socket) },
+		})
+		var out connectResult
+		if err != nil {
+			desc := netdial.Describe(err, "connect", ip, port)
+			out.Error = &desc
+		} else {
+			if !conn.finishAttempt(seq, socket) {
+				return
+			}
+			out.IP = ip
+			out.IsName = resolved.isName
+		}
+		n.deliver(func(ctx *v8.Context) {
+			n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
+		})
+	}()
+	return nil
+}
+
+// abortAttempt(id) gives up on the socket's connection attempt in progress.
+func (n *Net) abortAttemptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	conn, ok := n.Conn(int64(args[0].Integer()))
+	if !ok {
+		return nil
+	}
+	conn.mu.Lock()
+	conn.attemptSeq++
+	attempt, cancel := conn.attempt, conn.attemptCancel
+	conn.attempt, conn.attemptCancel = nil, nil
+	conn.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	// A socket may hold its lock while it dials, so it is closed off the JavaScript thread.
+	if attempt != nil {
+		go attempt.Close()
+	}
 	return nil
 }
 
@@ -1124,4 +1306,16 @@ func (n *Net) refServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 func (n *Net) unrefServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return n.setServerRef(info, false)
+}
+
+// timeoutError(ip, port) returns, as JSON, the error Node records for an attempt it gave up
+// on: ETIMEDOUT with this platform's errno.
+func (n *Net) timeoutErrorFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 2 {
+		return nil
+	}
+	ip, port := args[0].String(), int(args[1].Integer())
+	err := &netdial.AddressError{Err: syscall.ETIMEDOUT, Address: ip, Port: port}
+	return jsJSON(info.Context(), netdial.Describe(err, "connect", ip, port))
 }

@@ -97,28 +97,10 @@ func Connect(ctx context.Context, rt *runtime.Runtime, host string, port int, op
 
 	var firstErr error
 	for _, ip := range ips {
-		socket := rt.SocketFactory().CreateTCPSocket()
-		if opts.Prepare != nil {
-			opts.Prepare(socket)
-		}
-		if opts.LocalAddress != "" || opts.LocalPort != 0 {
-			if bindable, ok := socket.(runtime.LocalBindableTCPSocket); ok {
-				bindable.SetLocalAddr(opts.LocalAddress, opts.LocalPort)
-			}
-		}
-		var err error
-		// Only a name that went through DNS is reported as a hostname. Anything else
-		// the guest wrote must not reach a policy as a name it could match on.
-		if resolved, ok := socket.(runtime.ResolvedTCPSocket); ok && isName {
-			err = resolved.ConnectResolved(ctx, host, ip, port)
-		} else {
-			err = socket.Connect(ctx, ip, port)
-		}
+		socket, err := DialOne(ctx, rt, host, ip, isName, port, opts)
 		if err == nil {
 			return Result{Socket: socket, IP: ip, IsName: isName}, nil
 		}
-		socket.Close()
-		err = &AddressError{Err: err, Address: ip, Port: port}
 		if firstErr == nil {
 			firstErr = err
 		}
@@ -127,6 +109,34 @@ func Connect(ctx context.Context, rt *runtime.Runtime, host string, port int, op
 		}
 	}
 	return Result{}, firstErr
+}
+
+// DialOne connects to one address that Resolve returned for host. isName is Resolve's
+// report of whether host went through DNS: only then is host passed to the socket as the
+// name the address belongs to.
+func DialOne(ctx context.Context, rt *runtime.Runtime, host, ip string, isName bool, port int, opts Options) (runtime.TCPSocket, error) {
+	socket := rt.SocketFactory().CreateTCPSocket()
+	if opts.Prepare != nil {
+		opts.Prepare(socket)
+	}
+	if opts.LocalAddress != "" || opts.LocalPort != 0 {
+		if bindable, ok := socket.(runtime.LocalBindableTCPSocket); ok {
+			bindable.SetLocalAddr(opts.LocalAddress, opts.LocalPort)
+		}
+	}
+	var err error
+	// Only a name that went through DNS is reported as a hostname. Anything else
+	// the guest wrote must not reach a policy as a name it could match on.
+	if resolved, ok := socket.(runtime.ResolvedTCPSocket); ok && isName {
+		err = resolved.ConnectResolved(ctx, host, ip, port)
+	} else {
+		err = socket.Connect(ctx, ip, port)
+	}
+	if err != nil {
+		socket.Close()
+		return nil, &AddressError{Err: err, Address: ip, Port: port}
+	}
+	return socket, nil
 }
 
 // AddressError records the address a connection attempt was made to.
@@ -206,7 +216,8 @@ func Describe(err error, syscallName, host string, port int) NodeError {
 	out.Message = syscallName + " " + out.Code
 	if out.Address != "" {
 		if out.Port != 0 {
-			out.Message += " " + net.JoinHostPort(out.Address, strconv.Itoa(out.Port))
+			// Node writes an IPv6 address without brackets here.
+			out.Message += " " + out.Address + ":" + strconv.Itoa(out.Port)
 		} else {
 			out.Message += " " + out.Address
 		}

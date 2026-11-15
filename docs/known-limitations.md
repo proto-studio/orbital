@@ -147,8 +147,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `net.Socket` object. (#128)
 - **`net.connect` with an IPv6 zone** (`fe80::1%en0`) fails with `ENOTFOUND`, because a zone
   is free-form text a policy could be made to match on. `net.isIP` still accepts it.
-- **Happy-eyeballs is sequential.** Addresses are tried in order, and `'lookup'` fires once
-  rather than per address. (#129)
 
 ## fs (`pkg/nodejs/fs`)
 
