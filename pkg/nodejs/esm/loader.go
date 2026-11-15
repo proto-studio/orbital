@@ -19,6 +19,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 )
 
@@ -78,12 +79,15 @@ func stripFileURL(u string) string {
 func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 	rest := spec
 	if strings.HasPrefix(rest, "file:") {
-		// file:///p, file://localhost/p and file:/p all name /p.
+		// file:///p, file://localhost/p and file:/p all name /p. (A host other
+		// than localhost is rejected before this; see fileURLHost.)
 		rest = rest[len("file:"):]
 		if strings.HasPrefix(rest, "//") {
 			rest = rest[2:]
-			if strings.HasPrefix(rest, "localhost/") {
-				rest = rest[len("localhost"):]
+			if i := strings.IndexByte(rest, '/'); i >= 0 {
+				rest = rest[i:]
+			} else {
+				rest = ""
 			}
 		}
 		// A file: URL is absolute: file:a/b names /a/b.
@@ -106,6 +110,27 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep
 }
 
+// nodePlatform is process.platform for this OS.
+func nodePlatform() string {
+	if goruntime.GOOS == "windows" {
+		return "win32"
+	}
+	return goruntime.GOOS
+}
+
+// fileURLHost returns the host of a file:// URL specifier, lowercased (the
+// URL parser lowercases it), or "" when it has none.
+func fileURLHost(spec string) string {
+	if !strings.HasPrefix(spec, "file://") {
+		return ""
+	}
+	rest := spec[len("file://"):]
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	return strings.ToLower(rest)
+}
+
 // escapePath is a file path as it appears in a file: URL.
 func escapePath(p string) string {
 	return (&url.URL{Path: filepath.ToSlash(p)}).EscapedPath()
@@ -118,6 +143,13 @@ func normalizeSuffix(s string) string {
 	query, fragment := s, ""
 	if i := strings.IndexByte(s, '#'); i >= 0 {
 		query, fragment = s[:i], s[i:]
+	}
+	// An empty query or fragment ("?", "#") names the same module as none.
+	if query == "?" {
+		query = ""
+	}
+	if fragment == "#" {
+		fragment = ""
 	}
 	return percentEncode(query, "\"#<>'") + percentEncode(fragment, "\"<>`")
 }
@@ -291,6 +323,13 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 	switch {
 	case isURLSpecifier(spec):
+		if host := fileURLHost(spec); host != "" && host != "localhost" {
+			return "", &moduleError{
+				msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
+				code:      "ERR_INVALID_FILE_URL_HOST",
+				typeError: true,
+			}
+		}
 		var encodedSep bool
 		attempted, encoded, suffix, encodedSep = urlPath(spec, dir)
 		if encodedSep {

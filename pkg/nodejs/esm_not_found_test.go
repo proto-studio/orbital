@@ -3,6 +3,7 @@ package nodejs
 import (
 	"errors"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -334,5 +335,26 @@ func TestStaticImport_NotFoundIgnoresReplacedHelper(t *testing.T) {
 	var uncaught *runtime.UncaughtError
 	if !errors.As(err, &uncaught) || !strings.Contains(uncaught.Message, "ERR_MODULE_NOT_FOUND") {
 		t.Fatalf("RunModuleFile: %v, want the uncaught ERR_MODULE_NOT_FOUND", err)
+	}
+}
+
+// An empty query or fragment names the same module as none, and a file: URL's host
+// must be empty or localhost (in any case). Expected from Node 20.18.1.
+func TestDynamicImport_EmptySuffixesAndHosts(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"m.mjs": `export const n = Math.random(); export const u = import.meta.url.replace(/.*\//, '');`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { const ns = await import(s); return [ns.n, ns.u]; } catch (e) { return [e.name, e.code, e.message]; } };
+const base = await r('./m.mjs'), q = await r('./m.mjs?a');
+for (const s of ['./m.mjs?', './m.mjs#', './m.mjs?#', 'file://LOCALHOST' + d + '/m.mjs', 'file://LocalHost' + d + '/m.mjs']) { const x = await r(s); log.push(x[0] === base[0], x[1]); }
+const qa = await r('./m.mjs?a#'); log.push(qa[0] === q[0], qa[1]);
+for (const s of ['file://tmp' + d + '/m.mjs', 'file://example.com' + d + '/m.mjs']) log.push(await r(s));`,
+	})
+	got := runLogModuleIn(t, dir)
+	host := `["TypeError","ERR_INVALID_FILE_URL_HOST","File URL host must be \"localhost\" or empty on ` + goruntime.GOOS + `"]`
+	want := `[true,"m.mjs",true,"m.mjs",true,"m.mjs",true,"m.mjs",true,"m.mjs",true,"m.mjs?a",` + host + `,` + host + `]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
