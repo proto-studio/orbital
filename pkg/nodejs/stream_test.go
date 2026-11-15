@@ -96,3 +96,81 @@ w.end();`)
 		wantJSON(t, result, map[string]any{"seen": []any{"a", "b", "c"}, "thrown": float64(1)})
 	})
 }
+
+// An exception thrown by _write, _writev or _transform propagates out of
+// write(), end() or uncork() instead of becoming the stream's 'error'. A
+// buffered write that throws later reaches 'uncaughtException'.
+func TestWritable_WriteExceptionReachesCaller(t *testing.T) {
+	result := runJS(t, &runtime.Config{}, `
+const { Writable, Transform, Duplex } = require('stream');
+const out = []; const log = (...a) => out.push(a.join(' '));
+// 1 basic
+{
+  const w = new Writable({ write() { throw new Error('in write'); } });
+  w.on('error', e => log('1 stream error', e.message));
+  try { log('1 ret', w.write('a')); } catch (e) { log('1 caller caught', e.message); }
+  log('1 state', w.writableLength, w.writableNeedDrain, w.destroyed);
+  try { log('1 second write ret', w.write('b')); } catch (e) { log('1 second caught', e.message); }
+  log('1 len', w.writableLength);
+}
+// 2 not implemented
+{
+  const w = new Writable();
+  w.on('error', e => log('2 stream error', e.code));
+  try { w.write('a'); log('2 no throw'); } catch (e) { log('2 caught', e.code); }
+}
+// 3 writev throw on uncork
+{
+  const w = new Writable({ write(c, e, cb) { cb(); }, writev() { throw new Error('in writev'); } });
+  w.on('error', e => log('3 stream error', e.message));
+  w.cork(); w.write('a'); w.write('b');
+  try { w.uncork(); log('3 no throw'); } catch (e) { log('3 caught', e.message); }
+}
+// 4 transform throws
+{
+  const t = new Transform({ transform() { throw new Error('in transform'); } });
+  t.on('error', e => log('4 stream error', e.message));
+  try { t.write('a'); log('4 no throw'); } catch (e) { log('4 caught', e.message); }
+}
+// 5 throw after cb
+{
+  const w = new Writable({ write(c, e, cb) { cb(); throw new Error('after cb'); } });
+  w.on('error', e => log('5 stream error', e.message));
+  try { w.write('a'); log('5 no throw'); } catch (e) { log('5 caught', e.message); }
+}
+// 6 throw from buffered write processed asynchronously -> uncaught
+{
+  let n = 0;
+  const w = new Writable({ write(c, e, cb) { if (n++ === 0) setTimeout(cb, 1); else throw new Error('buffered'); } });
+  w.on('error', e => log('6 stream error', e.message));
+  w.write('a'); w.write('b');
+  process.on('uncaughtException', e => log('6 uncaught', e.message));
+}
+// 7 end with throwing write
+{
+  const w = new Writable({ write() { throw new Error('end write'); } });
+  w.on('error', e => log('7 stream error', e.message));
+  try { w.end('x'); log('7 no throw'); } catch (e) { log('7 caught', e.message); }
+}
+// 8 duplex
+{
+  const d = new Duplex({ read() {}, write() { throw new Error('dup'); } });
+  try { d.write('a'); log('8 no throw'); } catch (e) { log('8 caught', e.message); }
+}
+setTimeout(() => done({ log: out }), 20);
+`)
+	// Captured from Node 20.18.1.
+	wantJSON(t, result, map[string]any{"log": []any{
+		"1 caller caught in write",
+		"1 state 1 false false",
+		"1 second write ret true",
+		"1 len 2",
+		"2 caught ERR_METHOD_NOT_IMPLEMENTED",
+		"3 caught in writev",
+		"4 caught in transform",
+		"5 caught after cb",
+		"7 caught end write",
+		"8 caught dup",
+		"6 uncaught buffered",
+	}})
+}

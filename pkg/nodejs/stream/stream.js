@@ -1082,13 +1082,11 @@
 			called = true;
 			onWrite(stream, s, err, cb);
 		};
-		try {
-			if (s.destroyed) onwrite(codedError(Error, 'ERR_STREAM_DESTROYED', 'write'));
-			else stream._write(chunk, encoding, onwrite);
-		} catch (err) {
-			if (!called) onwrite(err);
-			else throw err;
-		}
+		// As in Node, an exception thrown by _write propagates to the caller of
+		// write() (or to 'uncaughtException' when the write was buffered) rather
+		// than becoming the stream's 'error'. The stream is left mid-write.
+		if (s.destroyed) onwrite(codedError(Error, 'ERR_STREAM_DESTROYED', 'write'));
+		else stream._write(chunk, encoding, onwrite);
 		s.sync = false;
 	}
 
@@ -1173,18 +1171,12 @@
 		s.sync = true;
 		s.writeLen = total;
 		let called = false;
-		try {
-			stream._writev(entries, (err) => {
-				if (called) return;
-				called = true;
-				onWrite(stream, s, err, finishAll);
-			});
-		} catch (err) {
-			if (!called) {
-				called = true;
-				onWrite(stream, s, err, finishAll);
-			}
-		}
+		// Like _write, an exception thrown by _writev propagates.
+		stream._writev(entries, (err) => {
+			if (called) return;
+			called = true;
+			onWrite(stream, s, err, finishAll);
+		});
 		s.sync = false;
 	}
 
