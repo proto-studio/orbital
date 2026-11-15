@@ -19,8 +19,12 @@
   ],
   "argv0": "custom0",
   "attached_leader": false,
+  "bad_timeout": "ERR_OUT_OF_RANGE",
+  "bad_timeout_ran": false,
   "detached_leader": true,
   "env_path": "custom-path-tool",
+  "env_path_dot": "custom-path-tool",
+  "env_path_relative": "custom-path-tool",
   "killSignal": [
     null,
     "SIGINT"

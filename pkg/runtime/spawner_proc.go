@@ -153,7 +153,7 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		// As in Node, a bare name is looked up on the PATH the child is given, if any.
 		path := command
 		if pathList, ok := envValue(options.Env, "PATH"); ok && !strings.Contains(command, "/") {
-			resolved, err := lookPathIn(command, pathList)
+			resolved, err := lookPathIn(command, pathList, options.Cwd)
 			if err != nil {
 				return nil, err
 			}
@@ -196,11 +196,23 @@ func envValue(env []string, name string) (string, bool) {
 }
 
 // lookPathIn finds an executable named file in the directories of pathList, as
-// exec.LookPath does with the process's own PATH.
-func lookPathIn(file, pathList string) (string, error) {
+// exec.LookPath does with the process's own PATH. As in Node, where the child searches
+// after changing to its working directory, a relative directory is relative to cwd. The
+// result is absolute, so nothing searches for it again.
+func lookPathIn(file, pathList, cwd string) (string, error) {
+	if !filepath.IsAbs(cwd) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		cwd = filepath.Join(wd, cwd)
+	}
 	for _, dir := range filepath.SplitList(pathList) {
 		if dir == "" {
 			dir = "."
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(cwd, dir)
 		}
 		candidate := filepath.Join(dir, file)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {

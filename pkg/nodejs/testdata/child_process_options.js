@@ -33,6 +33,22 @@ async function main() {
   results.argv0 = await outputOf(cp.spawn('sh', ['-c', 'echo $0'], { argv0: 'custom0' }));
   results.spawnargs = cp.spawn('true', ['x'], { argv0: 'named' }).spawnargs;
   results.env_path = await outputOf(cp.spawn('orbital-only-here', [], { env: { PATH: toolDir + ':/usr/bin:/bin' } }));
+  // A relative PATH entry is relative to the child's working directory.
+  const path = require('path');
+  results.env_path_relative = await outputOf(cp.spawn('orbital-only-here', [],
+    { cwd: path.dirname(toolDir), env: { PATH: path.basename(toolDir) } }));
+  results.env_path_dot = await outputOf(cp.spawn('orbital-only-here', [], { cwd: toolDir, env: { PATH: '.' } }));
+
+  // An invalid option throws before anything runs.
+  const marker = path.join(toolDir, 'touched');
+  try {
+    cp.spawn('touch', [marker], { timeout: -1 });
+    results.bad_timeout = 'no throw';
+  } catch (e) {
+    results.bad_timeout = e.code;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  results.bad_timeout_ran = require('fs').existsSync(marker);
 
   // A detached child leads its own process group, so its group id is its pid.
   const detached = cp.spawn('sh', ['-c', 'echo $$ $(ps -o pgid= -p $$)'], { detached: true });
