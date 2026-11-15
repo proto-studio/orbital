@@ -124,7 +124,8 @@
       throw codedError(TypeError, 'ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE',
         'Invalid key object type secret, expected public.');
     }
-    if (!wantPrivate && key.type === 'private') key = crypto.createPublicKey(key);
+    // A private key verifies with its public half, which _verify takes from
+    // the private key's own entry; no public copy is made.
     const padding = intOption(options, 'padding');
     const saltLength = intOption(options, 'saltLength');
     const dsaEncoding = options.dsaEncoding === undefined ? 'der' : options.dsaEncoding;
@@ -239,6 +240,10 @@
   function oneShotAlgorithm(algorithm) {
     if (algorithm === null || algorithm === undefined) return '';
     if (typeof algorithm !== 'string') throw invalidArgType('algorithm', 'of type string', algorithm);
+    // '' means "default" to the native, so an explicit empty name is refused here.
+    if (algorithm === '' || !crypto._digestSize(algorithm)) {
+      throw codedError(TypeError, 'ERR_CRYPTO_INVALID_DIGEST', 'Invalid digest: ' + algorithm);
+    }
     return algorithm;
   }
 
@@ -250,6 +255,9 @@
 
   // Delivers a native callback result as Node's callback(err, value).
   function deliver(callback, toValue) {
+    // The callback runs in the AsyncLocalStorage context of the call.
+    const hooks = globalThis.__async_hooks_module;
+    if (hooks) callback = hooks.AsyncLocalStorage.bind(callback);
     return function (message, value) {
       if (message !== undefined) {
         const text = String(message);
