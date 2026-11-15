@@ -2,7 +2,9 @@ package nodejs
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -152,4 +154,26 @@ const dir = %q;
 })().catch((e) => done({ failed: String(e) }));
 `, dir))
 	wantJSON(t, got, map[string]any{"written": "written", "n": 1.0, "a": "x"})
+}
+
+// writev writes to the process's stdout, descriptor 1, as write does.
+func TestFS_WritevToStdout(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	got := runJS(t, &runtime.Config{}, `
+const fs = require('fs');
+const n = fs.writevSync(1, [Buffer.from('sync ')]);
+fs.writev(1, [Buffer.from('callback'), Buffer.from('\n')], (err, m) => done({ n, m, err: err && err.code }));
+`)
+	os.Stdout = saved
+	w.Close()
+	out, _ := io.ReadAll(r)
+	wantJSON(t, got, map[string]any{"n": 5.0, "m": 9.0, "err": nil})
+	if string(out) != "sync callback\n" {
+		t.Errorf("stdout = %q", out)
+	}
 }
