@@ -42,7 +42,9 @@ func (c *Crypto) offThread(ctx *v8.Context, callback *v8.Value, work func() (str
 	loop.AddPendingWork()
 	go func() {
 		defer loop.DonePendingWork()
+		offThreadSlots <- struct{}{}
 		out, err := work()
+		<-offThreadSlots
 		loop.EnqueueMicrotask(func() {
 			if err != nil {
 				msg, _ := jsCtx.NewString(err.Error())
@@ -55,6 +57,10 @@ func (c *Crypto) offThread(ctx *v8.Context, callback *v8.Value, work func() (str
 	}()
 	return ctx.Undefined()
 }
+
+// offThreadSlots bounds how much of this work runs at once, as Node's
+// threadpool (four threads by default) does.
+var offThreadSlots = make(chan struct{}, 4)
 
 func optionalCallback(args []*v8.Value, i int) *v8.Value {
 	if i < len(args) {

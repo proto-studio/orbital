@@ -1,4 +1,9 @@
 {
+  "asyncContext": [
+    "request 0",
+    "request 1",
+    "request 2"
+  ],
   "checkPrimeCallback": {
     "err": "undefined",
     "order": [
