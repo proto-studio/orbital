@@ -32,13 +32,10 @@
     const parentURL = (context && context.parentURL) || '';
     const r = globalThis.__goResolve(specifier, parentURL);
     if (!r.found) {
-      const err = new Error(
-        "Cannot find module '" + specifier + "'" +
-          (parentURL ? ' imported from ' + parentURL : '')
-      );
-      err.code = 'ERR_MODULE_NOT_FOUND';
-      // The attempted path lets resolve hooks rewrite the extension and retry
-      // (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).
+      const err = new Error(r.message);
+      if (r.code) err.code = r.code;
+      // The missing module's url lets resolve hooks rewrite the extension and
+      // retry (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).
       if (r.url) err.url = r.url;
       throw err;
     }

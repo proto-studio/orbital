@@ -296,7 +296,54 @@ func (e *ESM) resolveModule(specifier, referrer string) (string, string, error) 
 	if err := e.ensureLoader(); err != nil {
 		return "", "", err
 	}
-	return e.resolveAndLoad(specifier, referrer)
+	source, url, err := e.resolveAndLoad(specifier, referrer)
+	if err != nil {
+		return "", "", e.throwable(err)
+	}
+	return source, url, nil
+}
+
+// thrownError is a loader failure together with the JavaScript error V8 throws
+// for it (or rejects import() with).
+type thrownError struct {
+	err error
+	exc *v8.Value
+}
+
+func (t *thrownError) Error() string        { return t.err.Error() }
+func (t *thrownError) Unwrap() error        { return t.err }
+func (t *thrownError) Exception() *v8.Value { return t.exc }
+
+// throwable attaches to err the error object the importing code sees: for a
+// moduleError, an Error with Node's message, code and url. Other failures keep
+// the generic error V8's resolve callback reports.
+func (e *ESM) throwable(err error) error {
+	var me *moduleError
+	if !errors.As(err, &me) || e.rt.Ended() != nil {
+		return err
+	}
+	ctx := e.rt.Context()
+	global, gerr := ctx.Global()
+	if gerr != nil {
+		return err
+	}
+	mk, _ := global.Get("__esmModuleError")
+	if mk == nil || !mk.IsFunction() {
+		return err
+	}
+	args := make([]*v8.Value, 3)
+	for i, s := range []string{me.msg, me.code, me.url} {
+		v, serr := ctx.NewString(s)
+		if serr != nil {
+			return err
+		}
+		args[i] = v
+	}
+	exc, cerr := mk.Call(nil, args...)
+	if cerr != nil || exc == nil {
+		return err
+	}
+	return &thrownError{err: err, exc: exc}
 }
 
 // resolveAndLoad produces the compilable ESM source + stable url for a
@@ -352,6 +399,9 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, stop context.Context) (*v8
 		return p.PromiseResult(), nil
 	case v8.PromiseRejected:
 		reason := p.PromiseResult()
+		if me := codedError(reason); me != nil {
+			return nil, me
+		}
 		msg := "promise rejected"
 		if reason != nil {
 			msg = reason.String()
@@ -362,4 +412,18 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, stop context.Context) (*v8
 		return nil, ended
 	}
 	return nil, errors.New("esm: hook promise never settled: the loader hooks have no pending work left")
+}
+
+// codedError carries a hook's rejection with a Node error code (such as the
+// default resolver's ERR_MODULE_NOT_FOUND) back to the application realm with its
+// message, code and url, so the importer sees the error Node would give it.
+func codedError(reason *v8.Value) *moduleError {
+	if reason == nil || !reason.IsObject() {
+		return nil
+	}
+	code := objString(reason, "code")
+	if code == "" {
+		return nil
+	}
+	return &moduleError{msg: objString(reason, "message"), code: code, url: objString(reason, "url")}
 }

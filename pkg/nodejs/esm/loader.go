@@ -13,7 +13,7 @@ package esm
 
 import (
 	"encoding/json"
-	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -142,22 +142,6 @@ func (e *ESM) resolveIndex(dir string) string {
 	return ""
 }
 
-// attemptedPath returns the path a relative/absolute specifier *would* resolve
-// to (by simple join, without existence/extension probing). It is reported as
-// the not-found error's `url` so resolve hooks can rewrite the extension and
-// retry — e.g. ts-blank-space mapping a missing "./x.js" to "./x.ts".
-func (e *ESM) attemptedPath(specifier, referrer string) string {
-	spec := stripFileURL(specifier)
-	switch {
-	case strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../"):
-		return filepath.Join(e.referrerDir(referrer), spec)
-	case strings.HasPrefix(spec, "/") || winAbs(spec):
-		return spec
-	default:
-		return ""
-	}
-}
-
 // resolveToURL implements Node's default resolution and returns a stable module
 // url (an absolute path, or "node:<name>" for builtins).
 func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
@@ -181,42 +165,74 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 
 	dir := e.referrerDir(referrer)
-	var abs string
+	var abs, attempted string
 	switch {
 	case strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../"):
-		joined := filepath.Join(dir, spec)
-		abs = e.resolveFile(joined)
-		if abs == "" && e.fsIsDir(joined) {
-			abs = e.resolveIndex(joined)
-		}
+		attempted = filepath.Join(dir, spec)
 	case strings.HasPrefix(spec, "/") || winAbs(spec):
-		abs = e.resolveFile(spec)
-		if abs == "" && e.fsIsDir(spec) {
-			abs = e.resolveIndex(spec)
-		}
+		attempted = spec
 	default:
-		abs = e.resolveBare(spec, dir)
+		return e.resolveBare(spec, dir, referrer)
 	}
-
+	abs = e.resolveFile(attempted)
+	if abs == "" && e.fsIsDir(attempted) {
+		abs = e.resolveIndex(attempted)
+	}
 	if abs == "" {
-		err := errors.New("Cannot find module '" + specifier + "' imported from " + orEntry(referrer))
-		return "", &notFoundError{msg: err.Error()}
+		return "", moduleNotFound(attempted, referrer, e.cwd())
 	}
 	return abs, nil
 }
 
-func orEntry(s string) string {
-	if s == "" {
-		return "<entry>"
-	}
-	return s
+// moduleError is a module-loading failure with a Node error code, thrown into
+// the importing realm as an Error carrying that code (and the url Node reports
+// for a missing module), so code checking err.code works as it does on Node.
+type moduleError struct {
+	msg  string
+	code string
+	// url is the file: URL of the missing module, empty when Node reports none
+	// (a missing package).
+	url string
 }
 
-// notFoundError carries the ERR_MODULE_NOT_FOUND-style code so resolve hooks
-// (e.g. ts-blank-space) can catch it and retry with a different extension.
-type notFoundError struct{ msg string }
+func (m *moduleError) Error() string { return m.msg }
 
-func (n *notFoundError) Error() string { return n.msg }
+// moduleNotFound is Node's error for a module file that does not exist.
+func moduleNotFound(path, referrer, cwd string) *moduleError {
+	return &moduleError{
+		msg:  "Cannot find module '" + path + "' imported from " + importerPath(referrer, cwd),
+		code: "ERR_MODULE_NOT_FOUND",
+		url:  fileURL(path),
+	}
+}
+
+// packageNotFound is Node's error for a package that is not installed, or one
+// whose main entry does not exist (Node then names that entry's path).
+func packageNotFound(name, referrer, cwd string) *moduleError {
+	return &moduleError{
+		msg:  "Cannot find package '" + name + "' imported from " + importerPath(referrer, cwd),
+		code: "ERR_MODULE_NOT_FOUND",
+	}
+}
+
+// importerPath is how Node names the importer in a resolution error: its path,
+// or the working directory (with a trailing separator) for an entry point or an
+// --import preload.
+func importerPath(referrer, cwd string) string {
+	if referrer == "" {
+		return strings.TrimSuffix(cwd, string(filepath.Separator)) + string(filepath.Separator)
+	}
+	return stripFileURL(referrer)
+}
+
+// fileURL is the file: URL for an absolute path, as Node's pathToFileURL gives it.
+func fileURL(p string) string {
+	p = filepath.ToSlash(p)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
 
 // ---- bare / package.json "exports" resolution -----------------------------
 
@@ -240,15 +256,16 @@ func splitBare(specifier string) (pkg, sub string) {
 	return specifier[:idx], "./" + specifier[idx+1:]
 }
 
-func (e *ESM) resolveBare(specifier, fromDir string) string {
+// resolveBare resolves a package specifier the way Node does: the first
+// node_modules directory (walking up from fromDir) that contains the package
+// decides the result, and a missing package or entry is an error.
+func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, error) {
 	pkg, sub := splitBare(specifier)
 	dir := fromDir
 	for {
 		pkgDir := filepath.Join(dir, "node_modules", pkg)
 		if e.fsIsDir(pkgDir) {
-			if r := e.resolvePackage(pkgDir, sub); r != "" {
-				return r
-			}
+			return e.resolvePackage(pkgDir, sub, referrer)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -256,10 +273,11 @@ func (e *ESM) resolveBare(specifier, fromDir string) string {
 		}
 		dir = parent
 	}
-	return ""
+	return "", packageNotFound(pkg, referrer, e.cwd())
 }
 
-func (e *ESM) resolvePackage(pkgDir, sub string) string {
+func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
+	main := ""
 	pkgJSON := filepath.Join(pkgDir, "package.json")
 	if e.fsIsFile(pkgJSON) {
 		if src, err := e.fsRead(pkgJSON); err == nil {
@@ -271,29 +289,30 @@ func (e *ESM) resolvePackage(pkgDir, sub string) string {
 						if target := resolveExports(exp, sub); target != "" {
 							abs := filepath.Join(pkgDir, target)
 							if r := e.resolveFile(abs); r != "" {
-								return r
+								return r, nil
 							}
 							if e.fsIsDir(abs) {
 								if r := e.resolveIndex(abs); r != "" {
-									return r
+									return r, nil
 								}
 							}
+							return "", moduleNotFound(abs, referrer, e.cwd())
 						}
 					}
 				}
 				if sub == "." {
-					main := jsonString(pkg["module"])
+					main = jsonString(pkg["module"])
 					if main == "" {
 						main = jsonString(pkg["main"])
 					}
 					if main != "" {
 						abs := filepath.Join(pkgDir, main)
 						if r := e.resolveFile(abs); r != "" {
-							return r
+							return r, nil
 						}
 						if e.fsIsDir(abs) {
 							if r := e.resolveIndex(abs); r != "" {
-								return r
+								return r, nil
 							}
 						}
 					}
@@ -306,12 +325,21 @@ func (e *ESM) resolvePackage(pkgDir, sub string) string {
 		target = filepath.Join(pkgDir, sub)
 	}
 	if r := e.resolveFile(target); r != "" {
-		return r
+		return r, nil
 	}
 	if e.fsIsDir(target) {
-		return e.resolveIndex(target)
+		if r := e.resolveIndex(target); r != "" {
+			return r, nil
+		}
 	}
-	return ""
+	if sub != "." {
+		return "", moduleNotFound(target, referrer, e.cwd())
+	}
+	// Node names the package's main entry, or its index.js when it has none.
+	if main == "" {
+		main = "index.js"
+	}
+	return "", packageNotFound(filepath.Join(pkgDir, main), referrer, e.cwd())
 }
 
 func jsonString(raw json.RawMessage) string {
