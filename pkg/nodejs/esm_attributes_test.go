@@ -404,3 +404,26 @@ log.push((await import('mem:parent')).default);`,
 		t.Fatalf("child's parentURL %q, want mem:parent", b)
 	}
 }
+
+// Load hooks get a structured clone of the attributes a resolve hook returned, so a
+// Date stays a Date and a Map a Map. Expected from Node 20.18.1.
+func TestImportAttributes_StructuredCloneToLoadHooks(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"virt.js": ``,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './virt.js') return { ...(await n(s, c)), importAttributes: { d: new Date(0), m: new Map([['k', 1]]) } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('virt.js')) { const a = c.importAttributes; return { format: 'module', source: 'export default ' + JSON.stringify([a.d instanceof Date, a.m instanceof Map, a.m.get && a.m.get('k')]) + ';', shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+log.push((await import('./virt.js')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[[true,true,1]]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

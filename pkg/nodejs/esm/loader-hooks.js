@@ -363,6 +363,33 @@
     }) });
   }
 
+  // The resolved attributes object itself stays in this realm until its load,
+  // so the load hooks get a structured clone of it, as Node gives them (a Date
+  // stays a Date, a Map a Map), rather than what survives the JSON trip to Go.
+  const stashed = new Map();
+  let stashSeq = 0;
+  const clone = typeof structuredClone === 'function' ? structuredClone : null;
+
+  function stashAttrs(attrs) {
+    const id = ++stashSeq;
+    stashed.set(id, attrs);
+    const encoded = JSON.parse(encodeAttrs(attrs));
+    encoded.id = id;
+    return JSON.stringify(encoded);
+  }
+
+  function unstashAttrs(text) {
+    const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
+    if (encoded.id !== undefined && stashed.has(encoded.id)) {
+      const attrs = stashed.get(encoded.id);
+      stashed.delete(encoded.id);
+      if (clone && attrs !== null && typeof attrs === 'object') {
+        try { return clone(attrs); } catch (e) { /* not cloneable: rebuild below */ }
+      }
+    }
+    return decodeAttrs(text);
+  }
+
   function decodeAttrs(text) {
     const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
     const attrs = encoded.array ? [] : {};
@@ -459,7 +486,7 @@
     return {
       url: res.url,
       format: res.format == null ? '' : res.format,
-      importAttributes: encodeAttrs(resolvedAttributes),
+      importAttributes: stashAttrs(resolvedAttributes),
     };
   };
 
@@ -468,7 +495,7 @@
     const ctx = {
       format: format || undefined,
       conditions: ['node', 'import', 'module', 'default'],
-      importAttributes: decodeAttrs(attrsJSON),
+      importAttributes: unstashAttrs(attrsJSON),
     };
     checkAttributes = !!check;
     const res = await chain(url, ctx);
