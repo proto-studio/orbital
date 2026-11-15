@@ -2131,3 +2131,206 @@ const char* v8go_module_get_request(void* module_ptr, int index) {
 }
 
 } // extern "C"
+
+// ---- ValueSerializer --------------------------------------------------------
+
+namespace {
+
+// Array buffer views are host objects written the way Node's serializer writes them: a type,
+// the byte length and only the view's own bytes, so a view keeps its type and a Buffer
+// does not carry the rest of its pool. V8 runs no JavaScript while it deserializes, so
+// the types are worked out here: a Buffer is a Uint8Array whose prototype is
+// Buffer.prototype, which the caller passes in.
+enum ViewType : uint32_t {
+  kInt8 = 0, kUint8, kUint8Clamped, kInt16, kUint16, kInt32, kUint32, kFloat32, kFloat64,
+  kDataView, kBuffer, kBigInt64, kBigUint64, kViewTypeCount
+};
+
+bool viewTypeOf(Local<Object> object, Local<Value> buffer_proto, uint32_t* type) {
+  if (object->IsUint8Array()) {
+    *type = (!buffer_proto.IsEmpty() && buffer_proto->IsObject() &&
+             object->GetPrototype()->StrictEquals(buffer_proto)) ? kBuffer : kUint8;
+  } else if (object->IsInt8Array()) { *type = kInt8; }
+  else if (object->IsUint8ClampedArray()) { *type = kUint8Clamped; }
+  else if (object->IsInt16Array()) { *type = kInt16; }
+  else if (object->IsUint16Array()) { *type = kUint16; }
+  else if (object->IsInt32Array()) { *type = kInt32; }
+  else if (object->IsUint32Array()) { *type = kUint32; }
+  else if (object->IsFloat32Array()) { *type = kFloat32; }
+  else if (object->IsFloat64Array()) { *type = kFloat64; }
+  else if (object->IsDataView()) { *type = kDataView; }
+  else if (object->IsBigInt64Array()) { *type = kBigInt64; }
+  else if (object->IsBigUint64Array()) { *type = kBigUint64; }
+  else { return false; }
+  return true;
+}
+
+size_t elementSize(uint32_t type) {
+  switch (type) {
+    case kInt16: case kUint16: return 2;
+    case kInt32: case kUint32: case kFloat32: return 4;
+    case kFloat64: case kBigInt64: case kBigUint64: return 8;
+    default: return 1;
+  }
+}
+
+Local<Object> makeView(Isolate* isolate, Local<Context> context, uint32_t type,
+                       Local<ArrayBuffer> buffer, size_t length, Local<Value> buffer_proto) {
+  size_t n = length / elementSize(type);
+  switch (type) {
+    case kInt8: return Int8Array::New(buffer, 0, n);
+    case kUint8: return Uint8Array::New(buffer, 0, n);
+    case kUint8Clamped: return Uint8ClampedArray::New(buffer, 0, n);
+    case kInt16: return Int16Array::New(buffer, 0, n);
+    case kUint16: return Uint16Array::New(buffer, 0, n);
+    case kInt32: return Int32Array::New(buffer, 0, n);
+    case kUint32: return Uint32Array::New(buffer, 0, n);
+    case kFloat32: return Float32Array::New(buffer, 0, n);
+    case kFloat64: return Float64Array::New(buffer, 0, n);
+    case kDataView: return DataView::New(buffer, 0, length);
+    case kBigInt64: return BigInt64Array::New(buffer, 0, n);
+    case kBigUint64: return BigUint64Array::New(buffer, 0, n);
+    case kBuffer: {
+      Local<Uint8Array> view = Uint8Array::New(buffer, 0, n);
+      if (!buffer_proto.IsEmpty() && buffer_proto->IsObject()) {
+        // An ordinary typed array's prototype: no JavaScript runs.
+        if (view->SetPrototype(context, buffer_proto).IsNothing()) return Local<Object>();
+      }
+      return view;
+    }
+  }
+  return Local<Object>();
+}
+
+class ViewSerializerDelegate : public ValueSerializer::Delegate {
+ public:
+  ViewSerializerDelegate(Isolate* isolate, Local<Value> buffer_proto)
+      : isolate_(isolate), buffer_proto_(buffer_proto) {}
+
+  void ThrowDataCloneError(Local<String> message) override {
+    isolate_->ThrowException(Exception::Error(message));
+  }
+
+  Maybe<bool> WriteHostObject(Isolate* isolate, Local<Object> object) override {
+    uint32_t type = 0;
+    if (!object->IsArrayBufferView() || !viewTypeOf(object, buffer_proto_, &type)) {
+      return ValueSerializer::Delegate::WriteHostObject(isolate, object);
+    }
+    Local<ArrayBufferView> view = object.As<ArrayBufferView>();
+    size_t length = view->ByteLength();
+    if (length > 0xFFFFFFFFu) {
+      ThrowDataCloneError(String::NewFromUtf8Literal(isolate, "Array buffer view is too large"));
+      return Nothing<bool>();
+    }
+    std::vector<uint8_t> bytes(length);
+    if (length > 0) view->CopyContents(bytes.data(), length);
+    serializer->WriteUint32(type);
+    serializer->WriteUint32(static_cast<uint32_t>(length));
+    if (length > 0) serializer->WriteRawBytes(bytes.data(), length);
+    return Just(true);
+  }
+
+  ValueSerializer* serializer = nullptr;
+
+ private:
+  Isolate* isolate_;
+  Local<Value> buffer_proto_;
+};
+
+class ViewDeserializerDelegate : public ValueDeserializer::Delegate {
+ public:
+  ViewDeserializerDelegate(Local<Context> context, Local<Value> buffer_proto)
+      : context_(context), buffer_proto_(buffer_proto) {}
+
+  MaybeLocal<Object> ReadHostObject(Isolate* isolate) override {
+    uint32_t type = 0;
+    uint32_t length = 0;
+    const void* data = nullptr;
+    if (!deserializer->ReadUint32(&type) || type >= kViewTypeCount ||
+        !deserializer->ReadUint32(&length) ||
+        (length > 0 && !deserializer->ReadRawBytes(length, &data)) ||
+        length % elementSize(type) != 0) {
+      isolate->ThrowException(Exception::Error(
+          String::NewFromUtf8Literal(isolate, "Unable to deserialize cloned data.")));
+      return MaybeLocal<Object>();
+    }
+    Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, length);
+    if (length > 0) memcpy(buffer->Data(), data, length);
+    Local<Object> view = makeView(isolate, context_, type, buffer, length, buffer_proto_);
+    if (view.IsEmpty()) return MaybeLocal<Object>();
+    return view;
+  }
+
+  ValueDeserializer* deserializer = nullptr;
+
+ private:
+  Local<Context> context_;
+  Local<Value> buffer_proto_;
+};
+
+void setCaughtError(Isolate* isolate, TryCatch& try_catch, char** error) {
+  if (try_catch.HasTerminated() || !try_catch.HasCaught()) {
+    *error = strdup("");
+    return;
+  }
+  String::Utf8Value text(isolate, try_catch.Exception());
+  *error = strdup(*text ? *text : "Unknown error");
+}
+
+}  // namespace
+
+unsigned char* v8go_value_serialize(void* context_ptr, void* value_ptr, void* buffer_proto_ptr, size_t* size, char** error) {
+  if (!context_ptr || !value_ptr || !size || !error) return nullptr;
+  ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+  Isolate* isolate = ctx_wrapper->isolate;
+  Locker locker(isolate);
+  Isolate::Scope isolate_scope(isolate);
+  HandleScope handle_scope(isolate);
+  Local<Context> context = ctx_wrapper->context.Get(isolate);
+  Context::Scope context_scope(context);
+  TryCatch try_catch(isolate);
+
+  Local<Value> value = static_cast<ValueWrapper*>(value_ptr)->value.Get(isolate);
+  Local<Value> buffer_proto;
+  if (buffer_proto_ptr) buffer_proto = static_cast<ValueWrapper*>(buffer_proto_ptr)->value.Get(isolate);
+  ViewSerializerDelegate delegate(isolate, buffer_proto);
+  ValueSerializer serializer(isolate, &delegate);
+  delegate.serializer = &serializer;
+  serializer.SetTreatArrayBufferViewsAsHostObjects(true);
+  serializer.WriteHeader();
+  if (!serializer.WriteValue(context, value).FromMaybe(false)) {
+    setCaughtError(isolate, try_catch, error);
+    return nullptr;
+  }
+  std::pair<uint8_t*, size_t> result = serializer.Release();
+  *size = result.second;
+  return result.first;
+}
+
+void* v8go_value_deserialize(void* context_ptr, const unsigned char* data, size_t size, void* buffer_proto_ptr, char** error) {
+  if (!context_ptr || !error) return nullptr;
+  ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+  Isolate* isolate = ctx_wrapper->isolate;
+  Locker locker(isolate);
+  Isolate::Scope isolate_scope(isolate);
+  HandleScope handle_scope(isolate);
+  Local<Context> context = ctx_wrapper->context.Get(isolate);
+  Context::Scope context_scope(context);
+  TryCatch try_catch(isolate);
+
+  Local<Value> buffer_proto;
+  if (buffer_proto_ptr) buffer_proto = static_cast<ValueWrapper*>(buffer_proto_ptr)->value.Get(isolate);
+  ViewDeserializerDelegate delegate(context, buffer_proto);
+  ValueDeserializer deserializer(isolate, data, size, &delegate);
+  delegate.deserializer = &deserializer;
+  Local<Value> value;
+  if (!deserializer.ReadHeader(context).FromMaybe(false) ||
+      !deserializer.ReadValue(context).ToLocal(&value)) {
+    setCaughtError(isolate, try_catch, error);
+    return nullptr;
+  }
+  ValueWrapper* wrapper = new ValueWrapper();
+  wrapper->isolate = isolate;
+  wrapper->value.Reset(isolate, value);
+  return wrapper;
+}

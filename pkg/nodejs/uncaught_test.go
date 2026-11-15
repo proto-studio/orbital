@@ -375,8 +375,20 @@ const cases = [
   'const inner = new RangeError("in"); delete inner.stack; throw { detail: inner };',
   'throw { n: new Number(5), s: new String("x"), b: new Boolean(false), big: Object(3n) };',
   'throw { sym: Object(Symbol("q")) };',
+  'throw new Proxy({ code: "E_PROXY" }, {});',
+  'const e = new TypeError("px"); e.p = new Proxy({}, {}); e.code = 2; throw e;',
+  'throw new Proxy([1, 2], {});',
+  'const c = new TypeError("inner"); c.code = "E_IN"; throw new Error("outer", { cause: c });',
+  'const c = new TypeError("inner"); c.fn = () => 1; c.p = Promise.resolve(); const e = new Error("outer", { cause: c }); e.code = 1; throw e;',
+  'throw Symbol("x");',
+  'throw { a: 1, [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("bad inspect"); } };',
+  'throw { [Symbol.toStringTag]: "Error", code: "E" };',
+  'const e = new Error("g"); Object.defineProperty(e, "ro", { get() { return 5; }, enumerable: true, configurable: true }); throw e;',
+  'const m = new Map([[1, 2]]); m[Symbol.iterator] = function* () { yield [9, 9]; }; throw { m };',
+  'JSON.stringify = () => "{}"; const e = new RangeError("json"); e.code = "J"; throw e;',
 ];
 const describe = (e) => {
+  if (typeof e === 'symbol') return 'symbol ' + String(e) + ' registered=' + (Symbol.keyFor(e) !== undefined);
   // Inspected text is cut at its first brace: util.inspect itself is not under test.
   if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e).replace(/ ?\{[\s\S]*$/, ' {...}');
   if (e instanceof DataView) return 'DataView ' + new Uint8Array(e.buffer, e.byteOffset, e.byteLength).join(',');
@@ -390,7 +402,10 @@ const describe = (e) => {
       (ArrayBuffer.isView(e[k]) ? ':' + e[k].constructor.name + ':' + Array.from(new Uint8Array(e[k].buffer, e[k].byteOffset, e[k].byteLength)) : '') +
       (k === 'samples' ? ':negzero=' + Object.is(e[k][0], -0) : '') +
       (k === 'detail' ? ':stack=' + typeof e[k].stack + ',' + Object.prototype.hasOwnProperty.call(e[k], 'stack') : '') +
-      (['n', 's', 'b', 'big'].includes(k) ? ':' + typeof e[k] + ',' + e[k].valueOf() : ''));
+      (['n', 's', 'b', 'big'].includes(k) ? ':' + typeof e[k] + ',' + e[k].valueOf() : '') +
+      (k === 'cause' && e[k] instanceof Error ? ':' + e[k].constructor.name + ',' + e[k].message + ',code=' + e[k].code + ',own=' + Object.getOwnPropertyNames(e[k]).filter((n) => n !== 'stack').sort() : '') +
+      (k === 'ro' ? ':writable=' + Object.getOwnPropertyDescriptor(e, k).writable : '') +
+      (k === 'm' ? ':' + JSON.stringify([...e[k]]) : ''));
   return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
     typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
 };
@@ -411,8 +426,8 @@ next(0);
 		"Error true [object Error] string - code=E_X message=c name=Error nested=[object Object]",
 		"RangeError true [object Error] string - g=1 message=custom name=MyErr",
 		"URIError true [object Error] string - message=later name=URIError",
-		"Error true [object Error] string TypeError:inner cause=[object Error] message=outer name=Error",
-		"Error true [object Error] string - b=10:bigint,10 d=[object Date]:0 m=[object Map] message=f n=NaN:number,NaN name=Error",
+		"Error true [object Error] string TypeError:inner cause=[object Error]:TypeError,inner,code=undefined,own=message,name message=outer name=Error",
+		"Error true [object Error] string - b=10:bigint,10 d=[object Date]:0 m=[object Map]:[[1,2]] message=f n=NaN:number,NaN name=Error",
 		"Error true [object Error] string - message=nf",
 		"Error true [object Error] string - errors=[object Array] message=agg name=AggregateError",
 		"string a string",
@@ -434,6 +449,17 @@ next(0);
 		"Object false [object Object] undefined - detail=[object Error]:stack=undefined,true",
 		"Object false [object Object] undefined - b=[object Boolean]:object,false big=[object BigInt]:object,3 n=[object Number]:object,5 s=[object String]:object,x",
 		"string  {...}",
+		"string  {...}",
+		"TypeError true [object Error] string - message=px",
+		"string [ 1, 2 ]",
+		"Error true [object Error] string TypeError:inner cause=[object Error]:TypeError,inner,code=E_IN,own=code,message,name message=outer name=Error",
+		"Error true [object Error] string TypeError:inner cause=[object Error]:TypeError,inner,code=undefined,own=message code=1 message=outer name=Error",
+		"symbol Symbol(x) registered=true",
+		"Object false [object Object] undefined - a=1",
+		"Object false [object Object] undefined - code=E",
+		"Error true [object Error] string - message=g name=Error ro=5:writable=false",
+		"Object false [object Object] undefined - m=[object Map]:[[1,2]]",
+		"RangeError true [object Error] string - code=J message=json name=RangeError",
 	}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
