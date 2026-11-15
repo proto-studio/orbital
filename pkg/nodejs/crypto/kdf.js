@@ -110,8 +110,11 @@
     return size;
   }
 
-  // Wraps a callback for the native base64 result.
+  // Wraps a callback for the native base64 result. The callback runs in the
+  // AsyncLocalStorage context that was current when the work was started.
   function deliver(callback, toResult) {
+    const hooks = globalThis.__async_hooks_module;
+    if (hooks) callback = hooks.AsyncLocalStorage.bind(callback);
     return function (message, data) {
       if (message !== undefined) {
         callback(new Error(message));

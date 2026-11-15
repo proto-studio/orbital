@@ -35,7 +35,9 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 	loop.AddPendingWork()
 	go func() {
 		defer loop.DonePendingWork()
+		kdfSlots <- struct{}{}
 		key, err := work()
+		<-kdfSlots
 		loop.EnqueueMicrotask(func() {
 			if err != nil {
 				msg, _ := jsCtx.NewString(err.Error())
@@ -48,6 +50,11 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 	}()
 	return ctx.Undefined()
 }
+
+// kdfSlots bounds how many derivations run at once, as Node's threadpool
+// (four threads by default) does, so a burst of scrypt calls queues instead
+// of allocating every call's memory at the same time.
+var kdfSlots = make(chan struct{}, 4)
 
 func argBytes(args []*v8.Value, i int) []byte {
 	if i >= len(args) {

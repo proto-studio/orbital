@@ -124,6 +124,24 @@ async function main() {
   results.scryptCallback = await callback((cb) => crypto.scrypt('pw', 'salt', 16, cb));
   results.scryptOptionsCallback = await callback((cb) => crypto.scrypt('pw', 'salt', 16, { N: 1024 }, cb));
   results.hkdfCallback = await callback((cb) => crypto.hkdf('sha256', 'key', 'salt', 'info', 16, cb));
+
+  // Callbacks run in the AsyncLocalStorage context they were started in.
+  const { AsyncLocalStorage } = require('async_hooks');
+  const als = new AsyncLocalStorage();
+  const seen = await Promise.all([
+    (cb) => crypto.pbkdf2('pw', 'salt', 1, 16, 'sha256', cb),
+    (cb) => crypto.scrypt('pw', 'salt', 16, { N: 16, r: 1 }, cb),
+    (cb) => crypto.hkdf('sha256', 'key', 'salt', 'info', 16, cb),
+  ].map((start, i) => new Promise((resolve) => {
+    als.run('request ' + i, () => start(() => resolve(als.getStore())));
+  })));
+  results.asyncContext = seen;
+
+  // Many derivations at once all finish.
+  const many = await Promise.all(Array.from({ length: 12 }, (_, i) => new Promise((resolve) => {
+    crypto.scrypt('pw', 'salt' + i, 8, { N: 1024 }, (err, key) => resolve(err ? String(err) : key.length));
+  })));
+  results.manyAtOnce = many;
   return results;
 }
 
