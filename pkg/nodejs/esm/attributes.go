@@ -178,15 +178,18 @@ func attrsJSON(attrs []v8.ImportAttribute) string {
 }
 
 // parseAttrsJSON decodes the attributes the loader realm passes back: a JSON
-// array of [key, value] pairs (see encodeAttrs in loader-hooks.js), keeping
+// object whose "pairs" are [key, value] arrays (see encodeAttrs in loader-hooks.js), keeping
 // their order. A value that isn't a string comes as {"text": String(value),
 // "received": how Node describes it}; it becomes its text, and for `type` the
 // description is returned too.
 func parseAttrsJSON(s string) (attrs []v8.ImportAttribute, typeReceived string) {
-	var pairs [][2]json.RawMessage
-	if json.Unmarshal([]byte(s), &pairs) != nil {
+	var encoded struct {
+		Pairs [][2]json.RawMessage `json:"pairs"`
+	}
+	if json.Unmarshal([]byte(s), &encoded) != nil {
 		return nil, ""
 	}
+	pairs := encoded.Pairs
 	attrs = make([]v8.ImportAttribute, 0, len(pairs))
 	for _, p := range pairs {
 		var key, val string
