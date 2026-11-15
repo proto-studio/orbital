@@ -749,6 +749,12 @@
       "value": "Jun  7 08:09:10 2051 GMT"
     }
   },
+  "otherNames": {
+    "value": [
+      "othername:UPN:user@example.com, othername:XmppAddr:xmpp@example.com, othername:SRVName:_ldap.example.com, othername:\u003cunsupported\u003e, DNS:dns.example.com",
+      "othername:UPN:user@example.com, othername:XmppAddr:xmpp@example.com, othername:SRVName:_ldap.example.com, othername:\u003cunsupported\u003e, DNS:dns.example.com"
+    ]
+  },
   "prototype": [
     "ca",
     "checkEmail",
@@ -776,6 +782,13 @@
     "validTo",
     "verify"
   ],
+  "rdnBoundaries": {
+    "value": [
+      false,
+      "CN=a\n1.2.3.4=b",
+      "CN=a\\011.2.3.4=b"
+    ]
+  },
   "trusted": {
     "value": [
       true,
