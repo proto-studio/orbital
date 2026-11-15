@@ -84,6 +84,46 @@
     owner[name] = wrapped;
   }
 
+  // Promise reactions registered while a domain is active run inside it. If one throws, the
+  // domain stays active until the reaction's job is over, so the rejection that follows is
+  // recorded against it and reported to its 'error' listeners rather than as an
+  // unhandledRejection. catch() and finally() go through then(). Node follows promises with
+  // a V8 promise hook, which also covers await; here await is not followed. then() is only
+  // replaced once a domain is created, so programs without domains keep the native one.
+  const promiseThen = Promise.prototype.then;
+  function bindReaction(domain, fn) {
+    if (typeof fn !== 'function') return fn;
+    return function domainReaction(value) {
+      domain.enter();
+      let threw = true;
+      try {
+        const ret = apply(fn, this, [value]);
+        threw = false;
+        return ret;
+      } finally {
+        if (threw) queueUpdate(() => domain.exit());
+        else domain.exit();
+      }
+    };
+  }
+  function installPromises() {
+    Object.defineProperty(Promise.prototype, 'then', {
+      value: {
+        then(onFulfilled, onRejected) {
+          const domain = exports.active;
+          if (domain) {
+            onFulfilled = bindReaction(domain, onFulfilled);
+            onRejected = bindReaction(domain, onRejected);
+          }
+          return apply(promiseThen, this, [onFulfilled, onRejected]);
+        },
+      }.then,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+
   let installed = false;
 
   function install() {
@@ -121,6 +161,8 @@
       };
     }
 
+
+    installPromises();
 
     // Emitters created while a domain is active belong to it.
     EventEmitter.usingDomains = true;
@@ -325,6 +367,7 @@
   wrapScheduler(global, 'setInterval', 0);
   wrapScheduler(global, 'setImmediate', 0);
   if (getProcess()) wrapScheduler(getProcess(), 'nextTick', 0);
+
 
   function create() {
     return new Domain();
