@@ -155,3 +155,23 @@ func TestMemoryFilesystem_WriteFileKeepsTheFile(t *testing.T) {
 		t.Errorf("/f mode = %v, want the original 0644", info.Mode.Perm())
 	}
 }
+
+// Copy over an open file keeps that file, as WriteFile does.
+func TestMemoryFilesystem_CopyKeepsTheFile(t *testing.T) {
+	m := NewMemoryFilesystem()
+	m.WriteFile("/src", []byte("abcdef"), 0o644)
+	m.WriteFile("/dest", []byte("old"), 0o644)
+	h, err := m.OpenFile("/dest", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Copy("/src", "/dest"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.(MetadataFile).Truncate(1); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := m.ReadFile("/dest"); string(data) != "a" {
+		t.Errorf("/dest = %q, want %q", data, "a")
+	}
+}

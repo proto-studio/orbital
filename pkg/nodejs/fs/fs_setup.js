@@ -81,11 +81,12 @@
   // The exact times in nanoseconds, as decimal strings, which the native layer gives beside
   // the millisecond numbers, since a Number can't hold them.
   const kNs = Symbol('ns');
+  const kExact = Symbol('exact');
   function toBigIntStats(s) {
     const b = new BigIntStats();
-    for (const key of ['dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size', 'blocks']) {
-      b[key] = BigInt(Math.trunc(s[key]));
-    }
+    ['dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size', 'blocks'].forEach((key, i) => {
+      b[key] = s[kExact] ? BigInt(s[kExact][i]) : BigInt(Math.trunc(s[key]));
+    });
     for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
       b[key + 'Ms'] = BigInt(Math.floor(s[key + 'Ms']));
     }
@@ -107,6 +108,7 @@
     const stats = new Stats(s.dev, s.mode, s.nlink, s.uid, s.gid, s.rdev, s.blksize, s.ino, s.size,
       s.blocks, s.atimeMs, s.mtimeMs, s.ctimeMs, s.birthtimeMs);
     if (Array.isArray(s.timesNs)) Object.defineProperty(stats, kNs, { value: s.timesNs });
+    if (Array.isArray(s.exact)) Object.defineProperty(stats, kExact, { value: s.exact });
     return stats;
   }
   // Exposed so the promise and callback layers return the same class.

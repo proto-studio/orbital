@@ -3,6 +3,8 @@ package fs
 import (
 	"testing"
 	"time"
+
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 // Stats times past 2262, which a filesystem such as ext4 can hold, keep their value.
@@ -34,5 +36,25 @@ func TestNanos(t *testing.T) {
 		if got := nanos(tc.t); got != tc.want {
 			t.Errorf("nanos(%v) = %s, want %s", tc.t, got, tc.want)
 		}
+	}
+}
+
+// A large inode keeps its exact value in BigInt stats.
+func TestBigIntStatsKeepExactNumbers(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	f := New()
+	f.rt = rt
+	ctx := rt.Context()
+	obj := f.createStatObject(ctx, &runtime.FileInfo{Ino: 9007199254740993, Size: 1, HasDetails: true})
+	if err := rt.SetGlobal("__rawStat", obj); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.RunScript(`String(__fs_module.__toBigIntStats(__fs_module.__addStatsMethods(__rawStat)).ino)`, "t.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "9007199254740993" {
+		t.Errorf("ino = %s", result.String())
 	}
 }
