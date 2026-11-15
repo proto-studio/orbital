@@ -12,6 +12,15 @@ const fs = require('fs');
 const path = require('path');
 const { internalBinding } = require('internal/test/binding');
 
+// The table must match the Node Orbital follows; another ICU counts other characters as wide.
+// To move to a new Node, change these along with the version Orbital follows.
+const want = { node: 'v20.18.1', icu: '75.1', unicode: '15.1' };
+const have = { node: process.version, icu: process.versions.icu, unicode: process.versions.unicode };
+if (have.node !== want.node || have.icu !== want.icu || have.unicode !== want.unicode) {
+  throw new Error(`gen_widths.js needs Node ${want.node} (ICU ${want.icu}, Unicode ${want.unicode}); ` +
+    `this is ${have.node} (ICU ${have.icu}, Unicode ${have.unicode})`);
+}
+
 const icu = internalBinding('icu');
 const changes = [];
 let last = -1;
