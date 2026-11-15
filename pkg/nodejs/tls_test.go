@@ -1500,3 +1500,43 @@ func TestTLSSocket_WrapsAnyDuplex(t *testing.T) {
 	got := runJS(t, &runtime.Config{}, string(script))
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
+
+// As with a stream in Node, TLS over an in-memory stream doesn't keep the script running,
+// whether its socket is left open or paused with data waiting.
+func TestTLSSocket_IdleDuplexLetsTheScriptEnd(t *testing.T) {
+	script, err := os.ReadFile("testdata/tls_duplex.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(script)
+	prelude := src[:strings.Index(src, "async function inMemory")]
+	for name, body := range map[string]string{
+		"open": `
+const [a, b] = pair();
+new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+const client = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => { globalThis.secured = true; });`,
+		"paused with data": `
+const [a, b] = pair();
+const server = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+server.on('secure', () => { for (let i = 0; i < 50; i++) server.write(Buffer.alloc(16384)); });
+const client = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => { globalThis.secured = true; client.pause(); });`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst, err := New(&runtime.Config{Timeout: 10 * time.Second, EnableTimers: true, EnableConsole: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			start := time.Now()
+			if _, err := inst.Runtime.Run(prelude+body, "idle.js"); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if inst.Runtime.IsKilled() || time.Since(start) > 5*time.Second {
+				t.Fatalf("script kept running (killed: %v, after %v)", inst.Runtime.IsKilled(), time.Since(start))
+			}
+			if v, _ := inst.Runtime.GetGlobal("secured"); v == nil || v.String() != "true" {
+				t.Fatal("the handshake didn't finish before the script ended")
+			}
+		})
+	}
+}
