@@ -1,0 +1,174 @@
+package nodejs
+
+import (
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"proto.zip/studio/orbital/pkg/runtime"
+)
+
+// A domain follows the work started inside it: timers, immediates, intervals, nextTick
+// callbacks and event emitters created in it run with it active, and their uncaught
+// exceptions reach its 'error' listeners. Expected values are what Node 20.18.1 prints.
+func TestDomain_FollowsAsyncWork(t *testing.T) {
+	notes, err := runUncaught(t, `
+const domain = require('domain');
+const EventEmitter = require('events');
+const log = (...a) => note(a.join(' '));
+const cases = {
+  timer(next) {
+    const d = domain.create();
+    d.on('error', (e) => { log('caught', e.message, e.domain === d, e.domainThrown, process.domain === d); next(); });
+    d.run(() => setTimeout(() => { throw new Error('in timer'); }, 1));
+  },
+  immediate(next) {
+    const d = domain.create();
+    d.on('error', (e) => { log('caught', e.message); next(); });
+    d.run(() => setImmediate(() => { throw new Error('in immediate'); }));
+  },
+  tick(next) {
+    const d = domain.create();
+    d.on('error', (e) => { log('caught', e.message); next(); });
+    d.run(() => process.nextTick(() => { log('active in tick', process.domain === d); throw new Error('in tick'); }));
+  },
+  interval(next) {
+    const d = domain.create();
+    let n = 0;
+    const h = d.run(() => setInterval(() => { if (++n === 2) { clearInterval(h); throw new Error('in interval'); } }, 1));
+    d.on('error', (e) => { log('caught', e.message, n); next(); });
+  },
+  nested(next) {
+    const outer = domain.create(), inner = domain.create();
+    outer.on('error', (e) => log('outer', e.message));
+    inner.on('error', (e) => { log('inner', e.message); next(); });
+    outer.run(() => inner.run(() => setTimeout(() => { log('active', process.domain === inner); throw new Error('nested'); }, 1)));
+  },
+  sync(next) {
+    const d = domain.create();
+    d.on('error', (e) => log('caught sync', e.message));
+    try { d.run(() => { throw new Error('sync'); }); } catch (e) { log('run rethrew', e.message, process.domain === d); }
+    d.exit();
+    setTimeout(next, 1);
+  },
+  emitter(next) {
+    const d = domain.create();
+    let em;
+    d.on('error', (e) => { log('caught', e.message, e.domainEmitter === em, e.domainThrown); next(); });
+    d.run(() => { em = new EventEmitter(); });
+    log('bound', em.domain === d);
+    em.emit('error', new Error('emitted'));
+  },
+  emitterListener(next) {
+    const d = domain.create();
+    let em;
+    d.on('error', (e) => { log('caught', e.message); next(); });
+    d.run(() => { em = new EventEmitter(); });
+    em.on('x', () => { log('active in listener', process.domain === d); });
+    setTimeout(() => { em.emit('x'); setTimeout(() => em.emit('error', new Error('later')), 1); }, 1);
+  },
+  noHandler(next) {
+    const d = domain.create();
+    process.once('uncaughtException', (e) => { log('process caught', e.message, e.domain === d); next(); });
+    d.run(() => setTimeout(() => { throw new Error('unhandled in domain'); }, 1));
+  },
+  bindIntercept(next) {
+    const d = domain.create();
+    let count = 0;
+    d.on('error', (e) => { log('caught', e.message); if (++count === 2) next(); });
+    const f = d.bind(() => { throw new Error('bound'); });
+    setTimeout(f, 1);
+    const g = d.intercept((v) => log('intercepted value', v));
+    g(null, 5);
+    setTimeout(() => g(new Error('intercepted error')), 2);
+  },
+
+};
+const names = Object.keys(cases);
+const run = (i) => { if (i === names.length) { note('done'); return; } log('== ' + names[i]); cases[names[i]](() => setTimeout(() => run(i + 1), 5)); };
+run(0);
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	want := []string{
+		"== timer",
+		"caught in timer true true false",
+		"== immediate",
+		"caught in immediate",
+		"== tick",
+		"active in tick true",
+		"caught in tick",
+		"== interval",
+		"caught in interval 2",
+		"== nested",
+		"active true",
+		"inner nested",
+		"== sync",
+		"run rethrew sync true",
+		"== emitter",
+		"bound true",
+		"caught emitted true false",
+		"== emitterListener",
+		"active in listener true",
+		"caught later",
+		"== noHandler",
+		"process caught unhandled in domain false",
+		"== bindIntercept",
+		"intercepted value 5",
+		"caught bound",
+		"caught intercepted error",
+		"done",
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// As in Node, run() lets an exception through to its caller, and an uncaught one reaches
+// the domain; a domain's handler that throws ends the program with code 7.
+func TestDomain_RunAndHandlerThrows(t *testing.T) {
+	notes, err := runUncaught(t, `
+const d = require('domain').create();
+d.on('error', (e) => note('domain caught', e.message, e.domainThrown));
+d.run(() => { throw new Error('sync top'); });
+note('not reached');
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if want := []string{"domain caught sync top true"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+
+	_, err = runUncaught(t, `
+const domain = require('domain');
+const outer = domain.create(), inner = domain.create();
+outer.on('error', () => note('outer'));
+inner.on('error', (e) => { throw new Error('handler threw ' + e.message); });
+outer.run(() => inner.run(() => setTimeout(() => { throw new Error('x'); }, 1)));
+`)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) || uncaught.ExitCode != 7 || !strings.Contains(uncaught.Message, "handler threw x") {
+		t.Errorf("Run returned %v, want exit 7 with the handler's error", err)
+	}
+}
+
+// The domain module and process.setUncaughtExceptionCaptureCallback exclude each other,
+// with Node's error codes.
+func TestDomain_CaptureCallbackExclusive(t *testing.T) {
+	notes, err := runUncaught(t, `
+try { process.setUncaughtExceptionCaptureCallback(() => {}); require('domain').create(); } catch (e) { note(e.code); }
+process.setUncaughtExceptionCaptureCallback(null);
+require('domain').create();
+try { process.setUncaughtExceptionCaptureCallback(() => {}); } catch (e) { note(e.code); }
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	want := []string{"ERR_DOMAIN_CALLBACK_NOT_AVAILABLE", "ERR_DOMAIN_CANNOT_SET_UNCAUGHT_EXCEPTION_CAPTURE"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}

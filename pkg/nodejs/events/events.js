@@ -3,6 +3,9 @@
 		constructor() {
 			this._events = {};
 			this._maxListeners = undefined;
+			// Node's hook for what every emitter does on creation; the domain module
+			// replaces it to tie emitters to the active domain.
+			EventEmitter.init.call(this);
 		}
 
 		// Lazily initialize the listener store. Node does this in every method so
@@ -220,6 +223,9 @@
 			emitter.once(name, onEvent);
 		});
 	};
+
+	EventEmitter.init = function init() {};
+	EventEmitter.usingDomains = false;
 
 	return EventEmitter;
 })()
