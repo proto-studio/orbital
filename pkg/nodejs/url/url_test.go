@@ -306,3 +306,29 @@ JSON.stringify(cases.map(([u, b]) => { try { const x = b === undefined ? new URL
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// url.parse() keeps dot segments as Node's legacy parser does; assigning href replaces the
+// authority too; a file: URL's Windows drive letter survives ".." and "|" becomes ":"; and a
+// path starting with "//" in a URL without an authority is written with "/." before it.
+// Expected values are Node 20.18.1's.
+func TestURL_DotSegmentEdges(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const out = [];
+for (const u of ['http://h/a/../b', 'http://h/a/%2e%2e/b?x', 'file:///a/./b', '/a/./b']) { const p = __url_module.parse(u); out.push([p.pathname, p.path, __url_module.format(p)]); }
+const x = new URL('foo://h/x'); x.href = 'foo:/y'; out.push(x.href);
+out.push([new URL('../../x', 'file:///C:/a/b').href, new URL('..', 'file:///C:/').href, new URL('../x', 'file:///C|/a').href, new URL('../../x', 'http://h/C:/a').href, new URL('../..', 'file:///C:').href]);
+const y = new URL('foo:/.//host/path'); out.push([y.href, y.pathname, y.host]);
+out.push([new URL('foo:/a/..//b').href, new URL('foo://h/a/..//b').href, new URL('file:///a/..//b').href]);
+JSON.stringify(out);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["/a/../b","/a/../b","http://h/a/../b"],["/a/%2e%2e/b","/a/%2e%2e/b?x","http://h/a/%2e%2e/b?x"],["/a/./b","/a/./b","file:///a/./b"],["/a/./b","/a/./b","/a/./b"],"foo:/y",["file:///C:/x","file:///C:/","file:///C:/x","http://h/x","file:///C:/"],["foo:/.//host/path","//host/path",""],["foo:/.//b","foo://h//b","file:////b"]]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
