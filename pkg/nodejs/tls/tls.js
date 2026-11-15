@@ -19,6 +19,12 @@
 
   function makeError(message, code) {
     const err = new Error(message);
+    // OpenSSL's messages also name the library and the reason, which Node copies out.
+    const openssl = /^error:[0-9A-F]+:([^:]+)::(.+)$/.exec(message);
+    if (openssl) {
+      err.library = openssl[1];
+      err.reason = openssl[2];
+    }
     if (code) err.code = code;
     return err;
   }
@@ -94,7 +100,8 @@
           requestCert: options.requestCert,
           rejectUnauthorized: options.rejectUnauthorized,
           SNICallback: options.SNICallback,
-          contexts: server ? server._contexts : []
+          contexts: server ? server._contexts : [],
+          ticketKeys: server ? server._ticketKeys : null
         }, (err) => {
           if (err) {
             this.destroy(err);
@@ -139,7 +146,8 @@
         ALPNProtocols: alpnList(options.ALPNProtocols),
         requestCert,
         rejectUnauthorized,
-        hasSNI: sniCallback !== null || contexts.length > 0
+        hasSNI: sniCallback !== null || contexts.length > 0,
+        ticketKeys: options.ticketKeys ? options.ticketKeys.toString('base64') : undefined
       }), chooseContext, (encoded) => {
         if (this.destroyed) return;
         const result = JSON.parse(encoded);
@@ -262,7 +270,18 @@
         checkIdentity = tls.checkServerIdentity;
       }
 
-      internal.upgradeClient(this._id, host, JSON.stringify(clientNativeOptions(options, checkIdentity !== null)), (encoded) => {
+      const nativeOptions = clientNativeOptions(options, checkIdentity !== null);
+      if (options.session) nativeOptions.session = Buffer.from(options.session).toString('base64');
+      const onSession = (session, ticket) => {
+        if (this.destroyed) return;
+        this._session = Buffer.from(session, 'base64');
+        this._ticket = Buffer.from(ticket, 'base64');
+        const current = this._session;
+        // As in Node, 'session' follows 'secureConnect' even when the ticket came first.
+        if (this.secureConnecting) this.once('secureConnect', () => this.emit('session', current));
+        else this.emit('session', current);
+      };
+      internal.upgradeClient(this._id, host, JSON.stringify(nativeOptions), (encoded) => {
         if (this.destroyed) return;
         const result = JSON.parse(encoded);
         this.authorized = !!result.authorized;
@@ -296,7 +315,7 @@
         this.emit('secureConnect');
         this._flushIO();
         if (!this.isPaused() || this.readableFlowing === null) this.read(0);
-      });
+      }, onSession);
     }
 
     _finishHandshake() {
@@ -340,10 +359,12 @@
       return Buffer.from(internal.exportKeyingMaterial(this._id, length, encodedLabel, encodedContext), 'base64');
     }
 
-    // Session resumption tickets are not exposed.
-    getSession() { return undefined; }
-    getTLSTicket() { return undefined; }
-    setSession() {}
+    // A session is an opaque buffer that tls.connect's session option takes back.
+    getSession() { return this._session; }
+    getTLSTicket() { return this._ticket; }
+    setSession(session) {
+      this._tlsOptions.session = typeof session === 'string' ? Buffer.from(session, 'latin1') : session;
+    }
     getFinished() { return undefined; }
     getPeerFinished() { return undefined; }
     getEphemeralKeyInfo() { return null; }
@@ -374,7 +395,10 @@
       rejectUnauthorized: options.rejectUnauthorized !== false,
       ca: credentials.ca ? pemList(credentials.ca) : null,
       cert: pemList(credentials.cert).join('\n'),
-      key: pemList(credentials.key).map(keyText).join('\n'),
+      keys: keyEntries(credentials),
+      pfx: pfxEntries(credentials),
+      ciphers: typeof credentials.ciphers === 'string' ? credentials.ciphers : '',
+      ecdhCurve: typeof credentials.ecdhCurve === 'string' ? credentials.ecdhCurve : '',
       servername: options.servername || '',
       scriptChecksIdentity,
       ALPNProtocols: alpnList(options.ALPNProtocols),
@@ -383,8 +407,37 @@
     };
   }
 
-  function keyText(key) {
-    return key && typeof key === 'object' && key.pem ? pemList(key.pem)[0] : key;
+  function bytesText(value) {
+    return typeof value === 'string' ? value : Buffer.from(value).toString('utf8');
+  }
+
+  // Node's key option: PEM, or { pem, passphrase } objects, each decrypted with its own
+  // passphrase or the options' one.
+  function keyEntries(credentials) {
+    const keys = credentials.key;
+    if (keys === undefined || keys === null) return [];
+    const fallback = typeof credentials.passphrase === 'string' ? credentials.passphrase : null;
+    return (Array.isArray(keys) ? keys : [keys]).map((key) => {
+      if (key && typeof key === 'object' && !ArrayBuffer.isView(key) && key.pem !== undefined) {
+        const passphrase = typeof key.passphrase === 'string' ? key.passphrase : fallback;
+        return { pem: bytesText(key.pem), passphrase };
+      }
+      return { pem: bytesText(key), passphrase: fallback };
+    });
+  }
+
+  // Node's pfx option: PKCS#12 data, or { buf, passphrase } objects.
+  function pfxEntries(credentials) {
+    const pfx = credentials.pfx;
+    if (pfx === undefined || pfx === null) return [];
+    const fallback = typeof credentials.passphrase === 'string' ? credentials.passphrase : null;
+    return (Array.isArray(pfx) ? pfx : [pfx]).map((item) => {
+      if (item && typeof item === 'object' && !ArrayBuffer.isView(item) && item.buf !== undefined) {
+        const passphrase = typeof item.passphrase === 'string' ? item.passphrase : fallback;
+        return { buf: Buffer.from(item.buf).toString('base64'), passphrase };
+      }
+      return { buf: Buffer.from(item).toString('base64'), passphrase: fallback };
+    });
   }
 
   /**
@@ -403,9 +456,6 @@
     }
 
     options = { ...options, rejectUnauthorized: resolveRejectUnauthorized(options) };
-    if (options.pfx) {
-      throw makeError('PFX credentials are not supported', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
-    }
 
     // Bad credentials throw here, before connecting, as they do in Node.
     const invalid = internal.validateClient(JSON.stringify(clientNativeOptions(options, false)));
@@ -442,12 +492,12 @@
     const memo = options.secureContext;
     if (memo && memo._id) return memo._id;
     const credentials = memo ? (memo.context || {}) : options;
-    if (credentials.pfx) {
-      throw makeError('PFX credentials are not supported', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
-    }
     const encoded = {
       cert: pemList(credentials.cert),
-      key: pemList(credentials.key).map(keyText),
+      key: keyEntries(credentials),
+      pfx: pfxEntries(credentials),
+      ciphers: typeof credentials.ciphers === 'string' ? credentials.ciphers : '',
+      ecdhCurve: typeof credentials.ecdhCurve === 'string' ? credentials.ecdhCurve : '',
       ca: credentials.ca ? pemList(credentials.ca) : null,
       minVersion: credentials.minVersion || '',
       maxVersion: credentials.maxVersion || ''
@@ -486,7 +536,9 @@
       });
       this._tlsOptions = options;
       this._contexts = [];
-      this._ticketKeys = Buffer.alloc(48);
+      if (options.ticketKeys !== undefined) checkTicketKeys(options.ticketKeys);
+      this._ticketKeys = options.ticketKeys !== undefined
+        ? Buffer.from(options.ticketKeys) : Buffer.from(internal.newTicketKeys(), 'base64');
       this.handshakeTimeout = options.handshakeTimeout === undefined ? kDefaultHandshakeTimeout : options.handshakeTimeout;
       this.setSecureContext(options);
       if (secureConnectionListener) this.on('secureConnection', secureConnectionListener);
@@ -506,6 +558,7 @@
     }
 
     setTicketKeys(keys) {
+      checkTicketKeys(keys);
       this._ticketKeys = Buffer.from(keys);
     }
 
@@ -547,7 +600,8 @@
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
         SNICallback: options.SNICallback,
-        contexts: this._contexts
+        contexts: this._contexts,
+        ticketKeys: this._ticketKeys
       }, (err) => {
         clearTimer();
         if (handshakeOver) return;
@@ -564,6 +618,19 @@
     }
   }
 
+  function checkTicketKeys(keys) {
+    if (!ArrayBuffer.isView(keys)) {
+      throw makeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.' +
+        `${keys === undefined ? ' Received undefined' : ''}`, 'ERR_INVALID_ARG_TYPE');
+    }
+    if (keys.byteLength !== 48) {
+      throw makeError('Session ticket keys must be a 48-byte buffer\n' +
+        'This is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n' +
+        'Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n',
+      'ERR_INTERNAL_ASSERTION');
+    }
+  }
+
   function createServer(options, secureConnectionListener) {
     return new Server(options, secureConnectionListener);
   }
@@ -573,12 +640,11 @@
    */
   function createSecureContext(options) {
     options = options || {};
-    if (options.cert || options.key || options.pfx) {
-      const certs = pemList(options.cert);
-      const keys = pemList(options.key);
-      if (certs.length && keys.length) contextIdFrom(options);
-    }
-    return { context: { ...options } };
+    const memo = { context: { ...options } };
+    // Credentials and cipher settings are checked now, as in Node.
+    const pairs = options.cert && options.key;
+    if (pairs || options.pfx || options.ciphers || options.ecdhCurve) contextIdFrom({ secureContext: memo });
+    return memo;
   }
 
   function getCiphers() {
@@ -819,7 +885,7 @@
     return err;
   }
 
-  const rootCertificates = [];
+  let rootCertificates;
 
   // Export module
   const tls = {
@@ -831,7 +897,6 @@
     createSecureContext,
     getCiphers,
     checkServerIdentity,
-    rootCertificates,
     CLIENT_RENEG_LIMIT: 3,
     CLIENT_RENEG_WINDOW: 600,
     DEFAULT_CIPHERS,
@@ -839,6 +904,20 @@
     DEFAULT_MIN_VERSION,
     DEFAULT_MAX_VERSION
   };
+
+  // Node's bundled CA certificates, read on first use.
+  Object.defineProperty(tls, 'rootCertificates', {
+    get() {
+      if (!rootCertificates) {
+        const end = '-----END CERTIFICATE-----';
+        rootCertificates = Object.freeze(internal.rootCertificates().split(end + '\n')
+          .map((pem, i, all) => (i < all.length - 1 ? pem + end : pem)));
+      }
+      return rootCertificates;
+    },
+    configurable: false,
+    enumerable: true
+  });
 
   global.__tls_module = tls;
 

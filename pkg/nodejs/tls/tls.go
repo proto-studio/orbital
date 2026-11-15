@@ -31,6 +31,14 @@ import (
 //go:embed tls.js
 var tlsJS string
 
+// rootCertificatesPEM is Node 20.18.1's bundled CA list, tls.rootCertificates, one
+// certificate after another. Regenerate it with
+//
+//	node -e "process.stdout.write(require('tls').rootCertificates.join('\n'))"
+//
+//go:embed root_certificates.pem
+var rootCertificatesPEM string
+
 // TLS provides TLS/SSL functionality.
 type TLS struct {
 	rt  *runtime.Runtime
@@ -85,6 +93,8 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 		"getCertificate":       t.getCertificateFunc,
 		"getCipher":            t.getCipherFunc,
 		"getProtocol":          t.getProtocolFunc,
+		"rootCertificates":     t.rootCertificatesFunc,
+		"newTicketKeys":        t.newTicketKeysFunc,
 		"isSessionReused":      t.isSessionReusedFunc,
 		"exportKeyingMaterial": t.exportKeyingMaterialFunc,
 		"createPipe":           t.createPipeFunc,
@@ -161,6 +171,10 @@ type clientOptions struct {
 	ALPNProtocols []string `json:"ALPNProtocols"`
 	MinVersion    string   `json:"minVersion"`
 	MaxVersion    string   `json:"maxVersion"`
+	Ciphers       string   `json:"ciphers"`
+	ECDHCurve     string   `json:"ecdhCurve"`
+	// Session is a session from an earlier connection, as base64, to resume.
+	Session string `json:"session"`
 }
 
 func (o *clientOptions) newVerifier(base *tls.Config, host string) (*tlsclient.Verifier, error) {
@@ -174,6 +188,12 @@ func (o *clientOptions) newVerifier(base *tls.Config, host string) (*tlsclient.V
 	}
 	if base == nil {
 		if err := applyVersions(verifier.Config, o.MinVersion, o.MaxVersion); err != nil {
+			return nil, err
+		}
+		if err := tlsclient.ApplyCiphers(verifier.Config, o.Ciphers); err != nil {
+			return nil, err
+		}
+		if err := tlsclient.ApplyECDHCurve(verifier.Config, o.ECDHCurve); err != nil {
 			return nil, err
 		}
 	}
@@ -238,8 +258,9 @@ func (t *TLS) validateClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return ctx.Null()
 }
 
-// upgradeClient(netId, host, optionsJSON, callback) starts a client handshake on a
-// connected socket. callback receives a JSON handshakeResult.
+// upgradeClient(netId, host, optionsJSON, callback, onSession) starts a client handshake on
+// a connected socket. callback receives a JSON handshakeResult. onSession(session, ticket)
+// receives each session the server issues, both as base64.
 func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -254,11 +275,17 @@ func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err := json.Unmarshal([]byte(args[2].String()), &opts); err != nil {
 		return ctx.Throw("tls: invalid connect options")
 	}
-	verifier, err := opts.newVerifier(t.rt.ClientTLSConfig(), host)
+	base := t.rt.ClientTLSConfig()
+	verifier, err := opts.newVerifier(base, host)
 	if err != nil {
 		t.deliver(func(ctx *v8.Context) { t.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, describeForJS(err))) })
 		return nil
 	}
+	var onSession *v8.Value
+	if len(args) > 4 {
+		onSession = args[4]
+	}
+	t.useSessions(verifier.Config, base != nil, opts.Session, onSession)
 
 	finish := func(conn *tls.Conn, err error) handshakeResult {
 		var result handshakeResult
@@ -389,14 +416,19 @@ type serverContext struct {
 	clientCAs    *x509.CertPool
 	minVersion   uint16
 	maxVersion   uint16
+	cipherSuites []uint16
+	curves       []tls.CurveID
 }
 
 type contextOptions struct {
-	Cert       []string `json:"cert"`
-	Key        []string `json:"key"`
-	CA         []string `json:"ca"`
-	MinVersion string   `json:"minVersion"`
-	MaxVersion string   `json:"maxVersion"`
+	Cert       []string               `json:"cert"`
+	Key        []tlsclient.PrivateKey `json:"key"`
+	PFX        []tlsclient.PFX        `json:"pfx"`
+	CA         []string               `json:"ca"`
+	MinVersion string                 `json:"minVersion"`
+	MaxVersion string                 `json:"maxVersion"`
+	Ciphers    string                 `json:"ciphers"`
+	ECDHCurve  string                 `json:"ecdhCurve"`
 }
 
 // createServerContext(optionsJSON) parses credentials and returns an id, or a JSON error.
@@ -415,16 +447,11 @@ func (t *TLS) createServerContextFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(opts.Cert) != len(opts.Key) && len(opts.Key) != 0 && len(opts.Cert) != 0 {
 		return jsJSON(ctx, handshakeResult{Message: "certificates and keys do not pair up", Code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH"})
 	}
-	for i := range opts.Cert {
-		if i >= len(opts.Key) {
-			break
-		}
-		cert, err := tls.X509KeyPair([]byte(opts.Cert[i]), []byte(opts.Key[i]))
-		if err != nil {
-			return jsJSON(ctx, handshakeResult{Message: err.Error(), Code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH"})
-		}
-		context.certificates = append(context.certificates, cert)
+	certificates, err := tlsclient.LoadCertificates(opts.Cert, opts.Key, opts.PFX)
+	if err != nil {
+		return jsJSON(ctx, describeForJS(err))
 	}
+	context.certificates = certificates
 	if opts.CA != nil {
 		context.clientCAs = x509.NewCertPool()
 		for _, pem := range opts.CA {
@@ -435,8 +462,16 @@ func (t *TLS) createServerContextFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err := applyVersions(probe, opts.MinVersion, opts.MaxVersion); err != nil {
 		return jsJSON(ctx, describeForJS(err))
 	}
+	if err := tlsclient.ApplyCiphers(probe, opts.Ciphers); err != nil {
+		return jsJSON(ctx, describeForJS(err))
+	}
+	if err := tlsclient.ApplyECDHCurve(probe, opts.ECDHCurve); err != nil {
+		return jsJSON(ctx, describeForJS(err))
+	}
 	context.minVersion = probe.MinVersion
 	context.maxVersion = probe.MaxVersion
+	context.cipherSuites = probe.CipherSuites
+	context.curves = probe.CurvePreferences
 
 	t.mu.Lock()
 	t.nextContext++
@@ -454,6 +489,7 @@ func (t *TLS) context(id int64) *serverContext {
 
 type serverOptions struct {
 	Context            int64    `json:"context"`
+	TicketKeys         []byte   `json:"ticketKeys"`
 	ALPNProtocols      []string `json:"ALPNProtocols"`
 	RequestCert        bool     `json:"requestCert"`
 	RejectUnauthorized bool     `json:"rejectUnauthorized"`
@@ -497,10 +533,16 @@ func (t *TLS) upgradeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		cfg := &tls.Config{
 			NextProtos: opts.ALPNProtocols,
 		}
+		// Sessions resume across a server's connections because they share its keys.
+		if len(opts.TicketKeys) > 0 {
+			cfg.SetSessionTicketKeys([][32]byte{ticketKey(opts.TicketKeys)})
+		}
 		if sc != nil {
 			cfg.Certificates = sc.certificates
 			cfg.MinVersion = sc.minVersion
 			cfg.MaxVersion = sc.maxVersion
+			cfg.CipherSuites = sc.cipherSuites
+			cfg.CurvePreferences = sc.curves
 		}
 		if opts.RequestCert {
 			// The client certificate is checked below, so the outcome can be recorded
@@ -815,4 +857,9 @@ func (t *TLS) exportKeyingMaterialFunc(info *v8.FunctionCallbackInfo) *v8.Value 
 		return ctx.Throw(err.Error())
 	}
 	return jsString(ctx, base64.StdEncoding.EncodeToString(material))
+}
+
+// rootCertificates() returns Node's bundled CA certificates as PEM text.
+func (t *TLS) rootCertificatesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	return jsString(info.Context(), rootCertificatesPEM)
 }

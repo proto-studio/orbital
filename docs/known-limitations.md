@@ -114,10 +114,15 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## Network modules (`pkg/nodejs/net`, `tls`, `http`, `https`, `dns`, `dgram`)
 
-- **TLS options with no effect.** `ciphers`, `honorCipherOrder`, `ecdhCurve`, `dhparam` and
-  `sigalgs` are ignored. `pfx` and encrypted keys are not supported and throw. Session
-  resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no
-  `session` event fires. `tls.rootCertificates` is empty. (#125)
+- **Some TLS options are limited by Go's TLS.** TLS 1.3 cipher suites can't be chosen, so
+  `TLS_` names in `ciphers` are accepted without effect, and the suite negotiated can differ
+  from Node's. `honorCipherOrder`, `dhparam` and `sigalgs` have no effect, and `X448` in
+  `ecdhCurve` is skipped. In `ciphers`, OpenSSL keywords such as `HIGH` stand for all of Go's
+  ECDHE suites. Sessions are opaque buffers that only Orbital reads, a TLS 1.3 server issues
+  one ticket where Node issues two, and `getSession()` is `undefined` until the first
+  `'session'` event. Servers resume sessions only from tickets, so `'newSession'` and
+  `'resumeSession'` never fire. CA certificates in a `pfx` are sent as the chain but not
+  trusted for verifying peers.
 - **A TLS handshake over a stream that isn't a socket keeps the process running** until it
   finishes, even if nothing else would. In Node only the stream decides that.
 - **The HTTP parser is stricter than Node in places.** All of these are refused, because
