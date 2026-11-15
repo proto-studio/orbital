@@ -749,7 +749,9 @@ func (c *Console) formatArray(v *v8.Value) string {
 func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	length := v.ArrayLength()
 	if length == 0 {
-		return "[]"
+		// What goes before the bracket: a subclass's name, say. reduceArray adds it otherwise.
+		prefix, _ := c.inspectCall("arrayPrefix", v)
+		return prefix + "[]"
 	}
 	circular, done := c.track(v)
 	if done == nil {
@@ -757,6 +759,9 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	}
 	defer done()
 	if depth <= 0 {
+		if s, ok := c.inspectCall("cut", v); ok {
+			return s
+		}
 		return "[Array]"
 	}
 
@@ -785,7 +790,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	}
 	parts = append(parts, c.formatProperties(v, c.keyList(c.inspectValue("symbols", v)), depth)...)
 	ref := c.leave()
-	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers), c.refArg(ref)); ok {
+	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers), c.refArg(ref), v); ok {
 		return s
 	}
 	return withRef(ref, multilineBraces("[", "]", parts))
@@ -828,7 +833,10 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 
 	names := c.propertyNames(v)
 	if len(names) == 0 {
-		return "{}"
+		// What goes before the brace: a class's name, or [Object: null prototype]. reduceObject
+		// adds it otherwise.
+		prefix, _ := c.inspectCall("objectPrefix", v)
+		return prefix + "{}"
 	}
 	// Past the depth limit, a value with properties is never expanded, which also bounds the
 	// recursion through one that holds itself.
@@ -839,9 +847,14 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	c.enter(depth)
 	parts := c.formatProperties(v, names, depth)
 	if len(parts) == 0 {
-		return "{}"
+		prefix, _ := c.inspectCall("objectPrefix", v)
+		return prefix + "{}"
 	}
-	return c.reduce(parts, "{", "}", depth, "")
+	ref := c.leave()
+	if s, ok := c.reduceJS("reduceObject", parts, c.integer(level(depth)), v, c.refArg(ref)); ok {
+		return s
+	}
+	return withRef(ref, multilineBraces("{", "}", parts))
 }
 
 // formatScalar formats a Date or RegExp, which inspect's scalar describes as { text, date }, as

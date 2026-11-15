@@ -522,3 +522,34 @@ func TestUtil_InspectSortedManyKeys(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// Naming each object costs a walk up its prototype chain, which stays small: 20000 objects
+// holding arrays inspect in about 25 ms.
+func TestUtil_InspectManyObjectsTime(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const wide = {};
+		for (let i = 0; i < 20000; i++) wide['k' + i] = { v: [i] };
+		const start = Date.now();
+		const text = __util_module.inspect(wide);
+		JSON.stringify({ text: text.slice(0, 21), ms: Date.now() - start });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	var got struct {
+		Text string
+		Ms   int
+	}
+	if err := json.Unmarshal([]byte(result.String()), &got); err != nil {
+		t.Fatalf("decoding %q: %v", result.String(), err)
+	}
+	if want := "{\n  k0: { v: [ 0 ] },"; got.Text != want {
+		t.Errorf("got %q, want %q", got.Text, want)
+	}
+	if got.Ms > 500 {
+		t.Errorf("inspecting took %d ms", got.Ms)
+	}
+}

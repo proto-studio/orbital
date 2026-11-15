@@ -203,7 +203,8 @@
 		}
 
 		function formatArray(arr, depth) {
-			if (arr.length === 0) return '[]';
+			const prefix = inspectShared.arrayPrefix(arr);
+			if (arr.length === 0) return prefix + '[]';
 			layout.currentDepth = depth;
 
 			const items = [];
@@ -224,7 +225,7 @@
 			for (const key of inspectShared.symbols(arr)) items.push(formatProperty(arr, key, depth));
 			sortOutput(items, elements);
 
-			return reduce(items, '[', ']', depth, { array: true, numbers });
+			return reduce(items, prefix + '[', ']', depth, { array: true, numbers });
 		}
 
 		// sortOutput sorts the entries of output from start on, as Node does with the sorted
@@ -238,25 +239,12 @@
 
 		function formatObject(obj, depth) {
 			const keys = inspectShared.keys(obj);
-
-			if (keys.length === 0) {
-				const proto = Object.getPrototypeOf(obj);
-				if (proto && proto.constructor && proto.constructor.name !== 'Object') {
-					return proto.constructor.name + ' {}';
-				}
-				return '{}';
-			}
+			const prefix = inspectShared.objectPrefix(obj);
+			if (keys.length === 0) return prefix + '{}';
 
 			layout.currentDepth = depth;
 			const items = keys.map(key => formatProperty(obj, key, depth));
 			sortOutput(items);
-
-			const proto = Object.getPrototypeOf(obj);
-			let prefix = '';
-			if (proto && proto.constructor && proto.constructor.name !== 'Object') {
-				prefix = proto.constructor.name + ' ';
-			}
-
 			return reduce(items, prefix + '{', '}', depth);
 		}
 
