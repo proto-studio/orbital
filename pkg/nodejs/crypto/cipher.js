@@ -12,8 +12,11 @@
   const kHandle = Symbol('kCipherHandle');
   const kDecoder = Symbol('kDecoder');
   const kAuthTagLength = Symbol('kAuthTagLength');
+  const kDone = Symbol('kDone');
+  const kTag = Symbol('kTag');
 
-  // Contexts are freed at final; one never finished is freed when collected.
+  // A context is freed at final, or when its object is collected if it never
+  // gets there.
   const registry = typeof FinalizationRegistry === 'function'
     ? new FinalizationRegistry((id) => crypto._cipherFree(id))
     : null;
@@ -136,6 +139,8 @@
     self[kHandle] = id;
     self[kAuthTagLength] = tagLength;
     self[kDecoder] = null;
+    self[kDone] = false;
+    self[kTag] = null;
     if (registry) registry.register(self, id, self);
   }
 
@@ -147,11 +152,37 @@
     throw invalidArgType('data', 'of type string or an instance of Buffer, TypedArray, or DataView', data);
   }
 
+  // Base64 output is encoded in whole three-byte groups, with any remainder
+  // kept for the next call, so the pieces join into one valid encoding.
+  class Base64Decoder {
+    constructor(encoding) {
+      this.encoding = encoding;
+      this.rest = Buffer.alloc(0);
+    }
+
+    write(buf) {
+      const all = Buffer.concat([this.rest, buf]);
+      const n = all.length - (all.length % 3);
+      this.rest = all.subarray(n);
+      return all.subarray(0, n).toString(this.encoding);
+    }
+
+    end() {
+      const out = this.rest.toString(this.encoding);
+      this.rest = Buffer.alloc(0);
+      return out;
+    }
+  }
+
   function output(self, buf, outputEncoding) {
     if (outputEncoding && outputEncoding !== 'buffer') {
       if (!self[kDecoder] || self[kDecoder].encoding !== outputEncoding) {
-        const { StringDecoder } = globalThis.__string_decoder_module;
-        self[kDecoder] = new StringDecoder(outputEncoding);
+        if (outputEncoding === 'base64' || outputEncoding === 'base64url') {
+          self[kDecoder] = new Base64Decoder(outputEncoding);
+        } else {
+          const { StringDecoder } = globalThis.__string_decoder_module;
+          self[kDecoder] = new StringDecoder(outputEncoding);
+        }
       }
       return self[kDecoder].write(buf);
     }
@@ -180,14 +211,30 @@
     },
 
     update(data, inputEncoding, outputEncoding) {
+      if (this[kDone]) throw codedError(Error, '', 'Trying to add data in unsupported state');
       const bytes = dataBytes(data, inputEncoding);
       const out = Buffer.from(native(crypto._cipherUpdate, this[kHandle], bytes.toString('base64')), 'base64');
       return output(this, out, outputEncoding);
     },
 
     final(outputEncoding) {
-      const out = Buffer.from(native(crypto._cipherFinal, this[kHandle]), 'base64');
-      if (registry) registry.unregister(this);
+      if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state');
+      this[kDone] = true;
+      let out;
+      try {
+        out = Buffer.from(native(crypto._cipherFinal, this[kHandle]), 'base64');
+        if (this instanceof Cipheriv) {
+          try {
+            this[kTag] = Buffer.from(crypto._cipherGetAuthTag(this[kHandle]), 'base64');
+          } catch {
+            // not an authenticated cipher
+          }
+        }
+      } finally {
+        // The context is done with; getAuthTag uses the tag kept above.
+        crypto._cipherFree(this[kHandle]);
+        if (registry) registry.unregister(this);
+      }
       if (outputEncoding && outputEncoding !== 'buffer') {
         const s = output(this, out, outputEncoding);
         const rest = this[kDecoder].end();
@@ -197,6 +244,7 @@
     },
 
     setAutoPadding(ap) {
+      if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation setAutoPadding');
       native(crypto._cipherSetAutoPadding, this[kHandle], ap === undefined ? true : !!ap);
       return this;
     },
@@ -210,6 +258,7 @@
             "The property 'options.plaintextLength' is invalid. Received " + inspectValue(n));
         }
       }
+      if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation setAAD');
       native(crypto._cipherSetAAD, this[kHandle], bytes.toString('base64'));
       return this;
     },
@@ -241,7 +290,10 @@
 
   Object.defineProperty(Cipheriv.prototype, 'getAuthTag', {
     value: function getAuthTag() {
-      return Buffer.from(native(crypto._cipherGetAuthTag, this[kHandle]), 'base64');
+      if (!this[kDone] || !this[kTag]) {
+        throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation getAuthTag');
+      }
+      return Buffer.from(this[kTag]);
     },
     writable: true, configurable: true, enumerable: true,
   });
@@ -249,6 +301,7 @@
   Object.defineProperty(Decipheriv.prototype, 'setAuthTag', {
     value: function setAuthTag(tagbuf) {
       const tag = bufferSource(tagbuf, 'buffer');
+      if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation setAuthTag');
       const want = this[kAuthTagLength];
       if (want !== -1 && tag.length !== want) {
         throw codedError(TypeError, 'ERR_CRYPTO_INVALID_AUTH_TAG', 'Invalid authentication tag length: ' + tag.length);

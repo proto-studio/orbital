@@ -147,6 +147,16 @@ results.padding = (() => {
   r.push(outcome(() => d2.update(Buffer.alloc(15))), outcome(() => d2.final()));
   const d3 = crypto.createDecipheriv('aes-128-cbc', key, iv);
   r.push(outcome(() => d3.final()));
+  // Padding turned off after update() held back the last block.
+  const ct = crypto.createCipheriv('aes-128-cbc', key, iv).setAutoPadding(false).update(bytes(32, 4));
+  const late = crypto.createDecipheriv('aes-128-cbc', key, iv);
+  r.push(outcome(() => late.update(ct)));
+  late.setAutoPadding(false);
+  r.push(outcome(() => late.final()));
+  const late2 = crypto.createDecipheriv('aes-128-ecb', key, null);
+  r.push(outcome(() => late2.update(Buffer.alloc(16))));
+  late2.setAutoPadding(false);
+  r.push(outcome(() => late2.final()));
   const d4 = crypto.createDecipheriv('aes-128-cbc', key, iv);
   d4.setAutoPadding(false);
   r.push(outcome(() => Buffer.concat([d4.update(Buffer.alloc(32)), d4.final()])));
@@ -158,6 +168,13 @@ results.encodings = (() => {
   const key = bytes(16, 1), iv = bytes(16, 2);
   const c = crypto.createCipheriv('aes-128-cbc', key, iv);
   const r = [c.update('abc', 'utf8', 'base64'), c.final('base64')];
+  // Base64 pieces join into one encoding of the ciphertext.
+  for (const n of [1, 15, 16, 17, 40]) {
+    const b = crypto.createCipheriv('aes-128-cbc', key, iv);
+    const text = b.update(bytes(n, 9), undefined, 'base64') + b.final('base64');
+    const u = crypto.createCipheriv('aes-128-ctr', key, iv);
+    r.push([text, u.update(bytes(n, 9), undefined, 'base64url') + u.final('base64url')]);
+  }
   const c2 = crypto.createCipheriv('aes-128-cbc', key, iv);
   r.push(c2.update('616263', 'hex', 'hex') + c2.final('hex'));
   // A UTF-8 character split across updates comes out whole.
