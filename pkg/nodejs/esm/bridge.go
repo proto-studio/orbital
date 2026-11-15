@@ -2,11 +2,10 @@ package esm
 
 // Bridges from the Go loader into the runtime's live JS state:
 //   - the set of builtin module names (from `require('module').builtinModules`)
-//   - a CJS module's own export names (via the real `require`), used to
-//     synthesize named ESM re-exports.
+//   - a builtin's own export names (via the real `require`), used to
+//     synthesize its named ESM exports.
 //
-// These are the only points where default loading touches JS; everything else
-// (filesystem, package.json, classification) is pure Go.
+// A CommonJS file's export names come from lexing its source (cjs_exports.go).
 
 import (
 	"errors"

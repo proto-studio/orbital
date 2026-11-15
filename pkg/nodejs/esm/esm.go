@@ -26,6 +26,10 @@ type ESM struct {
 	builtins    map[string]bool
 	loader      *loaderRealm
 	provider    func() (*runtime.Runtime, error)
+	// lexer is cjs-module-lexer's parse function, compiled on first use.
+	lexer *v8.Value
+	// cjsExports caches the export names found for each CommonJS file.
+	cjsExports map[string]*cjsNames
 }
 
 // New creates an ESM module runtime without a loader realm provider, so
@@ -172,8 +176,9 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 
 // endedOr returns what ended the runtime in place of err, a failure from loading or
 // running module code. process.exit() terminates execution, so any step that runs
-// JavaScript fails when the program exits: Instantiate when an imported CommonJS
-// module is required to build its wrapper, Evaluate for module code itself. The
+// JavaScript fails when the program exits: Instantiate when a builtin is required
+// to build its wrapper, Evaluate for module code (an imported CommonJS module
+// included). The
 // caller must see the exit (or uncaught error), not the module error V8 reports.
 func (e *ESM) endedOr(err error) error {
 	if ended := e.rt.Ended(); ended != nil {
