@@ -284,11 +284,16 @@ func (f *RealSocketFactory) ListenInherited(fd int) (TCPServer, error) {
 		return nil, ErrNotInherited
 	}
 	// The descriptor stays the embedder's: only a copy is wrapped and closed here.
+	// ForkLock keeps a concurrent fork from inheriting the copy before it is close-on-exec.
+	syscall.ForkLock.RLock()
 	dup, err := syscall.Dup(fd)
+	if err == nil {
+		syscall.CloseOnExec(dup)
+	}
+	syscall.ForkLock.RUnlock()
 	if err != nil {
 		return nil, ErrNotInherited
 	}
-	syscall.CloseOnExec(dup)
 	file := os.NewFile(uintptr(dup), "inherited")
 	defer file.Close()
 	// A connected socket would pass as a TCP listener and then fail every accept.
