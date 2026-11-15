@@ -39,3 +39,16 @@ func TestFSMore_MatchesNode(t *testing.T) {
 	got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", dir, script))
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
+
+// cp refuses to copy a path onto itself on a filesystem without inode numbers too, rather
+// than removing the file before copying it.
+func TestFS_CpSamePathInMemory(t *testing.T) {
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewMemoryFilesystem()}, `
+const fs = require('fs');
+fs.writeFileSync('/f', 'keep');
+let code = null;
+try { fs.cpSync('/f', '/./f'); } catch (e) { code = e.code; }
+fs.cp('/f', '/f', (e) => done({ sync: code, async: e && e.code, contents: fs.readFileSync('/f', 'utf8') }));
+`)
+	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "contents": "keep"})
+}

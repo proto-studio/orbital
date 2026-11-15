@@ -1051,7 +1051,8 @@
   // the file. A numeric position moves along with them; any other means the file's offset.
   function vectored(op) {
     return (fd, buffers, position) => {
-      let pos = typeof position === 'number' ? position : null;
+      // A negative position, like none, means the file's offset.
+      let pos = typeof position === 'number' && position >= 0 ? position : null;
       let total = 0;
       for (const buffer of buffers) {
         const n = op(fd, buffer, 0, buffer.byteLength, pos);
@@ -1172,19 +1173,20 @@
     }
     return opts;
   }
-  const statFor = (opts) => (opts.dereference ? fs.statSync : fs.lstatSync);
   const pathModule = () => globalThis.__path_module || (typeof require === 'function' ? require('path') : null);
-  function cpSyncImpl(src, dest, opts) {
+
+  // cp's steps, written once as a generator that yields each filesystem call it needs as
+  // [name, ...args] and each question for the filter as ['filter', src, dest]. cpSync answers
+  // them at once; cp awaits a filter that returns a promise.
+  function* cpSteps(src, dest, opts) {
     const path = pathModule();
-    const srcStat = statFor(opts)(src);
-    let destStat;
-    try {
-      destStat = statFor(opts)(dest);
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e;
-    }
+    const stat = opts.dereference ? 'stat' : 'lstat';
+    const srcStat = yield [stat, src];
+    const destStat = yield [stat + 'OrNothing', dest];
     if (destStat) {
-      if (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev) {
+      // The paths are compared too, for a filesystem that reports no inode numbers.
+      if (path.resolve(src) === path.resolve(dest) ||
+          (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev)) {
         throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22, 'src and dest cannot be the same', dest);
       }
       if (srcStat.isDirectory() && !destStat.isDirectory()) {
@@ -1204,55 +1206,83 @@
           'cannot copy ' + src + ' to a subdirectory of self ' + dest, dest);
       }
     }
-    if (opts.filter) {
-      const keep = opts.filter(src, dest);
-      if (keep && typeof keep.then === 'function') {
-        throw codedError(TypeError, 'ERR_INVALID_RETURN_VALUE',
-          'Expected boolean to be returned from the "filter" function but got an instance of Promise.');
-      }
-      if (!keep) return;
-    }
-    copyEntry(srcStat, destStat, src, dest, opts);
+    if (opts.filter && !(yield ['filter', src, dest])) return;
+    // Like Node's, cp makes the destination's missing parent directories.
+    yield ['mkdirParents', path.dirname(dest)];
+    yield* copyEntry(srcStat, destStat, src, dest, opts);
   }
-  function copyEntry(srcStat, destStat, src, dest, opts) {
+  function* copyEntry(srcStat, destStat, src, dest, opts) {
+    const stat = opts.dereference ? 'stat' : 'lstat';
     if (srcStat.isDirectory()) {
       if (!opts.recursive) {
         // Node's errno here is EINVAL from cpSync and EISDIR from cp.
         throw cpError('ERR_FS_EISDIR', 'Path is a directory', 'EISDIR', opts.async ? 21 : 22, src + ' is a directory (not copied)', src);
       }
-      if (!destStat) fs.mkdirSync(dest, { mode: srcStat.mode & 0o7777 });
+      if (!destStat) yield ['mkdir', dest, { mode: srcStat.mode & 0o7777 }];
       const path = pathModule();
-      for (const name of fs.readdirSync(src)) {
+      for (const name of yield ['readdir', src]) {
         const from = path.join(src, name);
         const to = path.join(dest, name);
-        if (opts.filter && !opts.filter(from, to)) continue;
-        let toStat;
-        try {
-          toStat = statFor(opts)(to);
-        } catch (e) {
-          if (e.code !== 'ENOENT') throw e;
-        }
-        copyEntry(statFor(opts)(from), toStat, from, to, opts);
+        // A rejected directory is skipped whole.
+        if (opts.filter && !(yield ['filter', from, to])) continue;
+        yield* copyEntry(yield [stat, from], yield [stat + 'OrNothing', to], from, to, opts);
       }
-      if (!destStat) fs.chmodSync(dest, srcStat.mode & 0o7777);
+      if (!destStat) yield ['chmod', dest, srcStat.mode & 0o7777];
       return;
     }
     if (destStat) {
-      if (opts.force) {
-        fs.unlinkSync(dest);
-      } else {
+      if (!opts.force) {
         if (opts.errorOnExist) {
           throw cpError('ERR_FS_CP_EEXIST', 'Target already exists', 'EEXIST', 17, dest + ' already exists', dest);
         }
         return;
       }
+      yield ['unlink', dest];
     }
-    fs.copyFileSync(src, dest, opts.mode);
-    if (opts.preserveTimestamps) fs.utimesSync(dest, srcStat.atime, srcStat.mtime);
-    fs.chmodSync(dest, srcStat.mode & 0o7777);
+    yield ['copyFile', src, dest, opts.mode];
+    if (opts.preserveTimestamps) yield ['utimes', dest, srcStat.atime, srcStat.mtime];
+    yield ['chmod', dest, srcStat.mode & 0o7777];
   }
+  // A stat that gives undefined for a missing path.
+  const orNothing = (stat) => (p) => {
+    try {
+      return stat(p);
+    } catch (e) {
+      if (e.code === 'ENOENT') return undefined;
+      throw e;
+    }
+  };
+  const cpCalls = {
+    stat: (p) => fs.statSync(p), lstat: (p) => fs.lstatSync(p),
+    statOrNothing: orNothing((p) => fs.statSync(p)), lstatOrNothing: orNothing((p) => fs.lstatSync(p)),
+    readdir: (p) => fs.readdirSync(p), mkdir: (p, o) => fs.mkdirSync(p, o), chmod: (p, m) => fs.chmodSync(p, m),
+    mkdirParents: (p) => { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); },
+    unlink: (p) => fs.unlinkSync(p), copyFile: (a, b, m) => fs.copyFileSync(a, b, m),
+    utimes: (p, a, m) => fs.utimesSync(p, a, m)
+  };
   fs.cpSync = function (src, dest, options) {
-    cpSyncImpl(src, dest, cpOptions(options));
+    const opts = cpOptions(options);
+    const steps = cpSteps(src, dest, opts);
+    let step = steps.next();
+    while (!step.done) {
+      const [name, ...args] = step.value;
+      let value;
+      try {
+        if (name === 'filter') {
+          value = opts.filter(...args);
+          if (value && typeof value.then === 'function') {
+            throw codedError(TypeError, 'ERR_INVALID_RETURN_VALUE',
+              'Expected boolean to be returned from the "filter" function but got an instance of Promise.');
+          }
+        } else {
+          value = cpCalls[name](...args);
+        }
+      } catch (e) {
+        step = steps.throw(e);
+        continue;
+      }
+      step = steps.next(value);
+    }
   };
   fs.cp = function (src, dest, options, callback) {
     if (typeof options === 'function') {
@@ -1261,36 +1291,36 @@
     }
     checkCallback(callback);
     const opts = Object.assign(cpOptions(options), { async: true });
-    // An async filter may return a promise here, so each answer is awaited.
-    const filter = opts.filter;
-    const run = async () => {
-      if (!filter) return cpSyncImpl(src, dest, opts);
-      const answers = new Map();
-      const ask = async (from, to) => {
-        const keep = await filter(from, to);
-        answers.set(from + '\0' + to, !!keep);
-      };
-      await walkForFilter(src, dest, opts, ask);
-      return cpSyncImpl(src, dest, Object.assign({}, opts, { filter: (from, to) => answers.get(from + '\0' + to) }));
+    const steps = cpSteps(src, dest, opts);
+    // Runs the steps, waiting for each answer from the filter, and calls back at the end.
+    const advance = (err, value) => {
+      for (;;) {
+        let step;
+        try {
+          step = err ? steps.throw(err) : steps.next(value);
+        } catch (e) {
+          process.nextTick(callback, e);
+          return;
+        }
+        if (step.done) {
+          process.nextTick(callback, null);
+          return;
+        }
+        const [name, ...args] = step.value;
+        err = null;
+        try {
+          if (name === 'filter') {
+            Promise.resolve(opts.filter(...args)).then((keep) => advance(null, keep), (e) => advance(e));
+            return;
+          }
+          value = cpCalls[name](...args);
+        } catch (e) {
+          err = e;
+        }
+      }
     };
-    run().then(() => callback(null), (e) => callback(e));
+    advance(null);
   };
-  // Asks an async filter about each path cp will reach, before the copy, which then uses the
-  // answers.
-  async function walkForFilter(src, dest, opts, ask) {
-    await ask(src, dest);
-    let stat;
-    try {
-      stat = statFor(opts)(src);
-    } catch (e) {
-      return;
-    }
-    if (!stat.isDirectory() || !opts.recursive) return;
-    const path = pathModule();
-    for (const name of fs.readdirSync(src)) {
-      await walkForFilter(path.join(src, name), path.join(dest, name), opts, ask);
-    }
-  }
 
   // fs.openAsBlob(path[, { type }]): a Blob of the file's contents, read when it is opened.
   fs.openAsBlob = function (path, options) {

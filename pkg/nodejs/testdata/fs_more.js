@@ -193,6 +193,16 @@ async function testVectors() {
     const n = fs.readvSync(fd, [a, b], 0);
     return [n, a.toString(), b.toString('latin1')];
   });
+  attempt('readv_current_offset', () => {
+    fs.writeSync(fd, 'abcdefghij', 0);
+    const rd = fs.openSync(file('vec'), 'r');
+    fs.readSync(rd, Buffer.alloc(4));
+    const a = Buffer.alloc(2);
+    const b = Buffer.alloc(2);
+    const n = fs.readvSync(rd, [a, b], -1);
+    fs.closeSync(rd);
+    return [n, a.toString(), b.toString()];
+  });
   attempt('readv_bad', () => fs.readvSync(fd, 'x'));
   await attemptAsync('writev_callback', async () => {
     const [n, buffers] = await callback((cb) => fs.writev(fd, [Buffer.from('12')], 0, cb));
@@ -284,6 +294,19 @@ async function testCp() {
   });
   await attemptAsync('cp_callback', async () => { await callback((cb) => fs.cp(file('cp_src'), file('cp_cb'), { recursive: true }, cb)); return tree('cp_cb'); });
   await attemptAsync('cp_callback_dir', () => callback((cb) => fs.cp(file('cp_src'), file('cp_cb2'), cb)));
+  attempt('cp_missing_parent', () => {
+    fs.cpSync(file('cp_file'), file('cp_parent/a/b/file'));
+    fs.cpSync(file('cp_src'), file('cp_parent/c/d'), { recursive: true });
+    return [read('cp_parent/a/b/file'), tree('cp_parent/c/d')];
+  });
+  await attemptAsync('cp_filter_skips_directory', async () => {
+    const asked = [];
+    await fsp.cp(file('cp_src'), file('cp_skip'), { recursive: true, filter: async (src) => {
+      asked.push(path.basename(src));
+      return !src.endsWith('sub');
+    } });
+    return [asked.sort(), tree('cp_skip')];
+  });
   await attemptAsync('cp_promise_filter', async () => {
     await fsp.cp(file('cp_src'), file('cp_async'), { recursive: true, filter: async (src) => !src.endsWith('sub') });
     return tree('cp_async');
