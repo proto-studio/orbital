@@ -153,12 +153,15 @@ const execResult = (start) => new Promise((resolve) => {
   out.execFileOk = await execResult((cb) => cp.execFile('/bin/sh', ['-c', 'echo fine'], cb));
   out.execFileFails = await execResult((cb) => cp.execFile('/bin/sh', ['-c', 'echo bad >&2; exit 5'], cb));
   out.execFileMissing = await execResult((cb) => cp.execFile(MISSING, ['x'], cb));
+  // exec runs its command with /bin/sh. Some shells, such as dash on Linux, fork sleep
+  // instead of becoming it, and the sleep would keep the pipes open after the shell is
+  // killed. exec makes every shell become sleep, so the signal reaches it.
   out.execKilled = await execResult((cb) => {
-    const c = cp.exec('sleep 30', cb);
+    const c = cp.exec('exec sleep 30', cb);
     setTimeout(() => c.kill(), 50);
     return c;
   });
-  out.execTimeout = await execResult((cb) => cp.exec('sleep 30', { timeout: 50 }, cb));
+  out.execTimeout = await execResult((cb) => cp.exec('exec sleep 30', { timeout: 50 }, cb));
   out.execFileTimeoutSignal = await execResult((cb) => cp.execFile('sleep', ['30'], { timeout: 50, killSignal: 'SIGKILL' }, cb));
   out.execMaxBuffer = await execResult((cb) => cp.exec('echo 0123456789', { maxBuffer: 4 }, cb));
   out.execBufferEncoding = await new Promise((resolve) => {
@@ -193,7 +196,7 @@ const execResult = (start) => new Promise((resolve) => {
   out.execSyncFailsNoStderr = thrown(() => cp.execSync('exit 3', quiet));
   out.execSyncFailsEncoded = thrown(() => cp.execSync('echo out; echo err >&2; exit 3', { ...quiet, encoding: 'utf8' }));
   out.execSyncSignal = thrown(() => cp.execSync('kill -TERM $$', quiet));
-  out.execSyncTimeout = thrown(() => cp.execSync('sleep 30', { ...quiet, timeout: 50 }));
+  out.execSyncTimeout = thrown(() => cp.execSync('exec sleep 30', { ...quiet, timeout: 50 }));
   // Whether the child exits before the kill arrives is a race, in Node too.
   const noRace = (shape) => {
     const { status, signal, ...rest } = shape;
