@@ -177,3 +177,23 @@ fs.writev(1, [Buffer.from('callback'), Buffer.from('\n')], (err, m) => done({ n,
 		t.Errorf("stdout = %q", out)
 	}
 }
+
+// On a FIFO, a read waiting for data doesn't hold up the write that supplies it.
+func TestFS_FIFOReadWaitsForLaterWrite(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const fd = fs.openSync(%q, 'r+');
+const buf = Buffer.alloc(1);
+fs.read(fd, buf, 0, 1, null, (err, n) => {
+  fs.closeSync(fd);
+  done({ err: err && err.code, n, data: buf.toString() });
+});
+setTimeout(() => fs.writeSync(fd, 'x'), 50);
+`, fifo))
+	wantJSON(t, got, map[string]any{"err": nil, "n": 1.0, "data": "x"})
+}
