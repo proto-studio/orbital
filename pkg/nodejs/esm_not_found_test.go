@@ -455,3 +455,33 @@ log.push(await r('pkg/nope.mjs?variant=1#x'), await r('file://localhost?next=' +
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Package subpaths and "exports" targets are URL paths: decoded, with encoded
+// separators refused and a target's query kept; whitespace anywhere in a specifier
+// is dropped. The error stringifies with its code and survives a throwing
+// Error.prepareStackTrace. Expected from Node 20.18.1.
+func TestDynamicImport_PackageURLPathsAndErrorShape(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/pkg/package.json": `{"type":"module"}`,
+		"node_modules/pkg/sub.js":       `export default 'sub:' + import.meta.url.split('/').pop();`,
+		"node_modules/pkg/a b.js":       `export default 'ab:' + import.meta.url.split('/').pop();`,
+		"node_modules/pkg/a%2Fb.js":     `export default 'lit';`,
+		"node_modules/ex/package.json":  `{"type":"module","exports":{".":"./raw.mjs?x","./sp":"./a%20b.mjs"}}`,
+		"node_modules/ex/raw.mjs":       `export default 'raw:' + import.meta.url.split('/').pop();`,
+		"node_modules/ex/a b.mjs":       `export default 'exab:' + import.meta.url.split('/').pop();`,
+		"x.mjs":                         `export default 'x';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.code, e.message.split(' imported')[0].replace(d, '<d>')]; } };
+for (const s of ['p\nkg/sub.js', 'fi\nle://' + d + '/x.mjs', 'pkg/a%20b.js', 'pkg/a%2Fb.js', 'ex', 'ex/sp']) log.push(await r(s));
+try { await import('./nope.mjs'); } catch (e) { log.push(String(e).split(' imported')[0].replace(d, '<d>'), e instanceof Error, e.constructor === Error); }
+Error.prepareStackTrace = () => { throw new Error('custom'); };
+try { await import('./nope.mjs'); } catch (e) { log.push(e.code); }`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["sub:sub.js","x","ab:a%20b.js",["ERR_INVALID_MODULE_SPECIFIER","Invalid module \"<d>/node_modules/pkg/a%2Fb.js\" must not include encoded \"/\" or \"\\\" characters"],` +
+		`"raw:raw.mjs?x","exab:a%20b.mjs","Error [ERR_MODULE_NOT_FOUND]: Cannot find module '<d>/nope.mjs'",true,true,"ERR_MODULE_NOT_FOUND"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

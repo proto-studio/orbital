@@ -251,8 +251,8 @@ func (e *ESM) linkFailed(err error) error {
 	return nil
 }
 
-// ErrPreloadFailed is returned by Preload when the module failed to resolve or
-// link and an 'uncaughtException' listener handled the error. Node then runs no
+// ErrPreloadFailed is returned by Preload when the module failed to resolve,
+// link or run and an 'uncaughtException' listener handled the error. Node then runs no
 // further preloads and not the entry point; the program ends normally.
 var ErrPreloadFailed = errors.New("esm: an --import module failed and the error was handled")
 
@@ -326,10 +326,12 @@ func (e *ESM) Preload(specifier string) error {
 		return ErrPreloadFailed
 	}
 	e.linkHandled = false
-	if _, err = e.RunModule(source, url); err != nil {
+	result, err := e.RunModule(source, url)
+	if err != nil {
 		return err
 	}
-	if e.linkHandled {
+	// A link error, or a throw or rejection while it ran, that a listener handled.
+	if e.linkHandled || (result != nil && result.IsPromise() && result.PromiseState() == v8.PromiseRejected) {
 		return ErrPreloadFailed
 	}
 	return nil

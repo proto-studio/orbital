@@ -35,15 +35,32 @@
     defineProperty(obj, key, { value: value, writable: true, enumerable: enumerable, configurable: true });
   }
 
+  // Like Node's coded errors, these stringify as "Error [CODE]: message", from a
+  // prototype between the error and Error.prototype (or TypeError.prototype).
+  function codedToString() {
+    return this.name + ' [' + this.code + ']: ' + this.message;
+  }
+  var CodedError = Object.create(NativeError.prototype);
+  var CodedTypeError = Object.create(NativeTypeError.prototype);
+  own(CodedError, 'toString', codedToString, false);
+  own(CodedTypeError, 'toString', codedToString, false);
+  var setPrototypeOf = Object.setPrototypeOf;
+
   globalThis.__esmModuleError = function (message, code, url, isTypeError) {
     var err = isTypeError ? new NativeTypeError(message) : new NativeError(message);
     if (code) {
       var name = isTypeError ? 'TypeError' : 'Error';
-      var stack = err.stack;
+      var stack;
+      try {
+        stack = err.stack;
+      } catch (e) {
+        // A throwing Error.prepareStackTrace: keep the error, as Node does.
+      }
       if (typeof stack === 'string' && stack.indexOf(name + ': ') === 0) {
         own(err, 'stack', name + ' [' + code + ']: ' + stack.slice(name.length + 2), false);
       }
       own(err, 'code', code, true);
+      setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);
     }
     if (url) own(err, 'url', url, true);
     return err;
