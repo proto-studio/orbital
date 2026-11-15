@@ -68,3 +68,17 @@ func TestSandboxedExecCountsTowardMaxProcesses(t *testing.T) {
 		t.Fatalf("ExecFile after the limit freed up: %v", err)
 	}
 }
+
+// ExecFile runs its file without a shell, so the file's own rule applies.
+func TestSandboxedExecFileChecksTheFile(t *testing.T) {
+	allowlist := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{"echo"}})
+	out, _, _, err := allowlist.ExecFile(context.Background(), "echo", []string{"ok"}, &SpawnOptions{Shell: true})
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("allowed file: out = %q, err = %v", out, err)
+	}
+
+	denied := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowAll: true, BlockedCommands: []string{"echo"}})
+	if _, _, _, err := denied.ExecFile(context.Background(), "echo", []string{"x"}, &SpawnOptions{Shell: true}); !errors.Is(err, ErrCommandNotAllowed) {
+		t.Fatalf("blocked file: err = %v", err)
+	}
+}
