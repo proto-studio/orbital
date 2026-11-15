@@ -63,6 +63,10 @@ var binaryParityCases = []struct {
 	{"crypto.createHmac('sha256', new DataView(new Uint8Array([9, 0, 0x41, 9]).buffer, 1, 2)).update('msg').digest('hex')", "\"32bbc524622004fad8a688fda7c6c707e072e88f1ab383da6982729d01038f42\""},
 	{"crypto.createHmac('sha256', new Uint8Array(new Uint8Array([9, 0, 0x41, 9]).buffer, 1, 2)).update('msg').digest('hex')", "\"32bbc524622004fad8a688fda7c6c707e072e88f1ab383da6982729d01038f42\""},
 	{"crypto.createHmac('sha256', new Uint8Array([0, 1]).buffer).update('msg').digest('hex')", "\"9355f12eb0fc4600d188edc1045d20051349732e4ca6cdcb5e07ba583539fb3b\""},
+	// later changes to the caller's buffer
+	{"(() => { const b = new Uint8Array([1, 2, 3]); const h = crypto.createHmac('sha256', b.buffer); b.fill(67); return h.update('msg').digest('hex'); })()", "\"88ec2da49ac6d7d71199ded8261b45b03567a627290b90a1a6f8bd929664b5f4\""},
+	{"(() => { const b = new Uint8Array([1, 2, 3]); const h = crypto.createHmac('sha256', b); b.fill(67); return h.update('msg').digest('hex'); })()", "\"88ec2da49ac6d7d71199ded8261b45b03567a627290b90a1a6f8bd929664b5f4\""},
+	{"(() => { const b = Buffer.from([1, 2, 3]); const h = crypto.createHash('sha256').update(b); b.fill(67); return h.digest('hex'); })()", "\"039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81\""},
 	// views
 	{"crypto.createHash('sha256').update(new Uint8Array([0, 0x41])).digest('hex')", "\"c00b4d3c929cb5cc316691ed4636f634576f2c9b2954767234c5274e9dde185d\""},
 	{"crypto.createHash('sha256').update(Buffer.from([9, 0, 0x41, 9]).subarray(1, 3)).digest('hex')", "\"c00b4d3c929cb5cc316691ed4636f634576f2c9b2954767234c5274e9dde185d\""},
