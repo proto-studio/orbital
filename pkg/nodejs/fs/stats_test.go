@@ -21,3 +21,18 @@ func TestMillis(t *testing.T) {
 		}
 	}
 }
+
+func TestNanos(t *testing.T) {
+	for _, tc := range []struct {
+		t    time.Time
+		want string
+	}{
+		{time.Unix(1700000000, 123456789), "1700000000123456789"},
+		{time.Unix(10413792000, 1), "10413792000000000001"},
+		{time.Unix(0, 0), "0"},
+	} {
+		if got := nanos(tc.t); got != tc.want {
+			t.Errorf("nanos(%v) = %s, want %s", tc.t, got, tc.want)
+		}
+	}
+}

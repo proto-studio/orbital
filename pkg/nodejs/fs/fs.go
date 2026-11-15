@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math/big"
 	"os"
 	"strings"
 	"sync"
@@ -660,6 +661,17 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	num("mtimeMs", ms(stat.ModTime))
 	num("ctimeMs", ms(stat.ChangeTime))
 	num("birthtimeMs", ms(stat.BirthTime))
+	// The same times in whole nanoseconds, as decimal strings, for { bigint: true }, since a
+	// Number can't hold them exactly.
+	nsTimes, _ := ctx.NewArray(4)
+	for i, t := range []time.Time{stat.AccessTime, stat.ModTime, stat.ChangeTime, stat.BirthTime} {
+		if t.IsZero() {
+			t = stat.ModTime
+		}
+		v, _ := ctx.NewString(nanos(t))
+		nsTimes.SetIndex(i, v)
+	}
+	obj.Set("timesNs", nsTimes)
 	return obj
 }
 
@@ -667,6 +679,12 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 // seconds and nanoseconds, since nanoseconds since 1970 overflow an int64 past 2262.
 func millis(t time.Time) float64 {
 	return float64(t.Unix())*1000 + float64(t.Nanosecond())/1e6
+}
+
+// nanos gives t in nanoseconds since 1970 as a decimal string, exactly, past 2262 too.
+func nanos(t time.Time) string {
+	n := new(big.Int).Mul(big.NewInt(t.Unix()), big.NewInt(1e9))
+	return n.Add(n, big.NewInt(int64(t.Nanosecond()))).String()
 }
 
 // POSIX file type and mode bits, as st_mode carries them and Node's fs.Stats reports them.

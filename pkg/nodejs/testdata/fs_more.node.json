@@ -218,6 +218,13 @@
       "name": "Error"
     }
   },
+  "cp_callback_filter_throws_falsy": {
+    "error": {
+      "code": "ERR_FALSY_VALUE_REJECTION",
+      "message": "Promise was rejected with falsy value",
+      "name": "Error"
+    }
+  },
   "cp_dir": {
     "value": [
       [
@@ -391,6 +398,9 @@
     "value": [
       "a"
     ]
+  },
+  "cp_promise_filter_throws_falsy": {
+    "value": "rejected with 0"
   },
   "cp_read_only_dir": {
     "value": [
@@ -900,6 +910,13 @@
     "error": {
       "code": "ERR_OUT_OF_RANGE",
       "message": "The value of \"len\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "truncate_fraction_fd": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"fd\" is out of range. It must be an integer. Received 1.5",
       "name": "RangeError"
     }
   },
