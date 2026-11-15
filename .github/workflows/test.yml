@@ -51,6 +51,18 @@ jobs:
         if: startsWith(matrix.platform, 'linux-')
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
+      # V8 turns on memory protection keys only when the CPU has them (pku) and the OS
+      # enables them (ospke). Recording both, with the CPU model and kernel, shows whether
+      # a crash in V8 happened on a runner where they were available.
+      - name: Record CPU protection-key support (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: |
+          uname -r
+          grep -m1 'model name' /proc/cpuinfo || true
+          for flag in pku ospke; do
+            if grep -qw "$flag" /proc/cpuinfo; then echo "$flag: yes"; else echo "$flag: no"; fi
+          done
+
       # v8setup reads its source from these variables.
       - name: Choose where to install V8 from
         env:
