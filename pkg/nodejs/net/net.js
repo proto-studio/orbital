@@ -395,7 +395,7 @@
       // As in Node, a write already handed to the transport reports no error if the
       // socket is destroyed before it completes.
       this._writeInFlight = cb;
-      internal.write(this._id, buf.toString('base64'), (encodedError) => {
+      const done = internal.write(this._id, buf.toString('base64'), (encodedError) => {
         this._pendingWriteBytes = 0;
         if (this._writeInFlight !== cb) return;
         this._writeInFlight = null;
@@ -407,6 +407,12 @@
         this._touch();
         cb();
       });
+      if (done === true) {
+        this._pendingWriteBytes = 0;
+        this._writeInFlight = null;
+        this._bytesDispatched += buf.length;
+        cb();
+      }
     }
 
     _final(cb) {

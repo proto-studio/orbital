@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"syscall"
@@ -84,6 +85,28 @@ type HalfClosableTCPSocket interface {
 	// peer finishes too. A wrapper whose underlying socket cannot do this returns
 	// errors.ErrUnsupported.
 	CloseWrite() error
+}
+
+// TryWriteTCPSocket is an optional extension of TCPSocket for sockets that can write without
+// blocking. Node writes to a socket at once when the operating system can take the bytes, and
+// completes the write in the same turn of the event loop; a socket that implements this lets
+// Orbital do the same.
+type TryWriteTCPSocket interface {
+	TCPSocket
+
+	// TryWrite writes as much of data as the socket can take without waiting and returns
+	// how many bytes it wrote. A wrapper whose underlying socket cannot do this returns
+	// errors.ErrUnsupported.
+	TryWrite(data []byte) (int, error)
+}
+
+// TryWrite writes what socket can take of data without waiting, or returns
+// errors.ErrUnsupported if it cannot.
+func TryWrite(socket TCPSocket, data []byte) (int, error) {
+	if writer, ok := socket.(TryWriteTCPSocket); ok {
+		return writer.TryWrite(data)
+	}
+	return 0, errors.ErrUnsupported
 }
 
 // CloseWrite half-closes socket, or returns errors.ErrUnsupported if it cannot.
@@ -306,6 +329,58 @@ func (s *RealTCPSocket) Write(data []byte) (int, error) {
 	// The lock is not held across the write: a peer that stops reading must not
 	// prevent Close from interrupting it.
 	return conn.Write(data)
+}
+
+// TryWrite writes what the operating system takes of data without waiting.
+func (s *RealTCPSocket) TryWrite(data []byte) (int, error) {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+
+	if conn == nil {
+		return 0, ErrSocketClosed
+	}
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return 0, errors.ErrUnsupported
+	}
+	raw, err := sc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	written := 0
+	var writeErr error
+	// Returning true from the callback stops the poller from waiting for the socket to
+	// become writable, so this never blocks.
+	err = raw.Write(func(fd uintptr) bool {
+		for written < len(data) {
+			n, err := syscall.Write(int(fd), data[written:])
+			if n > 0 {
+				written += n
+			}
+			if err == syscall.EINTR {
+				continue
+			}
+			if err == syscall.EAGAIN {
+				break
+			}
+			if err != nil {
+				writeErr = err
+				break
+			}
+			if n == 0 {
+				break
+			}
+		}
+		return true
+	})
+	if err != nil {
+		return written, err
+	}
+	if writeErr != nil {
+		return written, &net.OpError{Op: "write", Net: conn.LocalAddr().Network(), Source: conn.LocalAddr(), Addr: conn.RemoteAddr(), Err: os.NewSyscallError("write", writeErr)}
+	}
+	return written, nil
 }
 
 // Read receives data from the TCP connection into the buffer.

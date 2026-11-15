@@ -3,8 +3,11 @@ package nodejs
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
 	"sync"
 	"testing"
 
@@ -1017,4 +1020,28 @@ self.close();
 done({ code });`)
 		wantJSON(t, result, map[string]any{"code": "DEPTH_ZERO_SELF_SIGNED_CERT"})
 	})
+}
+
+// A response's 'finish' comes in the same order relative to its request's 'end' as in Node:
+// a write the socket takes at once completes without waiting for another thread.
+func TestHTTPEventOrder_MatchesNode(t *testing.T) {
+	const scriptPath, expectedPath = "testdata/http_event_order.js", "testdata/http_event_order.node.json"
+	if captureFromNode(t) {
+		output, err := exec.Command("node", scriptPath).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		writeExpected(t, expectedPath, results)
+		return
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, string(script))
+	wantJSON(t, got, readExpected(t, expectedPath))
 }

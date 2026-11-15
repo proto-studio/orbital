@@ -421,7 +421,9 @@ func (n *Net) connectUnixFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 }
 
 // write(id, base64Data, callback) writes bytes. They cross the boundary as base64 because
-// a JavaScript string cannot carry them unchanged. callback receives a JSON error or null.
+// a JavaScript string cannot carry them unchanged. It returns true when the socket took all
+// the bytes at once, and callback is not called; otherwise callback later receives a JSON
+// error or null.
 func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 3 {
@@ -441,10 +443,23 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return n.failSocketClosed(callback, "write")
 	}
 
+	// Like libuv, write at once what the socket takes without waiting. When that is
+	// everything, the write is done and JavaScript completes it in this turn, as Node does.
+	written, err := runtime.TryWrite(socket, data)
+	if errors.Is(err, errors.ErrUnsupported) {
+		written, err = 0, nil
+	}
+	if err == nil && written == len(data) {
+		return info.Context().NewBoolean(true)
+	}
+	data = data[written:]
+
 	n.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer n.rt.EventLoop().DonePendingWork()
-		_, err := socket.Write(data)
+		if err == nil {
+			_, err = socket.Write(data)
+		}
 		n.deliver(func(ctx *v8.Context) {
 			if err != nil {
 				desc := netdial.Describe(err, "write", "", 0)
