@@ -509,13 +509,20 @@ func (f *FS) writevOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, 
 	}
 	position := intAt(args, 2)
 	return func() opResult {
-		file, ok := f.fileForFD(fd)
-		if !ok {
+		// Descriptors 1 and 2 are the process's own stdout and stderr, as for write.
+		var write func([]byte) (int, error)
+		if file, ok := f.fileForFD(fd); ok {
+			write = func(data []byte) (int, error) {
+				return atPosition(file, position, func() (int, error) { return file.Write(data) })
+			}
+		} else if std := map[int]*os.File{1: os.Stdout, 2: os.Stderr}[fd]; std != nil {
+			write = std.Write
+		} else {
 			return failed(syscall.EBADF, "write", "")
 		}
 		total := 0
 		for _, data := range chunks {
-			n, err := atPosition(file, position, func() (int, error) { return file.Write(data) })
+			n, err := write(data)
 			if err != nil {
 				return failed(err, "write", "")
 			}
