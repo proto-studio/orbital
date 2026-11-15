@@ -65,6 +65,27 @@ async function main() {
     return [k.algorithm.name, k.algorithm.length, hex(await subtle.exportKey('raw', k))];
   });
 
+  // deriveKey's default and checked lengths for the key it makes.
+  const targets = {
+    hmacSha256: [{ name: 'HMAC', hash: 'SHA-256' }, ['sign']],
+    hmacSha1: [{ name: 'HMAC', hash: 'SHA-1' }, ['sign']],
+    hmacSha384: [{ name: 'HMAC', hash: 'SHA-384' }, ['sign']],
+    hmacSha512: [{ name: 'HMAC', hash: { name: 'SHA-512' } }, ['sign']],
+    hmacLength128: [{ name: 'HMAC', hash: 'SHA-256', length: 128 }, ['sign']],
+    hmacLength100: [{ name: 'HMAC', hash: 'SHA-256', length: 100 }, ['sign']],
+    hmacLength0: [{ name: 'HMAC', hash: 'SHA-256', length: 0 }, ['sign']],
+    aesNoLength: [{ name: 'AES-GCM' }, ['encrypt']],
+    aesLength100: [{ name: 'AES-GCM', length: 100 }, ['encrypt']],
+    aesCbc192: [{ name: 'AES-CBC', length: 192 }, ['encrypt']],
+    aesKw128: [{ name: 'AES-KW', length: 128 }, ['wrapKey']],
+  };
+  for (const [name, [target, usages]] of Object.entries(targets)) {
+    results['deriveKeyTarget_' + name] = await outcome(async () => {
+      const k = await subtle.deriveKey(p(), key, target, true, usages);
+      return [k.algorithm.name, k.algorithm.length, hex(await subtle.exportKey('raw', k))];
+    });
+  }
+
   const onlyDeriveKey = await subtle.importKey('raw', ikm, 'HKDF', false, ['deriveKey']);
   results.deriveBitsWithoutUsage = await outcome(() => subtle.deriveBits(p(), onlyDeriveKey, 128));
   results.deriveKeyWithOnlyDeriveKey = await outcome(async () => {

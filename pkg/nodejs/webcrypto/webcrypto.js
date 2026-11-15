@@ -383,6 +383,35 @@
     return b64ToBytes(outB64).buffer;
   }
 
+  // The bits deriveKey derives for the key it makes, as in Node: an HMAC key
+  // defaults to its hash's block size, and an AES key needs a valid length.
+  function derivedKeyLength(algo) {
+    const name = typeof algo.name === 'string' ? algo.name.toUpperCase() : '';
+    if (name === 'HMAC') {
+      if (algo.length === undefined) {
+        const hash = upperHashName(algo.hash);
+        return hash === 'SHA-384' || hash === 'SHA-512' ? 1024 : 512;
+      }
+      if (algo.length === 0) throw new DOMException('Invalid key length', 'OperationError');
+      return algo.length;
+    }
+    if (name.startsWith('AES-')) {
+      if (algo.length === undefined) {
+        throw new TypeError("Failed to normalize algorithm: passed algorithm can not be converted to 'AesDerivedKeyParams' because 'length' is required in 'AesDerivedKeyParams'.");
+      }
+      if (algo.length !== 128 && algo.length !== 192 && algo.length !== 256) {
+        throw new DOMException('Invalid key length', 'OperationError');
+      }
+      return algo.length;
+    }
+    return algo.length || 256;
+  }
+
+  function upperHashName(h) {
+    const name = typeof h === 'string' ? h : (h && typeof h === 'object' ? h.name : undefined);
+    return typeof name === 'string' ? name.toUpperCase() : '';
+  }
+
   // HKDF keys import only from raw bytes, are never extractable, and only
   // derive.
   function checkHKDFImport(format, extractable, keyUsages) {
@@ -581,7 +610,8 @@
     }
 
     async deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
-      const bits = await this._deriveBits(algorithm, baseKey, derivedKeyAlgorithm.length || 256, 'deriveKey');
+      const length = derivedKeyLength(normalizeAlgorithm(derivedKeyAlgorithm));
+      const bits = await this._deriveBits(algorithm, baseKey, length, 'deriveKey');
       return this.importKey('raw', bits, derivedKeyAlgorithm, extractable, keyUsages);
     }
 
