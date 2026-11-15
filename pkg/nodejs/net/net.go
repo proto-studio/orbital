@@ -74,6 +74,7 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 		"createServer":     n.createServerFunc,
 		"listen":           n.listenFunc,
 		"listenUnix":       n.listenUnixFunc,
+		"listenInherited":  n.listenInheritedFunc,
 		"accept":           n.acceptFunc,
 		"closeServer":      n.closeServerFunc,
 		"getServerAddress": n.getServerAddressFunc,
@@ -811,6 +812,33 @@ func (n *Net) server(id int64) (*server, bool) {
 // listen(id, host, port) binds synchronously and returns null or a JSON error. Binding
 // does not block on connections, and it makes server.address() usable straight away, as
 // in Node, where only the 'listening' event is deferred.
+// listenInherited(serverId, fd) listens on a socket the process inherited, if the runtime's
+// socket factory offers it. It returns null or a JSON error.
+func (n *Net) listenInheritedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.Throw("net: invalid listen arguments")
+	}
+	s, ok := n.server(int64(args[0].Integer()))
+	if !ok {
+		return ctx.Throw("net: server not found")
+	}
+	fd := int(args[1].Integer())
+	err := runtime.ErrNotInherited
+	var srv runtime.TCPServer
+	if factory, ok := n.rt.SocketFactory().(runtime.InheritedListenerFactory); ok {
+		srv, err = factory.ListenInherited(fd)
+	}
+	if err != nil {
+		return jsJSON(ctx, netdial.Describe(err, "listen", "", 0))
+	}
+	s.mu.Lock()
+	s.srv = srv
+	s.mu.Unlock()
+	return ctx.Null()
+}
+
 func (n *Net) listenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
