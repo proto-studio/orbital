@@ -11,6 +11,7 @@ package worker_threads
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -99,6 +100,15 @@ func (w *WorkerThreads) Register(rt *goruntime.Runtime) error {
 		if err := w.setFunc(iso, ctx, "__wt_set_dispatcher", w.setDispatcherFunc); err != nil {
 			return err
 		}
+	}
+
+	// V8's ValueSerializer, for sending a worker's thrown value to its parent the way
+	// Node does. worker_threads.js takes both and removes them from the global object.
+	if err := w.setFunc(iso, ctx, "__wt_serialize", serializeFunc); err != nil {
+		return err
+	}
+	if err := w.setFunc(iso, ctx, "__wt_deserialize", deserializeFunc); err != nil {
+		return err
 	}
 
 	if _, err := rt.RunScript(workerThreadsJS, "worker_threads.js"); err != nil {
@@ -372,6 +382,46 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 		}
 	}
 	wk.fromWorker <- wtEvent{kind: "exit", code: code}
+}
+
+// serializeFunc implements __wt_serialize(value, bufferPrototype): the value serialized by
+// V8, as base64, or a thrown DataCloneError.
+func serializeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.Throw("__wt_serialize needs a value and Buffer.prototype")
+	}
+	data, err := ctx.SerializeValue(args[0], args[1])
+	if err != nil {
+		if errors.Is(err, v8.ErrExecutionTerminated) {
+			return nil
+		}
+		return ctx.Throw(err.Error())
+	}
+	s, _ := ctx.NewString(base64.StdEncoding.EncodeToString(data))
+	return s
+}
+
+// deserializeFunc implements __wt_deserialize(base64, bufferPrototype).
+func deserializeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.Throw("__wt_deserialize needs data and Buffer.prototype")
+	}
+	data, err := base64.StdEncoding.DecodeString(args[0].String())
+	if err != nil {
+		return ctx.Throw("Unable to deserialize cloned data.")
+	}
+	value, err := ctx.DeserializeValue(data, args[1])
+	if err != nil {
+		if errors.Is(err, v8.ErrExecutionTerminated) {
+			return nil
+		}
+		return ctx.Throw(err.Error())
+	}
+	return value
 }
 
 // serializeThrown encodes the value that ended a worker for the parent's 'error' event, in

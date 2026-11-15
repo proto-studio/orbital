@@ -99,6 +99,14 @@ int v8go_value_is_string(void* value);
 int v8go_value_is_object(void* value);
 int v8go_value_is_array(void* value);
 int v8go_value_is_function(void* value);
+
+// V8's ValueSerializer, with array buffer views as host objects the way Node's serializer
+// writes them: the view's type, byte length and own bytes. buffer_proto is Buffer.prototype,
+// or NULL: a Uint8Array with that prototype is a Buffer and is rebuilt as one. serialize
+// returns a buffer the caller frees, or NULL with *error set (empty if execution was
+// terminated).
+unsigned char* v8go_value_serialize(void* context, void* value, void* buffer_proto, size_t* size, char** error);
+void* v8go_value_deserialize(void* context, const unsigned char* data, size_t size, void* buffer_proto, char** error);
 int v8go_value_to_boolean(void* value);
 double v8go_value_to_number(void* context, void* value);
 long v8go_value_to_integer(void* context, void* value);
