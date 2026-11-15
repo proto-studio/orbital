@@ -130,6 +130,34 @@ func TestNet_HappyEyeballs(t *testing.T) {
 		}
 	})
 
+	t.Run("tls.connect passes the options on", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{DNSResolver: resolver, SocketFactory: newFactory()}, `
+const tls = require('tls');
+const t0 = Date.now();
+const s = tls.connect({ host: 'dual.test', port: 443, autoSelectFamilyAttemptTimeout: 20 });
+s.on('error', () => {});
+s.on('connect', () => { const ms = Date.now() - t0; s.destroy(); done({ fast: ms < 200 }); });`)
+		wantJSON(t, got, map[string]any{"fast": true})
+		got = runJS(t, &runtime.Config{DNSResolver: resolver, SocketFactory: newFactory()}, `
+const tls = require('tls');
+const s = tls.connect({ host: 'dual.test', port: 443, autoSelectFamily: false });
+const attempts = [];
+s.on('connectionAttempt', (ip) => attempts.push(ip));
+s.on('error', () => {});
+setTimeout(() => { s.destroy(); done({ attempts }); }, 400);`)
+		wantJSON(t, got, map[string]any{"attempts": []any{"2001:db8::1"}})
+	})
+
+	t.Run("an attempt timeout must fit a timer", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{}, `
+const net = require('net');
+const out = {};
+try { net.setDefaultAutoSelectFamilyAttemptTimeout(4294967296); } catch (e) { out.setter = e.code; }
+try { net.connect({ port: 1, autoSelectFamilyAttemptTimeout: 4294967296 }); } catch (e) { out.option = e.code; }
+done(out);`)
+		wantJSON(t, got, map[string]any{"setter": "ERR_OUT_OF_RANGE", "option": "ERR_OUT_OF_RANGE"})
+	})
+
 	t.Run("without autoSelectFamily only the first address is tried", func(t *testing.T) {
 		factory := newFactory()
 		factory.hang = nil
