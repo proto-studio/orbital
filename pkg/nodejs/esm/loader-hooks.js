@@ -345,9 +345,11 @@
   // string goes as { text, received, json?, undefined? }: its string form (what
   // Node prints for an unknown key), how Node describes it in a type error, and
   // what to rebuild it from for the load hooks' context.
+  // The pairs travel as { array, pairs }, so an array a hook returned comes back
+  // as an array.
   function encodeAttrs(attrs) {
-    if (attrs == null || typeof attrs !== 'object') return '[]';
-    return JSON.stringify(Object.keys(attrs).map((k) => {
+    if (attrs == null || typeof attrs !== 'object') return '{"array":false,"pairs":[]}';
+    return JSON.stringify({ array: Array.isArray(attrs), pairs: Object.keys(attrs).map((k) => {
       const v = attrs[k];
       if (typeof v === 'string') return [k, v];
       const other = { text: formatted(v), received: received(v) };
@@ -358,12 +360,13 @@
         try { other.json = JSON.parse(JSON.stringify(v)); } catch (e) { /* not representable */ }
       }
       return [k, other];
-    }));
+    }) });
   }
 
   function decodeAttrs(text) {
-    const attrs = {};
-    for (const [k, v] of JSON.parse(text || '[]')) {
+    const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
+    const attrs = encoded.array ? [] : {};
+    for (const [k, v] of encoded.pairs) {
       let value = v;
       if (typeof v !== 'string') {
         value = v.undefined ? undefined : 'bigint' in v ? BigInt(v.bigint) : 'json' in v ? v.json : v.text;

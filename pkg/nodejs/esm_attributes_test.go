@@ -344,3 +344,28 @@ log.push(a.default, b.default, a === b);`,
 		t.Fatalf("NUL type: got %s, want %s", got, want)
 	}
 }
+
+// An array a resolve hook returns as importAttributes reaches the load hooks as an
+// array, and a file name holding the key separator byte keeps its whole url.
+// Expected from Node 20.18.1.
+func TestImportAttributes_ArrayShapeAndSeparatorInPath(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"virt.js":    ``,
+		"a\x01b.mjs": `export default import.meta.url.split('/').pop();`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './virt.js') return { ...(await n(s, c)), importAttributes: ['x'] };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('virt.js')) return { format: 'module', source: 'export default ' + JSON.stringify([Array.isArray(c.importAttributes), c.importAttributes.length, c.importAttributes[0]]) + ';', shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+log.push((await import('./virt.js')).default, (await import('./a%01b.mjs')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[[true,1,"x"],"a%01b.mjs"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
