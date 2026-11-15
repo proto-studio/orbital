@@ -1,7 +1,10 @@
 package nodejs
 
 import (
+	"fmt"
 	"io/fs"
+	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -122,4 +125,31 @@ const fs = require('fs');
 		"read": "abc", "writev": []any{4.0, "abcd"}, "readv": []any{"bc", "de"},
 		"emptyWritev": []any{true, 0.0}, "emptyReadv": []any{true, 0.0},
 	})
+}
+
+// fs.promises.writeFile given a FileHandle queues its write before it returns, and readv
+// returns what a pipe holds rather than waiting to fill every buffer.
+func TestFS_PromiseWritesAndShortVectors(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+(async () => {
+  const handle = await fs.promises.open(dir + '/f', 'w');
+  const writing = fs.promises.writeFile(handle, 'written');
+  await handle.close();
+  await writing;
+  const fd = fs.openSync(dir + '/fifo', 'r+');
+  fs.writeSync(fd, 'x');
+  const a = Buffer.alloc(4), b = Buffer.alloc(4);
+  const n = fs.readvSync(fd, [a, b]);
+  fs.closeSync(fd);
+  done({ written: fs.readFileSync(dir + '/f', 'utf8'), n, a: a.toString('latin1', 0, n) });
+})().catch((e) => done({ failed: String(e) }));
+`, dir))
+	wantJSON(t, got, map[string]any{"written": "written", "n": 1.0, "a": "x"})
 }

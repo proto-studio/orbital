@@ -532,12 +532,16 @@ func (f *FS) writevOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, 
 }
 
 // readvOp backs readv(fd, [length...], position) and gives the bytes read into each buffer,
-// as base64, stopping at the end of the file. A position of -1 means the file's offset.
+// as base64. Like readv(2), it reads once, as much as is there up to the buffers' total, and
+// splits that across them, so a pipe with less waiting doesn't hold it up. A position of -1
+// means the file's offset.
 func (f *FS) readvOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
 	fd := fdAt(args)
 	var lengths []int64
+	var total int64
 	for _, item := range vectorAt(args, 1) {
 		lengths = append(lengths, item.Integer())
+		total += item.Integer()
 	}
 	position := intAt(args, 2)
 	return func() opResult {
@@ -545,20 +549,17 @@ func (f *FS) readvOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *
 		if !ok {
 			return failed(syscall.EBADF, "read", "")
 		}
+		buf := make([]byte, total)
+		n, err := atPosition(file, position, func() (int, error) { return file.Read(buf) })
+		if err != nil && err != io.EOF && n == 0 {
+			return failed(err, "read", "")
+		}
 		var parts []string
+		data := buf[:n]
 		for _, length := range lengths {
-			buf := make([]byte, length)
-			n, err := atPosition(file, position, func() (int, error) { return io.ReadFull(file, buf) })
-			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-				return failed(err, "read", "")
-			}
-			parts = append(parts, fileContents(buf[:n], false))
-			if position >= 0 {
-				position += int64(n)
-			}
-			if int64(n) < length {
-				break
-			}
+			take := min(length, int64(len(data)))
+			parts = append(parts, fileContents(data[:take], false))
+			data = data[take:]
 		}
 		return opResult{value: func(ctx *v8.Context) *v8.Value {
 			arr, _ := ctx.NewArray(len(parts))

@@ -24,6 +24,13 @@
     return new Promise((resolve) => resolve(operation()));
   }
 
+  // viaCallback with its first argument from first(), which may throw to reject.
+  function viaCallbackWith(first, name, ...args) {
+    return new Promise((resolve, reject) => {
+      fs[name](first(), ...args, (err, value) => (err ? reject(err) : resolve(value)));
+    });
+  }
+
   // Runs fs[name], a callback form, which does its work off the JavaScript thread, as a
   // promise of its result. A bad argument it throws rejects the promise.
   function viaCallback(name, ...args) {
@@ -155,8 +162,9 @@
   const fsPromises = {
     // These run off the JavaScript thread, through the callback forms.
     readFile: (path, options) => viaCallback('readFile', path, options),
-    writeFile: (path, data, options) => attempt(() => target(path)).then((t) => viaCallback('writeFile', t, data, options)),
-    appendFile: (path, data, options) => attempt(() => target(path)).then((t) => viaCallback('appendFile', t, data, options)),
+    // The write is queued before these return, so a FileHandle closed right after waits for it.
+    writeFile: (path, data, options) => viaCallbackWith(() => target(path), 'writeFile', data, options),
+    appendFile: (path, data, options) => viaCallbackWith(() => target(path), 'appendFile', data, options),
     unlink: (path) => viaCallback('unlink', path),
     rename: (oldPath, newPath) => viaCallback('rename', oldPath, newPath),
     copyFile: (src, dest, mode) => viaCallback('copyFile', src, dest, mode),
