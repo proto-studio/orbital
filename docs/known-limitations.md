@@ -118,7 +118,8 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `sigalgs` are ignored. `pfx` and encrypted keys are not supported and throw. Session
   resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no
   `session` event fires. `tls.rootCertificates` is empty. (#125)
-- **`TLSSocket` can only wrap a `net.Socket`,** not an arbitrary stream. (#126)
+- **A TLS handshake over a stream that isn't a socket keeps the process running** until it
+  finishes, even if nothing else would. In Node only the stream decides that.
 - **The HTTP parser is stricter than Node in places.** All of these are refused, because
   another hop could read the same bytes differently:
   - a non-chunked final `Transfer-Encoding`, before the handler runs, where Node runs the

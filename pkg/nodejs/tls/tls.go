@@ -40,6 +40,7 @@ type TLS struct {
 	sessions    map[int64]*session
 	contexts    map[int64]*serverContext
 	nextContext int64
+	pipes       map[int64]*netmodule.PipeSocket
 }
 
 // session is the TLS state of one upgraded socket.
@@ -55,6 +56,7 @@ func New(netModule *netmodule.Net) *TLS {
 		net:      netModule,
 		sessions: make(map[int64]*session),
 		contexts: make(map[int64]*serverContext),
+		pipes:    make(map[int64]*netmodule.PipeSocket),
 	}
 }
 
@@ -85,6 +87,9 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 		"getProtocol":          t.getProtocolFunc,
 		"isSessionReused":      t.isSessionReusedFunc,
 		"exportKeyingMaterial": t.exportKeyingMaterialFunc,
+		"createPipe":           t.createPipeFunc,
+		"pipePush":             t.pipePushFunc,
+		"pipeEnd":              t.pipeEndFunc,
 	}
 
 	for name, fn := range funcs {

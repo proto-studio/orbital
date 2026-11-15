@@ -62,10 +62,11 @@
   class TLSSocket extends net.Socket {
     constructor(socket, options) {
       options = { ...options };
-      if (socket && !(socket instanceof net.Socket)) {
-        throw makeError('tls: only a net.Socket can be wrapped', 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM');
-      }
-      super({ allowHalfOpen: socket ? socket.allowHalfOpen : options.allowHalfOpen, signal: options.signal });
+      const stream = socket && !(socket instanceof net.Socket) ? socket : null;
+      super({
+        allowHalfOpen: socket && !stream ? socket.allowHalfOpen : options.allowHalfOpen,
+        signal: options.signal
+      });
 
       this.encrypted = true;
       this.authorized = false;
@@ -79,7 +80,8 @@
       // Nothing moves on this socket until the handshake finishes.
       this._ioBlocked = true;
 
-      if (socket) this._adopt(socket);
+      if (stream) this._adoptStream(stream);
+      else if (socket) this._adopt(socket);
 
       // A server-side socket built directly, as for STARTTLS, starts straight away.
       if (this._isServer && !options._managedByServer && this._id !== null) {
@@ -185,6 +187,30 @@
       } else {
         takeOver();
       }
+    }
+
+    // Carries TLS over any duplex stream, as Node does for proxies and in-memory pipes.
+    _adoptStream(stream) {
+      this._wrapped = stream;
+      const id = internal.createPipe((data) => {
+        if (!stream.destroyed) stream.write(Buffer.from(data, 'base64'));
+      }, () => {
+        if (!stream.destroyed && !stream.writableEnded) stream.end();
+      });
+      stream.on('data', (chunk) => {
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        internal.pipePush(id, buf.toString('base64'));
+      });
+      stream.on('end', () => internal.pipeEnd(id));
+      stream.on('error', (err) => {
+        if (!this.destroyed) this.destroy(err);
+      });
+      stream.on('close', () => {
+        internal.pipeEnd(id);
+        if (!this.destroyed && !stream.readableEnded) this.destroy();
+      });
+      this._id = id;
+      this._onAdopted();
     }
 
     _onAdopted() {
