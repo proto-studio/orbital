@@ -118,6 +118,11 @@ func (s *FilteredTCPSocket) Write(data []byte) (int, error) {
 	return s.underlying.Write(data)
 }
 
+// TryWrite delegates to the underlying socket if it can write without waiting.
+func (s *FilteredTCPSocket) TryWrite(data []byte) (int, error) {
+	return TryWrite(s.underlying, data)
+}
+
 // Read delegates to the underlying socket.
 func (s *FilteredTCPSocket) Read(buf []byte) (int, error) {
 	return s.underlying.Read(buf)

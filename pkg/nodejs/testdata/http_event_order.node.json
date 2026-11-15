@@ -1,0 +1,42 @@
+{
+  "GET endAfterData": [
+    "req end",
+    "res finish"
+  ],
+  "GET endInImmediate": [
+    "req end",
+    "res finish"
+  ],
+  "GET endOnRequestEnd": [
+    "req end",
+    "res finish"
+  ],
+  "GET endThenResume": [
+    "res finish",
+    "req end"
+  ],
+  "GET resumeThenEnd": [
+    "res finish",
+    "req end"
+  ],
+  "POST endAfterData": [
+    "req end",
+    "res finish"
+  ],
+  "POST endInImmediate": [
+    "req end",
+    "res finish"
+  ],
+  "POST endOnRequestEnd": [
+    "req end",
+    "res finish"
+  ],
+  "POST endThenResume": [
+    "res finish",
+    "req end"
+  ],
+  "POST resumeThenEnd": [
+    "res finish",
+    "req end"
+  ]
+}
