@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // ErrOutsideSandbox is the error a call returns for a path it refuses. It is a permission
@@ -112,13 +113,7 @@ func (l *LocalFilesystem) Stat(path string) (*FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileInfo{
-		Name:    info.Name(),
-		Size:    info.Size(),
-		Mode:    info.Mode(),
-		ModTime: info.ModTime(),
-		IsDir:   info.IsDir(),
-	}, nil
+	return fileInfoOf(info), nil
 }
 
 // Lstat returns file information like Stat, but describes a final symbolic link itself.
@@ -134,13 +129,7 @@ func (l *LocalFilesystem) Lstat(path string) (*FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileInfo{
-		Name:    info.Name(),
-		Size:    info.Size(),
-		Mode:    info.Mode(),
-		ModTime: info.ModTime(),
-		IsDir:   info.IsDir(),
-	}, nil
+	return fileInfoOf(info), nil
 }
 
 // Exists checks if a path exists.
@@ -304,9 +293,83 @@ func (l *LocalFilesystem) Copy(src, dst string) error {
 	return err
 }
 
+// fileInfoOf describes info as a FileInfo, with the OS's details.
+func fileInfoOf(info fs.FileInfo) *FileInfo {
+	fi := &FileInfo{
+		Name:    info.Name(),
+		Size:    info.Size(),
+		Mode:    info.Mode(),
+		ModTime: info.ModTime(),
+		IsDir:   info.IsDir(),
+	}
+	addDetails(fi, info.Sys())
+	return fi
+}
+
+// Truncate sets the size of a file, cutting it or padding it with zeros.
+func (l *LocalFilesystem) Truncate(path string, size int64) error {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Truncate(resolved, size)
+}
+
+// Chmod sets the mode of a file.
+func (l *LocalFilesystem) Chmod(path string, mode fs.FileMode) error {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Chmod(resolved, mode)
+}
+
+// Chown sets the owner and group of a file.
+func (l *LocalFilesystem) Chown(path string, uid, gid int) error {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Chown(resolved, uid, gid)
+}
+
+// Chtimes sets the access and modification times of a file.
+func (l *LocalFilesystem) Chtimes(path string, atime, mtime time.Time) error {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Chtimes(resolved, atime, mtime)
+}
+
+// Access checks that a path exists and may be used as mode asks, as access(2) does.
+func (l *LocalFilesystem) Access(path string, mode uint32) error {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return syscall.Access(resolved, mode)
+}
+
+// Statfs describes the filesystem a path is on.
+func (l *LocalFilesystem) Statfs(path string) (*FsStats, error) {
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	return statfs(resolved)
+}
+
 // localFile wraps os.File to implement our File interface.
 type localFile struct {
 	*os.File
+}
+
+// Chtimes sets the access and modification times of the open file.
+func (f *localFile) Chtimes(atime, mtime time.Time) error {
+	return syscall.Futimes(int(f.Fd()), []syscall.Timeval{
+		syscall.NsecToTimeval(atime.UnixNano()), syscall.NsecToTimeval(mtime.UnixNano()),
+	})
 }
 
 // Stat returns file information for the open file.
@@ -315,13 +378,7 @@ func (f *localFile) Stat() (*FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileInfo{
-		Name:    info.Name(),
-		Size:    info.Size(),
-		Mode:    info.Mode(),
-		ModTime: info.ModTime(),
-		IsDir:   info.IsDir(),
-	}, nil
+	return fileInfoOf(info), nil
 }
 
 // Open opens a file for reading.
@@ -381,3 +438,10 @@ func FilesystemIsUnrestricted(fs Filesystem) bool {
 	local, ok := fs.(*LocalFilesystem)
 	return ok && local.Root == ""
 }
+
+var (
+	_ MetadataFilesystem = (*LocalFilesystem)(nil)
+	_ StatfsFilesystem   = (*LocalFilesystem)(nil)
+	_ LstatFilesystem    = (*LocalFilesystem)(nil)
+	_ MetadataFile       = (*localFile)(nil)
+)

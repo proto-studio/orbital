@@ -1,0 +1,972 @@
+{
+  "access_callback_ok": {
+    "value": []
+  },
+  "access_callback_x": {
+    "error": {
+      "code": "EACCES",
+      "errno": -13,
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/access'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/access",
+      "syscall": "access"
+    }
+  },
+  "access_exists": {
+    "value": null
+  },
+  "access_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, access '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "access"
+    }
+  },
+  "access_promise_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, access '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "access"
+    }
+  },
+  "access_promise_x": {
+    "error": {
+      "code": "EACCES",
+      "errno": -13,
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/access'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/access",
+      "syscall": "access"
+    }
+  },
+  "access_range": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "mode is out of range: \u003e= 0 \u0026\u0026 \u003c= 7",
+      "name": "RangeError"
+    }
+  },
+  "access_rw": {
+    "value": null
+  },
+  "access_type": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "mode must be int32 or null/undefined",
+      "name": "TypeError"
+    }
+  },
+  "access_x": {
+    "error": {
+      "code": "EACCES",
+      "errno": -13,
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/access'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/access",
+      "syscall": "access"
+    }
+  },
+  "blob": {
+    "value": [
+      true,
+      9,
+      "text/plain",
+      "blob text"
+    ]
+  },
+  "blob_missing": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "Unable to open file as blob",
+      "name": "TypeError"
+    }
+  },
+  "chmod": {
+    "value": "600"
+  },
+  "chmod_bad": {
+    "error": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'abc'",
+      "name": "TypeError"
+    }
+  },
+  "chmod_callback": {
+    "value": "644"
+  },
+  "chmod_callback_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, chmod '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "chmod"
+    }
+  },
+  "chmod_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, chmod '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "chmod"
+    }
+  },
+  "chmod_promise": {
+    "value": "604"
+  },
+  "chmod_range": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"mode\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received 8_589_934_592",
+      "name": "RangeError"
+    }
+  },
+  "chmod_string": {
+    "value": "640"
+  },
+  "chmod_undefined": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"mode\" argument must be of type number. Received undefined",
+      "name": "TypeError"
+    }
+  },
+  "chown_bad_uid": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"uid\" argument must be of type number. Received type string ('1')",
+      "name": "TypeError"
+    }
+  },
+  "chown_keep": {
+    "value": null
+  },
+  "chown_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, chown '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "chown"
+    }
+  },
+  "chown_promise": {
+    "value": null
+  },
+  "chown_range": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"uid\" is out of range. It must be \u003e= -1 \u0026\u0026 \u003c= 4294967295. Received -2",
+      "name": "RangeError"
+    }
+  },
+  "chown_same": {
+    "value": null
+  },
+  "cp_bad_filter": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"options.filter\" property must be of type function. Received type number (1)",
+      "name": "TypeError"
+    }
+  },
+  "cp_bad_option": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"options.recursive\" property must be of type boolean. Received type string ('yes')",
+      "name": "TypeError"
+    }
+  },
+  "cp_callback": {
+    "value": [
+      "a",
+      "sub",
+      "sub/b"
+    ]
+  },
+  "cp_callback_dir": {
+    "error": {
+      "code": "ERR_FS_EISDIR",
+      "errno": 21,
+      "info": {
+        "code": "EISDIR",
+        "errno": 21,
+        "message": "\u003cdir\u003e/cp_src is a directory (not copied)",
+        "path": "\u003cdir\u003e/cp_src",
+        "syscall": "cp"
+      },
+      "message": "Path is a directory: cp returned EISDIR (\u003cdir\u003e/cp_src is a directory (not copied)) \u003cdir\u003e/cp_src",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_src",
+      "syscall": "cp"
+    }
+  },
+  "cp_dir": {
+    "value": [
+      [
+        "a",
+        "sub",
+        "sub/b"
+      ],
+      "b",
+      "640"
+    ]
+  },
+  "cp_dir_to_file": {
+    "error": {
+      "code": "ERR_FS_CP_DIR_TO_NON_DIR",
+      "errno": 21,
+      "info": {
+        "code": "EISDIR",
+        "errno": 21,
+        "message": "cannot overwrite non-directory \u003cdir\u003e/cp_file with directory \u003cdir\u003e/cp_src",
+        "path": "\u003cdir\u003e/cp_file",
+        "syscall": "cp"
+      },
+      "message": "Cannot overwrite non-directory with directory: cp returned EISDIR (cannot overwrite non-directory \u003cdir\u003e/cp_file with directory \u003cdir\u003e/cp_src) \u003cdir\u003e/cp_file",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_file",
+      "syscall": "cp"
+    }
+  },
+  "cp_dir_without_recursive": {
+    "error": {
+      "code": "ERR_FS_EISDIR",
+      "errno": 22,
+      "info": {
+        "code": "EISDIR",
+        "errno": 22,
+        "message": "\u003cdir\u003e/cp_src is a directory (not copied)",
+        "path": "\u003cdir\u003e/cp_src",
+        "syscall": "cp"
+      },
+      "message": "Path is a directory: cp returned EISDIR (\u003cdir\u003e/cp_src is a directory (not copied)) \u003cdir\u003e/cp_src",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_src",
+      "syscall": "cp"
+    }
+  },
+  "cp_exists_error": {
+    "error": {
+      "code": "ERR_FS_CP_EEXIST",
+      "errno": 17,
+      "info": {
+        "code": "EEXIST",
+        "errno": 17,
+        "message": "\u003cdir\u003e/cp_dst/a already exists",
+        "path": "\u003cdir\u003e/cp_dst/a",
+        "syscall": "cp"
+      },
+      "message": "Target already exists: cp returned EEXIST (\u003cdir\u003e/cp_dst/a already exists) \u003cdir\u003e/cp_dst/a",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_dst/a",
+      "syscall": "cp"
+    }
+  },
+  "cp_exists_quiet": {
+    "value": "a"
+  },
+  "cp_file_to_dir": {
+    "error": {
+      "code": "ERR_FS_CP_NON_DIR_TO_DIR",
+      "errno": 20,
+      "info": {
+        "code": "ENOTDIR",
+        "errno": 20,
+        "message": "cannot overwrite directory \u003cdir\u003e/cp_src with non-directory \u003cdir\u003e/cp_file",
+        "path": "\u003cdir\u003e/cp_src",
+        "syscall": "cp"
+      },
+      "message": "Cannot overwrite directory with non-directory: cp returned ENOTDIR (cannot overwrite directory \u003cdir\u003e/cp_src with non-directory \u003cdir\u003e/cp_file) \u003cdir\u003e/cp_src",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_src",
+      "syscall": "cp"
+    }
+  },
+  "cp_filter": {
+    "value": [
+      "a"
+    ]
+  },
+  "cp_filter_promise": {
+    "error": {
+      "code": "ERR_INVALID_RETURN_VALUE",
+      "message": "Expected boolean to be returned from the \"filter\" function but got an instance of Promise.",
+      "name": "TypeError"
+    }
+  },
+  "cp_force": {
+    "value": "f"
+  },
+  "cp_into_self": {
+    "error": {
+      "code": "ERR_FS_CP_EINVAL",
+      "errno": 22,
+      "info": {
+        "code": "EINVAL",
+        "errno": 22,
+        "message": "cannot copy \u003cdir\u003e/cp_src to a subdirectory of self \u003cdir\u003e/cp_src/sub/x",
+        "path": "\u003cdir\u003e/cp_src/sub/x",
+        "syscall": "cp"
+      },
+      "message": "Invalid src or dest: cp returned EINVAL (cannot copy \u003cdir\u003e/cp_src to a subdirectory of self \u003cdir\u003e/cp_src/sub/x) \u003cdir\u003e/cp_src/sub/x",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_src/sub/x",
+      "syscall": "cp"
+    }
+  },
+  "cp_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "lstat"
+    }
+  },
+  "cp_promise_filter": {
+    "value": [
+      "a"
+    ]
+  },
+  "cp_same": {
+    "error": {
+      "code": "ERR_FS_CP_EINVAL",
+      "errno": 22,
+      "info": {
+        "code": "EINVAL",
+        "errno": 22,
+        "message": "src and dest cannot be the same",
+        "path": "\u003cdir\u003e/cp_file",
+        "syscall": "cp"
+      },
+      "message": "Invalid src or dest: cp returned EINVAL (src and dest cannot be the same) \u003cdir\u003e/cp_file",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_file",
+      "syscall": "cp"
+    }
+  },
+  "cp_timestamps": {
+    "value": 200000
+  },
+  "dirent": {
+    "value": [
+      {
+        "instance": true,
+        "isDirectory": false,
+        "isFile": true,
+        "keys": [
+          "name",
+          "parentPath",
+          "path"
+        ],
+        "name": "stats",
+        "parentPath": "\u003cdir\u003e",
+        "path": "\u003cdir\u003e"
+      },
+      {
+        "instance": true,
+        "isDirectory": true,
+        "isFile": false,
+        "keys": [
+          "name",
+          "parentPath",
+          "path"
+        ],
+        "name": "stats_dir",
+        "parentPath": "\u003cdir\u003e",
+        "path": "\u003cdir\u003e"
+      }
+    ]
+  },
+  "exists": {
+    "value": [
+      [
+        true
+      ],
+      [
+        false
+      ]
+    ]
+  },
+  "fchmod": {
+    "value": "600"
+  },
+  "fchmod_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, fchmod",
+      "name": "Error",
+      "syscall": "fchmod"
+    }
+  },
+  "fchown_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, fchown",
+      "name": "Error",
+      "syscall": "fchown"
+    }
+  },
+  "fchown_same": {
+    "value": null
+  },
+  "fdatasync": {
+    "value": null
+  },
+  "fdatasync_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, fdatasync",
+      "name": "Error",
+      "syscall": "fdatasync"
+    }
+  },
+  "filehandle_utimes": {
+    "value": [
+      [
+        13000000,
+        14000000,
+        14000000
+      ],
+      "640",
+      ""
+    ]
+  },
+  "filehandle_vectors": {
+    "value": [
+      1,
+      2,
+      "Q2"
+    ]
+  },
+  "fsync": {
+    "value": null
+  },
+  "fsync_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, fsync",
+      "name": "Error",
+      "syscall": "fsync"
+    }
+  },
+  "fsync_callback": {
+    "value": []
+  },
+  "fsync_callback_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, fsync",
+      "name": "Error",
+      "syscall": "fsync"
+    }
+  },
+  "fsync_negative_fd": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"fd\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 2147483647. Received -1",
+      "name": "RangeError"
+    }
+  },
+  "fsync_string_fd": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"fd\" argument must be of type number. Received type string ('1')",
+      "name": "TypeError"
+    }
+  },
+  "ftruncate": {
+    "value": "a"
+  },
+  "ftruncate_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, ftruncate",
+      "name": "Error",
+      "syscall": "ftruncate"
+    }
+  },
+  "futimes": {
+    "value": [
+      11000000,
+      12000000,
+      12000000
+    ]
+  },
+  "futimes_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, futime",
+      "name": "Error",
+      "syscall": "futime"
+    }
+  },
+  "opendir_callback": {
+    "value": [
+      "a",
+      "b",
+      null
+    ]
+  },
+  "opendir_callback_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, opendir '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "opendir"
+    }
+  },
+  "opendir_close_twice": {
+    "error": {
+      "code": "ERR_DIR_CLOSED",
+      "message": "Directory handle was closed",
+      "name": "Error"
+    }
+  },
+  "opendir_closed": {
+    "error": {
+      "code": "ERR_DIR_CLOSED",
+      "message": "Directory handle was closed",
+      "name": "Error"
+    }
+  },
+  "opendir_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "message": "ENOTDIR: not a directory, opendir",
+      "name": "Error",
+      "syscall": "opendir"
+    }
+  },
+  "opendir_iterate": {
+    "value": [
+      "a",
+      "b"
+    ]
+  },
+  "opendir_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, opendir",
+      "name": "Error",
+      "syscall": "opendir"
+    }
+  },
+  "opendir_sync": {
+    "value": {
+      "dir": true,
+      "names": [
+        [
+          "a",
+          false,
+          true
+        ],
+        [
+          "b",
+          true,
+          true
+        ]
+      ],
+      "path": "\u003cdir\u003e/od"
+    }
+  },
+  "promiseTypes": [
+    "cp function",
+    "opendir function",
+    "statfs function",
+    "truncate function",
+    "chmod function",
+    "chown function",
+    "utimes function"
+  ],
+  "readv": {
+    "value": [
+      6,
+      "aX",
+      "Ydef\u0000\u0000\u0000\u0000\u0000\u0000"
+    ]
+  },
+  "readv_bad": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"buffers\" argument must be an ArrayBufferView[]. Received type string ('x')",
+      "name": "TypeError"
+    }
+  },
+  "readv_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, read",
+      "name": "Error",
+      "syscall": "read"
+    }
+  },
+  "readv_callback": {
+    "value": [
+      3,
+      "12Y"
+    ]
+  },
+  "statfs": {
+    "value": {
+      "ctor": "StatFs",
+      "keys": [
+        "type",
+        "bsize",
+        "blocks",
+        "bfree",
+        "bavail",
+        "files",
+        "ffree"
+      ],
+      "positive": true,
+      "types": [
+        "number",
+        "number",
+        "number",
+        "number",
+        "number",
+        "number",
+        "number"
+      ]
+    }
+  },
+  "statfs_bigint": {
+    "value": [
+      "bigint",
+      "bigint",
+      "bigint",
+      "bigint",
+      "bigint",
+      "bigint",
+      "bigint"
+    ]
+  },
+  "statfs_callback": {
+    "value": "StatFs"
+  },
+  "statfs_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, statfs '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "statfs"
+    }
+  },
+  "statfs_promise": {
+    "value": "StatFs"
+  },
+  "stats_constructed": {
+    "value": {
+      "isFile": true,
+      "keys": [
+        "dev",
+        "mode",
+        "nlink",
+        "uid",
+        "gid",
+        "rdev",
+        "blksize",
+        "ino",
+        "size",
+        "blocks",
+        "atimeMs",
+        "mtimeMs",
+        "ctimeMs",
+        "birthtimeMs",
+        "atime",
+        "mtime",
+        "ctime",
+        "birthtime"
+      ],
+      "mtime": 2000
+    }
+  },
+  "stats_dir": {
+    "value": {
+      "isDirectory": true,
+      "isFile": false,
+      "type": "40000"
+    }
+  },
+  "stats_file": {
+    "value": {
+      "ctor": "Stats",
+      "instance": true,
+      "isDirectory": false,
+      "isFile": true,
+      "isSymbolicLink": false,
+      "keys": [
+        "dev",
+        "mode",
+        "nlink",
+        "uid",
+        "gid",
+        "rdev",
+        "blksize",
+        "ino",
+        "size",
+        "blocks",
+        "atimeMs",
+        "mtimeMs",
+        "ctimeMs",
+        "birthtimeMs",
+        "atime",
+        "mtime",
+        "ctime",
+        "birthtime"
+      ],
+      "mtime": true,
+      "mtimeMatches": true,
+      "size": 3,
+      "type": "100000"
+    }
+  },
+  "truncate_bad_len": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"len\" argument must be of type number. Received type string ('x')",
+      "name": "TypeError"
+    }
+  },
+  "truncate_callback": {
+    "value": "abcd"
+  },
+  "truncate_callback_bad_len": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"len\" argument must be of type number. Received type string ('x')",
+      "name": "TypeError"
+    }
+  },
+  "truncate_callback_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/x",
+      "syscall": "open"
+    }
+  },
+  "truncate_default": {
+    "value": ""
+  },
+  "truncate_fd": {
+    "value": ""
+  },
+  "truncate_fraction": {
+    "error": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"len\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    }
+  },
+  "truncate_longer": {
+    "value": [
+      97,
+      98,
+      99,
+      0,
+      0
+    ]
+  },
+  "truncate_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/missing/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing/x",
+      "syscall": "open"
+    }
+  },
+  "truncate_negative": {
+    "value": ""
+  },
+  "truncate_promise": {
+    "value": "ab"
+  },
+  "truncate_shorter": {
+    "value": "abc"
+  },
+  "types": [
+    "accessSync function",
+    "exists function",
+    "truncate function",
+    "ftruncateSync function",
+    "fsync function",
+    "fdatasyncSync function",
+    "chmod function",
+    "fchmodSync function",
+    "chown function",
+    "fchownSync function",
+    "utimes function",
+    "futimesSync function",
+    "opendir function",
+    "opendirSync function",
+    "cp function",
+    "cpSync function",
+    "statfs function",
+    "statfsSync function",
+    "readv function",
+    "writevSync function",
+    "openAsBlob function",
+    "watch function",
+    "watchFile function",
+    "unwatchFile function",
+    "Dir function",
+    "Stats function",
+    "Dirent function"
+  ],
+  "utimes_callback": {
+    "value": [
+      7000000,
+      8000000,
+      8000000
+    ]
+  },
+  "utimes_dates": {
+    "value": [
+      3000000,
+      4000000,
+      4000000
+    ]
+  },
+  "utimes_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, utime '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "utime"
+    }
+  },
+  "utimes_nan": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"time\" argument must be an instance of Date or an Time in seconds. Received type number (NaN)",
+      "name": "TypeError"
+    }
+  },
+  "utimes_numbers": {
+    "value": [
+      1000000,
+      2000500,
+      2000500
+    ]
+  },
+  "utimes_object": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"time\" argument must be an instance of Date or an Time in seconds. Received an instance of Object",
+      "name": "TypeError"
+    }
+  },
+  "utimes_promise": {
+    "value": [
+      9000000,
+      10000000,
+      10000000
+    ]
+  },
+  "utimes_strings": {
+    "value": [
+      5000000,
+      6000250,
+      6000250
+    ]
+  },
+  "watchFile": {
+    "value": [
+      [
+        true,
+        3,
+        1
+      ],
+      "function",
+      "function"
+    ]
+  },
+  "watchFile_no_listener": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"listener\" argument must be of type function. Received undefined",
+      "name": "TypeError"
+    }
+  },
+  "watch_directory": {
+    "value": [
+      true,
+      true
+    ]
+  },
+  "watch_file": {
+    "value": "f"
+  },
+  "watch_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, watch '\u003cdir\u003e/missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/missing",
+      "syscall": "watch"
+    }
+  },
+  "writev": {
+    "value": [
+      6,
+      "abcdef"
+    ]
+  },
+  "writev_bad_fd": {
+    "error": {
+      "code": "EBADF",
+      "errno": -9,
+      "message": "EBADF: bad file descriptor, write",
+      "name": "Error",
+      "syscall": "write"
+    }
+  },
+  "writev_callback": {
+    "value": [
+      2,
+      1,
+      "12Ydef"
+    ]
+  },
+  "writev_position": {
+    "value": [
+      2,
+      "aXYdef"
+    ]
+  }
+}
