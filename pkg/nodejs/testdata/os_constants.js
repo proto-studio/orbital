@@ -8,7 +8,9 @@ const finish = globalThis.done || ((value) => console.log(JSON.stringify(value, 
 const entries = (obj) => Object.entries(obj).map(([name, value]) => `${name}=${value}`);
 
 finish({
-  keys: Object.keys(os.constants).filter((k) => ['errno', 'signals', 'priority'].includes(k)),
+  keys: Object.keys(os.constants),
+  UV_UDP_REUSEADDR: os.constants.UV_UDP_REUSEADDR,
+  dlopen: entries(os.constants.dlopen),
   errno: entries(os.constants.errno),
   signals: entries(os.constants.signals),
   priority: entries(os.constants.priority),

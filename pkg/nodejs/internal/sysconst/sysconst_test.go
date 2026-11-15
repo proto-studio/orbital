@@ -32,6 +32,9 @@ func TestValuesHaveNodeNames(t *testing.T) {
 	if len(signals) != len(signalValues) {
 		t.Errorf("%d signal values but only %d have a Node name", len(signalValues), len(signals))
 	}
+	if len(dlopen) != len(dlopenValues) {
+		t.Errorf("%d dlopen values but only %d have a Node name", len(dlopenValues), len(dlopen))
+	}
 	if s, ok := Signal("SIGUSR1"); !ok || s != syscall.SIGUSR1 {
 		t.Errorf("Signal(SIGUSR1) = %d, %v", s, ok)
 	}
