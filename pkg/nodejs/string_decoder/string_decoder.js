@@ -37,8 +37,8 @@
         this.base64Rest = new Uint8Array(0);
       }
       if (this.utf8Rest.length) {
-        // An incomplete character at the end, as Node reports it.
-        r += '\ufffd';
+        // What is left is an unfinished or invalid character, replaced as Node does.
+        r += utf8Decoder.decode(this.utf8Rest);
         this.utf8Rest = new Uint8Array(0);
       }
       // As in Node, a lone UTF-16 byte at the end is dropped.

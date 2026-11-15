@@ -290,6 +290,7 @@ const execResult = (start) => new Promise((resolve) => {
   out.execFileUtf8Recovery = await execResult((cb) => cp.execFile('printf', ['\\342A\\360\\237\\230\\200'], cb));
   out.execFileUtf16OddByte = await execResult((cb) => cp.execFile('printf', ['a\\000b'], { encoding: 'utf16le' }, cb));
   out.execFileInvalidLead = await execResult((cb) => cp.execFile('printf', ['\\377\\200'], cb));
+  out.execFileInvalidSecond = await execResult((cb) => cp.execFile('printf', ['\\340\\200|\\355\\240|\\342\\202'], cb));
   out.execFileSetEncodingLater = await new Promise((resolve) => {
     const c = cp.execFile('printf', ['abc'], { encoding: 'buffer' }, (err, stdout) => resolve([typeof stdout, String(stdout)]));
     c.stdout.setEncoding('utf8');

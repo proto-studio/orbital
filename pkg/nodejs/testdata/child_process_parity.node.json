@@ -1337,6 +1337,21 @@
       "stderr": "function"
     }
   },
+  "execFileInvalidSecond": {
+    "err": null,
+    "stdout": "��|��|�",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
   "execFileSetEncodingLater": [
     "string",
     "abc"
