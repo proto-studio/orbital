@@ -1448,7 +1448,11 @@
       // directory, unless verbatimSymlinks asks for it as it is.
       const path = pathModule();
       let target = yield ['readlink', src];
-      if (!opts.verbatimSymlinks && !path.isAbsolute(target)) target = path.resolve(path.dirname(src), target);
+      if (!opts.verbatimSymlinks && !path.isAbsolute(target)) {
+        // With a root, a relative src is from the root, not the working directory.
+        const dir = cwdRelative || path.isAbsolute(src) ? path.dirname(src) : path.join(path.sep, path.dirname(src));
+        target = path.resolve(dir, target);
+      }
       if (destStat) yield ['unlink', dest];
       yield ['symlink', target, dest];
       return;

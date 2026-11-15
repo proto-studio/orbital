@@ -73,6 +73,13 @@ done({
   mkdtemp: code(() => /^\/tmp-[A-Za-z0-9]{6}$/.test(fs.mkdtempSync('/tmp-'))),
   mkdtempBeside: code(() => fs.mkdtempSync('/beside/x-')),
   unlinkBeside: code(() => fs.unlinkSync('/beside')),
+  cpLink: code(() => {
+    fs.mkdirSync('src');
+    fs.writeFileSync('src/f', 'linked');
+    fs.symlinkSync('f', 'src/link');
+    fs.cpSync('src', 'dest', { recursive: true });
+    return [fs.readlinkSync('dest/link'), fs.readFileSync('dest/link', 'utf8')].join(' ');
+  }),
 });
 `)
 	wantJSON(t, got, map[string]any{
@@ -80,7 +87,7 @@ done({
 		"relative": "inside", "beside": "EACCES", "besideLstat": true, "besideReadlink": "../beside.txt",
 		"besideRealpath": "EACCES", "besideWrite": "EACCES", "besideHardLink": "EACCES", "hardLinkMade": false,
 		"hardLink": "inside", "linkInBeside": "EACCES", "mkdtemp": true, "mkdtempBeside": "EACCES",
-		"unlinkBeside": "ok",
+		"unlinkBeside": "ok", "cpLink": "/src/f linked",
 	})
 	if data, err := os.ReadFile(filepath.Join(base, "beside.txt")); err != nil || string(data) != "beside" {
 		t.Errorf("beside.txt = %q, %v; want it unchanged", data, err)
