@@ -39,6 +39,9 @@ type ESM struct {
 	rejected *v8.Value
 	// keyPaths maps a module url carrying a query or fragment to its file.
 	keyPaths map[string]string
+	// linkHandled records that linkFailed's error went to an
+	// 'uncaughtException' listener.
+	linkHandled bool
 	// linkErr is the last error object a failed resolution threw, which is what
 	// a failed Instantiate threw.
 	linkErr *v8.Value
@@ -244,8 +247,14 @@ func (e *ESM) linkFailed(err error) error {
 		return ended
 	}
 	// An 'uncaughtException' listener handled it; Node carries on too.
+	e.linkHandled = true
 	return nil
 }
+
+// ErrPreloadFailed is returned by Preload when the module failed to resolve or
+// link and an 'uncaughtException' listener handled the error. Node then runs no
+// further preloads and not the entry point; the program ends normally.
+var ErrPreloadFailed = errors.New("esm: an --import module failed and the error was handled")
 
 // rejectionError converts a rejected module/promise reason (usually an Error
 // object) into a Go error, preferring the JS stack trace so the CLI prints the
@@ -309,11 +318,21 @@ func (e *ESM) Preload(specifier string) error {
 		}
 		// Like Node, an --import that fails to resolve is an uncaught exception.
 		e.linkErr = nil
+		e.linkHandled = false
 		thrown := e.throwable(err)
-		return e.linkFailed(thrown)
+		if err := e.linkFailed(thrown); err != nil || !e.linkHandled {
+			return err
+		}
+		return ErrPreloadFailed
 	}
-	_, err = e.RunModule(source, url)
-	return err
+	e.linkHandled = false
+	if _, err = e.RunModule(source, url); err != nil {
+		return err
+	}
+	if e.linkHandled {
+		return ErrPreloadFailed
+	}
+	return nil
 }
 
 // GetModuleNamespace returns the namespace object of a module after evaluation.

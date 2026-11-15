@@ -643,6 +643,15 @@ func runESModule(filename string) error {
 			if ended := rt.Ended(); ended != nil {
 				return ended
 			}
+			if errors.Is(err, esm.ErrPreloadFailed) {
+				// A listener handled the failure; like Node, end without the entry.
+				rt.EventLoop().Run()
+				if ended := rt.Ended(); ended != nil {
+					return ended
+				}
+				finalizeExit(rt)
+				return nil
+			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}
 	}
@@ -840,6 +849,15 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 		if err := esmLoader.Preload(mod); err != nil {
 			if ended := rt.Ended(); ended != nil {
 				return ended
+			}
+			if errors.Is(err, esm.ErrPreloadFailed) {
+				// A listener handled the failure; like Node, end without the entry.
+				rt.EventLoop().Run()
+				if ended := rt.Ended(); ended != nil {
+					return ended
+				}
+				finalizeExit(rt)
+				return nil
 			}
 			return fmt.Errorf("--import %s: %w", mod, err)
 		}

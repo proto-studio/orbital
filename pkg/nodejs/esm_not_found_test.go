@@ -438,3 +438,20 @@ log.push(await r('enc'));`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A missing file in a package keeps its query and fragment in the error's url, and a
+// file: URL's host ends at a query. Expected from Node 20.18.1.
+func TestDynamicImport_PackageSuffixInErrorAndHostlessQuery(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/pkg/package.json": `{"type":"module"}`,
+		"dep.mjs":                       `export default 'dep';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.code, e.url.split('/').pop()]; } };
+log.push(await r('pkg/nope.mjs?variant=1#x'), await r('file://localhost?next=' + d + '/dep.mjs'));`,
+	})
+	got := runLogModuleIn(t, dir)
+	if want := `[["ERR_MODULE_NOT_FOUND","nope.mjs?variant=1#x"],["ERR_MODULE_NOT_FOUND","dep.mjs"]]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

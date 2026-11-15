@@ -83,8 +83,9 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 		// than localhost is rejected before this; see fileURLHost.)
 		rest = rest[len("file:"):]
 		if strings.HasPrefix(rest, "//") {
+			// The host ends at the path, query or fragment.
 			rest = rest[2:]
-			if i := strings.IndexByte(rest, '/'); i >= 0 {
+			if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 				rest = rest[i:]
 			} else {
 				rest = ""
@@ -547,7 +548,9 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 		}
 	}
 	if sub != "." {
-		return "", "", e.moduleNotFound(target, referrer)
+		err := e.moduleNotFound(target, referrer)
+		err.url += suffix
+		return "", "", err
 	}
 	// Node names the package's main entry, or its index.js when it has none.
 	if main == "" {
