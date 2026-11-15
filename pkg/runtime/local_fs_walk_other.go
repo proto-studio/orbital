@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"time"
 )
 
 // On other systems, a LocalFilesystem with a root refuses every call, since it can't
@@ -38,3 +39,15 @@ func (l *LocalFilesystem) rootedRemoveAll(p string) error { return errNoWalk }
 func (l *LocalFilesystem) rootedRename(oldPath, newPath string) error { return errNoWalk }
 
 func (l *LocalFilesystem) rootedCopy(src, dst string) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedTruncate(p string, size int64) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedChmod(p string, mode fs.FileMode) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedChown(p string, uid, gid int) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedChtimes(p string, atime, mtime time.Time) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedAccess(p string, mode uint32) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedStatfs(p string) (*FsStats, error) { return nil, errNoWalk }
