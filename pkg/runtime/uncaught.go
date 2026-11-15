@@ -25,6 +25,9 @@ type UncaughtError struct {
 	// HandlerThrew reports that the exception came from an 'uncaughtException' handler, which
 	// is what the 7 means. A worker exits 1 in that case.
 	HandlerThrew bool
+	// Thrown is the value that ended the runtime, in the runtime's own context. It is only
+	// usable until the runtime is disposed. Workers use it to hand the value to the parent.
+	Thrown *v8.Value
 }
 
 // Error returns the text Node would print.
@@ -153,8 +156,8 @@ func (rt *Runtime) setNative(obj *v8.Value, name string, cb v8.FunctionCallback)
 	return obj.Set(name, fn)
 }
 
-// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew): no handler took
-// an exception.
+// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew, thrown): no
+// handler took an exception.
 func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
@@ -163,11 +166,16 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if rt.ended() {
 		return nil
 	}
+	var thrown *v8.Value
+	if len(args) > 4 {
+		thrown = args[4]
+	}
 	rt.fatal.Store(&UncaughtError{
 		Message:      args[0].String(),
 		ExitCode:     int(args[1].Integer()),
 		Origin:       args[2].String(),
 		HandlerThrew: args[3].Boolean(),
+		Thrown:       thrown,
 	})
 	rt.stopRunning()
 	return nil

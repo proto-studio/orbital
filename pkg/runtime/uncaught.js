@@ -53,7 +53,7 @@
 
   function die(err, code, origin, handlerThrew) {
     dead = true;
-    native.fatal(format(err), code, origin, !!handlerThrew);
+    native.fatal(format(err), code, origin, !!handlerThrew, err);
   }
 
   // trigger is process._fatalException plus its native caller: run the handlers, and if

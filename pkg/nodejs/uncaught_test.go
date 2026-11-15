@@ -341,6 +341,66 @@ worker.on('exit', (code) => note('exit', code));
 	}
 }
 
+// The parent's 'error' event gets the worker's thrown value as Node's error_serdes sends it:
+// an error keeps its built-in class and its properties, other values are cloned, and what
+// cannot be cloned arrives as its inspected text.
+func TestWorkerErrorKeepsThrownValue(t *testing.T) {
+	notes, err := runUncaught(t, `
+const { Worker } = require('worker_threads');
+const cases = [
+  'const e = new TypeError("boom"); e.extra = 1; throw e;',
+  'const e = new Error("c"); e.code = "E_X"; e.nested = { a: [1, 2] }; throw e;',
+  'class MyErr extends RangeError { constructor(m) { super(m); this.name = "MyErr"; } get g() { return 1; } } throw new MyErr("custom");',
+  'setTimeout(() => { throw new URIError("later"); }, 1);',
+  'throw new Error("outer", { cause: new TypeError("inner") });',
+  'const e = new Error("f"); e.fn = () => 1; e.sym = Symbol(); e.d = new Date(0); e.m = new Map([[1, 2]]); e.n = NaN; e.b = 10n; throw e;',
+  'const e = new Error("nf"); e.o = { f() {} }; throw e;',
+  'throw new AggregateError([], "agg");',
+  'throw "a string";',
+  'throw undefined;',
+  'throw { a: 1 };',
+  'throw { f() {} };',
+  'let x = ;',
+];
+const describe = (e) => {
+  if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e);
+  const props = Object.getOwnPropertyNames(e).filter((k) => k !== 'stack').sort()
+    .map((k) => k + '=' + (typeof e[k] === 'object' && e[k] !== null ? Object.prototype.toString.call(e[k]) : String(e[k])));
+  return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
+    typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
+};
+const next = (i) => {
+  if (i === cases.length) return;
+  const w = new Worker(cases[i], { eval: true });
+  w.on('error', (e) => note(describe(e)));
+  w.on('exit', () => next(i + 1));
+};
+next(0);
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	// Captured from Node 20.18.1.
+	want := []string{
+		"TypeError true [object Error] string - extra=1 message=boom name=TypeError",
+		"Error true [object Error] string - code=E_X message=c name=Error nested=[object Object]",
+		"RangeError true [object Error] string - g=1 message=custom name=MyErr",
+		"URIError true [object Error] string - message=later name=URIError",
+		"Error true [object Error] string TypeError:inner cause=[object Error] message=outer name=Error",
+		"Error true [object Error] string - b=10 d=[object Date] m=[object Map] message=f n=NaN name=Error",
+		"Error true [object Error] string - message=nf",
+		"Error true [object Error] string - errors=[object Array] message=agg name=AggregateError",
+		"string a string",
+		"undefined undefined",
+		"Object false [object Object] undefined - a=1",
+		"string { f: [Function: f] }",
+		"SyntaxError true [object Error] string - message=Unexpected token ';' name=SyntaxError",
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // A worker reports the code its 'exit' listeners chose. A throwing handler is an ordinary
 // failure there: the 7 Node gives a whole process does not apply.
 func TestWorkerExitCode(t *testing.T) {
