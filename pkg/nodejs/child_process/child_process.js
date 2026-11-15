@@ -554,6 +554,9 @@
     const normalized = normalizeSpawnArguments(file, args, options);
     const stdio = validStdio(normalized.options.stdio || 'pipe', false);
 
+    // Options are checked before anything starts, so a bad one runs nothing.
+    const killSignal = validateTimeoutAndSignal(normalized.options);
+
     const child = new ChildProcess();
     child._spawnfile = normalized.spawnfile;
     child._spawnargs = normalized.spawnargs;
@@ -574,16 +577,25 @@
     child._setupStreams(stdio);
     child._waitForExit();
     process.nextTick(() => child.emit('spawn'));
-    watchTimeoutAndSignal(child, normalized.options);
+    watchTimeoutAndSignal(child, normalized.options, killSignal);
 
     return child;
   }
 
-  // spawn's timeout and signal options: either kills the child with killSignal, and an abort
-  // also emits an AbortError, as Node does.
-  function watchTimeoutAndSignal(child, options) {
+  // Checks spawn's timeout, killSignal and signal options, and returns the signal to kill with.
+  function validateTimeoutAndSignal(options) {
     validateTimeout(options.timeout);
     const killSignal = sanitizeKillSignal(options.killSignal) || 'SIGTERM';
+    const signal = options.signal;
+    if (signal !== undefined && signal !== null && (typeof signal !== 'object' || !('aborted' in signal))) {
+      throw invalidArgType('options.signal', 'AbortSignal', signal);
+    }
+    return killSignal;
+  }
+
+  // spawn's timeout and signal options: either kills the child with killSignal, and an abort
+  // also emits an AbortError, as Node does.
+  function watchTimeoutAndSignal(child, options, killSignal) {
     if (options.timeout > 0) {
       let timeoutId = setTimeout(() => {
         if (!timeoutId) return;
@@ -601,9 +613,6 @@
     }
     const signal = options.signal;
     if (signal !== undefined && signal !== null) {
-      if (typeof signal !== 'object' || !('aborted' in signal)) {
-        throw invalidArgType('options.signal', 'AbortSignal', signal);
-      }
       const onAbort = () => {
         if (child.kill(killSignal)) {
           const err = new Error('The operation was aborted');
