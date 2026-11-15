@@ -105,6 +105,12 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_cipherFree":           c.cipherFreeFunc,
 		"_cipherInfo":           c.cipherInfoFunc,
 		"_cipherCount":          c.cipherCountFunc,
+
+		// randomFill, primes and SPKAC (extras.go).
+		"_randomBase64":  c.randomBase64Func,
+		"_checkPrime":    c.checkPrimeFunc,
+		"_generatePrime": c.generatePrimeFunc,
+		"_spkac":         c.spkacFunc,
 	}
 
 	for name, fn := range funcs {
@@ -371,6 +377,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// pbkdf2, scrypt and hkdf over the natives above.
 	if _, err = rt.RunScript(kdfJS, "crypto_kdf.js"); err != nil {
+		return err
+	}
+
+	// randomFill, primes, Certificate and the other remaining helpers.
+	if _, err = rt.RunScript(extrasJS, "crypto_extras.js"); err != nil {
 		return err
 	}
 
