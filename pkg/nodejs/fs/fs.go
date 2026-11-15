@@ -36,6 +36,10 @@ type FS struct {
 	fds    map[int]runtime.File
 	nextFD int
 
+	// The calls on each descriptor, which run one at a time and in order (ops.go).
+	queueMu sync.Mutex
+	queues  map[int]*fdQueue
+
 	// Read-stream table backing fs.createReadStream. The bulk file reads run in
 	// Go on a goroutine (off the JS thread) and hand chunks back through the
 	// event loop, so the JS layer is only a thin Readable adapter.
@@ -56,6 +60,7 @@ type readStream struct {
 func New() *FS {
 	return &FS{
 		fds:         make(map[int]runtime.File),
+		queues:      make(map[int]*fdQueue),
 		nextFD:      3,
 		readStreams: make(map[int]*readStream),
 		nextRS:      1,
@@ -125,58 +130,6 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
-	// fs.mkdirSync
-	mkdirSyncFn, err := iso.NewFunctionTemplate(f.mkdirSyncFunc)
-	if err != nil {
-		return err
-	}
-	mkdirSyncVal, err := mkdirSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("mkdirSync", mkdirSyncVal); err != nil {
-		return err
-	}
-
-	// fs.rmdirSync
-	rmdirSyncFn, err := iso.NewFunctionTemplate(f.rmdirSyncFunc)
-	if err != nil {
-		return err
-	}
-	rmdirSyncVal, err := rmdirSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("rmdirSync", rmdirSyncVal); err != nil {
-		return err
-	}
-
-	// fs.unlinkSync
-	unlinkSyncFn, err := iso.NewFunctionTemplate(f.unlinkSyncFunc)
-	if err != nil {
-		return err
-	}
-	unlinkSyncVal, err := unlinkSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("unlinkSync", unlinkSyncVal); err != nil {
-		return err
-	}
-
-	// fs.readdirSync
-	readdirSyncFn, err := iso.NewFunctionTemplate(f.readdirSyncFunc)
-	if err != nil {
-		return err
-	}
-	readdirSyncVal, err := readdirSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("readdirSync", readdirSyncVal); err != nil {
-		return err
-	}
-
 	// fs.statSync
 	statSyncFn, err := iso.NewFunctionTemplate(f.statSyncFunc)
 	if err != nil {
@@ -187,32 +140,6 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 	if err := fsObj.Set("statSync", statSyncVal); err != nil {
-		return err
-	}
-
-	// fs.renameSync
-	renameSyncFn, err := iso.NewFunctionTemplate(f.renameSyncFunc)
-	if err != nil {
-		return err
-	}
-	renameSyncVal, err := renameSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("renameSync", renameSyncVal); err != nil {
-		return err
-	}
-
-	// fs.copyFileSync
-	copyFileSyncFn, err := iso.NewFunctionTemplate(f.copyFileSyncFunc)
-	if err != nil {
-		return err
-	}
-	copyFileSyncVal, err := copyFileSyncFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := fsObj.Set("copyFileSync", copyFileSyncVal); err != nil {
 		return err
 	}
 
@@ -243,28 +170,10 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		}
 		return fsObj.Set(name, fn)
 	}
-	if err := regFn("openSync", f.openSyncFunc); err != nil {
-		return err
-	}
-	if err := regFn("closeSync", f.closeSyncFunc); err != nil {
-		return err
-	}
-	if err := regFn("writeSync", f.writeSyncFunc); err != nil {
-		return err
-	}
-	if err := regFn("readSync", f.readSyncFunc); err != nil {
-		return err
-	}
-	if err := regFn("fstatSync", f.fstatSyncFunc); err != nil {
-		return err
-	}
 	if err := regFn("lstatSync", f.lstatSyncFunc); err != nil {
 		return err
 	}
-	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
-		return err
-	}
-	if err := f.registerMetadata(regFn); err != nil {
+	if err := f.registerOps(regFn); err != nil {
 		return err
 	}
 
@@ -275,9 +184,6 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 	if err := regFn("lstat", func(info *v8.FunctionCallbackInfo) *v8.Value { return f.statFunc(info, "lstat") }); err != nil {
-		return err
-	}
-	if err := regFn("access", f.accessFunc); err != nil {
 		return err
 	}
 
@@ -426,42 +332,6 @@ func (f *FS) existsSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return ctx.False()
 }
 
-// mkdirSyncFunc implements fs.mkdirSync
-func (f *FS) mkdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	path := args[0].String()
-	recursive := false
-
-	if len(args) >= 2 && args[1].IsObject() {
-		if recVal, err := args[1].Get("recursive"); err == nil && recVal != nil {
-			recursive = recVal.Boolean()
-		}
-	}
-
-	// fs_setup.js passes the mode, already checked, as a number; Node's default is 0o777.
-	perm := fs.FileMode(0o777)
-	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
-		perm = dirMode(args[2].Integer())
-	}
-
-	var err error
-	if recursive {
-		err = f.fs().MkdirAll(path, perm)
-	} else {
-		err = f.fs().Mkdir(path, perm)
-	}
-
-	if err != nil {
-		return fsFailure(info.Context(), err, "mkdir", path)
-	}
-
-	return nil
-}
-
 // dirMode turns a Unix mode into Go's FileMode, whose setuid, setgid and sticky bits are not
 // the Unix ones.
 func dirMode(mode int64) fs.FileMode {
@@ -476,105 +346,6 @@ func dirMode(mode int64) fs.FileMode {
 		perm |= fs.ModeSticky
 	}
 	return perm
-}
-
-// rmdirSyncFunc implements fs.rmdirSync
-func (f *FS) rmdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	path := args[0].String()
-	recursive := false
-
-	if len(args) >= 2 && args[1].IsObject() {
-		if recVal, err := args[1].Get("recursive"); err == nil && recVal != nil {
-			recursive = recVal.Boolean()
-		}
-	}
-
-	// Remove deletes files too, but rmdir only takes a directory: anything else, a symbolic
-	// link included, is ENOTDIR and kept, as in Node. Node's recursive form looks first with
-	// lstat, so a missing path is reported as lstat.
-	stat, err := runtime.Lstat(f.fs(), path)
-	if err != nil {
-		if recursive {
-			return fsFailure(info.Context(), err, "lstat", path)
-		}
-		return fsFailure(info.Context(), err, "rmdir", path)
-	}
-	if !stat.IsDir {
-		return fsFailure(info.Context(), syscall.ENOTDIR, "rmdir", path)
-	}
-
-	if recursive {
-		err = f.fs().RemoveAll(path)
-	} else {
-		err = f.fs().Remove(path)
-	}
-
-	if err != nil {
-		return fsFailure(info.Context(), err, "rmdir", path)
-	}
-
-	return nil
-}
-
-// unlinkSyncFunc implements fs.unlinkSync
-func (f *FS) unlinkSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	path := args[0].String()
-	if err := f.fs().Remove(path); err != nil {
-		return fsFailure(info.Context(), err, "unlink", path)
-	}
-
-	return nil
-}
-
-// readdirSyncFunc implements fs.readdirSync
-func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	path := args[0].String()
-	entries, err := f.fs().ReadDir(path)
-	if err != nil {
-		return fsFailure(ctx, err, "scandir", path)
-	}
-
-	// Detect the { withFileTypes: true } option, which asks for Dirent-like
-	// objects (name + type predicates) rather than plain filename strings.
-	withFileTypes := false
-	if len(args) >= 2 && args[1] != nil && args[1].IsObject() {
-		if v, e := args[1].Get("withFileTypes"); e == nil && v != nil {
-			withFileTypes = v.Boolean()
-		}
-	}
-
-	arr, _ := ctx.NewArray(len(entries))
-	for i, entry := range entries {
-		if withFileTypes {
-			// fs_setup.js makes an fs.Dirent of each, from its name and libuv's type number.
-			obj, _ := ctx.NewObject()
-			name, _ := ctx.NewString(entry.Name)
-			obj.Set("name", name)
-			obj.Set("type", ctx.NewInteger(direntType(entry)))
-			arr.SetIndex(i, obj)
-		} else {
-			name, _ := ctx.NewString(entry.Name)
-			arr.SetIndex(i, name)
-		}
-	}
-
-	return arr
 }
 
 // direntType is libuv's number for an entry's type: UV_DIRENT_FILE (1) or UV_DIRENT_DIR (2).
@@ -608,22 +379,6 @@ func (f *FS) statSync(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	stat, err := f.fs().Stat(path)
 	if err != nil {
 		return fsFailure(ctx, err, syscallName, path)
-	}
-	return f.createStatObject(ctx, stat)
-}
-
-// rmTargetSyncFunc describes the path rm is to remove, as Node's rm does with lstat: a
-// symbolic link is described, and so removed, itself. On failure it returns an fsFailure.
-func (f *FS) rmTargetSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-	path := args[0].String()
-	stat, err := runtime.Lstat(f.fs(), path)
-	if err != nil {
-		return fsFailure(ctx, err, "lstat", path)
 	}
 	return f.createStatObject(ctx, stat)
 }
@@ -816,43 +571,6 @@ func parseOpenFlags(v *v8.Value) (int, bool) {
 	}
 }
 
-// openSyncFunc implements fs.openSync(path[, flags[, mode]]) -> fd.
-func (f *FS) openSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return ctx.Throw("openSync: path is required")
-	}
-	path := args[0].String()
-
-	var flagArg *v8.Value
-	if len(args) >= 2 {
-		flagArg = args[1]
-	}
-	flags, ok := parseOpenFlags(flagArg)
-	if !ok {
-		return ctx.Throw("openSync: invalid flags")
-	}
-
-	perm := fs.FileMode(0666)
-	if len(args) >= 3 && args[2] != nil && args[2].IsNumber() {
-		perm = fs.FileMode(args[2].Integer())
-	}
-
-	file, err := f.fs().OpenFile(path, flags, perm)
-	if err != nil {
-		return fsFailure(ctx, err, "open", path)
-	}
-
-	f.fdMu.Lock()
-	fd := f.nextFD
-	f.nextFD++
-	f.fds[fd] = file
-	f.fdMu.Unlock()
-
-	return ctx.NewInteger(int64(fd))
-}
-
 // fileForFD returns the open File for a descriptor, if any.
 func (f *FS) fileForFD(fd int) (runtime.File, bool) {
 	f.fdMu.Lock()
@@ -865,31 +583,6 @@ func (f *FS) fileForFD(fd int) (runtime.File, bool) {
 // this table, so other modules that take a descriptor look it up here.
 func (f *FS) FileForFD(fd int) (runtime.File, bool) {
 	return f.fileForFD(fd)
-}
-
-// closeSyncFunc implements fs.closeSync(fd).
-func (f *FS) closeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return ctx.Throw("closeSync: fd is required")
-	}
-	fd := int(args[0].Integer())
-
-	f.fdMu.Lock()
-	file, ok := f.fds[fd]
-	if ok {
-		delete(f.fds, fd)
-	}
-	f.fdMu.Unlock()
-
-	if !ok {
-		return fsFailure(ctx, syscall.EBADF, "close", "")
-	}
-	if err := file.Close(); err != nil {
-		return fsFailure(ctx, err, "close", "")
-	}
-	return nil
 }
 
 // atPosition runs op with the file at position, then puts the offset back, because a read or
@@ -911,118 +604,6 @@ func atPosition(file runtime.File, position int64, op func() (int, error)) (int,
 		opErr = err
 	}
 	return n, opErr
-}
-
-// writeSyncFunc backs fs.writeSync(fd, base64Data, position) and returns the bytes written.
-func (f *FS) writeSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 3 {
-		return ctx.Throw("writeSync: fd, data and position are required")
-	}
-	fd := int(args[0].Integer())
-	data, err := decodeData(args[1])
-	if err != nil {
-		return ctx.Throw(err.Error())
-	}
-	// Descriptors 1 and 2 are the process's own stdout and stderr, as process.stdout uses.
-	if std := map[int]*os.File{1: os.Stdout, 2: os.Stderr}[fd]; std != nil {
-		if _, open := f.fileForFD(fd); !open {
-			n, err := std.Write(data)
-			if err != nil {
-				return fsFailure(ctx, err, "write", "")
-			}
-			return ctx.NewInteger(int64(n))
-		}
-	}
-	file, ok := f.fileForFD(fd)
-	if !ok {
-		return fsFailure(ctx, syscall.EBADF, "write", "")
-	}
-
-	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
-		return file.Write(data)
-	})
-	if err != nil {
-		return fsFailure(ctx, err, "write", "")
-	}
-	return ctx.NewInteger(int64(n))
-}
-
-// readSyncFunc backs fs.readSync(fd, length, position) and returns the bytes read as base64,
-// empty at the end of the file.
-func (f *FS) readSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 3 {
-		return ctx.Throw("readSync: fd, length and position are required")
-	}
-	file, ok := f.fileForFD(int(args[0].Integer()))
-	if !ok {
-		return fsFailure(ctx, syscall.EBADF, "read", "")
-	}
-
-	buf := make([]byte, args[1].Integer())
-	n, err := atPosition(file, args[2].Integer(), func() (int, error) {
-		return file.Read(buf)
-	})
-	if err != nil && err != io.EOF && n == 0 {
-		return fsFailure(ctx, err, "read", "")
-	}
-	val, _ := ctx.NewString(fileContents(buf[:n], false))
-	return val
-}
-
-// fstatSyncFunc implements fs.fstatSync(fd).
-func (f *FS) fstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 {
-		return ctx.Throw("fstatSync: fd is required")
-	}
-	fd := int(args[0].Integer())
-	file, ok := f.fileForFD(fd)
-	if !ok {
-		return fsFailure(ctx, syscall.EBADF, "fstat", "")
-	}
-	stat, err := file.Stat()
-	if err != nil {
-		return fsFailure(ctx, err, "fstat", "")
-	}
-	return f.createStatObject(ctx, stat)
-}
-
-// renameSyncFunc implements fs.renameSync
-func (f *FS) renameSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	if err := f.fs().Rename(args[0].String(), args[1].String()); err != nil {
-		return fsFailureTo(info.Context(), err, "rename", args[0].String(), args[1].String())
-	}
-
-	return nil
-}
-
-// copyFileSyncFunc implements fs.copyFileSync
-func (f *FS) copyFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	src, dest := args[0].String(), args[1].String()
-	// COPYFILE_EXCL: refuse to replace an existing destination.
-	if len(args) >= 3 && args[2].IsNumber() && args[2].Integer()&1 != 0 && f.fs().Exists(dest) {
-		return fsFailureTo(info.Context(), syscall.EEXIST, "copyfile", src, dest)
-	}
-	if err := f.fs().Copy(src, dest); err != nil {
-		return fsFailureTo(info.Context(), err, "copyfile", src, dest)
-	}
-
-	return nil
 }
 
 // appendFileSyncFunc backs fs.appendFileSync(path, base64Data, flag, mode). It is
@@ -1193,50 +774,6 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 			}
 			statObj := f.callFsHelper(ctx, "__addStatsMethods", f.createStatObject(ctx, stat))
 			f.rt.MakeCallback(callback, nil, ctx.Null(), statObj)
-		})
-	}()
-
-	return nil
-}
-
-// accessFunc implements the async fs.access(path[, mode], callback), checking mode's R_OK,
-// W_OK and X_OK bits as access(2) does. A Filesystem that can't check them is asked only
-// whether the path exists.
-func (f *FS) accessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 2 {
-		return nil
-	}
-	path := args[0].String()
-	callback := args[len(args)-1]
-	if !callback.IsFunction() {
-		return nil
-	}
-	var mode uint32
-	if len(args) >= 3 && args[1].IsNumber() {
-		mode = uint32(args[1].Integer())
-	}
-
-	ctx := info.Context()
-	fsys := f.fs()
-
-	f.rt.EventLoop().AddPendingWork()
-	go func() {
-		defer f.rt.EventLoop().DonePendingWork()
-
-		var err error
-		if m, ok := fsys.(runtime.MetadataFilesystem); ok {
-			err = m.Access(path, mode)
-		} else if !fsys.Exists(path) {
-			err = syscall.ENOENT
-		}
-
-		f.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
-				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, "access", path))
-				return
-			}
-			f.rt.MakeCallback(callback, nil, ctx.Null())
 		})
 	}()
 

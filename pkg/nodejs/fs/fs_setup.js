@@ -352,18 +352,47 @@
     return mode;
   }
 
+  // The asynchronous forms of the native calls (fs.__mkdirAsync and so on) do their work off
+  // the JavaScript thread, as Node's threadpool does, and call back with (failure, value).
+  const asyncNative = {};
+  for (const key of Object.keys(fs)) {
+    const match = /^__(\w+)Async$/.exec(key);
+    if (match) {
+      asyncNative[match[1]] = fs[key];
+      delete fs[key];
+    }
+  }
+  // Runs a native call off the thread, and calls back with Node's error or finish(value).
+  function runAsync(name, args, callback, finish) {
+    asyncNative[name].apply(fs, args.concat((failure, value) => {
+      let error = null;
+      let result;
+      try {
+        check(failure);
+        result = finish ? finish(value) : value;
+      } catch (e) {
+        error = e;
+      }
+      if (error) callback(error);
+      else if (result === undefined) callback(null);
+      else callback(null, result);
+    }));
+  }
+
   // The native open takes only a numeric mode, so an octal string such as '600' is parsed and
   // a bad mode refused here, as Node does.
+  function openArgs(args) {
+    if (args.length >= 3) args[2] = writeMode({ mode: args[2] });
+    return args;
+  }
   const _openSync = fs.openSync;
   fs.openSync = function () {
-    const args = Array.prototype.slice.call(arguments);
-    if (args.length >= 3) args[2] = writeMode({ mode: args[2] });
-    return check(_openSync.apply(this, args));
+    return check(_openSync.apply(this, openArgs(Array.prototype.slice.call(arguments))));
   };
 
   // These calls return a failure description too.
   for (const name of ['mkdirSync', 'rmdirSync', 'unlinkSync', 'readdirSync', 'renameSync', 'copyFileSync',
-    'closeSync', 'writeSync', 'readSync', 'fstatSync']) {
+    'closeSync', 'fstatSync']) {
     const native = fs[name];
     if (typeof native === 'function') {
       fs[name] = function () {
@@ -452,27 +481,18 @@
       options = undefined;
     }
     checkCallback(callback);
-    if (typeof path === 'number') {
-      const bytes = dataBytes(data, encodingOf(options));
-      try {
-        writeToDescriptor(path, bytes);
-      } catch (e) {
-        process.nextTick(callback, e);
-        return;
-      }
-      process.nextTick(callback, null);
-      return;
-    }
+    if (typeof path === 'number') return writeAll(path, dataBytes(data, encodingOf(options)), callback);
     const bytes = base64Of(dataBytes(data, encodingOf(options)));
     _writeFile.call(this, path, bytes, writeFlag(options, 'w'), writeMode(options), callback);
   };
 
   // writeSync(fd, buffer[, offset[, length[, position]]]), writeSync(fd, buffer[, options])
   // or writeSync(fd, string[, position[, encoding]]).
-  const _writeSync = fs.writeSync;
-  fs.writeSync = function (fd, data, offsetOrPosition, lengthOrEncoding, position) {
+  // writeArgs gives the native write's arguments: the descriptor, the bytes as base64, and
+  // the position or -1.
+  function writeArgs(fd, data, offsetOrPosition, lengthOrEncoding, position) {
     if (typeof data === 'string') {
-      return _writeSync.call(this, fd, base64Of(dataBytes(data, lengthOrEncoding)), positionArg(offsetOrPosition));
+      return [fd, base64Of(dataBytes(data, lengthOrEncoding)), positionArg(offsetOrPosition)];
     }
     if (!ArrayBuffer.isView(data)) dataBytes(data);
     let offset = offsetOrPosition;
@@ -485,27 +505,42 @@
     if (typeof length !== 'number') length = data.byteLength - offset;
     checkRange('length', length, data.byteLength - offset);
     const bytes = viewBytes(data).subarray(offset, offset + length);
-    return _writeSync.call(this, fd, base64Of(bytes), positionArg(position));
+    return [fd, base64Of(bytes), positionArg(position)];
+  }
+  const _writeSync = fs.writeSync;
+  fs.writeSync = function () {
+    return check(_writeSync.apply(this, writeArgs.apply(null, arguments)));
   };
 
   // readSync(fd, buffer[, offset[, length[, position]]]) or readSync(fd, buffer[, options]).
-  const _readSync = fs.readSync;
-  fs.readSync = function (fd, buffer, offsetOrOptions, length, position) {
+  // readArgs checks a read's arguments. It gives the native read's arguments, and where the
+  // bytes go, or null for a read of nothing.
+  function readArgs(argc, fd, buffer, offsetOrOptions, length, position) {
     if (!ArrayBuffer.isView(buffer)) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.');
     }
     let offset = offsetOrOptions;
-    if (arguments.length <= 3 || (offset !== null && typeof offset === 'object')) {
+    if (argc <= 3 || (offset !== null && typeof offset === 'object')) {
       ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset || {});
     }
     if (offset === undefined || offset === null) offset = 0;
     checkRange('offset', offset, buffer.byteLength);
     length |= 0;
-    if (length === 0) return 0;
+    if (length === 0) return null;
     checkRange('length', length, buffer.byteLength - offset);
-    const bytes = bytesOf(_readSync.call(this, fd, length, positionArg(position)));
-    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).set(bytes, offset);
+    return { args: [fd, length, positionArg(position)], buffer, offset };
+  }
+  // Copies the bytes a read returned into its buffer, and gives how many there were.
+  function readInto(read, contents) {
+    const bytes = bytesOf(contents);
+    new Uint8Array(read.buffer.buffer, read.buffer.byteOffset, read.buffer.byteLength).set(bytes, read.offset);
     return bytes.length;
+  }
+  const _readSync = fs.readSync;
+  fs.readSync = function (fd, buffer, offsetOrOptions, length, position) {
+    const read = readArgs(arguments.length, fd, buffer, offsetOrOptions, length, position);
+    if (!read) return 0;
+    return readInto(read, check(_readSync.apply(this, read.args)));
   };
 
   // readdirSync(path, { withFileTypes: true }) returns fs.Dirent objects, which the native
@@ -761,14 +796,12 @@
         if (waiting) waiting(null);
       }
 
-      // Node's writes call back asynchronously, so their callbacks come before 'prefinish'.
-      // These write synchronously, so the final step waits a tick to keep that order.
       _final(callback) {
         if (this._opening || this._openError) {
           this._waiting = callback;
           return;
         }
-        process.nextTick(callback);
+        callback();
       }
 
       _write(chunk, encoding, callback) {
@@ -776,14 +809,14 @@
           this._waiting = (err) => (err ? callback(err) : this._write(chunk, encoding, callback));
           return;
         }
-        try {
-          const n = fs.writeSync(this.fd, chunk, 0, chunk.length, this.pos === undefined ? null : this.pos);
-          if (this.pos !== undefined) this.pos += n;
+        // The write runs off the thread; the next waits for it, as Writable writes one at a time.
+        const position = this.pos === undefined ? null : this.pos;
+        if (this.pos !== undefined) this.pos += chunk.length;
+        runAsync('write', writeArgs(this.fd, chunk, 0, chunk.length, position), (err, n) => {
+          if (err) return callback(err);
           this.bytesWritten += n;
           callback();
-        } catch (e) {
-          callback(e);
-        }
+        });
       }
 
       // Destroying closes the descriptor whatever autoClose says, as in Node.
@@ -806,13 +839,8 @@
           handle.close().then(() => callback(err), (e) => callback(err || e));
           return;
         }
-        try {
-          fs.closeSync(fd);
-        } catch (e) {
-          if (!err) err = e;
-        }
-        // Node closes asynchronously, so 'error' and 'close' come a tick later.
-        process.nextTick(callback, err);
+        // The close waits for the writes on the descriptor before it.
+        runAsync('close', [fd], (e) => callback(err || e));
       }
 
       // An explicit close ends the stream and then closes the descriptor even with autoClose
@@ -844,6 +872,16 @@
     };
   }
 
+  function rmIsDirectory(path) {
+    const e = new Error('Path is a directory: rm returned EISDIR (is a directory) ' + path);
+    e.name = 'SystemError';
+    e.code = 'ERR_FS_EISDIR';
+    e.errno = 21;
+    e.syscall = 'rm';
+    e.path = String(path);
+    return e;
+  }
+
   // rmSync(path[, { force, recursive }]): unlink a file, or with recursive a directory too.
   // force ignores a path that does not exist, and nothing else. Like Node, it looks at the path
   // with lstat, so a symbolic link is removed itself, even one whose target is missing or a
@@ -861,15 +899,7 @@
         if (force && e.code === 'ENOENT') return;
         throw e;
       }
-      if (stats.isDirectory() && !recursive) {
-        const e = new Error('Path is a directory: rm returned EISDIR (is a directory) ' + path);
-        e.name = 'SystemError';
-        e.code = 'ERR_FS_EISDIR';
-        e.errno = 21;
-        e.syscall = 'rm';
-        e.path = String(path);
-        throw e;
-      }
+      if (stats.isDirectory() && !recursive) throw rmIsDirectory(path);
       try {
         if (stats.isDirectory()) fs.rmdirSync(path, { recursive: true });
         else fs.unlinkSync(path);
@@ -879,70 +909,122 @@
     };
   }
 
-  // Callback forms of the synchronous calls. They run the synchronous call on this thread and
-  // call back on the next tick, as Node's always call back asynchronously.
-  // The synchronous function is looked up on each call, so the checks wrapped around it
-  // later, such as refusing a path with a NUL, apply here too.
-  function callbackForm(syncName, shape) {
-    return function () {
-      const args = Array.prototype.slice.call(arguments);
-      const callback = args.pop();
-      checkCallback(callback);
-      let result;
-      try {
-        result = fs[syncName].apply(fs, args);
-      } catch (e) {
-        process.nextTick(callback, e);
-        return;
-      }
-      const values = shape ? shape(result, args) : (result === undefined ? [] : [result]);
-      process.nextTick(() => callback(null, ...values));
-    };
+  // The callback forms. Their native calls run off the JavaScript thread, as Node's do on its
+  // threadpool; calls on one descriptor run in the order they were made. Bad arguments throw
+  // at once, as in Node.
+
+  // Splits the callback, which is always last, from the arguments before it.
+  function withCallback(args) {
+    args = Array.prototype.slice.call(args);
+    const callback = args.pop();
+    checkCallback(callback);
+    return [args, callback];
   }
-  const CALLBACK_FORMS = {
-    appendFile: 'appendFileSync', open: 'openSync', close: 'closeSync', fstat: 'fstatSync',
-    mkdir: 'mkdirSync', rmdir: 'rmdirSync', rm: 'rmSync', unlink: 'unlinkSync', rename: 'renameSync',
-    readdir: 'readdirSync', copyFile: 'copyFileSync', realpath: 'realpathSync'
+  // Calls back on the next tick, for a call that has nothing to do off the thread.
+  function later(callback, error, ...values) {
+    process.nextTick(() => (error ? callback(error) : callback(null, ...values)));
+  }
+
+  fs.open = function (path, flags, mode, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('open', openArgs(args), cb);
   };
-  for (const name of Object.keys(CALLBACK_FORMS)) {
-    const sync = fs[CALLBACK_FORMS[name]];
-    if (typeof fs[name] !== 'function' && typeof sync === 'function') fs[name] = callbackForm(CALLBACK_FORMS[name]);
-  }
-  if (typeof fs.mkdir === 'function') {
-    // Like Node, a bad mode throws rather than reaching the callback.
-    const mkdir = fs.mkdir;
-    fs.mkdir = function (path, options, callback) {
-      if (typeof options === 'function') return mkdir(path, options);
-      mkdirOptions(options);
-      return mkdir(path, options, callback);
-    };
-  }
-  if (typeof fs.appendFile === 'function') {
-    // appendFile(path, data[, options], callback): the options are optional.
-    const appendFile = fs.appendFile;
-    fs.appendFile = function (path, data, options, callback) {
-      if (typeof options === 'function') return appendFile(path, data, undefined, options);
-      return appendFile(path, data, options, callback);
-    };
-  }
-  // write calls back with (err, bytesWritten, buffer or string); read with (err, bytesRead, buffer).
-  if (typeof fs.write !== 'function') {
-    fs.write = callbackForm('writeSync', (n, args) => [n, args[1]]);
-  }
-  if (typeof fs.read !== 'function') {
-    const read = callbackForm('readSync', (n, args) => [n, args[1]]);
-    fs.read = function (fd, buffer, offset, length, position, callback) {
-      // read(fd, callback) and read(fd, options, callback) read into a new 16 KiB buffer.
-      if (typeof buffer === 'function' || (buffer && !ArrayBuffer.isView(buffer) && typeof offset === 'function')) {
-        const options = typeof buffer === 'function' ? {} : buffer;
-        callback = typeof buffer === 'function' ? buffer : offset;
-        const target = options.buffer || Buffer.alloc(16384);
-        return read(fd, target, options.offset || 0, options.length === undefined ? target.byteLength - (options.offset || 0) : options.length,
-          options.position === undefined ? null : options.position, callback);
+  fs.close = function (fd, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('close', args.slice(0, 1), cb);
+  };
+  fs.fstat = function (fd, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('fstat', args.slice(0, 1), cb, addStatsMethods);
+  };
+  // mkdir(path[, mode], callback) or mkdir(path[, { recursive, mode }], callback).
+  fs.mkdir = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    const { recursive, mode } = mkdirOptions(args[1]);
+    runAsync('mkdir', [args[0], { recursive }, mode], cb);
+  };
+  fs.rmdir = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('rmdir', args.slice(0, 2), cb);
+  };
+  fs.unlink = function (path, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('unlink', args.slice(0, 1), cb);
+  };
+  fs.rename = function (oldPath, newPath, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('rename', args.slice(0, 2), cb);
+  };
+  fs.copyFile = function (src, dest, mode, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('copyFile', args.slice(0, 3), cb);
+  };
+  fs.readdir = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('readdir', args.slice(0, 2), cb, (entries) => fs.__direntsOf(entries, args[0]));
+  };
+  // realpath only checks that the path exists, as realpathSync does, and reports a missing
+  // one with realpathSync's error.
+  fs.realpath = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('access', [args[0], 0], (err) => {
+      if (!err) return cb(null, args[0]);
+      try {
+        fs.realpathSync(args[0]);
+      } catch (e) {
+        err = e;
       }
-      return read.apply(this, arguments);
-    };
+      cb(err);
+    });
+  };
+  // appendFile(path, data[, options], callback); given a descriptor it writes there.
+  fs.appendFile = function (path, data, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    checkCallback(callback);
+    if (typeof path === 'number') return writeAll(path, dataBytes(data, encodingOf(options)), callback);
+    const bytes = base64Of(dataBytes(data, encodingOf(options)));
+    _writeFile.call(fs, path, bytes, writeFlag(options, 'a'), writeMode(options), callback);
+  };
+  // Writes all of bytes at the descriptor's offset, as writeFile and appendFile given one do.
+  function writeAll(fd, bytes, callback) {
+    runAsync('write', [fd, base64Of(bytes), -1], (err) => callback(err || null));
   }
+  // write calls back with (err, bytesWritten, buffer or string).
+  fs.write = function (fd, data) {
+    const [args, cb] = withCallback(arguments);
+    runAsync('write', writeArgs.apply(null, args), (err, n) => (err ? cb(err) : cb(null, n, data)));
+  };
+  // read calls back with (err, bytesRead, buffer). read(fd, callback) and read(fd, options,
+  // callback) read into a new 16 KiB buffer.
+  fs.read = function (fd, buffer, offset, length, position, callback) {
+    let [args, cb] = withCallback(arguments);
+    if (args.length === 1 || (args.length === 2 && args[1] && !ArrayBuffer.isView(args[1]))) {
+      const options = args[1] || {};
+      const target = options.buffer || Buffer.alloc(16384);
+      const start = options.offset || 0;
+      args = [fd, target, start, options.length === undefined ? target.byteLength - start : options.length,
+        options.position === undefined ? null : options.position];
+    }
+    const read = readArgs(args.length, ...args);
+    if (!read) return later(cb, null, 0, args[1]);
+    runAsync('read', read.args, (err, contents) => (err ? cb(err) : cb(null, readInto(read, contents), read.buffer)));
+  };
+  // rm(path[, options], callback): as rmSync, with each step off the thread.
+  fs.rm = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    const force = !!(args[1] && args[1].force);
+    const recursive = !!(args[1] && args[1].recursive);
+    runAsync('rmTarget', [path], (err, stats) => {
+      if (err) return cb(force && err.code === 'ENOENT' ? null : err);
+      if (stats.isDirectory() && !recursive) return cb(rmIsDirectory(path));
+      const done = (e) => cb(e && !(force && e.code === 'ENOENT') ? e : null);
+      if (stats.isDirectory()) runAsync('rmdir', [path, { recursive: true }], done);
+      else runAsync('unlink', [path], done);
+    }, addStatsMethods);
+  };
 
   // Argument checks for the calls below, with Node's errors.
   function checkInt(name, value, min, max) {
@@ -997,64 +1079,43 @@
     return buffers;
   }
 
-  // Defines fs[name + 'Sync'] and its callback form fs[name]. prepare checks and normalizes
-  // the arguments, throwing as Node does before touching the file, so a bad argument throws
-  // from the callback form too; run does the work; shape gives the callback's values.
-  function defineCall(name, prepare, run, shape) {
+  // Defines fs[name + 'Sync'] and its callback form fs[name] over a native call. prepare
+  // checks and normalizes the arguments, throwing as Node does before touching the file, so a
+  // bad argument throws from the callback form too. nativeOf names the native call for the
+  // prepared arguments, and finish makes its result into the call's value.
+  const nativeSync = {};
+  function defineCall(name, prepare, nativeOf, finish) {
+    const pick = typeof nativeOf === 'function' ? nativeOf : () => nativeOf;
     fs[name + 'Sync'] = function () {
-      return run.apply(null, prepare.apply(null, arguments));
+      const prepared = prepare.apply(null, arguments);
+      const result = check(nativeSync[pick(prepared)].apply(fs, prepared));
+      return finish ? finish(result, prepared) : result;
     };
     fs[name] = function () {
-      const args = Array.prototype.slice.call(arguments);
-      const callback = args.pop();
-      checkCallback(callback);
+      const [args, callback] = withCallback(arguments);
       const prepared = prepare.apply(null, args);
-      let result;
-      try {
-        result = run.apply(null, prepared);
-      } catch (e) {
-        process.nextTick(callback, e);
-        return;
-      }
-      const values = shape ? shape(result, prepared) : (result === undefined ? [] : [result]);
-      process.nextTick(() => callback(null, ...values));
+      runAsync(pick(prepared), prepared, callback, finish && ((result) => finish(result, prepared)));
     };
   }
-
-  const native = {};
-  for (const name of ['truncateSync', 'ftruncateSync', 'fsyncSync', 'fdatasyncSync', 'chmodSync',
-    'fchmodSync', 'chownSync', 'fchownSync', 'utimesSync', 'futimesSync', 'accessSync', 'statfsSync']) {
-    native[name] = fs[name];
-    delete fs[name];
+  for (const name of ['truncate', 'ftruncate', 'fsync', 'fdatasync', 'chmod', 'fchmod', 'chown', 'fchown',
+    'utimes', 'futimes', 'access', 'statfs']) {
+    nativeSync[name] = fs[name + 'Sync'];
+    delete fs[name + 'Sync'];
   }
-  const call = (name) => function () { return check(native[name].apply(fs, arguments)); };
 
   // truncate also takes a descriptor, as Node's still does.
-  defineCall('truncate', (path, len) => [typeof path === 'number' ? fdArg(path) : path, lenArg(len)],
-    (path, len) => (typeof path === 'number' ? call('ftruncateSync')(path, len) : call('truncateSync')(path, len)));
-  defineCall('ftruncate', (fd, len) => [fdArg(fd), lenArg(len)], call('ftruncateSync'));
-  defineCall('fsync', (fd) => [fdArg(fd)], call('fsyncSync'));
-  defineCall('fdatasync', (fd) => [fdArg(fd)], call('fdatasyncSync'));
-  defineCall('chmod', (path, mode) => [path, modeArg(mode)], call('chmodSync'));
-  defineCall('fchmod', (fd, mode) => [fdArg(fd), modeArg(mode)], call('fchmodSync'));
-  defineCall('chown', (path, uid, gid) => [path, idArg('uid', uid), idArg('gid', gid)], call('chownSync'));
-  defineCall('fchown', (fd, uid, gid) => [fdArg(fd), idArg('uid', uid), idArg('gid', gid)], call('fchownSync'));
-  defineCall('utimes', (path, atime, mtime) => [path, timeArg(atime), timeArg(mtime)], call('utimesSync'));
-  defineCall('futimes', (fd, atime, mtime) => [fdArg(fd), timeArg(atime), timeArg(mtime)], call('futimesSync'));
-
-  // accessSync(path[, mode]); the callback form runs off the thread, natively.
-  fs.accessSync = function (path, mode) {
-    check(native.accessSync.call(fs, path, accessMode(mode)));
-  };
-  const _access = fs.access;
-  fs.access = function (path, mode, callback) {
-    if (typeof mode === 'function') {
-      callback = mode;
-      mode = undefined;
-    }
-    checkCallback(callback);
-    _access.call(fs, path, accessMode(mode), callback);
-  };
+  defineCall('truncate', (path, len) => [typeof path === 'number' ? fdArg(path) : path, lenArg(len)], ([path]) => (typeof path === 'number' ? 'ftruncate' : 'truncate'));
+  defineCall('ftruncate', (fd, len) => [fdArg(fd), lenArg(len)], 'ftruncate');
+  defineCall('fsync', (fd) => [fdArg(fd)], 'fsync');
+  defineCall('fdatasync', (fd) => [fdArg(fd)], 'fdatasync');
+  defineCall('chmod', (path, mode) => [path, modeArg(mode)], 'chmod');
+  defineCall('fchmod', (fd, mode) => [fdArg(fd), modeArg(mode)], 'fchmod');
+  defineCall('chown', (path, uid, gid) => [path, idArg('uid', uid), idArg('gid', gid)], 'chown');
+  defineCall('fchown', (fd, uid, gid) => [fdArg(fd), idArg('uid', uid), idArg('gid', gid)], 'fchown');
+  defineCall('utimes', (path, atime, mtime) => [path, timeArg(atime), timeArg(mtime)], 'utimes');
+  defineCall('futimes', (fd, atime, mtime) => [fdArg(fd), timeArg(atime), timeArg(mtime)], 'futimes');
+  // access(path[, mode], callback).
+  defineCall('access', (path, mode) => [path, accessMode(mode)], 'access', () => undefined);
   // exists(path, callback) calls back with only true or false.
   fs.exists = function (path, callback) {
     checkCallback(callback);
@@ -1077,37 +1138,71 @@
       this.ffree = ffree;
     }
   }
-  defineCall('statfs', (path, options) => [path, !!(options && typeof options === 'object' && options.bigint)],
-    (path, bigint) => {
-      const s = call('statfsSync')(path);
+  defineCall('statfs', (path, options) => [path, !!(options && typeof options === 'object' && options.bigint)], 'statfs',
+    (s, [, bigint]) => {
       const v = (n) => (bigint ? BigInt(n) : n);
       return new StatFs(v(s.type), v(s.bsize), v(s.blocks), v(s.bfree), v(s.bavail), v(s.files), v(s.ffree));
     });
 
-  // readv and writev take a descriptor, the buffers, and a position; a negative or missing
-  // position means the file's offset.
-  const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), position];
-  // readv reads once, as readv(2) does, as much as is there up to the buffers' total, and
-  // splits it across them, so a pipe holding less doesn't keep it waiting.
-  defineCall('readv', vectorArgs, (fd, buffers, position) => {
-    const total = buffers.reduce((sum, b) => sum + b.byteLength, 0);
-    const all = Buffer.alloc(total);
-    const n = total === 0 ? 0 : fs.readSync(fd, all, 0, total, typeof position === 'number' && position >= 0 ? position : null);
-    let offset = 0;
-    for (const b of buffers) {
-      if (offset >= n) break;
-      const take = Math.min(b.byteLength, n - offset);
-      new Uint8Array(b.buffer, b.byteOffset, b.byteLength).set(all.subarray(offset, offset + take));
-      offset += take;
+  // readv and writev read into, or write from, each buffer in turn, stopping at the end of
+  // the file. A numeric position moves along with them; any other means the file's offset.
+  // They call back with (err, bytes, buffers).
+  // A negative position, like none, means the file's offset.
+  const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), typeof position === 'number' && position >= 0 ? position : null];
+  fs.readvSync = function () {
+    const [fd, buffers, position] = vectorArgs.apply(null, arguments);
+    let pos = position;
+    let total = 0;
+    for (const buffer of buffers) {
+      const n = fs.readSync(fd, buffer, 0, buffer.byteLength, pos);
+      total += n;
+      if (pos !== null) pos += n;
+      if (n < buffer.byteLength) break;
     }
-    return n;
-  }, (n, args) => [n, args[1]]);
-  // writev writes the buffers together in one write, so, as with writev(2), another writer
-  // to a pipe can't come between them.
-  defineCall('writev', vectorArgs, (fd, buffers, position) => {
-    const all = Buffer.concat(buffers.map((b) => viewBytes(b)));
-    return all.length === 0 ? 0 : fs.writeSync(fd, all, 0, all.length, typeof position === 'number' && position >= 0 ? position : null);
-  }, (n, args) => [n, args[1]]);
+    return total;
+  };
+  fs.writevSync = function () {
+    const [fd, buffers, position] = vectorArgs.apply(null, arguments);
+    let pos = position;
+    let total = 0;
+    for (const buffer of buffers) {
+      const n = fs.writeSync(fd, buffer, 0, buffer.byteLength, pos);
+      total += n;
+      if (pos !== null) pos += n;
+      if (n < buffer.byteLength) break;
+    }
+    return total;
+  };
+  // Runs step on each buffer in turn off the thread; step calls back with the bytes it moved.
+  function vectored(args, step) {
+    const [fd, buffers, position] = vectorArgs.apply(null, args[0]);
+    const callback = args[1];
+    let pos = position;
+    let total = 0;
+    const next = (i) => {
+      if (i === buffers.length) return callback(null, total, buffers);
+      step(fd, buffers[i], pos, (err, n) => {
+        if (err) return callback(err);
+        total += n;
+        if (pos !== null) pos += n;
+        if (n < buffers[i].byteLength) return callback(null, total, buffers);
+        next(i + 1);
+      });
+    };
+    next(0);
+  }
+  fs.readv = function () {
+    vectored(withCallback(arguments), (fd, buffer, pos, cb) => {
+      const read = readArgs(5, fd, buffer, 0, buffer.byteLength, pos);
+      if (!read) return cb(null, 0);
+      runAsync('read', read.args, cb, (contents) => readInto(read, contents));
+    });
+  };
+  fs.writev = function () {
+    vectored(withCallback(arguments), (fd, buffer, pos, cb) => {
+      runAsync('write', writeArgs(fd, buffer, 0, buffer.byteLength, pos), cb);
+    });
+  };
 
   // fs.Dir, from opendir: the directory's entries, read when it is opened.
   function dirClosed() {
@@ -1173,12 +1268,32 @@
   fs.Dir = Dir;
   // Node's opendirSync names neither the path nor scandir in its error; its callback form
   // names the path.
+  function opendirError(e, withPath) {
+    if (e && e.syscall === 'scandir') {
+      e.syscall = 'opendir';
+      e.message = e.message.replace(/, scandir '.*'$/, withPath ? ", opendir '" + e.path + "'" : ', opendir');
+      if (!withPath) delete e.path;
+    }
+    return e;
+  }
+  const dirPath = (path) => (typeof path === 'string' ? path : String(path));
+  const isRecursive = (options) => !!(options && typeof options === 'object' && options.recursive);
   // With recursive, the entries of each directory follow, breadth first, as in Node.
-  function openDir(path, options, withPath) {
+  // The entries with their names in the encoding options ask for, once the walk that needs
+  // the names as they are is done.
+  function encodedDirents(entries, options) {
+    const encoding = encodingOf(options);
+    if (!encoding || isUtf8(encoding)) return entries;
+    return entries.map((e) => {
+      const name = encoding === 'buffer' ? Buffer.from(e.name) : Buffer.from(e.name).toString(encoding);
+      return new Dirent(name, e[kType], e.parentPath);
+    });
+  }
+  fs.opendirSync = function (path, options) {
     let entries;
     try {
       entries = fs.readdirSync(path, { withFileTypes: true });
-      if (options && typeof options === 'object' && options.recursive) {
+      if (isRecursive(options)) {
         const p = pathModule();
         for (let i = 0; i < entries.length; i++) {
           if (entries[i].isDirectory()) {
@@ -1190,29 +1305,27 @@
         }
       }
     } catch (e) {
-      if (e && e.syscall === 'scandir') {
-        e.syscall = 'opendir';
-        e.message = e.message.replace(/, scandir '.*'$/, withPath ? ", opendir '" + e.path + "'" : ', opendir');
-        if (!withPath) delete e.path;
-      }
-      throw e;
+      throw opendirError(e, false);
     }
-    return new Dir(typeof path === 'string' ? path : String(path), encodedDirents(entries, options));
-  }
-  // The entries with their names in the encoding options ask for, once the walk that needs
-  // the names as they are is done.
-  function encodedDirents(entries, options) {
-    const encoding = encodingOf(options);
-    if (!encoding || isUtf8(encoding)) return entries;
-    return entries.map((e) => {
-      const name = encoding === 'buffer' ? Buffer.from(e.name) : Buffer.from(e.name).toString(encoding);
-      const d = new Dirent(name, e[kType], e.parentPath);
-      return d;
+    return new Dir(dirPath(path), encodedDirents(entries, options));
+  };
+  fs.opendir = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    const recursive = isRecursive(args[1]);
+    fs.readdir(args[0], { withFileTypes: true }, (err, entries) => {
+      if (err) return cb(opendirError(err, true));
+      // Each subdirectory is read off the thread in turn.
+      const more = (i) => {
+        while (i < entries.length && !(recursive && entries[i].isDirectory())) i++;
+        if (i === entries.length) return cb(null, new Dir(dirPath(args[0]), encodedDirents(entries, args[1])));
+        fs.readdir(pathModule().join(entries[i].parentPath, entries[i].name), { withFileTypes: true }, (e, inner) => {
+          if (e) return cb(opendirError(e, true));
+          entries.push(...inner);
+          more(i + 1);
+        });
+      };
+      more(0);
     });
-  }
-  defineCall('opendir', (path, options) => [path, options], (path, options) => openDir(path, options, true));
-  fs.opendirSync = function (path, options) {
-    return openDir(path, options, false);
   };
 
   // fs.cp: copies a file, or with recursive a directory, as Node's cp does.
@@ -1242,8 +1355,8 @@
   const pathModule = () => globalThis.__path_module || (typeof require === 'function' ? require('path') : null);
 
   // cp's steps, written once as a generator that yields each filesystem call it needs as
-  // [name, ...args] and each question for the filter as ['filter', src, dest]. cpSync answers
-  // them at once; cp awaits a filter that returns a promise.
+  // [name, ...args]. cpSync runs the calls synchronously; cp runs them off the thread, and
+  // awaits a filter that returns a promise.
   // A path made absolute as the filesystem takes it: from the working directory where
   // relative paths start there, and otherwise from the root.
   function fsResolve(p) {
@@ -1345,7 +1458,7 @@
       throw e;
     }
   };
-  const cpCalls = {
+  const cpSyncCalls = {
     stat: (p) => fs.statSync(p), lstat: (p) => fs.lstatSync(p),
     statOrNothing: orNothing((p) => fs.statSync(p)), lstatOrNothing: orNothing((p) => fs.lstatSync(p)),
     readdir: (p) => fs.readdirSync(p), mkdir: (p, o) => fs.mkdirSync(p, o), chmod: (p, m) => fs.chmodSync(p, m),
@@ -1371,7 +1484,7 @@
               'Expected boolean to be returned from the "filter" function but got an instance of Promise.');
           }
         } else {
-          value = cpCalls[name](...args);
+          value = cpSyncCalls[name](...args);
         }
       } catch (e) {
         step = steps.throw(e);
@@ -1386,6 +1499,15 @@
     e.reason = reason;
     return e;
   }
+  const orNothingAsync = (stat) => (p, cb) => stat(p, (err, s) => (err && err.code === 'ENOENT' ? cb(null, undefined) : cb(err, s)));
+  const cpAsyncCalls = {
+    stat: (p, cb) => fs.stat(p, cb), lstat: (p, cb) => fs.lstat(p, cb),
+    statOrNothing: orNothingAsync((p, cb) => fs.stat(p, cb)), lstatOrNothing: orNothingAsync((p, cb) => fs.lstat(p, cb)),
+    readdir: (p, cb) => fs.readdir(p, cb), mkdir: (...args) => fs.mkdir(...args), chmod: (p, m, cb) => fs.chmod(p, m, cb),
+    mkdirParents: (p, cb) => fs.access(p, (missing) => (missing ? fs.mkdir(p, { recursive: true }, cb) : cb(null))),
+    unlink: (p, cb) => fs.unlink(p, cb), copyFile: (a, b, m, cb) => fs.copyFile(a, b, m, cb),
+    utimes: (p, a, m, cb) => fs.utimes(p, a, m, cb)
+  };
   fs.cp = function (src, dest, options, callback) {
     src = pathString(src);
     dest = pathString(dest);
@@ -1396,32 +1518,31 @@
     checkCallback(callback);
     const opts = Object.assign(cpOptions(options), { async: true });
     const steps = cpSteps(src, dest, opts);
-    // Runs the steps, waiting for each answer from the filter, and calls back at the end.
     const advance = (err, value) => {
-      for (;;) {
-        let step;
-        try {
-          step = err ? steps.throw(err) : steps.next(value);
-        } catch (e) {
-          process.nextTick(callback, e);
-          return;
-        }
-        if (step.done) {
-          process.nextTick(callback, null);
-          return;
-        }
-        const [name, ...args] = step.value;
-        err = null;
-        try {
-          if (name === 'filter') {
-            Promise.resolve(opts.filter(...args)).then((keep) => advance(null, keep), (e) => advance(e || falsyRejection(e)));
-            return;
-          }
-          value = cpCalls[name](...args);
-        } catch (e) {
-          err = e || falsyRejection(e);
-        }
+      let step;
+      try {
+        step = err ? steps.throw(err) : steps.next(value);
+      } catch (e) {
+        callback(e);
+        return;
       }
+      if (step.done) {
+        callback(null);
+        return;
+      }
+      const [name, ...args] = step.value;
+      if (name === 'filter') {
+        let answer;
+        try {
+          answer = opts.filter(...args);
+        } catch (e) {
+          advance(e || falsyRejection(e));
+          return;
+        }
+        Promise.resolve(answer).then((keep) => advance(null, keep), (e) => advance(e || falsyRejection(e)));
+        return;
+      }
+      cpAsyncCalls[name](...args, advance);
     };
     advance(null);
   };
