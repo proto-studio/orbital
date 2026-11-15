@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !darwin && !linux
 
 package runtime
 
@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-// On systems without openat, a LocalFilesystem with a root refuses every call, since it can't
+// On other systems, a LocalFilesystem with a root refuses every call, since it can't
 // walk paths as local_fs_walk.go does.
 
 var errNoWalk = errors.ErrUnsupported

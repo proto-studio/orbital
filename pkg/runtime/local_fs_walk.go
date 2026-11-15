@@ -1,4 +1,4 @@
-//go:build unix
+//go:build darwin || linux
 
 package runtime
 
@@ -26,27 +26,60 @@ import (
 const maxLinkHops = 40
 
 // walk is where a walk ended: the directory holding the final name, open, and that name,
-// which is "." when the path names a directory reached by the walk itself.
+// which is "." when the path names a directory reached by the walk itself. Only the root and
+// the current directory are held open, however deep the path.
 type walk struct {
-	dirs  []int    // open directories from the root down; the last holds name
-	names []string // the names of dirs[1:] from the root
+	root  int
+	cur   int      // the directory holding name; root, or a descriptor of its own
+	names []string // the names leading from the root to cur
 	name  string
 	path  string // the path as the caller gave it, for errors
 }
 
-func (w *walk) dir() int { return w.dirs[len(w.dirs)-1] }
+func (w *walk) dir() int { return w.cur }
 
 func (w *walk) close() {
-	for _, fd := range w.dirs {
-		unix.Close(fd)
+	if w.cur != w.root {
+		unix.Close(w.cur)
 	}
-	w.dirs = nil
+	unix.Close(w.root)
+	w.cur, w.root = -1, -1
 }
 
-// rel is the path the walk reached, from the root.
-func (w *walk) rel() string {
-	parts := append(slices.Clone(w.names), w.name)
-	return filepath.Join(parts...)
+// setCur makes fd the current directory, closing the one before.
+func (w *walk) setCur(fd int) {
+	if w.cur != w.root {
+		unix.Close(w.cur)
+	}
+	w.cur = fd
+}
+
+// openDir opens name in dir as a directory, without following a link there. It asks only to
+// search the directory where the OS allows, so a directory that can be searched but not
+// listed can still be walked through.
+func openDir(dir int, name string) (int, error) {
+	fd, err := unix.Openat(dir, name, searchFlag|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.EINVAL) && searchFlag != unix.O_RDONLY {
+		fd, err = unix.Openat(dir, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	}
+	return fd, err
+}
+
+// up moves the walk to the parent of the current directory, by walking from the root again
+// through the names that led here, which are directories, not links.
+func (w *walk) up() error {
+	names := w.names[:len(w.names)-1]
+	w.setCur(w.root)
+	w.names = nil
+	for _, name := range names {
+		fd, err := openDir(w.cur, name)
+		if err != nil {
+			return w.fail("open", err)
+		}
+		w.setCur(fd)
+		w.names = append(w.names, name)
+	}
+	return nil
 }
 
 func (w *walk) fail(op string, err error) error {
@@ -91,11 +124,14 @@ func (l *LocalFilesystem) walkTo(p string, opts walkOptions) (*walk, error) {
 	}
 	// The root itself may be reached through links, such as /tmp on macOS: it is the
 	// embedder's choice, so the OS follows those.
-	rootFd, err := unix.Open(absRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	rootFd, err := unix.Open(absRoot, searchFlag|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.EINVAL) && searchFlag != unix.O_RDONLY {
+		rootFd, err = unix.Open(absRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	}
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: p, Err: err}
 	}
-	w := &walk{dirs: []int{rootFd}, name: ".", path: p}
+	w := &walk{root: rootFd, cur: rootFd, name: ".", path: p}
 	if err := l.walkNames(w, splitNames(rel), opts, absRoot); err != nil {
 		w.close()
 		return nil, err
@@ -121,11 +157,8 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 			if !ok {
 				return nil, ErrOutsideSandbox
 			}
-			for len(w.dirs) > 1 {
-				unix.Close(w.dirs[len(w.dirs)-1])
-				w.dirs = w.dirs[:len(w.dirs)-1]
-			}
-			w.names = w.names[:0]
+			w.setCur(w.root)
+			w.names = nil
 			target = under
 		}
 		return append(splitNames(target), rest...), nil
@@ -137,12 +170,12 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 		last := len(queue) == 0
 		w.name = "."
 		if name == ".." {
-			if len(w.dirs) == 1 {
+			if len(w.names) == 0 {
 				return ErrOutsideSandbox
 			}
-			unix.Close(w.dirs[len(w.dirs)-1])
-			w.dirs = w.dirs[:len(w.dirs)-1]
-			w.names = w.names[:len(w.names)-1]
+			if err := w.up(); err != nil {
+				return err
+			}
 			continue
 		}
 		if last && !opts.makeDirs {
@@ -160,12 +193,15 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 			if err != nil {
 				return err
 			}
+			// A link to "." or to the root leaves nothing to walk: the walk ends at the
+			// directory it reached.
+			w.name = "."
 			queue = next
 			continue
 		}
-		fd, err := unix.Openat(w.dir(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		fd, err := openDir(w.dir(), name)
 		if err == nil {
-			w.dirs = append(w.dirs, fd)
+			w.setCur(fd)
 			w.names = append(w.names, name)
 			continue
 		}
@@ -315,8 +351,11 @@ func (l *LocalFilesystem) rootedStat(p string, follow bool) (*FileInfo, error) {
 // rootedOpenFile opens the file p names. A link that appears at the final name after the walk
 // read it is not followed by the OS: the open fails, and the walk runs again.
 func (l *LocalFilesystem) rootedOpenFile(p string, flag int, perm fs.FileMode) (*os.File, error) {
+	// An exclusive create acts on the name itself, so an existing link there is EEXIST, as
+	// O_EXCL makes it.
+	exclusive := flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0
 	for range maxLinkHops {
-		w, err := l.walkTo(p, walkOptions{followFinal: true})
+		w, err := l.walkTo(p, walkOptions{followFinal: !exclusive})
 		if err != nil {
 			return nil, err
 		}
@@ -360,14 +399,23 @@ func (l *LocalFilesystem) rootedReadDir(p string) ([]DirEntry, error) {
 		return nil, err
 	}
 	defer f.Close()
-	entries, err := f.ReadDir(-1)
+	names, err := f.Readdirnames(-1)
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
-	result := make([]DirEntry, len(entries))
-	for i, e := range entries {
-		result[i] = DirEntry{Name: e.Name(), IsDir: e.IsDir()}
+	slices.Sort(names)
+	// Each entry is described relative to the open directory, not by a path.
+	dir := int(f.Fd())
+	result := make([]DirEntry, 0, len(names))
+	for _, name := range names {
+		var st unix.Stat_t
+		if err := unix.Fstatat(dir, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue // removed since it was listed
+			}
+			return nil, &fs.PathError{Op: "lstat", Path: filepath.Join(p, name), Err: err}
+		}
+		result = append(result, DirEntry{Name: name, IsDir: st.Mode&unix.S_IFMT == unix.S_IFDIR})
 	}
 	return result, nil
 }
@@ -444,11 +492,10 @@ func removeAllAt(dir int, name string) error {
 	}
 	f := os.NewFile(uintptr(fd), name)
 	names, err := f.Readdirnames(-1)
-	if err == nil {
-		for _, child := range names {
-			if err = removeAllAt(fd, child); err != nil {
-				break
-			}
+	// As os.RemoveAll does, it removes what it can and reports the first failure.
+	for _, child := range names {
+		if childErr := removeAllAt(fd, child); childErr != nil && err == nil {
+			err = childErr
 		}
 	}
 	f.Close()
