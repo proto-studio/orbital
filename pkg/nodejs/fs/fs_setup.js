@@ -1291,6 +1291,9 @@
     utimes: (p, a, m) => fs.utimesSync(p, a, m)
   };
   fs.cpSync = function (src, dest, options) {
+    // Buffer and URL paths become strings, for the path helpers.
+    src = pathString(src);
+    dest = pathString(dest);
     const opts = cpOptions(options);
     const steps = cpSteps(src, dest, opts);
     let step = steps.next();
@@ -1315,6 +1318,8 @@
     }
   };
   fs.cp = function (src, dest, options, callback) {
+    src = pathString(src);
+    dest = pathString(dest);
     if (typeof options === 'function') {
       callback = options;
       options = undefined;
@@ -1410,6 +1415,8 @@
       const EventEmitter = eventEmitter();
       watcher = new EventEmitter();
       let prev = statOrZero(filename);
+      // Node calls the listeners once at the start for a path that doesn't exist.
+      if (!fs.existsSync(filename)) process.nextTick(() => watcher.emit('change', zeroStats(), zeroStats()));
       watcher._timer = setInterval(() => {
         const curr = statOrZero(filename);
         if (!sameStats(curr, prev)) {
@@ -1489,6 +1496,8 @@
     }
     if (typeof options === 'string') options = { encoding: options };
     const opts = Object.assign({ persistent: true, recursive: false }, options);
+    // A Buffer or URL path becomes a string, for the path helpers.
+    filename = pathString(filename);
     let entries;
     try {
       entries = snapshot(filename, opts.recursive);
@@ -1506,12 +1515,19 @@
     const EventEmitter = eventEmitter();
     const watcher = new EventEmitter();
     if (typeof listener === 'function') watcher.on('change', listener);
+    // The watched path itself appearing or going is reported too, by its name.
+    let present = true;
+    const ownName = pathModule().basename(filename);
     const timer = setInterval(() => {
       let next;
       try {
         next = snapshot(filename, opts.recursive);
+        if (!present) watcher.emit('change', 'rename', named(ownName));
+        present = true;
       } catch (e) {
         next = new Map();
+        if (present && !entries.has(ownName)) watcher.emit('change', 'rename', named(ownName));
+        present = false;
       }
       for (const [name, stat] of next) {
         const old = entries.get(name);

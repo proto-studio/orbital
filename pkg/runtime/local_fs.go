@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // ErrOutsideSandbox is the error a call returns for a path it refuses. It is a permission
@@ -339,7 +341,10 @@ func (l *LocalFilesystem) Chtimes(path string, atime, mtime time.Time) error {
 	if err != nil {
 		return err
 	}
-	return os.Chtimes(resolved, atime, mtime)
+	if err := unix.UtimesNanoAt(unix.AT_FDCWD, resolved, []unix.Timespec{timespec(atime), timespec(mtime)}, 0); err != nil {
+		return &fs.PathError{Op: "chtimes", Path: path, Err: err}
+	}
+	return nil
 }
 
 // Access checks that a path exists and may be used as mode asks, as access(2) does.
@@ -367,9 +372,22 @@ type localFile struct {
 
 // Chtimes sets the access and modification times of the open file.
 func (f *localFile) Chtimes(atime, mtime time.Time) error {
-	return syscall.Futimes(int(f.Fd()), []syscall.Timeval{
-		syscall.NsecToTimeval(atime.UnixNano()), syscall.NsecToTimeval(mtime.UnixNano()),
-	})
+	return syscall.Futimes(int(f.Fd()), []syscall.Timeval{timeval(atime), timeval(mtime)})
+}
+
+// timeval gives t as seconds and microseconds, without going through nanoseconds since
+// 1970, which overflow an int64 past 2262.
+func timeval(t time.Time) syscall.Timeval {
+	tv := syscall.NsecToTimeval(int64(t.Nanosecond()))
+	tv.Sec = t.Unix()
+	return tv
+}
+
+// timespec gives t as seconds and nanoseconds, as timeval does.
+func timespec(t time.Time) unix.Timespec {
+	ts := unix.NsecToTimespec(int64(t.Nanosecond()))
+	ts.Sec = t.Unix()
+	return ts
 }
 
 // Stat returns file information for the open file.

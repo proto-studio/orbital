@@ -96,3 +96,22 @@ done({ quick: Date.now() - start < 2000 });
 `, dir))
 	wantJSON(t, got, map[string]any{"quick": true})
 }
+
+// cp takes Buffer paths, and fs.watch reports the watched directory going away by its name,
+// as Node does on Linux.
+func TestFS_CpBufferPathsAndWatchedDirectoryRemoved(t *testing.T) {
+	dir := t.TempDir()
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+fs.writeFileSync(dir + '/f', 'f');
+fs.cpSync(Buffer.from(dir + '/f'), Buffer.from(dir + '/new/f'));
+const copied = fs.readFileSync(dir + '/new/f', 'utf8');
+fs.mkdirSync(dir + '/gone');
+const events = [];
+const w = fs.watch(dir + '/gone', (type, name) => events.push(type + ' ' + name));
+setTimeout(() => fs.rmdirSync(dir + '/gone'), 150);
+setTimeout(() => { w.close(); done({ copied, events }); }, 600);
+`, dir))
+	wantJSON(t, got, map[string]any{"copied": "f", "events": []any{"rename gone"}})
+}
