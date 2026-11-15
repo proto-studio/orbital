@@ -24,6 +24,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -296,18 +297,37 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		return "", "", err
 	}
 	preFormat := objString(resolved, "format")
-	// The default load checks the attributes, except for an entry point.
-	check := ""
+	resolvedAttrs := objString(resolved, "importAttributes")
+
+	// The default load checks the attributes, except for an entry point and a
+	// (url, type) pair already checked: Node reuses that first module job, and
+	// its outcome, without loading again.
+	check, key := "", ""
 	if attrs != nil {
-		check = "1"
+		key = attrCheckKey(url, parseAttrsJSON(resolvedAttrs))
+		if prior, seen := e.attrChecks[key]; seen {
+			if prior != nil {
+				return "", "", prior
+			}
+		} else {
+			check = "1"
+		}
 	}
 
 	// load chain -> { source, format }
-	loadP, err := e.callLoaderRealm("__runLoad", url, preFormat, objString(resolved, "importAttributes"), check)
+	loadP, err := e.callLoaderRealm("__runLoad", url, preFormat, resolvedAttrs, check)
 	if err != nil {
 		return "", "", err
 	}
 	loaded, err := awaitPromiseRT(lrt, loadP, e.rt.ExecutionContext())
+	if check != "" {
+		var me *moduleError
+		if err == nil {
+			e.recordAttrCheck(key, nil)
+		} else if errors.As(err, &me) && strings.HasPrefix(me.code, "ERR_IMPORT_") {
+			e.recordAttrCheck(key, me)
+		}
+	}
 	if err != nil {
 		return "", "", err
 	}

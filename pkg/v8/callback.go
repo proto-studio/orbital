@@ -318,7 +318,7 @@ func runCallback(cb FunctionCallback, ctx *Context, infoPtr unsafe.Pointer) *Val
 }
 
 //export goModuleResolve
-func goModuleResolve(resolverID C.int, specifier, referrer *C.char, attrs **C.char, attrCount C.int, sourceOut, nameOut **C.char, errorOut *unsafe.Pointer) C.int {
+func goModuleResolve(resolverID C.int, specifier, referrer *C.char, attrs **C.char, attrLens *C.int, attrCount C.int, sourceOut, nameOut **C.char, errorOut *unsafe.Pointer) C.int {
 	resolver := getModuleResolver(int(resolverID))
 	if resolver == nil {
 		return C.int(-1)
@@ -328,10 +328,14 @@ func goModuleResolve(resolverID C.int, specifier, referrer *C.char, attrs **C.ch
 	referrerStr := C.GoString(referrer)
 
 	var attributes []ImportAttribute
-	if attrCount > 1 && attrs != nil {
+	if attrCount > 1 && attrs != nil && attrLens != nil {
 		raw := unsafe.Slice(attrs, int(attrCount))
+		lens := unsafe.Slice(attrLens, int(attrCount))
 		for i := 0; i+1 < len(raw); i += 2 {
-			attributes = append(attributes, ImportAttribute{Key: C.GoString(raw[i]), Value: C.GoString(raw[i+1])})
+			attributes = append(attributes, ImportAttribute{
+				Key:   C.GoStringN(raw[i], lens[i]),
+				Value: C.GoStringN(raw[i+1], lens[i+1]),
+			})
 		}
 	}
 

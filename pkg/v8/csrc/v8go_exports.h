@@ -19,9 +19,10 @@ extern "C" {
 extern void* goCallbackHandler(void* ctx, void* isolate, int callbackID, void* info);
 // On failure goModuleResolve returns nonzero and may set *errorOut to a
 // ValueWrapper* holding the exception to throw (the resolver's own error object).
-// attrs holds the import's attributes as attrCount strings: key, value, key, ...
+// attrs holds the import's attributes as attrCount strings (key, value, key,
+// ...) of attrLens bytes each; they may contain NULs.
 extern int goModuleResolve(int resolverID, char* specifier, char* referrer,
-                           char** attrs, int attrCount,
+                           char** attrs, int* attrLens, int attrCount,
                            char** sourceOut, char** nameOut, void** errorOut);
 // Near-heap-limit: return the new heap limit in bytes. Typically bump slightly
 // so TerminateExecution can unwind without FatalProcessOutOfMemory.
