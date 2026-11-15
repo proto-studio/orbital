@@ -178,13 +178,17 @@
 
   // The checks every key type makes, after its kty (and crv) check: use,
   // key_ops, then ext.
+  const KEY_OPS = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey'];
+
   function checkJWKUseOpsExt(keyData, expectedUse, extractable, usages) {
     if (usages.length > 0 && keyData.use !== undefined && keyData.use !== expectedUse) {
       throw dataError('Invalid JWK "use" Parameter');
     }
     if (keyData.key_ops !== undefined) {
       const ops = Array.from(keyData.key_ops);
-      if (new Set(ops).size !== ops.length) {
+      // Only the operations WebCrypto knows count as duplicates.
+      const known = ops.filter((op) => KEY_OPS.includes(op));
+      if (new Set(known).size !== known.length) {
         throw dataError('Duplicate key operation');
       }
       for (const u of usages) {
