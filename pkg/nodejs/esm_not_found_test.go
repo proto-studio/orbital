@@ -409,3 +409,32 @@ func TestPreload_NotFoundIsUncaught(t *testing.T) {
 		t.Fatalf("Preload: %v, want the uncaught ERR_MODULE_NOT_FOUND", err)
 	}
 }
+
+// A package's "exports" map is matched against the whole subpath, query included,
+// and a resolve hook's file: URL with an encoded "/" is refused. Expected from
+// Node 20.18.1.
+func TestDynamicImport_ExportsSubpathQueryAndHookEncodedSlash(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/p/package.json": `{"type":"module","exports":{"./sub":"./plain.mjs","./sub?raw":"./raw.mjs"}}`,
+		"node_modules/p/plain.mjs":    `export default 'plain:' + import.meta.url.split('/').pop();`,
+		"node_modules/p/raw.mjs":      `export default 'raw:' + import.meta.url.split('/').pop();`,
+		"node_modules/q/package.json": `{"type":"module","exports":{"./sub?raw":"./raw.mjs"}}`,
+		"node_modules/q/raw.mjs":      `export default 'raw:' + import.meta.url.split('/').pop();`,
+		"dep.mjs":                     `export default 'dep';`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'enc') return { url: import.meta.url.replace(/[^/]*$/, 'a%2Fdep.mjs'), shortCircuit: true };
+  return n(s, c);
+}`,
+		"entry.mjs": `const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.name, e.code, e.message]; } };
+log.push(await r('p/sub?raw'), await r('p/sub'), await r('q/sub?raw'));
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+log.push(await r('enc'));`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["raw:raw.mjs","plain:plain.mjs","raw:raw.mjs",["TypeError","ERR_INVALID_FILE_URL_PATH","File URL path must not include encoded / characters"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

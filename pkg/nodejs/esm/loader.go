@@ -222,7 +222,16 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 	if err := checkFileURLHost(u); err != nil {
 		return "", err
 	}
-	path, _, suffix, _ := urlPath(u, "/")
+	path, encoded, suffix, _ := urlPath(u, "/")
+	// Node turns a hook's url into a path with fileURLToPath, which refuses an
+	// encoded "/".
+	if strings.Contains(strings.ToLower(encoded), "%2f") {
+		return "", &moduleError{
+			msg:       "File URL path must not include encoded / characters",
+			code:      "ERR_INVALID_FILE_URL_PATH",
+			typeError: true,
+		}
+	}
 	return e.moduleKey(path, suffix), nil
 }
 
@@ -359,17 +368,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	case winAbs(spec):
 		attempted = spec
 	default:
-		// In a package subpath, as in a URL, tabs and newlines are dropped and a
-		// query or fragment stays on the package file's url. Without a subpath
-		// they're part of the package name, as in Node.
-		if name, sub := splitBare(spec); sub != "." {
-			sub = urlWhitespace.Replace(sub)
-			if i := strings.IndexAny(sub, "?#"); i >= 0 {
-				sub, suffix = sub[:i], normalizeSuffix(sub[i:])
-			}
-			spec = name + strings.TrimPrefix(sub, ".")
-		}
-		abs, err := e.resolveBare(spec, dir, referrer)
+		abs, suffix, err := e.resolveBare(spec, dir, referrer)
 		if err != nil {
 			return "", err
 		}
@@ -464,7 +463,8 @@ func splitBare(specifier string) (pkg, sub string) {
 // resolveBare resolves a package specifier the way Node does: the first
 // node_modules directory (walking up from fromDir) that contains the package
 // decides the result, and a missing package or entry is an error.
-func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, error) {
+// It also returns the query or fragment the module's url keeps (see resolvePackage).
+func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, string, error) {
 	pkg, sub := splitBare(specifier)
 	dir := fromDir
 	for {
@@ -478,10 +478,14 @@ func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, error) {
 		}
 		dir = parent
 	}
-	return "", e.packageNotFound(pkg, referrer)
+	return "", "", e.packageNotFound(pkg, referrer)
 }
 
-func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
+// resolvePackage resolves sub (".", or "./path") inside the package at pkgDir.
+// Like Node, an "exports" map is matched against the whole subpath, query and
+// fragment included; otherwise the subpath is read as a URL path, whose query
+// or fragment is returned to stay on the module's url.
+func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, error) {
 	main := ""
 	pkgJSON := filepath.Join(pkgDir, "package.json")
 	if e.fsIsFile(pkgJSON) {
@@ -494,14 +498,14 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
 						if target := resolveExports(exp, sub); target != "" {
 							abs := filepath.Join(pkgDir, target)
 							if r := e.resolveFile(abs); r != "" {
-								return r, nil
+								return r, "", nil
 							}
 							if e.fsIsDir(abs) {
 								if r := e.resolveIndex(abs); r != "" {
-									return r, nil
+									return r, "", nil
 								}
 							}
-							return "", e.moduleNotFound(abs, referrer)
+							return "", "", e.moduleNotFound(abs, referrer)
 						}
 					}
 				}
@@ -513,11 +517,11 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
 					if main != "" {
 						abs := filepath.Join(pkgDir, main)
 						if r := e.resolveFile(abs); r != "" {
-							return r, nil
+							return r, "", nil
 						}
 						if e.fsIsDir(abs) {
 							if r := e.resolveIndex(abs); r != "" {
-								return r, nil
+								return r, "", nil
 							}
 						}
 					}
@@ -525,26 +529,31 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
 			}
 		}
 	}
-	target := pkgDir
+	target, suffix := pkgDir, ""
 	if sub != "." {
-		target = filepath.Join(pkgDir, sub)
+		// As a URL path: tabs and newlines dropped, the suffix kept apart.
+		path := urlWhitespace.Replace(sub)
+		if i := strings.IndexAny(path, "?#"); i >= 0 {
+			path, suffix = path[:i], normalizeSuffix(path[i:])
+		}
+		target = filepath.Join(pkgDir, path)
 	}
 	if r := e.resolveFile(target); r != "" {
-		return r, nil
+		return r, suffix, nil
 	}
 	if e.fsIsDir(target) {
 		if r := e.resolveIndex(target); r != "" {
-			return r, nil
+			return r, suffix, nil
 		}
 	}
 	if sub != "." {
-		return "", e.moduleNotFound(target, referrer)
+		return "", "", e.moduleNotFound(target, referrer)
 	}
 	// Node names the package's main entry, or its index.js when it has none.
 	if main == "" {
 		main = "index.js"
 	}
-	return "", e.packageNotFound(filepath.Join(pkgDir, main), referrer)
+	return "", "", e.packageNotFound(filepath.Join(pkgDir, main), referrer)
 }
 
 func jsonString(raw json.RawMessage) string {
