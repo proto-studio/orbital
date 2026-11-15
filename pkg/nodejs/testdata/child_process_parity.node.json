@@ -509,11 +509,11 @@
   "execKilled": {
     "err": {
       "name": "Error",
-      "message": "Command failed: sleep 30\n",
+      "message": "Command failed: exec sleep 30\n",
       "code": null,
       "killed": true,
       "signal": "SIGTERM",
-      "cmd": "sleep 30"
+      "cmd": "exec sleep 30"
     },
     "stdout": "",
     "stderr": "",
@@ -531,11 +531,11 @@
   "execTimeout": {
     "err": {
       "name": "Error",
-      "message": "Command failed: sleep 30\n",
+      "message": "Command failed: exec sleep 30\n",
       "code": null,
       "killed": true,
       "signal": "SIGTERM",
-      "cmd": "sleep 30"
+      "cmd": "exec sleep 30"
     },
     "stdout": "",
     "stderr": "",
@@ -788,7 +788,7 @@
       "path": "/bin/sh",
       "spawnargs": [
         "-c",
-        "sleep 30"
+        "exec sleep 30"
       ],
       "signal": "SIGTERM",
       "status": null,
