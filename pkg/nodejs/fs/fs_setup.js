@@ -1302,7 +1302,7 @@
         if (i === entries.length) return cb(null, new Dir(dirPath(args[0]), encodedDirents(entries, args[1])));
         fs.readdir(pathModule().join(entries[i].parentPath, entries[i].name), { withFileTypes: true }, (e, inner) => {
           if (e) return cb(opendirError(e, true));
-          entries.push(...inner);
+          for (const entry of inner) entries.push(entry);
           more(i + 1);
         });
       };
