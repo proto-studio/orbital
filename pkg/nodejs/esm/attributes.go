@@ -90,8 +90,9 @@ func (e *ESM) displayURL(key string) string {
 	if strings.HasPrefix(key, "node:") || strings.HasPrefix(key, "native:") || strings.HasPrefix(key, "file:") {
 		return key
 	}
-	if p, ok := e.keyPaths[key]; ok && strings.HasPrefix(key, p) {
-		return fileURL(p) + key[len(p):]
+	if p, ok := e.keyPaths[key]; ok && p != key {
+		// Already the encoded path with its query or fragment (moduleKey).
+		return "file://" + key
 	}
 	return fileURL(key)
 }

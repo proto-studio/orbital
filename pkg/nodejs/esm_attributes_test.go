@@ -198,3 +198,31 @@ log.push([a.default, b.default, c.default, a === c, a.u.split('/').pop()]);`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A resolve hook's importAttributes must be an object (null and arrays pass), with
+// Node's error naming the hook that returned last. Expected from Node 20.18.1.
+func TestImportAttributes_HookResultChecked(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 'dep';`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s.includes('prim')) return { ...(await n('./dep.mjs', c)), importAttributes: 'oops' };
+  if (s.includes('nul')) return { ...(await n('./dep.mjs', c)), importAttributes: null };
+  if (s.includes('arr')) return { ...(await n('./dep.mjs', c)), importAttributes: ['x'] };
+  if (s.includes('own')) return { url: new URL('./dep.mjs', import.meta.url).href, importAttributes: 42, shortCircuit: true };
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['./prim', './nul', './arr', './own']) {
+  try { log.push((await import(s)).default); } catch (e) { log.push([e.name, e.code, e.message]); }
+}`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `[["TypeError","ERR_INVALID_RETURN_PROPERTY_VALUE","Expected an object to be returned for the \"importAttributes\" from the \"node:internal/modules/esm/resolve 'resolve'\" hook but got type string ('oops')."],` +
+		`"dep","dep",` +
+		`["TypeError","ERR_INVALID_RETURN_PROPERTY_VALUE","Expected an object to be returned for the \"importAttributes\" from the \"./hooks.mjs 'resolve'\" hook but got type number (42)."]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
