@@ -1,7 +1,8 @@
-// Package sysconst holds the host's errno and signal numbers under the names Node uses, so
-// os.constants, fs errors and child_process agree with each other and with Node on the same
-// platform. The values come from the syscall package's per-platform files, so each build
-// carries its own platform's numbers.
+// Package sysconst holds the host's errno, signal and dlopen numbers under the names Node uses,
+// so os.constants, fs errors and child_process agree with each other and with Node on the same
+// platform. Errno and signal values come from the syscall package's per-platform files, so each
+// build carries its own platform's numbers; dlopen's, which syscall doesn't have, from the
+// platform's <dlfcn.h>.
 package sysconst
 
 import "syscall"
@@ -38,7 +39,12 @@ var signalNames = []string{
 	"SIGLOST", "SIGPWR", "SIGINFO", "SIGSYS", "SIGUNUSED",
 }
 
+// dlopenNames lists the dlopen flags Node defines, in Node's order. A platform has those it
+// defines; see dlopenValues.
+var dlopenNames = []string{"RTLD_LAZY", "RTLD_NOW", "RTLD_GLOBAL", "RTLD_LOCAL", "RTLD_DEEPBIND"}
+
 var (
+	dlopen  = collect(dlopenNames, func(name string) (int, bool) { v, ok := dlopenValues[name]; return v, ok })
 	errnos  = collect(errnoNames, func(name string) (int, bool) { e, ok := errnoValues[name]; return int(e), ok })
 	signals = collect(signalNames, func(name string) (int, bool) { s, ok := signalValues[name]; return int(s), ok })
 )
@@ -56,6 +62,10 @@ func collect(names []string, value func(string) (int, bool)) []Constant {
 // Errnos returns the platform's errno constants as os.constants.errno has them, in order.
 // The caller must not modify the result.
 func Errnos() []Constant { return errnos }
+
+// Dlopen returns the platform's dlopen flags as os.constants.dlopen has them, in order. The
+// caller must not modify the result.
+func Dlopen() []Constant { return dlopen }
 
 // Signals returns the platform's signal constants as os.constants.signals has them, in
 // order. The caller must not modify the result.

@@ -81,6 +81,9 @@ func (o *OS) Register(rt *runtime.Runtime) error {
 
 	// Constants object
 	constants, _ := ctx.NewObject()
+	// libuv's flag for binding a UDP socket with SO_REUSEADDR, the same everywhere.
+	constants.Set("UV_UDP_REUSEADDR", ctx.NewInteger(4))
+	constants.Set("dlopen", constantsObject(ctx, sysconst.Dlopen()))
 	// Signal and error numbers are the host's own, as in Node, so code comparing them with
 	// a signal or an error's errno agrees with the platform.
 	constants.Set("errno", constantsObject(ctx, sysconst.Errnos()))

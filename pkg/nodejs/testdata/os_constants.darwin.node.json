@@ -1,4 +1,11 @@
 {
+  "UV_UDP_REUSEADDR": 4,
+  "dlopen": [
+    "RTLD_LAZY=1",
+    "RTLD_NOW=2",
+    "RTLD_GLOBAL=8",
+    "RTLD_LOCAL=4"
+  ],
   "errno": [
     "E2BIG=7",
     "EACCES=13",
@@ -81,6 +88,8 @@
     "EXDEV=18"
   ],
   "keys": [
+    "UV_UDP_REUSEADDR",
+    "dlopen",
     "errno",
     "signals",
     "priority"

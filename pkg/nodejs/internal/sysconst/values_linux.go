@@ -51,3 +51,9 @@ var signalValues = map[string]syscall.Signal{
 	"SIGSTKFLT": syscall.SIGSTKFLT,
 	"SIGSYS":    syscall.SIGSYS,
 }
+
+// dlopenValues maps each dlopen flag Node defines on this platform to its value, from glibc's
+// <bits/dlfcn.h>, which has the same values on every architecture Go builds for.
+var dlopenValues = map[string]int{
+	"RTLD_LAZY": 0x1, "RTLD_NOW": 0x2, "RTLD_GLOBAL": 0x100, "RTLD_LOCAL": 0, "RTLD_DEEPBIND": 0x8,
+}

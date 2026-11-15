@@ -49,3 +49,7 @@ var signalValues = map[string]syscall.Signal{
 	"SIGWINCH": syscall.SIGWINCH, "SIGIO": syscall.SIGIO, "SIGINFO": syscall.SIGINFO,
 	"SIGSYS": syscall.SIGSYS,
 }
+
+// dlopenValues maps each dlopen flag Node defines on this platform to its value, from macOS's
+// <dlfcn.h>.
+var dlopenValues = map[string]int{"RTLD_LAZY": 0x1, "RTLD_NOW": 0x2, "RTLD_GLOBAL": 0x8, "RTLD_LOCAL": 0x4}
