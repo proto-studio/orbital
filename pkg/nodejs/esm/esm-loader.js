@@ -27,6 +27,13 @@
   var NativeError = Error;
   var NativeTypeError = TypeError;
   var reject = Promise.reject.bind(Promise);
+  var defineProperty = Object.defineProperty;
+
+  // An own data property, as an assignment would make, without calling a setter
+  // code may have put on Error.prototype.
+  function own(obj, key, value, enumerable) {
+    defineProperty(obj, key, { value: value, writable: true, enumerable: enumerable, configurable: true });
+  }
 
   globalThis.__esmModuleError = function (message, code, url, isTypeError) {
     var err = isTypeError ? new NativeTypeError(message) : new NativeError(message);
@@ -34,11 +41,11 @@
       var name = isTypeError ? 'TypeError' : 'Error';
       var stack = err.stack;
       if (typeof stack === 'string' && stack.indexOf(name + ': ') === 0) {
-        err.stack = name + ' [' + code + ']: ' + stack.slice(name.length + 2);
+        own(err, 'stack', name + ' [' + code + ']: ' + stack.slice(name.length + 2), false);
       }
-      err.code = code;
+      own(err, 'code', code, true);
     }
-    if (url) err.url = url;
+    if (url) own(err, 'url', url, true);
     return err;
   };
 
