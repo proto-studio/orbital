@@ -1246,5 +1246,70 @@
       "-c",
       "echo joined args"
     ]
+  },
+  "execFileHexMaxBuffer": {
+    "err": null,
+    "stdout": "616263",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileBase64Chunks": {
+    "err": null,
+    "stdout": "YWI=",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "spawnSyncMaxBufferZero": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": "ok",
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnSyncMaxBufferCombined": "ENOBUFS",
+  "spawnSyncNegativeStdio": {
+    "pidType": "number",
+    "pidPositive": true,
+    "status": 0,
+    "signal": null,
+    "stdout": "ok\n",
+    "stderr": "",
+    "outputLength": 3,
+    "error": "absent"
+  },
+  "spawnNegativeStdio": {
+    "code": 0,
+    "signal": null,
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
   }
 }
