@@ -177,9 +177,11 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 - **[gap] `os.constants` has no `dlopen` or `UV_UDP_REUSEADDR`.** It has `errno`, `signals`
   and `priority`, which match Node's values for the host. (#135)
-- **[approx] An unknown signal name doesn't throw.** Node's `child.kill('SIGFOO')` and
-  `process.kill(pid, 'SIGFOO')` throw `ERR_UNKNOWN_SIGNAL`. Orbital's `child.kill` sends
-  `SIGTERM` instead, and `process.kill` throws an error with no `code`. (#136)
+- **[approx] `child.kill` doesn't throw for an unknown signal name.** Node's
+  `child.kill('SIGFOO')` throws `ERR_UNKNOWN_SIGNAL`. Orbital's sends `SIGTERM` instead. (#62)
+- **[approx] `process.kill` is refused unless the embedder allows it.** It signals through
+  `Config.ProcessSignaler`. The orbital CLI uses a real signaler, as Node behaves, except in
+  `--sandbox` mode. A library embedder that sets none gets `EPERM` for every call.
 
 ## V8 embedding (`pkg/v8`)
 

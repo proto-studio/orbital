@@ -27,6 +27,7 @@ type Runtime struct {
 	socketFactory     SocketFactory
 	clientTLSConfig   *tls.Config
 	processSpawner    ProcessSpawner
+	processSignaler   ProcessSignaler
 	documentRoot      string
 	resourceTracker   *ResourceTracker
 	execController    *ExecutionController
@@ -86,6 +87,11 @@ type Config struct {
 	// ProcessSpawner spawns child processes.
 	// If nil, real process spawning with no restrictions is used.
 	ProcessSpawner ProcessSpawner
+	// ProcessSignaler sends the signals of process.kill().
+	// If nil, every signal is refused with EPERM: process.kill() can reach any process
+	// the host process may signal, including the host process itself, so a library
+	// embedder opts in. The orbital CLI uses NewRealProcessSignaler, as Node behaves.
+	ProcessSignaler ProcessSignaler
 	// DocumentRoot is the root directory for sandboxing.
 	// When set, paths like process.cwd() are relative to this root.
 	DocumentRoot string
@@ -108,6 +114,7 @@ func DefaultConfig() *Config {
 		DNSResolver:    nil, // Will default to system DNS resolver
 		SocketFactory:  nil, // Will default to real sockets
 		ProcessSpawner: nil, // Will default to real process spawning
+		// ProcessSignaler: nil defaults to refusing process.kill()
 	}
 }
 
@@ -174,6 +181,10 @@ func New(cfg *Config) (*Runtime, error) {
 	}
 
 	// Set up process spawner
+	processSignaler := cfg.ProcessSignaler
+	if processSignaler == nil {
+		processSignaler = NewNoOpProcessSignaler()
+	}
 	processSpawner := cfg.ProcessSpawner
 	if processSpawner == nil {
 		processSpawner = NewRealProcessSpawner()
@@ -202,6 +213,7 @@ func New(cfg *Config) (*Runtime, error) {
 		socketFactory:   socketFactory,
 		clientTLSConfig: cfg.ClientTLSConfig,
 		processSpawner:  processSpawner,
+		processSignaler: processSignaler,
 		documentRoot:    cfg.DocumentRoot,
 		resourceTracker: resourceTracker,
 		execController:  execController,
@@ -260,6 +272,11 @@ func (rt *Runtime) ClientTLSConfig() *tls.Config {
 // ProcessSpawner returns the process spawner for this runtime.
 func (rt *Runtime) ProcessSpawner() ProcessSpawner {
 	return rt.processSpawner
+}
+
+// ProcessSignaler returns what sends the signals of process.kill().
+func (rt *Runtime) ProcessSignaler() ProcessSignaler {
+	return rt.processSignaler
 }
 
 // DocumentRoot returns the document root for path sandboxing.

@@ -452,6 +452,8 @@ func nodeOptionArgs() []string {
 
 func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
+	// process.kill() signals any process, as in Node. The library default refuses it.
+	cfg.ProcessSignaler = runtime.NewRealProcessSignaler()
 
 	// Set up filesystem with optional sandboxing
 	if documentRoot != "" {
@@ -472,6 +474,7 @@ func createRuntime() (*runtime.Runtime, error) {
 		cfg.DNSResolver = runtime.NewSandboxedResolver()
 		cfg.SocketFactory = runtime.NewNoOpSocketFactory()
 		cfg.ProcessSpawner = runtime.NewNoOpProcessSpawner()
+		cfg.ProcessSignaler = runtime.NewNoOpProcessSignaler()
 	}
 
 	// Set up network policy (Deno-style --allow-net / --deny-net)
