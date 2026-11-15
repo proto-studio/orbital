@@ -285,9 +285,100 @@
     }
   }
 
+  // How an unhandled rejection is treated: --unhandled-rejections.
+  const mode = native.unhandledRejections || 'throw';
+  let lastRejectionId = 0;
+
+  function PromiseRejectionHandledWarning(uid) {
+    const warning = new Error('Promise rejection was handled asynchronously (rejection id: ' + uid + ')');
+    warning.name = 'PromiseRejectionHandledWarning';
+    warning.id = uid;
+    return warning;
+  }
+
+  // noSideEffectsToString is how Node names a rejection reason in a warning without
+  // running any of the reason's own code.
+  function noSideEffectsToString(value) {
+    if (typeof value === 'symbol') return apply(Symbol.prototype.toString, value, []);
+    if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return String(value);
+    if (Array.isArray(value)) return '[object Array]';
+    for (let o = value; o !== null; o = Object.getPrototypeOf(o)) {
+      const desc = Object.getOwnPropertyDescriptor(o, 'constructor');
+      if (desc && typeof desc.value === 'function') {
+        const name = Object.getOwnPropertyDescriptor(desc.value, 'name');
+        if (name && typeof name.value === 'string' && name.value !== '') return '#<' + name.value + '>';
+        break;
+      }
+    }
+    return '[object Object]';
+  }
+
+  function emitWarning(p, warning, type) {
+    if (p && typeof p.emitWarning === 'function') p.emitWarning(warning, type);
+  }
+
+  // Node's emitUnhandledRejectionWarning: the reason, then what to do about it.
+  function warnUnhandled(p, uid, reason) {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    const warning = new Error(
+      'Unhandled promise rejection. This error originated either by throwing inside of an ' +
+      'async function without a catch block, or by rejecting a promise which was not handled ' +
+      'with .catch(). To terminate the node process on unhandled promise rejection, use the ' +
+      'CLI flag `--unhandled-rejections=strict` (see ' +
+      'https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode). (rejection id: ' + uid + ')');
+    Error.stackTraceLimit = limit;
+    Object.defineProperty(warning, 'name', {
+      value: 'UnhandledPromiseRejectionWarning', enumerable: false, writable: true, configurable: true,
+    });
+    try {
+      if (isErrorLike(reason)) {
+        warning.stack = reason.stack;
+        emitWarning(p, reason.stack, 'UnhandledPromiseRejectionWarning');
+      } else {
+        emitWarning(p, noSideEffectsToString(reason), 'UnhandledPromiseRejectionWarning');
+      }
+    } catch (_) {
+      try {
+        emitWarning(p, noSideEffectsToString(reason), 'UnhandledPromiseRejectionWarning');
+      } catch (_) {
+        // Nothing more can be said about it.
+      }
+    }
+    emitWarning(p, warning);
+  }
+
+  // reportUnhandled is the switch in Node's processPromiseRejections.
+  function reportUnhandled(p, info, promise) {
+    const reason = info.reason;
+    const emit = () => (p ? p.emit('unhandledRejection', reason, promise) : false);
+    const fatal = () => (isErrorLike(reason) ? reason : unhandledRejectionError(reason));
+    switch (mode) {
+      case 'strict':
+        trigger(fatal(), true);
+        if (!dead && !emit()) warnUnhandled(p, info.uid, reason);
+        break;
+      case 'none':
+        emit();
+        break;
+      case 'warn':
+        emit();
+        warnUnhandled(p, info.uid, reason);
+        break;
+      case 'warn-with-error-code':
+        if (!emit()) {
+          warnUnhandled(p, info.uid, reason);
+          if (p) p.exitCode = kGenericUserError;
+        }
+        break;
+      default:
+        if (!emit()) trigger(fatal(), true);
+    }
+  }
+
   function promiseReject(type, promise, reason) {
     if (type === kPromiseRejectWithNoHandler) {
-      const info = { reason, reported: false, handled: false, domain: activeDomain(promise) };
+      const info = { reason, reported: false, handled: false, domain: activeDomain(promise), uid: ++lastRejectionId };
       tracked.set(promise, info);
       pendingRejections[pendingRejections.length] = { promise, info };
       native.rejectionsPending();
@@ -297,7 +388,8 @@
       tracked.delete(promise);
       info.handled = true;
       if (info.reported) {
-        handledLate[handledLate.length] = promise;
+        // Made now, as Node does, so its stack shows where the handler was added.
+        handledLate[handledLate.length] = { promise, warning: PromiseRejectionHandledWarning(info.uid) };
         native.rejectionsPending();
       }
     }
@@ -306,9 +398,9 @@
   function processRejections() {
     const p = getProcess();
     while (handledLate.length > 0 && !dead) {
-      const promise = apply(shift, handledLate, []);
+      const { promise, warning } = apply(shift, handledLate, []);
       try {
-        if (p) p.emit('rejectionHandled', promise);
+        if (!p || !p.emit('rejectionHandled', promise)) emitWarning(p, warning);
       } catch (err) {
         trigger(err, false);
       }
@@ -325,8 +417,8 @@
           // As in Node, the domain's 'error' takes the place of 'unhandledRejection'; with
           // no listener there, emit throws and the reason becomes an uncaught exception.
           info.domain.emit('error', info.reason);
-        } else if (!p || !p.emit('unhandledRejection', info.reason, promise)) {
-          trigger(isErrorLike(info.reason) ? info.reason : unhandledRejectionError(info.reason), true);
+        } else {
+          reportUnhandled(p, info, promise);
         }
       } catch (err) {
         trigger(err, false);

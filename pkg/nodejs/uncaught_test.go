@@ -787,3 +787,124 @@ if (typeof Float16Array !== 'function') {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
+
+func runUncaughtWith(t *testing.T, cfg *runtime.Config, source string) ([]string, error) {
+	t.Helper()
+	cfg.EnableConsole, cfg.EnableTimers, cfg.Timeout = true, true, 20*time.Second
+	inst, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	prelude := `globalThis.__notes = []; globalThis.note = (...a) => __notes.push(a.join(' '));`
+	if _, err := inst.Runtime.RunScript(prelude, "prelude.js"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run(source, "test.js")
+	if inst.Runtime.IsKilled() {
+		t.Fatalf("killed: %s", inst.Runtime.KillReason())
+	}
+	val, err := inst.Runtime.RunScript(`JSON.stringify(__notes)`, "notes.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	if err := json.Unmarshal([]byte(val.String()), &notes); err != nil {
+		t.Fatal(err)
+	}
+	return notes, runErr
+}
+
+func TestUnhandledRejectionModes(t *testing.T) {
+	supportsRejections(t)
+	const noListeners = `
+process.on('warning', (w) => note('warning', w.name, w.message.split('\n')[0].slice(0, 40), w.id === undefined ? '-' : w.id));
+const p = Promise.reject(new Error('x'));
+const q = Promise.reject(42);
+setTimeout(() => { p.catch(() => {}); note('late catch'); }, 10);
+setTimeout(() => note('still running', process.exitCode), 20);
+`
+	const listeners = `
+process.on('warning', (w) => note('warning', w.name));
+process.on('unhandledRejection', (r) => note('unhandled', String(r)));
+process.on('uncaughtException', (e, o) => note('uncaught', e.message, o));
+process.on('rejectionHandled', () => note('rejectionHandled'));
+const p = Promise.reject(new Error('x'));
+setTimeout(() => p.catch(() => {}), 10);
+setTimeout(() => note('still running', process.exitCode), 20);
+`
+	unhandled := "warning UnhandledPromiseRejectionWarning Unhandled promise rejection. This error  -"
+	handledLate := "warning PromiseRejectionHandledWarning Promise rejection was handled asynchrono 1"
+	for _, tc := range []struct {
+		mode, script string
+		fatal        bool
+		want         []string
+	}{
+		{"", noListeners, true, []string{}},
+		{"throw", noListeners, true, []string{}},
+		{"strict", noListeners, true, []string{}},
+		{"warn", noListeners, false, []string{"warning UnhandledPromiseRejectionWarning Error: x -", unhandled,
+			"warning UnhandledPromiseRejectionWarning 42 -", unhandled, "late catch", handledLate, "still running "}},
+		{"none", noListeners, false, []string{"late catch", handledLate, "still running "}},
+		{"warn-with-error-code", noListeners, false, []string{"warning UnhandledPromiseRejectionWarning Error: x -", unhandled,
+			"warning UnhandledPromiseRejectionWarning 42 -", unhandled, "late catch", handledLate, "still running 1"}},
+		{"throw", listeners, false, []string{"unhandled Error: x", "rejectionHandled", "still running "}},
+		{"strict", listeners, false, []string{"uncaught x unhandledRejection", "unhandled Error: x", "rejectionHandled", "still running "}},
+		{"warn", listeners, false, []string{"unhandled Error: x", "warning UnhandledPromiseRejectionWarning",
+			"warning UnhandledPromiseRejectionWarning", "rejectionHandled", "still running "}},
+		{"none", listeners, false, []string{"unhandled Error: x", "rejectionHandled", "still running "}},
+		{"warn-with-error-code", listeners, false, []string{"unhandled Error: x", "rejectionHandled", "still running "}},
+	} {
+		name := tc.mode
+		if tc.script == listeners {
+			name += " with listeners"
+		}
+		t.Run(name, func(t *testing.T) {
+			notes, err := runUncaughtWith(t, &runtime.Config{UnhandledRejections: tc.mode, NoWarnings: true}, tc.script)
+			var uncaught *runtime.UncaughtError
+			if tc.fatal {
+				if !errors.As(err, &uncaught) || uncaught.Origin != "unhandledRejection" || !strings.Contains(uncaught.Message, "Error: x") {
+					t.Fatalf("Run returned %v, want the rejection as an uncaught error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("Run returned %v", err)
+			}
+			if !reflect.DeepEqual(notes, tc.want) {
+				t.Errorf("notes = %q\nwant %q", notes, tc.want)
+			}
+		})
+	}
+	if _, err := New(&runtime.Config{UnhandledRejections: "sometimes"}); err == nil {
+		t.Error("an unknown mode was accepted")
+	}
+}
+
+func TestProcessEmitWarning(t *testing.T) {
+	notes, err := runUncaughtWith(t, &runtime.Config{NoWarnings: true}, `
+process.on('warning', (w) => note(w instanceof Error, w.name, w.message, w.code, w.detail));
+process.emitWarning('hello');
+process.emitWarning(new RangeError('as error'));
+process.emitWarning('dep', 'DeprecationWarning', 'DEP0001');
+process.emitWarning('d', { type: 'Custom', code: 'C1', detail: 'more' });
+for (const bad of [[5], ['x', 5], ['x', 'T', 5]]) {
+  try { process.emitWarning(...bad); } catch (e) { note(e.code, e.message); }
+}
+note('sync done', process.listenerCount('warning'));
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	want := []string{
+		`ERR_INVALID_ARG_TYPE The "warning" argument must be of type string or an instance of Error. Received type number (5)`,
+		`ERR_INVALID_ARG_TYPE The "type" argument must be of type string. Received type number (5)`,
+		`ERR_INVALID_ARG_TYPE The "code" argument must be of type string. Received type number (5)`,
+		"sync done 1",
+		"true Warning hello  ",
+		"true RangeError as error  ",
+		"true DeprecationWarning dep DEP0001 ",
+		"true Custom d C1 more",
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q\nwant %q", notes, want)
+	}
+}

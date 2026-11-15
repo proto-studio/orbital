@@ -66,7 +66,9 @@ func TestParseNodeOptions(t *testing.T) {
 		{in: "- --bogus", args: nil},
 		// Accepted, with no effect in Orbital.
 		{in: "--enable-source-maps --max-old-space-size=100 --max_old_space_size=100 --expose-gc --no-expose-gc", args: nil},
-		{in: "--conditions=dev -C dev --unhandled-rejections=strict --trace-warnings=1 --no-deprecation --deprecation=false", args: nil},
+		{in: "--conditions=dev -C dev --trace-warnings=1 --no-deprecation --deprecation=false", args: nil},
+		// The last --unhandled-rejections counts.
+		{in: "--unhandled-rejections=strict --unhandled-rejections warn", args: []string{"--unhandled-rejections", "warn"}},
 		{in: "--experimental-modules --es-module-specifier-resolution=node --loader x --inspect=9229 --trace-events-enabled", args: nil},
 	}
 	for _, tc := range cases {
