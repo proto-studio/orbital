@@ -89,3 +89,48 @@ done({
 		t.Errorf("abs links to %q, %v; want the file under the root", target, err)
 	}
 }
+
+// Links a script makes and moves while its reads run reach only files under the root.
+func TestFSLinks_ChangingLinksWithRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	if err := os.MkdirAll(filepath.Join(root, "in"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "in", "f"), []byte("in"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "other", "f"), []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewLocalFilesystem(root), Timeout: 20 * time.Second}, `
+const fs = require('fs');
+fs.symlinkSync('in', '/cur');
+let reached = 0, reads = 0, i = 0;
+const end = Date.now() + 1500;
+const swap = () => {
+  if (Date.now() > end) return;
+  try { fs.unlinkSync('/tmp-link'); } catch (e) {}
+  fs.symlinkSync(i++ % 2 ? '../other' : 'in', '/tmp-link');
+  fs.rename('/tmp-link', '/cur', () => setImmediate(swap));
+};
+const read = () => {
+  if (Date.now() > end) return;
+  let pending = 8;
+  for (let k = 0; k < 8; k++) {
+    fs.readFile('/cur/f', 'utf8', (err, data) => {
+      reads++;
+      if (!err && data === 'other') reached++;
+      if (--pending === 0) setImmediate(read);
+    });
+  }
+};
+swap();
+read();
+setTimeout(() => done({ reached, someReads: reads > 100 }), 1700);
+`)
+	wantJSON(t, got, map[string]any{"reached": 0.0, "someReads": true})
+}
