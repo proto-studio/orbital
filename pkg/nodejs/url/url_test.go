@@ -281,3 +281,28 @@ func TestURL_LegacyParseIPv6(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+// Dot segments are removed and a file: URL keeps its empty host, as in the WHATWG URL
+// parser. Each case gives href, pathname and host as Node 20.18.1 does.
+func TestURL_DotSegmentsAndFileHost(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const cases = [
+  ['./x/', 'file:///a/b.mjs'], ['../x', 'file:///a/b/c.mjs'], ['../../../x', 'file:///a/b.mjs'], ['.', 'file:///a/b/c'], ['..', 'file:///a/b/c'],
+  ['./', 'http://h/a/b'], ['x/./y/../z?q=1#h', 'http://h/a/b'], ['%2e/x', 'http://h/a/b'], ['%2E%2E/x', 'http://h/a/b/c'], ['.%2e/x', 'http://h/a/b/c'],
+  ['file:///a/./b/../c'], ['file:///a/b/..'], ['file:///a/b/.'], ['file:///..'], ['http://h/a/./b/../../../c'], ['http://h/a/b/../?q=1'],
+  ['file:///etc/passwd'], ['file://host/x'], ['file:/x'], ['foo:///x'], ['foo:/x/./y'], ['foo://h/x/../y'], ['mailto:a/./b'], ['http://h'], ['x', 'file:///'],
+];
+
+JSON.stringify(cases.map(([u, b]) => { try { const x = b === undefined ? new URL(u) : new URL(u, b); return [x.href, x.pathname, x.host]; } catch (e) { return e.code || e.name; } }));
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["file:///a/x/","/a/x/",""],["file:///a/x","/a/x",""],["file:///x","/x",""],["file:///a/b/","/a/b/",""],["file:///a/","/a/",""],["http://h/a/","/a/","h"],["http://h/a/x/z?q=1#h","/a/x/z","h"],["http://h/a/x","/a/x","h"],["http://h/a/x","/a/x","h"],["http://h/a/x","/a/x","h"],["file:///a/c","/a/c",""],["file:///a/","/a/",""],["file:///a/b/","/a/b/",""],["file:///","/",""],["http://h/c","/c","h"],["http://h/a/?q=1","/a/","h"],["file:///etc/passwd","/etc/passwd",""],["file://host/x","/x","host"],["file:///x","/x",""],["foo:///x","/x",""],["foo:/x/y","/x/y",""],["foo://h/y","/y","h"],["mailto:a/./b","a/./b",""],["http://h/","/","h"],["file:///x","/x",""]]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
