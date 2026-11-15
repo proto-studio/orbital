@@ -1286,4 +1286,3 @@ func (s *RealUDPSocket) sockoptInt(option int) (int, error) {
 	}
 	return value, sockErr
 }
-

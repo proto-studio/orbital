@@ -8,6 +8,7 @@ import (
 	goruntime "runtime"
 	"syscall"
 	"testing"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 )
@@ -265,4 +266,28 @@ if (s) {
 		got = runJS(t, &runtime.Config{SocketFactory: runtime.NewFilteredSocketFactory(factory, runtime.NewAllowAllPolicy())}, fmt.Sprintf(script, r.Fd()))
 		wantJSON(t, got, map[string]any{"error": "ERR_INVALID_FD_TYPE", "message": "Unsupported fd type: UNKNOWN", "name": "TypeError"})
 	})
+}
+
+// Destroying a socket over a pipe interrupts a write the reader isn't taking, so the
+// script can end.
+func TestNet_SocketOverFullPipeCanBeDestroyed(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	factory := runtime.NewRealSocketFactory()
+	factory.AllowAllInheritedDescriptors()
+	start := time.Now()
+	got := runJS(t, &runtime.Config{SocketFactory: factory, Timeout: 10 * time.Second}, fmt.Sprintf(`
+const net = require('net');
+const s = new net.Socket({ fd: %d, readable: false });
+s.on('error', () => {});
+s.write(Buffer.alloc(4 * 1024 * 1024));
+setTimeout(() => { s.destroy(); done({ destroyed: s.destroyed }); }, 100);`, w.Fd()))
+	wantJSON(t, got, map[string]any{"destroyed": true})
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("took %v", time.Since(start))
+	}
 }

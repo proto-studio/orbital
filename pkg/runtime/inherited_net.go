@@ -130,10 +130,17 @@ func (f *RealSocketFactory) SocketInherited(fd int) (TCPSocket, error) {
 	if err != nil {
 		return nil, &ErrFileDescriptor{Type: "UNKNOWN"}
 	}
-	file := os.NewFile(uintptr(dup), "inherited")
 	if kind != syscall.S_IFSOCK {
-		return &RealTCPSocket{conn: &fileConn{file: file}}, nil
+		// Nonblocking, os.NewFile puts the pipe in Go's poller, so closing it interrupts a
+		// read or write in progress. As in Node, this applies to the descriptor's other
+		// copies too, since they share the setting.
+		if err := syscall.SetNonblock(dup, true); err != nil {
+			syscall.Close(dup)
+			return nil, &ErrFileDescriptor{Type: "UNKNOWN"}
+		}
+		return &RealTCPSocket{conn: &fileConn{file: os.NewFile(uintptr(dup), "inherited")}}, nil
 	}
+	file := os.NewFile(uintptr(dup), "inherited")
 	defer file.Close()
 	if isListening(dup) {
 		return nil, &ErrFileDescriptor{Type: "UNKNOWN"}
