@@ -144,19 +144,27 @@ func TestTimers_TimeoutObjects(t *testing.T) {
 const timer = setTimeout(() => {}, 1000);
 const out = [typeof timer, timer.hasRef(), timer.unref() === timer, timer.hasRef(), typeof +timer];
 clearTimeout(timer);
+// Timers fire in deadline order however slow the runner is, so each check compares the
+// timer against a marker due later or earlier instead of against the clock.
 let fired = false;
 const byNumber = setTimeout(() => { fired = true; }, 5);
 clearTimeout(+byNumber);
 await new Promise((r) => setTimeout(r, 30));
 out.push(fired);
-let count = 0;
-const refreshed = setTimeout(() => { count++; }, 20);
-await new Promise((r) => setTimeout(r, 10));
-refreshed.refresh();
-await new Promise((r) => setTimeout(r, 15));
-out.push(count);
+// refresh() restarts the timer from now. It is due at 50 ms; after at least 30 ms the
+// refresh moves it to 80 ms or later, behind a marker due at 65 ms. Without the refresh it
+// would fire before the marker.
+const order = [];
+await new Promise((resolve) => {
+  const refreshed = setTimeout(() => { order.push('refreshed'); resolve(); }, 50);
+  setTimeout(() => order.push('marker'), 65);
+  const start = Date.now();
+  while (Date.now() - start < 30) {}
+  refreshed.refresh();
+});
+out.push(order.join(','));
 done({ out });`)
-	wantJSON(t, result, map[string]any{"out": []any{"object", true, true, false, "number", false, float64(0)}})
+	wantJSON(t, result, map[string]any{"out": []any{"object", true, true, false, "number", false, "marker,refreshed"}})
 }
 
 // exitsPromptly fails if the script's handles keep the event loop running.
