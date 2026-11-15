@@ -39,6 +39,9 @@ var openSSLCiphers = []suiteInfo{
 	{"AES128-SHA", tls.TLS_RSA_WITH_AES_128_CBC_SHA, "RSA", "RSA", "AES128", "SHA1"},
 }
 
+// elsewhere stands for suites OpenSSL selects that crypto/tls lacks. It is never offered.
+var elsewhere = suiteInfo{name: "(not in crypto/tls)"}
+
 // cipherGroup returns the suites an OpenSSL cipher-string word selects. A word OpenSSL knows
 // that names only suites crypto/tls lacks selects none; a word it doesn't know at all
 // reports false.
@@ -56,12 +59,16 @@ func cipherGroup(word string) ([]suiteInfo, bool) {
 	switch word {
 	case "ALL", "DEFAULT", "HIGH":
 		return match(func(suiteInfo) bool { return true }), true
-	case "COMPLEMENTOFDEFAULT", "COMPLEMENTOFALL", "MEDIUM", "LOW", "EXPORT", "NULL", "eNULL", "aNULL", "3DES", "DES",
-		"RC4", "MD5", "IDEA", "SEED", "CAMELLIA", "CAMELLIA128", "CAMELLIA256", "ARIA", "ARIA128",
-		"ARIA256", "ARIAGCM", "PSK", "kPSK", "aPSK", "SRP", "kSRP", "aSRP", "DSS", "aDSS", "DH",
-		"kDH", "kDHE", "kEDH", "EDH", "DHE", "ADH", "AECDH", "aGOST", "kGOST", "GOST", "CCM",
-		"CCM8", "AESCCM", "AESCCM8":
+	// Groups OpenSSL 3 has no suites for at its default security level.
+	case "MEDIUM", "LOW", "EXPORT", "3DES", "DES", "RC4", "IDEA", "SEED", "kDH", "aGOST", "kGOST",
+		"GOST", "CCM", "CCM8":
 		return nil, true
+	// Groups whose suites OpenSSL has but crypto/tls doesn't, such as DHE ones.
+	case "COMPLEMENTOFDEFAULT", "COMPLEMENTOFALL", "NULL", "eNULL", "aNULL", "MD5", "CAMELLIA",
+		"CAMELLIA128", "CAMELLIA256", "ARIA", "ARIA128", "ARIA256", "ARIAGCM", "PSK", "kPSK", "aPSK",
+		"SRP", "kSRP", "aSRP", "DSS", "aDSS", "DH", "kDHE", "kEDH", "EDH", "DHE", "ADH", "AECDH",
+		"AESCCM", "AESCCM8":
+		return []suiteInfo{elsewhere}, true
 	case "ECDHE", "EECDH", "kECDHE", "kEECDH", "ECDH":
 		return match(func(c suiteInfo) bool { return c.kx == "ECDHE" }), true
 	case "kRSA", "RSA": // RSA is an alias of kRSA
@@ -82,10 +89,14 @@ func cipherGroup(word string) ([]suiteInfo, bool) {
 		return match(func(c suiteInfo) bool { return c.enc == "CHACHA20" }), true
 	case "AEAD":
 		return match(func(c suiteInfo) bool { return c.mac == "AEAD" }), true
-	// The protocol groups hold the suites defined for that version, which for crypto/tls's
-	// suites are the CBC ones with a SHA-1 MAC.
-	case "SHA1", "SHA", "TLSv1", "TLSv1.0", "SSLv3":
+	case "SHA1", "SHA":
 		return match(func(c suiteInfo) bool { return c.mac == "SHA1" }), true
+	// The protocol groups hold the suites a version introduced: of crypto/tls's, SSLv3 has
+	// the RSA ones with a SHA-1 MAC and TLSv1.0 the ECDHE ones.
+	case "SSLv3":
+		return match(func(c suiteInfo) bool { return c.mac == "SHA1" && c.kx == "RSA" }), true
+	case "TLSv1", "TLSv1.0":
+		return match(func(c suiteInfo) bool { return c.mac == "SHA1" && c.kx == "ECDHE" }), true
 	// The digest groups go by the record MAC, so AEAD suites are in none of them, and
 	// crypto/tls has no suite with a SHA-384 MAC.
 	case "SHA256":
@@ -146,13 +157,18 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 				selected = group
 				continue
 			}
+			// Suites crypto/tls lacks may still be in both groups, as with DHE+AESGCM.
+			mayBeElsewhere := containsCipher(selected, elsewhere) || containsCipher(group, elsewhere)
 			var both []suiteInfo
 			for _, c := range selected {
 				for _, g := range group {
-					if c.id == g.id {
+					if c.id == g.id && c != elsewhere {
 						both = append(both, c)
 					}
 				}
+			}
+			if len(both) == 0 && mayBeElsewhere {
+				both = []suiteInfo{elsewhere}
 			}
 			selected = both
 		}
@@ -174,7 +190,7 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 				selectedAny = true
 			}
 			for _, c := range selected {
-				if !banned[c.id] && !containsCipher(chosen, c) {
+				if c != elsewhere && !banned[c.id] && !containsCipher(chosen, c) {
 					chosen = append(chosen, c)
 				}
 			}
@@ -199,7 +215,7 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 
 func containsCipher(list []suiteInfo, c suiteInfo) bool {
 	for _, x := range list {
-		if x.id == c.id {
+		if x == c {
 			return true
 		}
 	}
@@ -209,7 +225,7 @@ func containsCipher(list []suiteInfo, c suiteInfo) bool {
 func removeCiphers(list, remove []suiteInfo) []suiteInfo {
 	var out []suiteInfo
 	for _, c := range list {
-		if !containsCipher(remove, c) {
+		if c == elsewhere || !containsCipher(remove, c) {
 			out = append(out, c)
 		}
 	}

@@ -54,6 +54,9 @@ function contexts() {
     ciphersNothingLeft: { ciphers: '!ALL' },
     ciphersAllExcluded: { ciphers: 'AESGCM:!ECDHE:!kRSA' },
     ciphersSHA256: { ciphers: 'SHA256' },
+    ciphersOnlyOpenSSLHas: { ciphers: 'DHE' },
+    ciphersJoinedOpenSSLOnly: { ciphers: 'DHE+AESGCM' },
+    ciphersNoSuitesAnywhere: { ciphers: 'CCM8' },
   };
   const out = {};
   for (const [name, options] of Object.entries(cases)) {
@@ -120,6 +123,9 @@ async function connections() {
       { ciphers: 'HIGH:!RSA', ca: rsaCert }],
     complementOfAll: [{ cert, key, maxVersion: 'TLSv1.2' }, { ciphers: 'COMPLEMENTOFALL:ECDHE-ECDSA-AES128-SHA' }],
     excludeComplementOfAll: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!COMPLEMENTOFALL' }],
+    sslv3Group: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-SHA', maxVersion: 'TLSv1.2' }, { ciphers: 'SSLv3' }],
+    excludeSSLv3: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-SHA', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!SSLv3' }],
+    onlyOpenSSLHasFallsToTLS13: [{ cert, key }, { ciphers: 'DHE' }],
     excludeTLSv10: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-SHA', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!TLSv1.0' }],
     digestExclusionKeepsAEAD: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!SHA256' }],
   };
