@@ -1306,6 +1306,11 @@
       "h",
       "éllo wörld",
       ""
+    ],
+    [
+      "h",
+      "éllo wörld",
+      ""
     ]
   ],
   "gcm": {
@@ -1316,6 +1321,12 @@
           "message": "Unsupported state or unable to authenticate data",
           "name": "Error"
         }
+      ]
+    },
+    "encodedTagAndAAD": {
+      "value": [
+        "e4b642d10d251f7e435611a9cde521d1",
+        "payload"
       ]
     },
     "iv1": {
