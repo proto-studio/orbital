@@ -86,3 +86,40 @@ const timerFirst = (start) => new Promise((resolve) => {
 		"write": "timer call", "writeOrder": "abcde", "stream": "timer call", "streamContents": "xy",
 	})
 }
+
+// A FileHandle's read, readv and writev are queued on the descriptor before they return, so a
+// close made right after them waits for them, and every callback comes after the call returns.
+func TestFS_DescriptorCallsKeepTheirOrder(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	got := runJS(t, &runtime.Config{Filesystem: slowFS{memory, 20 * time.Millisecond}}, `
+const fs = require('fs');
+(async () => {
+  const results = {};
+  fs.writeFileSync('/f', 'abcdef');
+  let handle = await fs.promises.open('/f', 'r');
+  const reading = handle.read(Buffer.alloc(3), 0, 3, 0);
+  const closing = handle.close();
+  results.read = (await reading).buffer.toString();
+  await closing;
+  handle = await fs.promises.open('/g', 'w');
+  const writing = handle.writev([Buffer.from('ab'), Buffer.from('cd')]);
+  await handle.close();
+  results.writev = [(await writing).bytesWritten, fs.readFileSync('/g', 'utf8')];
+  handle = await fs.promises.open('/f', 'r');
+  const vreading = handle.readv([Buffer.alloc(2), Buffer.alloc(2)], 1);
+  await handle.close();
+  results.readv = (await vreading).buffers.map(String);
+  const fd = fs.openSync('/g', 'r+');
+  let returned = false;
+  results.emptyWritev = await new Promise((resolve) => { fs.writev(fd, [], (err, n) => resolve([returned, n])); returned = true; });
+  returned = false;
+  results.emptyReadv = await new Promise((resolve) => { fs.readv(fd, [Buffer.alloc(0)], (err, n) => resolve([returned, n])); returned = true; });
+  fs.closeSync(fd);
+  done(results);
+})().catch((e) => done({ failed: String(e) }));
+`)
+	wantJSON(t, got, map[string]any{
+		"read": "abc", "writev": []any{4.0, "abcd"}, "readv": []any{"bc", "de"},
+		"emptyWritev": []any{true, 0.0}, "emptyReadv": []any{true, 0.0},
+	})
+}
