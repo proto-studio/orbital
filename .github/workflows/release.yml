@@ -5,9 +5,9 @@ name: Release
 # (glue) and update-v8.yml (V8), and this runs by itself when either merges, as a patch
 # release. Run it by hand for a release with no new pin, or to choose the bump level.
 #
-# Put [skip release] in a merge commit's message to merge a pin without releasing it,
-# so several pins can ship in one release. Unlike [skip ci], it skips nothing else. The
-# next run, by hand or from a later merge, releases everything pinned by then.
+# Label a pull request skip-release to merge its pin without releasing it, so several
+# pins can ship in one release. The next run, by hand or from a later merge, releases
+# everything pinned by then. Running it by hand ignores the label.
 #
 # Runs the tests on main first, since main doesn't require them and a release can't be
 # taken back. Never rebuilds: it re-downloads the artifacts from the run the manifest
@@ -48,12 +48,11 @@ jobs:
   # Runs queue, so that commit may be behind by now.
   check:
     name: Check for a new pin
-    if: >-
-      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch'
-      || !contains(github.event.head_commit.message, '[skip release]'))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       run: ${{ steps.check.outputs.run }}
       sha: ${{ steps.check.outputs.sha }}
@@ -67,8 +66,20 @@ jobs:
         id: check
         env:
           EVENT: ${{ github.event_name }}
+          PUSHED: ${{ github.sha }}
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # The pull request that merged as the pushed commit. If GitHub can't say, this
+          # step fails rather than release a pin someone meant to hold back.
+          if [ "$EVENT" = push ]; then
+            labels="$(gh api "repos/$GH_REPO/commits/$PUSHED/pulls" \
+              --jq '.[] | select(.merged_at != null) | .labels[].name')"
+            if printf '%s\n' "$labels" | grep -qx skip-release; then
+              echo "The pull request merged as $PUSHED is labeled skip-release, so this waits for the next release."
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           f=internal/v8dist/manifest.json
           version="$(jq -r .module_version "$f")"
           pin() { jq -S 'del(.module_version)'; }

@@ -231,7 +231,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make build-native
 | C++ glue compile (`libv8go_glue.a`) | CI (`glue.yml`), for pull requests and V8 updates; locally via `make v8-native` or `make v8-glue` |
 | Package `v8-<goos>-<goarch>.tar.gz` + sha256 | CI (`glue.yml`); locally alongside the V8 build (into `dist/`) |
 | Package `v8-headers.tar.gz` | CI (`glue.yml`), as `v8-headers`; locally alongside the V8 build; published on the Release |
-| Publish Release assets (libs + headers) | CI (`release.yml`, when a new pin merges unless its merge commit says `[skip release]`, or by hand) |
+| Publish Release assets (libs + headers) | CI (`release.yml`, when a new pin merges unless its pull request is labeled `skip-release`, or by hand) |
 | Fetch into `.v8/` + write cgo link file | Consumer/CI via `cmd/v8setup` (`go generate`) |
 | Go compile + CGO link | Native platform (this host, or a native CI runner) |
 

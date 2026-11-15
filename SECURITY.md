@@ -101,7 +101,7 @@ at full severity:
 - A branch's history changes a workflow, `.github/actions`, `scripts/`, or the
   Makefile's V8 recipes, and a later commit undoes it, especially when a build was
   pinned in between.
-- Commits that use `[skip ci]`, `[skip release]` or `[rebuild v8]` without a clear reason.
+- Commits that use `[skip ci]` or `[rebuild v8]`, or pull requests labeled `skip-release`, without a clear reason.
 - A manifest whose `source_run_id`, `source_commit`, checksums or `targets` change
   in a commit other than a `Pin V8 artifacts` commit from `github-actions[bot]`, or
   that names a run from a workflow other than `update-v8.yml` or `ci.yml`.
