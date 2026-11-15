@@ -274,6 +274,8 @@ func (l *LocalFilesystem) underRoot(p, absRoot string) (string, bool) {
 
 // resolvedPrefix gives p with the links in its longest existing directory resolved.
 func resolvedPrefix(p string) string {
+	// A trailing separator is dropped first, so the last name isn't taken twice.
+	p = filepath.Clean(p)
 	dir, rest := filepath.Dir(p), filepath.Base(p)
 	for {
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
@@ -398,7 +400,7 @@ func (l *LocalFilesystem) rootedOpenFile(p string, flag int, perm fs.FileMode) (
 		if err != nil {
 			return nil, &fs.PathError{Op: "open", Path: p, Err: err}
 		}
-		return os.NewFile(uintptr(fd), p), nil
+		return newFile(fd, p), nil
 	}
 	return nil, &fs.PathError{Op: "open", Path: p, Err: syscall.ELOOP}
 }
@@ -593,4 +595,19 @@ func (l *LocalFilesystem) rootedCopy(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// newFile wraps an opened descriptor as os.OpenFile would: a pipe, socket or device is put in
+// non-blocking mode first, so Go's poller manages it and closing the file ends a read that is
+// waiting on it. Regular files and directories stay as they are, as os.OpenFile leaves them.
+func newFile(fd int, name string) *os.File {
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) == nil {
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFREG, unix.S_IFDIR:
+		default:
+			unix.SetNonblock(fd, true)
+		}
+	}
+	return os.NewFile(uintptr(fd), name)
 }

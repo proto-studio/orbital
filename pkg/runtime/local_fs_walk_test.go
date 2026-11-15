@@ -346,3 +346,47 @@ func TestLocalFS_WalkMakesOnlyNamedDirectories(t *testing.T) {
 		}
 	}
 }
+
+// An absolute link target ending in "/" that reaches the root through a link outside it
+// names the directory once, and closing an opened FIFO ends a read waiting on it.
+func TestLocalFS_WalkTrailingSlashAndFIFO(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "f"), []byte("sub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "rootlink", "sub")+"/", filepath.Join(root, "via-alias")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := l.ReadFile("/via-alias/f"); err != nil || string(data) != "sub" {
+		t.Errorf("ReadFile via-alias/f = %q, %v", data, err)
+	}
+
+	fifo := filepath.Join(root, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	f, err := l.OpenFile("/fifo", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Read(make([]byte, 1))
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	f.Close()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("read returned data")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("closing the FIFO didn't end the waiting read")
+	}
+}
