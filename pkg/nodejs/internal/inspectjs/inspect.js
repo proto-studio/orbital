@@ -3,7 +3,7 @@
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
 // { context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection,
-// scalar, isDate, field, cut, entry, tracker, reduce }.
+// scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -138,13 +138,15 @@
       const extra = value.length - 50;
       return '<Buffer ' + hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') + '>';
     }
-    const name = value.constructor.name;
-    if (value.length === 0) return `${name}(0) []`;
+    // Read through %TypedArray%.prototype, which a typed array without a prototype lacks.
+    const length = typedArrayLength.call(value);
+    const name = prefix(value, typedArrayTag.call(value), `(${length})`);
+    if (length === 0) return `${name} []`;
     ctx.currentDepth = level;
-    const shown = Math.min(Math.max(0, ctx.maxArrayLength), value.length);
-    const output = Array.from(value.subarray(0, shown), primitive);
-    if (value.length > shown) output.push(more(value.length - shown));
-    return reduce(ctx, output, `${name}(${value.length}) [`, ']', level, { array: true, numbers: true });
+    const shown = Math.min(Math.max(0, ctx.maxArrayLength), length);
+    const output = Array.from(typedArraySubarray.call(value, 0, shown), primitive);
+    if (length > shown) output.push(more(length - shown));
+    return reduce(ctx, output, `${name} [`, ']', level, { array: true, numbers: true });
   }
 
   // Brand checks: each getter throws for anything but its own kind of object, so they only run
@@ -164,7 +166,10 @@
     : () => false;
   // %TypedArray%.prototype[Symbol.toStringTag] answers undefined, without throwing, for anything
   // but a typed array; ArrayBuffer.isView covers typed arrays and DataViews.
-  const typedArrayTag = getter(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag);
+  const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+  const typedArrayTag = getter(TypedArrayPrototype, Symbol.toStringTag);
+  const typedArrayLength = getter(TypedArrayPrototype, 'length');
+  const typedArraySubarray = TypedArrayPrototype.subarray;
   const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
   // Whether value may be a Ctor: it inherits from Ctor, or from no Object of this realm, like one
   // with a null prototype or from another realm. It spares ordinary objects the brand checks,
@@ -180,25 +185,95 @@
   const mayBeBuffer = (value) => mayBe(value, ArrayBuffer) ||
     (typeof SharedArrayBuffer === 'function' && mayBe(value, SharedArrayBuffer));
 
-  // The name util.inspect puts before an object's brace: the constructor's name and size, the
-  // kind of object in brackets when its toStringTag differs, or [Kind: null prototype] without a
-  // constructor. A toStringTag that throws is left out.
-  function prefix(value, fallback, size = '') {
-    let ctor = null;
-    for (let obj = value; obj !== null && ctor === null; obj = Object.getPrototypeOf(obj)) {
+  // constructorName is the name util.inspect gives value's constructor: that of the first
+  // named constructor on its prototype chain that value is an instance of, or null when there's
+  // none.
+  function constructorName(value) {
+    for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
       const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
-      if (desc && typeof desc.value === 'function' && desc.value.name !== '') ctor = desc.value.name;
+      if (desc !== undefined && typeof desc.value === 'function' && desc.value.name !== '' &&
+          isInstance(value, desc.value)) {
+        return String(desc.value.name);
+      }
     }
+    return null;
+  }
+  const isInstance = (value, ctor) => {
+    try {
+      return value instanceof ctor;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // tagOf is value's toStringTag as util.inspect shows it next to the constructor's name: a
+  // string, unless it's an own enumerable property, which is printed among the keys instead.
+  // One that throws is left out.
+  function tagOf(value) {
     let tag;
     try {
       tag = value[Symbol.toStringTag];
     } catch (e) {
-      tag = undefined;
+      return '';
     }
-    const tagged = typeof tag === 'string' && tag !== '';
-    if (ctor === null) return `[${fallback}${size}: null prototype]` + (tagged && tag !== fallback ? ` [${tag}]` : '');
-    if (tagged && tag !== ctor) return `${ctor}${size} [${tag}]`;
-    return ctor + size;
+    if (typeof tag !== 'string' || (tag !== '' && Object.prototype.propertyIsEnumerable.call(value, Symbol.toStringTag))) {
+      return '';
+    }
+    return tag;
+  }
+
+  // label is Node's getPrefix without its trailing space: the constructor's name and size, the
+  // toStringTag in brackets when it differs, or [fallback: null prototype] without a
+  // constructor.
+  function label(ctor, tag, fallback, size = '') {
+    if (ctor === null) {
+      return `[${fallback}${size}: null prototype]` + (tag !== '' && fallback !== tag ? ` [${tag}]` : '');
+    }
+    return tag !== '' && ctor !== tag ? `${ctor}${size} [${tag}]` : ctor + size;
+  }
+
+  // The name util.inspect puts before the brace of value, a kind of object named fallback: its
+  // constructor's name and size, the kind in brackets when its toStringTag differs, or
+  // [fallback: null prototype] without a constructor.
+  function prefix(value, fallback, size = '') {
+    return label(constructorName(value), tagOf(value), fallback, size);
+  }
+
+  // objectFallback is the kind Node names an object without a constructor after: V8's name for
+  // its constructor, which for an object made without one is its own toStringTag when that's a
+  // string data property, and otherwise Object. When it matches the tag shown, it's Object.
+  function objectFallback(value, tag) {
+    const desc = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+    const own = desc !== undefined && typeof desc.value === 'string' ? desc.value : '';
+    return own === '' || own === tag ? 'Object' : own;
+  }
+
+  // objectPrefix is what util.inspect puts before a plain object's brace, with a space after it:
+  // nothing for an Object without a toStringTag to show, the class of an instance, or
+  // [Object: null prototype] without a prototype.
+  function objectPrefix(value) {
+    const ctor = constructorName(value);
+    const tag = tagOf(value);
+    if (ctor === 'Object' && tag === '') return '';
+    return label(ctor, tag, ctor === null ? objectFallback(value, tag) : 'Object') + ' ';
+  }
+
+  // arrayPrefix is what util.inspect puts before an array's bracket, with a space after it:
+  // nothing for a plain Array, or the name and length of a subclass, a tagged array or one
+  // without a prototype.
+  function arrayPrefix(value) {
+    const ctor = constructorName(value);
+    const tag = tagOf(value);
+    if (ctor === 'Array' && tag === '') return '';
+    return label(ctor, tag, 'Array', `(${value.length})`) + ' ';
+  }
+
+  // cutLabel is how util.inspect names value, a kind of object named fallback, past the depth
+  // limit: its constructor's name in brackets, or [fallback: null prototype].
+  function cutLabel(value, fallback) {
+    const ctor = constructorName(value);
+    const text = label(ctor, tagOf(value), fallback);
+    return ctor === null ? text : `[${text}]`;
   }
 
   // binary describes an ArrayBuffer, SharedArrayBuffer or DataView the way util.inspect prints
@@ -319,22 +394,20 @@
     // Only the name is needed, so no bytes are read.
     const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
-    if (Array.isArray(value)) return value.length === 0 ? null : '[Array]';
+    if (Array.isArray(value)) return value.length === 0 ? null : cutLabel(value, 'Array');
     // Before counting keys: a typed array's keys are its elements, so counting them would walk
     // every byte of a value that only gets a name.
     if (ArrayBuffer.isView(value)) {
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
-      return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
+      return buffer || typedArrayLength.call(value) === 0 ? null : cutLabel(value, typedArrayTag.call(value));
     }
     const bare = keys(value).length === 0;
-    if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : '[Map]';
-    if (isSet(value)) return setSize.call(value) === 0 && bare ? null : '[Set]';
+    if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : cutLabel(value, 'Map');
+    if (isSet(value)) return setSize.call(value) === 0 && bare ? null : cutLabel(value, 'Set');
     if (isRegExp(value)) return null;
-    if (isDate(value)) return bare ? null : '[Date]';
+    if (isDate(value)) return bare ? null : cutLabel(value, 'Date');
     if (bare) return null;
-    if (proto === null) return '[Object: null prototype]';
-    const name = proto.constructor && proto.constructor.name;
-    return `[${name || 'Object'}]`;
+    return cutLabel(value, proto === null ? objectFallback(value, tagOf(value)) : 'Object');
   }
 
   // field describes property k of value as util.inspect prints one of the keys binary lists:
@@ -597,6 +670,6 @@
 
   return {
     context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection, scalar,
-    isDate, field, cut, entry, tracker, reduce
+    isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix
   };
 })()

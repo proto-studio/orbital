@@ -70,7 +70,13 @@
       track = suspended.pop();
     },
     reduce: (output, open, close, level, base, ref) => inspectShared.reduce(ctx, output, open, close, level, { base, ref }),
-    reduceArray: (output, level, numbers, ref) =>
-      inspectShared.reduce(ctx, output, '[', ']', level, { array: true, numbers, ref })
+    // reduceArray and reduceObject lay out the entries of an array or plain object, value, named
+    // before its bracket or brace when Node names it, as a subclass is, with ref first.
+    reduceArray: (output, level, numbers, ref, value) =>
+      inspectShared.reduce(ctx, output, inspectShared.arrayPrefix(value) + '[', ']', level, { array: true, numbers, ref }),
+    reduceObject: (output, level, value, ref) =>
+      inspectShared.reduce(ctx, output, inspectShared.objectPrefix(value) + '{', '}', level, { ref }),
+    objectPrefix: inspectShared.objectPrefix,
+    arrayPrefix: inspectShared.arrayPrefix
   };
 })()

@@ -217,3 +217,27 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   range(10, (i) => ['\u{1FA70}', '⌚', '☔', '\u{1F004}', '　', 'Ａ', '±', '́e', '­', '​'][i] + 'x'.repeat(i)),
   range(9, (i) => ['\u{1F3FB}', 'é', 'ᅠ', '\u{E0001}', '\u{20000}', '\u{30000}', '⺀', '\u{1F1E6}', '\u{16FE4}'][i] + 'yy'.repeat(i % 3)),
   range(8, (i) => '\u{1F468}‍\u{1F469}'.repeat(i % 2) + '-'.repeat(i)));
+// An object or array without the usual constructor is named before its brace: a class's name,
+// a toStringTag that isn't an own enumerable key in brackets, or [Kind: null prototype].
+{
+  const show = (...values) => { for (const v of values) { console.log(v); console.log(u.inspect(v)); } };
+  class Foo { constructor() { this.a = 1; } }
+  class Empty {}
+  class MyArr extends Array {}
+  class Bytes extends Uint8Array {}
+  class MyMap extends Map {}
+  const tag = (o, t, enumerable = false) => Object.defineProperty(o, Symbol.toStringTag, { value: t, enumerable });
+  const fake = Object.create({ constructor: function Zed() {} });
+  show(Object.create(null), Object.assign(Object.create(null), { a: 1 }), 'abc'.match(/(?<g>b)/).groups,
+    new Foo(), new Empty(), new (class {})(), fake, Object.create({ inherited: 1 }),
+    tag({ a: 1 }, 'T'), { a: 1, [Symbol.toStringTag]: 'Own' }, tag(new Foo(), 'Bar'), tag(new Foo(), 'Foo'),
+    tag(Object.create(null), 'T'), tag(Object.create(null), 'T', true), Object.assign(Object.create(null), { [Symbol.toStringTag]: 5 }),
+    Object.defineProperty(Object.create(null), Symbol.toStringTag, { get() { return 'G'; }, enumerable: true }),
+    MyArr.from([1, 2]), new MyArr(), Object.setPrototypeOf([1, 2], null), tag([1], 'T'), new Bytes(2), new Bytes(0),
+    Object.setPrototypeOf(new Uint8Array(2), null), new MyMap([[1, 2]]), Object.setPrototypeOf(new Map([[1, 2]]), null),
+    tag(new Map(), 'M'), Object.setPrototypeOf(new Set([1]), null),
+    { a: { b: { c: Object.create(null), d: Object.assign(Object.create(null), { x: 1 }), e: new Foo(), f: new Empty(),
+      g: MyArr.from([1]), h: Object.setPrototypeOf([1], null), i: tag({ x: 1 }, 'T'), j: new MyMap([[1, 1]]),
+      k: Object.setPrototypeOf(new Map([[1, 1]]), null), l: new Bytes(1), m: Object.setPrototypeOf(new Uint8Array(1), null),
+      n: tag(Object.assign(Object.create(null), { x: 1 }), 'T', true), o: new MyArr() } } });
+}
