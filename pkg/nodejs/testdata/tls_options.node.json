@@ -1,0 +1,185 @@
+{
+  "connections": {
+    "clientCipherTLS12": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-CHACHA20-POLY1305",
+      "protocol": "TLSv1.2"
+    },
+    "clientPfx": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "curve": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "legacyPem": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "noCommonCurve": {
+      "error": true
+    },
+    "noCommonTLS12Cipher": {
+      "error": true
+    },
+    "pfx": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "pkcs8": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "serverCipherTLS12": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-AES256-GCM-SHA384",
+      "protocol": "TLSv1.2"
+    },
+    "tls13Only": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
+    },
+    "tls13OnlyAgainstTLS12": {
+      "error": true
+    }
+  },
+  "contexts": {
+    "ciphersKeywords": "ok",
+    "ciphersSomeKnown": "ok",
+    "ciphersTLS13Only": "ok",
+    "ciphersUnknown": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "connectThrows": {
+      "code": null,
+      "library": null,
+      "message": "mac verify failure",
+      "reason": null
+    },
+    "ecdhCurveList": "ok",
+    "ecdhCurveRepeated": {
+      "code": "ERR_CRYPTO_OPERATION_FAILED",
+      "library": null,
+      "message": "Failed to set ECDH curve",
+      "reason": null
+    },
+    "ecdhCurveUnknown": {
+      "code": "ERR_CRYPTO_OPERATION_FAILED",
+      "library": null,
+      "message": "Failed to set ECDH curve",
+      "reason": null
+    },
+    "ecdhCurveX448": "ok",
+    "keyObject": "ok",
+    "legacyPem": "ok",
+    "legacyPemWrong": {
+      "code": "ERR_OSSL_BAD_DECRYPT",
+      "library": "Provider routines",
+      "message": "error:1C800064:Provider routines::bad decrypt",
+      "reason": "bad decrypt"
+    },
+    "pfx": "ok",
+    "pfxEmptyPassword": "ok",
+    "pfxGarbage": {
+      "code": null,
+      "library": null,
+      "message": "not enough data",
+      "reason": null
+    },
+    "pfxLegacy": {
+      "code": "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+      "library": null,
+      "message": "Unsupported PKCS12 PFX data",
+      "reason": null
+    },
+    "pfxNoPassphrase": {
+      "code": null,
+      "library": null,
+      "message": "mac verify failure",
+      "reason": null
+    },
+    "pfxObject": "ok",
+    "pfxObjectOwnPassphrase": "ok",
+    "pfxSHA1MAC": "ok",
+    "pfxWrongPassphrase": {
+      "code": null,
+      "library": null,
+      "message": "mac verify failure",
+      "reason": null
+    },
+    "pkcs8": "ok",
+    "pkcs8Missing": {
+      "code": "ERR_OSSL_BAD_DECRYPT",
+      "library": "Provider routines",
+      "message": "error:1C800064:Provider routines::bad decrypt",
+      "reason": "bad decrypt"
+    },
+    "pkcs8Wrong": {
+      "code": "ERR_OSSL_BAD_DECRYPT",
+      "library": "Provider routines",
+      "message": "error:1C800064:Provider routines::bad decrypt",
+      "reason": "bad decrypt"
+    }
+  },
+  "rootCertificates": {
+    "frozen": true,
+    "length": 147,
+    "same": true,
+    "sha256": "c06029c2849e5c88792e2e18589bb9712bc3636c6fcd09938ad4d4790e0f7594"
+  },
+  "sessionsTLS12": {
+    "first": {
+      "events": [
+        "secureConnect",
+        "session"
+      ],
+      "getSessionMatches": true,
+      "isBuffer": true,
+      "reused": false,
+      "ticketIsBuffer": true
+    },
+    "keys": 48,
+    "second": {
+      "events": [
+        "secureConnect"
+      ],
+      "reused": true
+    }
+  },
+  "sessionsTLS13": {
+    "first": {
+      "events": [
+        "secureConnect",
+        "session"
+      ],
+      "getSessionMatches": true,
+      "isBuffer": true,
+      "reused": false,
+      "ticketIsBuffer": true
+    },
+    "keys": 48,
+    "second": {
+      "events": [
+        "secureConnect"
+      ],
+      "reused": true
+    }
+  },
+  "ticketKeys": {
+    "length": 48,
+    "option": true,
+    "random": true,
+    "set": true,
+    "short": "ERR_INTERNAL_ASSERTION"
+  }
+}

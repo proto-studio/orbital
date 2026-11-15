@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -1185,8 +1186,77 @@ done(out);`)
 		"addContext":         "other.test",
 		"sniCallback":        []any{"other.test", []any{"other.test"}},
 		"startTLS":           "HELLO",
-		"badCreds":           []any{"string", "string", "string"},
-		"versionBound":       "TLSv1.2",
+		// Node reports unreadable PKCS#12 data without a code.
+		"badCreds":     []any{"string", "string", "undefined"},
+		"versionBound": "TLSv1.2",
+	})
+}
+
+// Credentials in PKCS#12 and encrypted PEM, the ciphers and ecdhCurve options, sessions,
+// ticket keys and tls.rootCertificates behave as in Node.
+func TestTLSOptions_MatchesNode(t *testing.T) {
+	const scriptPath, expectedPath = "testdata/tls_options.js", "testdata/tls_options.node.json"
+	if captureFromNode(t) {
+		output, err := exec.Command("node", scriptPath).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		writeExpected(t, expectedPath, results)
+		return
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := filepath.Abs("testdata/tls_options")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Timeout: 60 * time.Second}, fmt.Sprintf("globalThis.FIXTURES = %q;\n%s", dir, script))
+	wantJSON(t, got, readExpected(t, expectedPath))
+}
+
+// A script's session resumes a connection only when the script's options are in charge.
+// With an embedder's ClientTLSConfig, sessions still arrive but are not offered back.
+func TestTLSConnect_SessionsAndEmbedderConfig(t *testing.T) {
+	ca := newTestCA(t)
+	port := newTLSServer(t, ca.issue(t, "localhost"))
+	script := func(options string) string {
+		return fmt.Sprintf(`
+const tls = require('tls');
+const once = (session) => new Promise((resolve) => {
+  let got, reused;
+  const c = tls.connect({ host: 'localhost', port: %d, session, %s }, () => { reused = c.isSessionReused(); c.write('x'); });
+  c.on('session', (s) => { got = s; });
+  c.on('data', () => { if (got) c.end(); });
+  c.on('close', () => resolve({ reused, session: got }));
+});
+(async () => {
+  const first = await once();
+  const second = await once(first.session);
+  done({ gotSession: Buffer.isBuffer(first.session), firstReused: first.reused, secondReused: second.reused });
+})();`, port, options)
+	}
+	t.Run("script options", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{}, script(fmt.Sprintf("ca: %q", ca.pem)))
+		wantJSON(t, got, map[string]any{"gotSession": true, "firstReused": false, "secondReused": true})
+	})
+	t.Run("embedder config", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}}, script(""))
+		wantJSON(t, got, map[string]any{"gotSession": true, "firstReused": false, "secondReused": false})
+	})
+	t.Run("a malformed session is ignored", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const tls = require('tls');
+const c = tls.connect({ host: 'localhost', port: %d, ca: %q, session: Buffer.from('nonsense') }, () => {
+  done({ reused: c.isSessionReused(), authorized: c.authorized });
+  c.destroy();
+});`, port, ca.pem))
+		wantJSON(t, got, map[string]any{"reused": false, "authorized": true})
 	})
 }
 

@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"net"
 	"regexp"
 	"strconv"
@@ -23,10 +22,13 @@ import (
 type Options struct {
 	RejectUnauthorized bool `json:"rejectUnauthorized"`
 	// CA replaces the default roots unless it is nil.
-	CA         []string `json:"ca"`
-	Cert       string   `json:"cert"`
-	Key        string   `json:"key"`
-	Servername string   `json:"servername"`
+	CA   []string `json:"ca"`
+	Cert string   `json:"cert"`
+	Key  string   `json:"key"`
+	// Keys, when set, replaces Key with keys that may carry their own passphrase.
+	Keys       []PrivateKey `json:"keys"`
+	PFX        []PFX        `json:"pfx"`
+	Servername string       `json:"servername"`
 	// ScriptChecksIdentity leaves the hostname check to a JavaScript
 	// checkServerIdentity callback. The chain is still verified here.
 	ScriptChecksIdentity bool `json:"scriptChecksIdentity"`
@@ -86,13 +88,19 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 		}
 		// As in Node, a certificate without its key, or the reverse, is not an error.
 		// The connection just presents no client certificate.
-		if opts.Cert != "" && opts.Key != "" {
-			cert, err := tls.X509KeyPair([]byte(opts.Cert), []byte(opts.Key))
-			if err != nil {
-				return nil, fmt.Errorf("ERR_OSSL_X509_KEY_VALUES_MISMATCH: %w", err)
-			}
-			cfg.Certificates = []tls.Certificate{cert}
+		keys := opts.Keys
+		if len(keys) == 0 && opts.Key != "" {
+			keys = []PrivateKey{{PEM: opts.Key}}
 		}
+		var certs []string
+		if opts.Cert != "" && len(keys) > 0 {
+			certs, keys = []string{opts.Cert}, keys[:1]
+		}
+		loaded, err := LoadCertificates(certs, keys, opts.PFX)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Certificates = loaded
 	}
 	cfg.ServerName = name
 	if base == nil && opts.SNIOnlyFromServername && opts.Servername == "" {
