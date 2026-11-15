@@ -64,8 +64,8 @@ func refused(t *testing.T, what string, err error) {
 	}
 }
 
-// Paths through a link whose target lies beyond the configured root are refused by every
-// call, whether the root is given directly or through a link of its own.
+// Paths through a link to the sibling directory are refused by every call, whether the root
+// is given directly or through a link of its own.
 func TestLocalFS_LinkTargetsAreChecked(t *testing.T) {
 	base := linkLayout(t)
 	other := filepath.Join(base, "other")
@@ -126,8 +126,8 @@ func TestLocalFS_LinkTargetsAreChecked(t *testing.T) {
 	}
 }
 
-// Links whose targets stay within the root work as before.
-func TestLocalFS_LinksWithinRootWork(t *testing.T) {
+// Links to places under the root work as before.
+func TestLocalFS_NearbyLinksWork(t *testing.T) {
 	base := linkLayout(t)
 	for _, rootName := range []string{"root", "rootlink"} {
 		t.Run(rootName, func(t *testing.T) {
@@ -163,8 +163,8 @@ func TestLocalFS_LinksWithinRootWork(t *testing.T) {
 	}
 }
 
-// Calls that work on a link itself, lstat, unlink and rename, still do so for a link whose
-// target lies beyond the root, and leave that target alone.
+// Calls that work on a link itself, lstat, unlink and rename, still do so for a link to the
+// sibling directory, and leave its target alone.
 func TestLocalFS_LinkItselfCanBeHandled(t *testing.T) {
 	base := linkLayout(t)
 	l := NewLocalFilesystem(filepath.Join(base, "root"))

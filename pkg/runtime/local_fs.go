@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-// ErrOutsideSandbox is returned when a path escapes the document root. It is a permission
+// ErrOutsideSandbox is the error resolvePath returns for a path it refuses. It is a permission
 // error, so callers that report errno codes report EACCES, as its text says.
 var ErrOutsideSandbox error = pathCheckError{}
 
@@ -66,7 +66,7 @@ func (l *LocalFilesystem) checkedPath(p string, followFinal bool) (string, error
 	if err != nil {
 		return "", err
 	}
-	if !within(real, realRoot) {
+	if !isUnder(real, realRoot) {
 		return "", ErrOutsideSandbox
 	}
 	// The OS gets the path as named, so calls such as an exclusive create through a link
@@ -74,8 +74,8 @@ func (l *LocalFilesystem) checkedPath(p string, followFinal bool) (string, error
 	return textual, nil
 }
 
-// within reports whether p is root or below it.
-func within(p, root string) bool {
+// isUnder reports whether p is root or below it.
+func isUnder(p, root string) bool {
 	return p == root || strings.HasPrefix(p, strings.TrimSuffix(root, string(filepath.Separator))+string(filepath.Separator))
 }
 
