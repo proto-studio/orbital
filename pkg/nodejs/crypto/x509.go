@@ -308,6 +308,13 @@ func formatGeneralName(gn asn1.RawValue) string {
 		if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
 			return "othername:<unsupported>"
 		}
+		// The value may still be in its [0] EXPLICIT wrapper.
+		if on.Value.Class == asn1.ClassContextSpecific && on.Value.Tag == 0 && on.Value.IsCompound {
+			var inner asn1.RawValue
+			if _, err := asn1.Unmarshal(on.Value.Bytes, &inner); err == nil {
+				on.Value = inner
+			}
+		}
 		prefix, unicode := "", true
 		switch on.Type.String() {
 		case oidUPN:
@@ -849,18 +856,25 @@ func checkIssued(issuer, subject *x509.Certificate) bool {
 // with runs of whitespace collapsed and ASCII letters lowercased, and the
 // values of each RDN in a fixed order.
 func canonicalName(attrs []nameAttr) string {
-	var rdns []string
+	var rdns [][][2]string
 	for i := 0; i < len(attrs); {
 		j := i
-		var vals []string
+		var vals [][2]string
 		for ; j < len(attrs) && attrs[j].rdn == attrs[i].rdn; j++ {
-			vals = append(vals, attrs[j].Key+"="+canonicalValue(attrs[j].Value))
+			vals = append(vals, [2]string{attrs[j].Key, canonicalValue(attrs[j].Value)})
 		}
-		sort.Strings(vals)
-		rdns = append(rdns, strings.Join(vals, "\x00"))
+		sort.Slice(vals, func(a, b int) bool {
+			if vals[a][0] != vals[b][0] {
+				return vals[a][0] < vals[b][0]
+			}
+			return vals[a][1] < vals[b][1]
+		})
+		rdns = append(rdns, vals)
 		i = j
 	}
-	return strings.Join(rdns, "\x01")
+	// JSON keeps the structure, so no value can pass for a boundary.
+	b, _ := json.Marshal(rdns)
+	return string(b)
 }
 
 func canonicalValue(v string) string {

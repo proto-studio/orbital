@@ -63,6 +63,22 @@ results.trusted = outcome(() => {
   const t = new X509Certificate(trustedCA);
   return [t.fingerprint256 === ca.fingerprint256, t.toString().split('\n')[0], t.subject === ca.subject];
 });
+// OtherName alt names (UPN, XmppAddr, SRVName and one Node doesn't print), and an issuer of
+// two RDNs (CN=a, 1.2.3.4=b) next to a CA whose one CN is "a\x011.2.3.4=b".
+const more = {
+ "oneCN": "-----BEGIN CERTIFICATE-----\nMIIBTDCB86ADAgECAgEWMAoGCCqGSM49BAMCMBYxFDASBgNVBAMMC2EBMS4yLjMu\nND1iMB4XDTI0MDEwNTAzMDQwNVoXDTI0MDEwNTA0MDQwNVowFjEUMBIGA1UEAwwL\nYQExLjIuMy40PWIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQHBuL4BF0M6q0h\n9//gxfktwxAQWpGImHj3dD7u2uiuNWlLPeM+r9mZQ3PYxBCNum7kI1/4sTy5DKqo\nwka8WyG0ozIwMDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRfiszfHjKBT7ko\nz9sXYl2D366y8DAKBggqhkjOPQQDAgNIADBFAiAwPNjHFnbA5Vy9FNSdC6l/oXiP\nA6FXPFn37QG94yHrPgIhAPmESJgSQLTMY8gvZ4AtOid6VIl5I9h37HfdYZru3QJX\n-----END CERTIFICATE-----\n",
+ "otherName": "-----BEGIN CERTIFICATE-----\nMIIBrTCCAVOgAwIBAgIBFTAKBggqhkjOPQQDAjAUMRIwEAYDVQQDEwlvdGhlcm5h\nbWUwHhcNMjQwMTA1MDMwNDA1WhcNMjQwMTA1MDQwNDA1WjAUMRIwEAYDVQQDEwlv\ndGhlcm5hbWUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQHBuL4BF0M6q0h9//g\nxfktwxAQWpGImHj3dD7u2uiuNWlLPeM+r9mZQ3PYxBCNum7kI1/4sTy5DKqowka8\nWyG0o4GVMIGSMIGPBgNVHREEgYcwgYSgIAYKKwYBBAGCNxQCA6ASDBB1c2VyQGV4\nYW1wbGUuY29toB4GCCsGAQUFBwgFoBIMEHhtcHBAZXhhbXBsZS5jb22gHwYIKwYB\nBQUHCAegExYRX2xkYXAuZXhhbXBsZS5jb22gDgYDKgMEoAcMBW90aGVygg9kbnMu\nZXhhbXBsZS5jb20wCgYIKoZIzj0EAwIDSAAwRQIhAK7/HE8Agapk1QrR0K9mjXKu\nkIyi3TrDRdlAoJfSkzwsAiBjgGkeaVEMOJb8b6WYvKx9RD/ggf8XH1fOBjgjTbat\nIA==\n-----END CERTIFICATE-----\n",
+ "twoRDNIssuer": "-----BEGIN CERTIFICATE-----\nMIIBEzCBuqADAgECAgEXMAoGCCqGSM49BAMCMBgxCjAIBgNVBAMTAWExCjAIBgMq\nAwQTAWIwHhcNMjQwMTA1MDMwNDA1WhcNMjQwMTA1MDQwNDA1WjAPMQ0wCwYDVQQD\nEwRsZWFmMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBwbi+ARdDOqtIff/4MX5\nLcMQEFqRiJh493Q+7trorjVpSz3jPq/ZmUNz2MQQjbpu5CNf+LE8uQyqqMJGvFsh\ntDAKBggqhkjOPQQDAgNIADBFAiEApW3/pUh7lQ8ea8FKMHmKdHmPZG6PjityMx5g\nRRTCuPcCIFKhacf+6cb8gA7WgChg0ZT83MzlZ5zIe53gqKqHwJZD\n-----END CERTIFICATE-----\n"
+};
+results.otherNames = outcome(() => {
+  const o = new X509Certificate(more.otherName);
+  return [o.subjectAltName, o.toLegacyObject().subjectaltname];
+});
+results.rdnBoundaries = outcome(() => {
+  const leafOf = new X509Certificate(more.twoRDNIssuer);
+  const oneCN = new X509Certificate(more.oneCN);
+  return [leafOf.checkIssued(oneCN), leafOf.issuer, oneCN.subject];
+});
 results.fromDer = outcome(() => new X509Certificate(leaf.raw).fingerprint256 === leaf.fingerprint256);
 results.fromUint8Array = outcome(() => new X509Certificate(new Uint8Array(Buffer.from(certs.leaf))).serialNumber);
 results.withLeadingText = outcome(() => new X509Certificate('junk\n' + certs.leaf).serialNumber);
