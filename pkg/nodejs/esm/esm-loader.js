@@ -9,6 +9,17 @@
 (function () {
   'use strict';
 
+  // import() hands its load-and-evaluate job here rather than running the module
+  // during the call. Node loads the module asynchronously, so the code after import(),
+  // the microtasks it queues and process.nextTick callbacks all run before the module
+  // does. Captured now so user code replacing setImmediate cannot affect import().
+  var schedule = globalThis.setImmediate;
+  if (typeof schedule === 'function') {
+    globalThis.__esmScheduleDynamicImport = function (job) {
+      schedule(job);
+    };
+  }
+
   globalThis.__esmFinishDynamicImport = function (evalPromise, ns) {
     return Promise.resolve(evalPromise).then(function () {
       return ns;
