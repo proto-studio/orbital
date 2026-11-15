@@ -60,7 +60,17 @@
         key = wantPrivate ? crypto.createPrivateKey(input) : crypto.createPublicKey(input);
       } catch (e) {
         if (e && e.code) throw e;
-        throw codedError(Error, 'ERR_OSSL_UNSUPPORTED', 'error:1E08010C:DECODER routines::unsupported');
+        // The public operations take a private key too.
+        let fallback;
+        if (!wantPrivate) {
+          try {
+            fallback = crypto.createPrivateKey(input);
+          } catch (e2) {
+            // fall through to Node's error
+          }
+        }
+        if (!fallback) throw codedError(Error, 'ERR_OSSL_UNSUPPORTED', 'error:1E08010C:DECODER routines::unsupported');
+        key = fallback;
       }
     }
     if (wantPrivate && key.type !== 'private') {

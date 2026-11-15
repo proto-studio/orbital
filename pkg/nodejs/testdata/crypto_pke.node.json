@@ -146,6 +146,12 @@
   "privateEncrypt": {
     "value": "7d863fdc15ff0a134e816d9ee3e1883777ac5312b024aea47fbeb98edfa3066b4d933078af8d3fbfcfdd20ac993ce29d63a8dcbe0958d0db0d6e9be5014b10b7819a0acbed39320e3e7ef31c0327aaee6467ef8761c606c5f861a2e670294bcbc324b8870b9b51d59e461c487cf28509c6db8cfa670c87e180a50d4d4a33961c"
   },
+  "privatePemForPublic": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
   "publicDecrypt": {
     "value": "secret message"
   },

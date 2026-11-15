@@ -38,6 +38,8 @@ results.pkcs1Encrypt = outcome(() => crypto.publicEncrypt({ key: pub, padding: R
 results.pkcs1PrivateDecrypt = outcome(() => crypto.privateDecrypt({ key: priv, padding: RSA_PKCS1_PADDING }, crypto.publicEncrypt({ key: pub, padding: RSA_PKCS1_PADDING }, msg)));
 results.withPrivateAsPublic = outcome(() => crypto.privateDecrypt(priv, crypto.publicEncrypt(priv, msg)).toString());
 results.fromPem = outcome(() => crypto.privateDecrypt(fx.rsaPriv, crypto.publicEncrypt(fx.rsaPub, msg)).toString());
+results.privatePemForPublic = outcome(() => [crypto.privateDecrypt(priv, crypto.publicEncrypt(fx.rsaPriv, msg)).toString(),
+  crypto.publicDecrypt(fx.rsaPriv, crypto.privateEncrypt(priv, msg)).toString()]);
 results.stringData = outcome(() => crypto.privateDecrypt(priv, crypto.publicEncrypt(pub, 'secret message')).toString());
 
 // Deterministic: private encryption and unpadded operations.
