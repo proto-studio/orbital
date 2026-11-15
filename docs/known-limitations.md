@@ -152,10 +152,20 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   and the other callback forms, and `fs.createWriteStream`'s writes, do their work on the
   JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a path,
   `stat`, `access` and read streams run off the thread.
-- **`fs.rm` and `rmSync` look a path up with `stat`,** so a symbolic link to a directory counts
-  as a directory.
 - **Some `fs` calls are still missing,** including `accessSync`, `truncate`,
   `ftruncate`, `fsync`, `chmod`, `utimes`, `mkdtemp`, and the `fs.Stats` and `fs.Dirent` classes.
+
+## util.inspect and console.log (`pkg/nodejs/internal/inspectjs`, `console`, `util`)
+
+- **[gap] Self-references aren't labeled.** Node prints `<ref *1> { self: [Circular *1] }`.
+  `util.inspect` prints a plain `[Circular]` without the `<ref *1>` marker, and `console.log`
+  doesn't detect the cycle at all: it repeats the object until the depth limit and prints
+  `[Object]`.
+- **[gap] Symbol keys aren't listed.** `{ x: 2, [Symbol(k)]: 1 }` prints as `{ x: 2 }` in both.
+- **[approx] `%i` of a number too large for an integer** clamps to the 64-bit limit
+  (`9223372036854775807`). Node parses the number's text, so `2 ** 70` prints `1`.
+- **[approx] `%d` of a numeric string** prints `NaN`. Node converts the string, so `'42'`
+  prints `42`.
 
 ## Node features found missing during development
 
