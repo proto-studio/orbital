@@ -98,3 +98,35 @@ func TestMemoryFilesystem_Metadata(t *testing.T) {
 		t.Errorf("Truncate through a read-only handle = %v, want EINVAL", err)
 	}
 }
+
+// A handle's metadata calls change the file it opened, even after that file is renamed and
+// another takes its name.
+func TestMemoryFilesystem_HandleKeepsItsFile(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/a", []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := m.OpenFile("/a", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Rename("/a", "/b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.WriteFile("/a", []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := h.(MetadataFile)
+	if err := file.Chmod(0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(2); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := m.Stat("/b"); info.Mode.Perm() != 0o600 || info.Size != 2 {
+		t.Errorf("/b = %v, %d; want 0600, 2 bytes", info.Mode.Perm(), info.Size)
+	}
+	if info, _ := m.Stat("/a"); info.Mode.Perm() != 0o644 || info.Size != 6 {
+		t.Errorf("/a = %v, %d; want it unchanged", info.Mode.Perm(), info.Size)
+	}
+}

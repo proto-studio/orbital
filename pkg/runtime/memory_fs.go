@@ -298,6 +298,7 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 // reach the file at once, so other handles and ReadFile see them.
 type memFileHandle struct {
 	fs       *MemoryFilesystem
+	opened   *memFile // the file opened, which the metadata calls change even after a rename
 	path     string
 	writable bool
 	append   bool
@@ -444,6 +445,7 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 
 	return &memFileHandle{
 		fs:       m,
+		opened:   mf,
 		path:     path,
 		writable: writable,
 		append:   flag&os.O_APPEND != 0,
@@ -485,25 +487,28 @@ func (m *MemoryFilesystem) Truncate(path string, size int64) error {
 
 // Chmod sets the permission bits of a file, and its setuid, setgid and sticky bits.
 func (m *MemoryFilesystem) Chmod(path string, mode fs.FileMode) error {
-	return m.change("chmod", path, func(mf *memFile) error {
-		const settable = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
-		mf.mode = mf.mode&^settable | mode&settable
-		return nil
-	})
+	return m.change("chmod", path, func(mf *memFile) error { mf.chmod(mode); return nil })
+}
+
+// chmod sets the permission bits, and the setuid, setgid and sticky bits.
+func (mf *memFile) chmod(mode fs.FileMode) {
+	const settable = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
+	mf.mode = mf.mode&^settable | mode&settable
+}
+
+// chown records the owner and group; -1 leaves a value as it is, as in chown(2).
+func (mf *memFile) chown(uid, gid int) {
+	if uid != -1 {
+		mf.uid = uid
+	}
+	if gid != -1 {
+		mf.gid = gid
+	}
 }
 
 // Chown records the owner and group of a file.
 func (m *MemoryFilesystem) Chown(path string, uid, gid int) error {
-	return m.change("chown", path, func(mf *memFile) error {
-		// -1 leaves a value as it is, as in chown(2).
-		if uid != -1 {
-			mf.uid = uid
-		}
-		if gid != -1 {
-			mf.gid = gid
-		}
-		return nil
-	})
+	return m.change("chown", path, func(mf *memFile) error { mf.chown(uid, gid); return nil })
 }
 
 // Chtimes sets the access and modification times of a file.
@@ -526,12 +531,19 @@ func (m *MemoryFilesystem) Access(path string, mode uint32) error {
 	})
 }
 
+// onOpened runs apply on the file the handle opened, under the filesystem's lock.
+func (f *memFileHandle) onOpened(apply func(*memFile) error) error {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+	return apply(f.opened)
+}
+
 // Truncate sets the size of the open file.
 func (f *memFileHandle) Truncate(size int64) error {
 	if !f.writable {
 		return &fs.PathError{Op: "ftruncate", Path: f.path, Err: syscall.EINVAL}
 	}
-	return f.fs.change("ftruncate", f.path, func(mf *memFile) error { return mf.resize("ftruncate", f.path, size) })
+	return f.onOpened(func(mf *memFile) error { return mf.resize("ftruncate", f.path, size) })
 }
 
 // Sync has nothing to flush: writes reach the file at once.
@@ -541,17 +553,17 @@ func (f *memFileHandle) Sync() error {
 
 // Chmod sets the permission bits of the open file.
 func (f *memFileHandle) Chmod(mode fs.FileMode) error {
-	return f.fs.Chmod(f.path, mode)
+	return f.onOpened(func(mf *memFile) error { mf.chmod(mode); return nil })
 }
 
 // Chown records the owner and group of the open file.
 func (f *memFileHandle) Chown(uid, gid int) error {
-	return f.fs.Chown(f.path, uid, gid)
+	return f.onOpened(func(mf *memFile) error { mf.chown(uid, gid); return nil })
 }
 
 // Chtimes sets the access and modification times of the open file.
 func (f *memFileHandle) Chtimes(atime, mtime time.Time) error {
-	return f.fs.Chtimes(f.path, atime, mtime)
+	return f.onOpened(func(mf *memFile) error { mf.accessTime, mf.modTime = atime, mtime; return nil })
 }
 
 var (
