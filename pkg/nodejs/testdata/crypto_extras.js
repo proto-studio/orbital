@@ -104,6 +104,8 @@ const primes = {
   zero: [0], one: [1], negative: [-1], string: ['8'], tooBig: [2 ** 31],
   bigintOption: [8, { bigint: 'x' }], safeOption: [8, { safe: 1 }], addString: [8, { add: '6' }],
   negativeAdd: [8, { add: -6n }],
+  // Few numbers near 32 bits are 2147483659 mod 2147483660; this must still finish.
+  narrowProgression: [32, { add: 2147483660n, rem: 2147483659n, bigint: true }],
 };
 for (const [name, args] of Object.entries(primes)) {
   results['generatePrimeSync_' + name] = outcome(() => {
@@ -117,7 +119,10 @@ for (const [name, args] of Object.entries(primes)) {
       const rem = opts.rem === undefined ? (opts.safe ? 3n : 1n) : (typeof opts.rem === 'bigint' ? opts.rem : BigInt('0x' + Buffer.from(opts.rem).toString('hex')));
       extra.push('rem ' + (n % add === rem));
     }
-    return [show(p), n.toString(2).length, crypto.checkPrimeSync(n), ...extra].join(' ');
+    // With add, OpenSSL may step past size bits, so only a lower bound is fixed.
+    const bits = n.toString(2).length;
+    return [show(p), opts.add !== undefined && typeof opts.add !== 'string' ? 'atLeast ' + (bits >= args[0]) : bits,
+      crypto.checkPrimeSync(n), ...extra].join(' ');
   });
 }
 results.generatePrime_noCallback = outcome(() => crypto.generatePrime(16));
@@ -140,7 +145,17 @@ for (const [name, text] of Object.entries(spkacs)) {
 }
 const corrupt = spkacs.rsaSha256.slice(0, 40) + 'AAAA' + spkacs.rsaSha256.slice(44);
 const tampered = spkacs.rsaSha256.slice(0, 300) + (spkacs.rsaSha256[300] === 'A' ? 'B' : 'A') + spkacs.rsaSha256.slice(301);
-const inputs = { corrupt, tampered, garbage: 'abc', empty: '', u8: new Uint8Array(Buffer.from(spkacs.rsaSha256)) };
+// The ECDSA SPKAC with its signature algorithm changed to RSA-SHA256: the algorithm
+// doesn't match the key, so it doesn't verify.
+const ecDer = Buffer.from(spkacs.ecSha256, 'base64');
+const ecdsaOid = Buffer.from('06082a8648ce3d040302', 'hex');
+const at = ecDer.indexOf(ecdsaOid);
+const rsaOid = Buffer.from('06092a864886f70d01010b0500', 'hex');
+const swapped = Buffer.concat([ecDer.subarray(0, at), rsaOid, ecDer.subarray(at + ecdsaOid.length)]);
+// Two bytes longer: fix the outer SEQUENCE and AlgorithmIdentifier lengths.
+swapped[2] += 3; swapped[at - 1] += 3;
+const wrongAlg = swapped.toString('base64');
+const inputs = { corrupt, tampered, wrongAlg, garbage: 'abc', empty: '', u8: new Uint8Array(Buffer.from(spkacs.rsaSha256)) };
 for (const [name, v] of Object.entries(inputs)) {
   results['spkacInput_' + name] = [
     outcome(() => Certificate.exportChallenge(v)),

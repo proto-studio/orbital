@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"math"
 	"math/big"
 	"strings"
 
@@ -107,9 +108,13 @@ func (c *Crypto) checkPrimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("checkPrime: candidate and checks are required")
 	}
 	n := hexInt(args[0].String())
-	checks := int(args[1].Integer())
+	checks := args[1].Integer()
+	// extras.js checks these, but scripts can reach the native directly.
+	if checks < 0 || checks > math.MaxInt32 {
+		return ctx.Throw("checkPrime: checks out of range")
+	}
 	return c.offThread(ctx, optionalCallback(args, 2), func() (string, error) {
-		if n.ProbablyPrime(checks) {
+		if n.ProbablyPrime(int(checks)) {
 			return "true", nil
 		}
 		return "false", nil
@@ -137,32 +142,44 @@ func generatePrime(bits int, safe bool, add, rem *big.Int) (*big.Int, error) {
 	span := new(big.Int).Set(lo)
 	half := new(big.Int)
 	m := new(big.Int)
+	minimum := big.NewInt(3)
+	if safe {
+		minimum.SetInt64(5)
+	}
+	isWanted := func(p *big.Int) bool {
+		if !p.ProbablyPrime(20) {
+			return false
+		}
+		return !safe || half.Rsh(p, 1).ProbablyPrime(20)
+	}
 	// Give up rather than loop for ever on a combination with no prime.
-	for attempt := 0; attempt < 1<<20; attempt++ {
+	for attempt := 0; attempt < 1<<16; attempt++ {
 		r, err := rand.Int(rand.Reader, span)
 		if err != nil {
 			return nil, err
 		}
 		p := r.Add(r, lo)
-		if add != nil && add.Sign() > 0 {
-			p.Sub(p, m.Mod(p, add))
-			p.Add(p, rem)
-			if p.BitLen() != bits {
-				continue
+		p.SetBit(p, 0, 1)
+		if add == nil || add.Sign() == 0 {
+			if isWanted(p) {
+				return p, nil
 			}
-		} else {
-			p.SetBit(p, 0, 1)
-		}
-		if !p.ProbablyPrime(20) {
 			continue
 		}
-		if safe {
-			half.Rsh(p, 1)
-			if !half.ProbablyPrime(20) {
-				continue
-			}
+		// As OpenSSL's probable_prime_dh: round down to rem mod add, step up
+		// once if that lost the top bit, then try successive values of the
+		// progression. The result can be longer than bits.
+		p.Sub(p, m.Mod(p, add))
+		p.Add(p, rem)
+		if p.BitLen() < bits || p.Cmp(minimum) < 0 {
+			p.Add(p, add)
 		}
-		return p, nil
+		for step := 0; step < 1<<12; step++ {
+			if isWanted(p) {
+				return p, nil
+			}
+			p.Add(p, add)
+		}
 	}
 	return nil, errors.New("error:1C800066:Provider routines::too many attempts")
 }
@@ -176,7 +193,11 @@ func (c *Crypto) generatePrimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 4 {
 		return ctx.Throw("generatePrime: missing arguments")
 	}
-	bits := int(args[0].Integer())
+	size := args[0].Integer()
+	if size < 1 || size > math.MaxInt32 {
+		return ctx.Throw("generatePrime: size out of range")
+	}
+	bits := int(size)
 	safe := args[1].Boolean()
 	var add, rem *big.Int
 	if s := args[2].String(); s != "" {
@@ -255,8 +276,9 @@ func verifySPKAC(signed *spkacSigned, pub any) bool {
 	}
 	msg := signed.PKAC.FullBytes
 	sig := signed.Signature.RightAlign()
+	oid := signed.Algorithm.Algorithm.String()
 	if k, isEd := pub.(ed25519.PublicKey); isEd {
-		return h == 0 && ed25519.Verify(k, msg, sig)
+		return oid == "1.3.101.112" && ed25519.Verify(k, msg, sig)
 	}
 	if h == 0 || !h.Available() {
 		return false
@@ -264,11 +286,12 @@ func verifySPKAC(signed *spkacSigned, pub any) bool {
 	d := h.New()
 	d.Write(msg)
 	sum := d.Sum(nil)
+	// The signature algorithm must be one for the key's type.
 	switch k := pub.(type) {
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(k, h, sum, sig) == nil
+		return strings.HasPrefix(oid, "1.2.840.113549.1.1.") && rsa.VerifyPKCS1v15(k, h, sum, sig) == nil
 	case *ecdsa.PublicKey:
-		return ecdsa.VerifyASN1(k, sum, sig)
+		return strings.HasPrefix(oid, "1.2.840.10045.4.") && ecdsa.VerifyASN1(k, sum, sig)
 	}
 	return false
 }

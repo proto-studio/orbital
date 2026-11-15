@@ -120,7 +120,7 @@
     "value": "undefined undefined"
   },
   "generatePrimeSync_addRem": {
-    "value": "string bigint 8 true rem true"
+    "value": "string bigint atLeast true true rem true"
   },
   "generatePrimeSync_addString": {
     "code": "ERR_INVALID_ARG_TYPE",
@@ -144,7 +144,10 @@
     "value": "string ArrayBuffer 1 8 true"
   },
   "generatePrimeSync_bufferAddRem": {
-    "value": "string bigint 16 true rem true"
+    "value": "string bigint atLeast true true rem true"
+  },
+  "generatePrimeSync_narrowProgression": {
+    "value": "string bigint atLeast true true rem true"
   },
   "generatePrimeSync_negative": {
     "code": "ERR_OUT_OF_RANGE",
@@ -429,6 +432,17 @@
     },
     {
       "value": "boolean true"
+    }
+  ],
+  "spkacInput_wrongAlg": [
+    {
+      "value": "Buffer ec challenge"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaNgEoWxnzzdPwzv8xTCE51UGUTGr\n57NOu4zqbFM0o+ppaUx/6emK2Rd1c1q/Ut41fdcnHf1G8Qx2LtjAwL8I1A==\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean false"
     }
   ],
   "spkac_ecSha256": [
