@@ -15,6 +15,14 @@
       "cipher": null,
       "protocol": "TLSv1.3"
     },
+    "digestExclusionKeepsAEAD": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256",
+      "protocol": "TLSv1.2"
+    },
+    "digestGroupLeavesOutAEAD": {
+      "error": true
+    },
     "excludeGroup": {
       "authorized": true,
       "cipher": "some non-GCM cipher",
@@ -81,6 +89,7 @@
       "message": "error:0A0000B9:SSL routines::no cipher match",
       "reason": "no cipher match"
     },
+    "ciphersSHA256": "ok",
     "ciphersSomeKnown": "ok",
     "ciphersTLS13Only": "ok",
     "ciphersUnknown": {

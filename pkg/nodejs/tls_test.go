@@ -1233,7 +1233,8 @@ const once = (session) => new Promise((resolve) => {
   let got, reused;
   const c = tls.connect({ host: 'localhost', port: %d, session, %s }, () => { reused = c.isSessionReused(); c.write('x'); });
   c.on('session', (s) => { got = s; });
-  c.on('data', () => { if (got) c.end(); });
+  // Give a ticket sent after the handshake time to arrive before closing.
+  c.on('data', () => setTimeout(() => c.end(), 50));
   c.on('close', () => resolve({ reused, session: got }));
 });
 (async () => {
