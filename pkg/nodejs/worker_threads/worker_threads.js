@@ -130,8 +130,15 @@
     memo.set(value, id);
     const tag = objectToString.call(value);
     switch (tag) {
-      case '[object Date]':
-        return { t: 'd', id, v: value.getTime() };
+      case '[object Date]': {
+        const time = value.getTime();
+        return { t: 'd', id, v: Number.isNaN(time) ? 'NaN' : time };
+      }
+      case '[object ArrayBuffer]':
+        return { t: 'ab', id, v: Array.from(new Uint8Array(value)) };
+      case '[object SharedArrayBuffer]':
+        // The V8 serializer only shares one with a transfer list.
+        throw uncloneable();
       case '[object RegExp]':
         return { t: 'r', id, s: value.source, f: value.flags };
       case '[object Error]': {
@@ -175,6 +182,12 @@
     return { t: 'o', id, v: props };
   }
 
+  // defineData adds an own property even where assigning would call a setter, as an own
+  // "__proto__" key would.
+  function defineData(obj, key, value) {
+    Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+  }
+
   function decodeValue(d, refs) {
     switch (d.t) {
       case 'u':
@@ -188,7 +201,9 @@
       case 'ref':
         return refs[d.id];
       case 'd':
-        return (refs[d.id] = new Date(d.v));
+        return (refs[d.id] = new Date(d.v === 'NaN' ? NaN : d.v));
+      case 'ab':
+        return (refs[d.id] = new Uint8Array(d.v).buffer);
       case 'r':
         return (refs[d.id] = new RegExp(d.s, d.f));
       case 'e': {
@@ -215,7 +230,7 @@
       }
       case 'a': {
         const arr = (refs[d.id] = new Array(d.n));
-        for (const [k, v] of d.v) arr[k] = decodeValue(v, refs);
+        for (const [k, v] of d.v) defineData(arr, k, decodeValue(v, refs));
         return arr;
       }
       case 'ta': {
@@ -228,7 +243,7 @@
       }
       case 'o': {
         const obj = (refs[d.id] = {});
-        for (const [k, v] of d.v) obj[k] = decodeValue(v, refs);
+        for (const [k, v] of d.v) defineData(obj, k, decodeValue(v, refs));
         return obj;
       }
     }
@@ -291,7 +306,8 @@
       // Try the next form.
     }
     try {
-      if (error !== null && error !== undefined && hasOwnProp.call(error, inspectCustom)) {
+      // Node checks with `in`, so a class's inspector counts too.
+      if (error !== null && typeof error === 'object' && inspectCustom in error) {
         return JSON.stringify({ k: 'custom', s: inspectValue(error) });
       }
     } catch (e) {
@@ -312,7 +328,7 @@
         const refs = [];
         const descs = {};
         for (const [k, v, enumerable, writable, configurable] of d.p) {
-          descs[k] = { value: decodeValue(v, refs), enumerable, writable, configurable };
+          defineData(descs, k, { value: decodeValue(v, refs), enumerable, writable, configurable });
         }
         descs[Symbol.toStringTag] = { value: 'Error', configurable: true };
         return Object.create(errorCtors[d.c].prototype, descs);
