@@ -120,6 +120,9 @@ type Conn struct {
 	resourceID uint64
 	readErr    error
 	diverted   chan divertedRead
+	// noHold stops a waiting read from keeping the process running. A pipe's transport
+	// holds the event loop itself, only while it has bytes to process.
+	noHold bool
 }
 
 type divertedRead struct {
@@ -218,7 +221,7 @@ func (d *divertedConn) Read(b []byte) (int, error) {
 // updateHold keeps the event loop running while a read is outstanding on a referenced
 // socket. A paused or unreferenced socket does not keep the process alive, as in Node.
 func (c *Conn) updateHoldLocked() {
-	want := c.reading > 0 && c.ref && !c.closed
+	want := c.reading > 0 && c.ref && !c.closed && !c.noHold
 	if want == c.held {
 		return
 	}

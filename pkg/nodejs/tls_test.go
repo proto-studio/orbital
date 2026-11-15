@@ -1477,3 +1477,26 @@ func issueCA(t *testing.T, name string, parent *testCA, key *ecdsa.PrivateKey, p
 	}
 	return &testCA{cert: cert, key: key, pem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}
 }
+
+// TLSSocket carries TLS over any duplex stream, as in Node.
+func TestTLSSocket_WrapsAnyDuplex(t *testing.T) {
+	const scriptPath, expectedPath = "testdata/tls_duplex.js", "testdata/tls_duplex.node.json"
+	if captureFromNode(t) {
+		output, err := exec.Command("node", scriptPath).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		writeExpected(t, expectedPath, results)
+		return
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, string(script))
+	wantJSON(t, got, readExpected(t, expectedPath))
+}
