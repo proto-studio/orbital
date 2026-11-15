@@ -50,6 +50,7 @@ function contexts() {
     ciphersMedium: { ciphers: 'MEDIUM' },
     ciphersNothingLeft: { ciphers: '!ALL' },
     ciphersAllExcluded: { ciphers: 'AESGCM:!ECDHE:!kRSA' },
+    ciphersSHA256: { ciphers: 'SHA256' },
   };
   const out = {};
   for (const [name, options] of Object.entries(cases)) {
@@ -109,6 +110,8 @@ async function connections() {
     excludeGroup: [{ cert, key, ciphers: 'HIGH:!AESGCM', maxVersion: 'TLSv1.2' }, {}, true],
     keywordAndName: [{ cert, key, ciphers: 'DEFAULT:ECDHE-RSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, {}, true],
     tls13OnlyAtMostTLS12: [{ cert, key }, { ciphers: 'TLS_AES_128_GCM_SHA256', maxVersion: 'TLSv1.2' }],
+    digestGroupLeavesOutAEAD: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'SHA256' }],
+    digestExclusionKeepsAEAD: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!SHA256' }],
   };
   const out = {};
   for (const [name, [serverOptions, clientOptions, familyOnly]] of Object.entries(cases)) {

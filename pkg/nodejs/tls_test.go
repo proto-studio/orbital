@@ -1220,8 +1220,9 @@ func TestTLSOptions_MatchesNode(t *testing.T) {
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
 
-// A script's session resumes a connection only when the script's options are in charge.
-// With an embedder's ClientTLSConfig, sessions still arrive but are not offered back.
+// Sessions pass to and from the script only when the script's options are in charge. With
+// an embedder's ClientTLSConfig, they could carry the embedder's client identity, so the
+// script neither receives nor offers them.
 func TestTLSConnect_SessionsAndEmbedderConfig(t *testing.T) {
 	ca := newTestCA(t)
 	port := newTLSServer(t, ca.issue(t, "localhost"))
@@ -1247,7 +1248,7 @@ const once = (session) => new Promise((resolve) => {
 	})
 	t.Run("embedder config", func(t *testing.T) {
 		got := runJS(t, &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}}, script(""))
-		wantJSON(t, got, map[string]any{"gotSession": true, "firstReused": false, "secondReused": false})
+		wantJSON(t, got, map[string]any{"gotSession": false, "firstReused": false, "secondReused": false})
 	})
 	t.Run("a malformed session is ignored", func(t *testing.T) {
 		got := runJS(t, &runtime.Config{}, fmt.Sprintf(`

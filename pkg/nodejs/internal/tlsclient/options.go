@@ -86,10 +86,12 @@ func cipherGroup(word string) ([]suiteInfo, bool) {
 		return match(func(c suiteInfo) bool { return c.mac == "AEAD" }), true
 	case "SHA1", "SHA", "TLSv1", "SSLv3.0":
 		return match(func(c suiteInfo) bool { return c.mac == "SHA1" }), true
+	// The digest groups go by the record MAC, so AEAD suites are in none of them, and
+	// crypto/tls has no suite with a SHA-384 MAC.
 	case "SHA256":
-		return match(func(c suiteInfo) bool { return c.mac == "SHA256" || c.enc == "AES128GCM" || c.enc == "CHACHA20" }), true
+		return match(func(c suiteInfo) bool { return c.mac == "SHA256" }), true
 	case "SHA384":
-		return match(func(c suiteInfo) bool { return c.enc == "AES256GCM" }), true
+		return nil, true
 	case "TLSv1.2":
 		return match(func(c suiteInfo) bool { return c.mac != "SHA1" }), true
 	}
