@@ -1117,12 +1117,13 @@
     constructor(path, entries) {
       this._path = path;
       this._entries = entries;
+      this._next = 0; // the next entry to give, so reading doesn't shift the array
       this._closed = false;
     }
     get path() { return this._path; }
     readSync() {
       if (this._closed) throw dirClosed();
-      return this._entries.length ? this._entries.shift() : null;
+      return this._next < this._entries.length ? this._entries[this._next++] : null;
     }
     read(callback) {
       if (typeof callback !== 'function') {
