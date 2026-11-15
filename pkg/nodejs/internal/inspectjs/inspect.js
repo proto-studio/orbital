@@ -186,10 +186,14 @@
     (typeof SharedArrayBuffer === 'function' && mayBe(value, SharedArrayBuffer));
 
   // constructorName is the name util.inspect gives value's constructor: that of the first
-  // named constructor on its prototype chain that value is an instance of, or null when there's
-  // none. A proxy whose traps throw while it's looked at is named Object, as Node, which
-  // inspects a proxy's target, would name a plain one.
-  function constructorName(value) {
+  // named constructor on its prototype chain that value is an instance of. Without one, it's null
+  // when value has no prototype, and otherwise, as Node's getConstructorName has it, the kind of
+  // value with its prototype described in angle brackets: Object <[Object: null prototype] {}>.
+  // budget is how many more levels deep the value may print; past it, the prototype is
+  // <Complex prototype>. A proxy whose traps throw while it's looked at is named Object, as
+  // Node, which inspects a proxy's target, would name a plain one.
+  function constructorName(value, budget = Infinity) {
+    let first;
     try {
       for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
         const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
@@ -197,11 +201,22 @@
             isInstance(value, desc.value)) {
           return String(desc.value.name);
         }
+        if (obj === value) first = Object.getPrototypeOf(obj);
       }
+      if (first === null) return null;
+      // Node asks V8 for the kind, which knows how value was made; Array or Object covers the
+      // values that get here.
+      const kind = Array.isArray(value) ? 'Array' : 'Object';
+      if (budget < 0) return `${kind} <Complex prototype>`;
+      const inner = constructorName(first, budget - 1);
+      if (inner !== null) return `${kind} <${inner}>`;
+      // Node inspects the prototype with a depth of -1: its braces when it has no keys, and
+      // otherwise its name alone.
+      const proto = keys(first).length === 0 ? `${objectPrefix(first)}{}` : cutLabel(first, objectFallback(first, tagOf(first)));
+      return `${kind} <${proto}>`;
     } catch (e) {
       return 'Object';
     }
-    return null;
   }
   const isInstance = (value, ctor) => {
     try {
@@ -264,9 +279,9 @@
 
   // objectPrefix is what util.inspect puts before a plain object's brace, with a space after it:
   // nothing for an Object without a toStringTag to show, the class of an instance, or
-  // [Object: null prototype] without a prototype.
-  function objectPrefix(value) {
-    const ctor = constructorName(value);
+  // [Object: null prototype] without a prototype. budget is as for constructorName.
+  function objectPrefix(value, budget = Infinity) {
+    const ctor = constructorName(value, budget);
     const tag = tagOf(value);
     if (ctor === 'Object' && tag === '') return '';
     return label(ctor, tag, ctor === null ? objectFallback(value, tag) : 'Object') + ' ';
@@ -283,9 +298,10 @@
   }
 
   // cutLabel is how util.inspect names value, a kind of object named fallback, past the depth
-  // limit: its constructor's name in brackets, or [fallback: null prototype].
+  // limit: its constructor's name in brackets, or [fallback: null prototype]. Past the limit, a
+  // prototype without a constructor is <Complex prototype>.
   function cutLabel(value, fallback) {
-    const ctor = constructorName(value);
+    const ctor = constructorName(value, -1);
     const text = label(ctor, tagOf(value), fallback);
     return ctor === null ? text : `[${text}]`;
   }

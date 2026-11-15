@@ -20,6 +20,9 @@
   // holds the outer calls' trackers meanwhile.
   let track = inspectShared.tracker();
   const suspended = [];
+  // objectPrefix is inspect's for a plain object at level, which the console prints at
+  // util.inspect's default depth of 2.
+  const objectPrefix = (value, level) => inspectShared.objectPrefix(value, 2 - level);
   return {
     quote: inspectShared.quote,
     string: (str, level) => inspectShared.string(ctx, str, level),
@@ -75,8 +78,8 @@
     reduceArray: (output, level, numbers, ref, value) =>
       inspectShared.reduce(ctx, output, inspectShared.arrayPrefix(value) + '[', ']', level, { array: true, numbers, ref }),
     reduceObject: (output, level, value, ref) =>
-      inspectShared.reduce(ctx, output, inspectShared.objectPrefix(value) + '{', '}', level, { ref }),
-    objectPrefix: inspectShared.objectPrefix,
+      inspectShared.reduce(ctx, output, objectPrefix(value, level) + '{', '}', level, { ref }),
+    objectPrefix,
     arrayPrefix: inspectShared.arrayPrefix
   };
 })()

@@ -241,3 +241,14 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
       k: Object.setPrototypeOf(new Map([[1, 1]]), null), l: new Bytes(1), m: Object.setPrototypeOf(new Uint8Array(1), null),
       n: tag(Object.assign(Object.create(null), { x: 1 }), 'T', true), o: new MyArr() } } });
 }
+// An object whose prototype chain has no named constructor but doesn't end right away is named
+// after its kind with its prototype described in angle brackets, <Complex prototype> past the
+// depth limit.
+{
+  const np = Object.create(null);
+  show(Object.create(np), Object.assign(Object.create(np), { a: 1 }), Object.create(Object.assign(Object.create(null), { x: 1 })),
+    Object.create(Object.create(Object.create(null))), Object.create(Object.create(Object.create(Object.create(null)))),
+    { a: { b: { c: Object.assign(Object.create(np), { z: 1 }), d: Object.create(Object.create(Object.create(Object.create(null)))) } } },
+    Object.create(Object.setPrototypeOf({ q: 1 }, Object.create(null))), { a: Object.create(Object.create(Object.create(null))) });
+  console.log(u.inspect(Object.create(Object.create(Object.create(null))), { depth: 0 }), u.inspect({ a: Object.create(np) }, { depth: null }));
+}

@@ -239,7 +239,7 @@
 
 		function formatObject(obj, depth) {
 			const keys = inspectShared.keys(obj);
-			const prefix = inspectShared.objectPrefix(obj);
+			const prefix = inspectShared.objectPrefix(obj, opts.depth === null ? Infinity : opts.depth - depth);
 			if (keys.length === 0) return prefix + '{}';
 
 			layout.currentDepth = depth;
