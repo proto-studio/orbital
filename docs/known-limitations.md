@@ -210,9 +210,15 @@ traceability.
   `verify`, `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
   passes, but native `node:crypto` consumers of them will not work. (#141)
-- **[gap] `node:crypto` KDFs.** `pbkdf2` / `pbkdf2Sync`, `scrypt` / `scryptSync`,
-  and `hkdf` / `hkdfSync` are absent from `node:crypto`. (WebCrypto has a native
-  PBKDF2 for `deriveBits`; it is not surfaced on `node:crypto`.) (#142)
+- **[gap] Some digest names Node accepts are unknown.** `pbkdf2` and `hkdf` take the
+  digests Go's standard library has (MD5, SHA-1, SHA-2 including SHA-512/224 and /256,
+  SHA-3) under Node's names and aliases (`RSA-SHA256`, `sha256WithRSAEncryption`,
+  `sha-256`, …), matched without regard to case (`digests.go`). `ripemd160`, `blake2b512`,
+  `blake2s256`, `sm3`, `md5-sha1` and the `shake` functions throw
+  `ERR_CRYPTO_INVALID_DIGEST`.
+- **[approx] scrypt parameter errors don't carry over an earlier OpenSSL error.** Once
+  one scrypt call fails the memory limit, Node adds that message to later
+  `Invalid scrypt params` errors too; Orbital gives each error its own reason.
 - **[gap] `node:crypto` introspection is partial.** `getHashes()` returns only
   `md5, sha1, sha256, sha384, sha512` (`crypto.go`); Node lists far more. There
   is no `getCiphers()` / `getCurves()` / `X509Certificate`. (#143)
