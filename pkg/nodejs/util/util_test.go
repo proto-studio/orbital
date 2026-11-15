@@ -576,3 +576,22 @@ func TestUtil_InspectProxyThrowingWhileNamed(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// An array whose prototype chain has no constructor is named within the depth limit, like an
+// object: a chain of 1000 prototypes ends in <Complex prototype>.
+func TestUtil_InspectArrayLongPrototypeChain(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		let chain = null;
+		for (let i = 0; i < 1000; i++) chain = Object.create(chain);
+		__util_module.inspect(Object.setPrototypeOf([1], chain));
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "Array <Object <Object <Object <Complex prototype>>>>(1) [ 1 ]"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

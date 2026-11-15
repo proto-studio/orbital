@@ -20,9 +20,10 @@
   // holds the outer calls' trackers meanwhile.
   let track = inspectShared.tracker();
   const suspended = [];
-  // objectPrefix is inspect's for a plain object at level, which the console prints at
-  // util.inspect's default depth of 2.
+  // objectPrefix and arrayPrefix are inspect's for a plain object or array at level, which the
+  // console prints at util.inspect's default depth of 2.
   const objectPrefix = (value, level) => inspectShared.objectPrefix(value, 2 - level);
+  const arrayPrefix = (value, level) => inspectShared.arrayPrefix(value, 2 - level);
   return {
     quote: inspectShared.quote,
     string: (str, level) => inspectShared.string(ctx, str, level),
@@ -76,10 +77,10 @@
     // reduceArray and reduceObject lay out the entries of an array or plain object, value, named
     // before its bracket or brace when Node names it, as a subclass is, with ref first.
     reduceArray: (output, level, numbers, ref, value) =>
-      inspectShared.reduce(ctx, output, inspectShared.arrayPrefix(value) + '[', ']', level, { array: true, numbers, ref }),
+      inspectShared.reduce(ctx, output, arrayPrefix(value, level) + '[', ']', level, { array: true, numbers, ref }),
     reduceObject: (output, level, value, ref) =>
       inspectShared.reduce(ctx, output, objectPrefix(value, level) + '{', '}', level, { ref }),
     objectPrefix,
-    arrayPrefix: inspectShared.arrayPrefix
+    arrayPrefix
   };
 })()

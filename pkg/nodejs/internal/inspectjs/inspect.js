@@ -289,9 +289,9 @@
 
   // arrayPrefix is what util.inspect puts before an array's bracket, with a space after it:
   // nothing for a plain Array, or the name and length of a subclass, a tagged array or one
-  // without a prototype.
-  function arrayPrefix(value) {
-    const ctor = constructorName(value);
+  // without a prototype. budget is as for constructorName.
+  function arrayPrefix(value, budget = Infinity) {
+    const ctor = constructorName(value, budget);
     const tag = tagOf(value);
     if (ctor === 'Array' && tag === '') return '';
     return label(ctor, tag, 'Array', `(${value.length})`) + ' ';
