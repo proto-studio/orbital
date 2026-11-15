@@ -47,21 +47,21 @@ func TestNet_ListenOnInheritedSocket(t *testing.T) {
 	t.Run("an allowed descriptor", func(t *testing.T) {
 		fd, port := inheritedListener(t)
 		factory := runtime.NewRealSocketFactory()
-		factory.AllowInheritedListeners(fd)
+		factory.AllowInheritedDescriptors(fd)
 		got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(inheritedScript, fmt.Sprintf("{ fd: %d }", fd), port))
 		wantJSON(t, got, map[string]any{"listening": true, "reply": "hello"})
 	})
 	t.Run("as a handle", func(t *testing.T) {
 		fd, port := inheritedListener(t)
 		factory := runtime.NewRealSocketFactory()
-		factory.AllowInheritedListeners(fd)
+		factory.AllowInheritedDescriptors(fd)
 		got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(inheritedScript, fmt.Sprintf("{ handle: { fd: %d } }", fd), port))
 		wantJSON(t, got, map[string]any{"listening": true, "reply": "hello"})
 	})
 	t.Run("through a policy that allows it", func(t *testing.T) {
 		fd, port := inheritedListener(t)
 		factory := runtime.NewRealSocketFactory()
-		factory.AllowInheritedListeners(fd)
+		factory.AllowInheritedDescriptors(fd)
 		filtered := runtime.NewFilteredSocketFactory(factory, runtime.NewAllowAllPolicy())
 		got := runJS(t, &runtime.Config{SocketFactory: filtered}, fmt.Sprintf(inheritedScript, fmt.Sprintf("{ fd: %d }", fd), port))
 		wantJSON(t, got, map[string]any{"listening": true, "reply": "hello"})
@@ -69,7 +69,7 @@ func TestNet_ListenOnInheritedSocket(t *testing.T) {
 	t.Run("a policy that refuses it", func(t *testing.T) {
 		fd, port := inheritedListener(t)
 		factory := runtime.NewRealSocketFactory()
-		factory.AllowInheritedListeners(fd)
+		factory.AllowInheritedDescriptors(fd)
 		filtered := runtime.NewFilteredSocketFactory(factory, runtime.NewDenyAllPolicy())
 		got := runJS(t, &runtime.Config{SocketFactory: filtered}, fmt.Sprintf(inheritedScript, fmt.Sprintf("{ fd: %d }", fd), port))
 		if got["error"] == nil || got["listening"] != nil {
@@ -99,7 +99,7 @@ func TestRealSocketFactory_ListenInheritedOnlyTCP(t *testing.T) {
 	defer r.Close()
 	defer w.Close()
 	factory := runtime.NewRealSocketFactory()
-	factory.AllowInheritedListeners(int(r.Fd()))
+	factory.AllowInheritedDescriptors(int(r.Fd()))
 	if _, err := factory.ListenInherited(int(r.Fd())); err == nil {
 		t.Fatal("listened on a pipe")
 	}
@@ -130,7 +130,7 @@ func TestRealSocketFactory_ListenInheritedChecksAndKeepsTheDescriptor(t *testing
 	fd, _ := inheritedListener(t)
 	func() {
 		factory := runtime.NewRealSocketFactory()
-		factory.AllowInheritedListeners(int(connected.Fd()), fd)
+		factory.AllowInheritedDescriptors(int(connected.Fd()), fd)
 		if _, err := factory.ListenInherited(int(connected.Fd())); !errors.Is(err, runtime.ErrNotInherited) {
 			t.Fatalf("connected socket: err = %v", err)
 		}
@@ -164,4 +164,105 @@ server.listen(0, '127.0.0.1', () => {
   server.close(() => setImmediate(() => done({ error, calls })));
 });`)
 	wantJSON(t, got, map[string]any{"error": "ERR_INVALID_ARG_VALUE", "calls": []any{"listening"}})
+}
+
+// new net.Socket({ fd }) wraps a connected socket or a pipe the factory allows, as in Node,
+// and refuses other descriptors with Node's ERR_INVALID_FD_TYPE.
+func TestNet_SocketFromInheritedDescriptor(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte("hello"))
+			c.Close()
+		}
+	}()
+	connectedFD := func(t *testing.T) int {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := c.(*net.TCPConn).File()
+		c.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() })
+		return int(f.Fd())
+	}
+	const script = `
+const net = require('net');
+let s;
+try { s = new net.Socket({ fd: %d }); } catch (e) { done({ error: e.code, message: e.message, name: e.name }); }
+if (s) {
+  let got = '';
+  s.on('data', (d) => { got += d; });
+  s.on('error', (e) => done({ error: e.code }));
+  s.on('end', () => { s.destroy(); done({ got, remote: s.remoteAddress === undefined ? null : s.remoteAddress }); });
+}`
+	t.Run("a connected socket", func(t *testing.T) {
+		fd := connectedFD(t)
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowInheritedDescriptors(fd)
+		got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(script, fd))
+		wantJSON(t, got, map[string]any{"got": "hello", "remote": "127.0.0.1"})
+	})
+	t.Run("a pipe", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		w.Write([]byte("hello"))
+		w.Close()
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowAllInheritedDescriptors()
+		got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(script, r.Fd()))
+		wantJSON(t, got, map[string]any{"got": "hello", "remote": nil})
+	})
+	t.Run("a file", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowAllInheritedDescriptors()
+		got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(script, f.Fd()))
+		wantJSON(t, got, map[string]any{"error": "ERR_INVALID_FD_TYPE", "message": "Unsupported fd type: FILE", "name": "TypeError"})
+	})
+	t.Run("not allowed", func(t *testing.T) {
+		fd := connectedFD(t)
+		for _, factory := range []runtime.SocketFactory{nil, runtime.NewRealSocketFactory()} {
+			got := runJS(t, &runtime.Config{SocketFactory: factory}, fmt.Sprintf(script, fd))
+			wantJSON(t, got, map[string]any{"error": "ERR_INVALID_FD_TYPE", "message": "Unsupported fd type: UNKNOWN", "name": "TypeError"})
+		}
+	})
+	t.Run("through a policy", func(t *testing.T) {
+		fd := connectedFD(t)
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowAllInheritedDescriptors()
+		got := runJS(t, &runtime.Config{SocketFactory: runtime.NewFilteredSocketFactory(factory, runtime.NewAllowAllPolicy())}, fmt.Sprintf(script, fd))
+		wantJSON(t, got, map[string]any{"got": "hello", "remote": "127.0.0.1"})
+		got = runJS(t, &runtime.Config{SocketFactory: runtime.NewFilteredSocketFactory(factory, runtime.NewDenyAllPolicy())}, fmt.Sprintf(script, connectedFD(t)))
+		if got["error"] == nil || got["got"] != nil {
+			t.Fatalf("a denied peer was wrapped: %v", got)
+		}
+		// A pipe has no peer for the policy to check.
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		defer w.Close()
+		got = runJS(t, &runtime.Config{SocketFactory: runtime.NewFilteredSocketFactory(factory, runtime.NewAllowAllPolicy())}, fmt.Sprintf(script, r.Fd()))
+		wantJSON(t, got, map[string]any{"error": "ERR_INVALID_FD_TYPE", "message": "Unsupported fd type: UNKNOWN", "name": "TypeError"})
+	})
 }
