@@ -579,11 +579,19 @@ const processWarningJS = `(function () {
 		return err;
 	}
 
+	// A program can freeze Error or make stackTraceLimit read-only.
+	function stackTraceLimitWritable() {
+		var desc = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit');
+		if (desc === undefined) return Object.isExtensible(Error);
+		return Object.prototype.hasOwnProperty.call(desc, 'writable') ? desc.writable : desc.set !== undefined;
+	}
+
 	function createWarningObject(message, type, code, ctor, detail) {
 		var limit = Error.stackTraceLimit;
-		Error.stackTraceLimit = 0;
+		var writable = stackTraceLimitWritable();
+		if (writable) Error.stackTraceLimit = 0;
 		var warning = new Error(message);
-		Error.stackTraceLimit = limit;
+		if (writable) Error.stackTraceLimit = limit;
 		warning.name = String(type || 'Warning');
 		if (code !== undefined) warning.code = code;
 		if (detail !== undefined) warning.detail = detail;
@@ -623,7 +631,8 @@ const processWarningJS = `(function () {
 		}
 		if (warning.name === 'DeprecationWarning') {
 			if (process.noDeprecation) return;
-			if (process.throwDeprecation) throw warning;
+			// Thrown a tick later, after the warnings already queued, as in Node.
+			if (process.throwDeprecation) return process.nextTick(function () { throw warning; });
 		}
 		process.nextTick(doEmitWarning, warning);
 	};
