@@ -2143,7 +2143,7 @@ namespace {
 // Buffer.prototype, which the caller passes in.
 enum ViewType : uint32_t {
   kInt8 = 0, kUint8, kUint8Clamped, kInt16, kUint16, kInt32, kUint32, kFloat32, kFloat64,
-  kDataView, kBuffer, kBigInt64, kBigUint64, kViewTypeCount
+  kDataView, kBuffer, kBigInt64, kBigUint64, kFloat16, kViewTypeCount
 };
 
 // inheritsFrom reports whether proto is on object's prototype chain. A typed array is not a
@@ -2176,13 +2176,14 @@ bool viewTypeOf(Local<Object> object, Local<Value> buffer_proto, uint32_t* type)
   else if (object->IsDataView()) { *type = kDataView; }
   else if (object->IsBigInt64Array()) { *type = kBigInt64; }
   else if (object->IsBigUint64Array()) { *type = kBigUint64; }
+  else if (object->IsFloat16Array()) { *type = kFloat16; }
   else { return false; }
   return true;
 }
 
 size_t elementSize(uint32_t type) {
   switch (type) {
-    case kInt16: case kUint16: return 2;
+    case kInt16: case kUint16: case kFloat16: return 2;
     case kInt32: case kUint32: case kFloat32: return 4;
     case kFloat64: case kBigInt64: case kBigUint64: return 8;
     default: return 1;
@@ -2205,6 +2206,7 @@ Local<Object> makeView(Isolate* isolate, Local<Context> context, uint32_t type,
     case kDataView: return DataView::New(buffer, 0, length);
     case kBigInt64: return BigInt64Array::New(buffer, 0, n);
     case kBigUint64: return BigUint64Array::New(buffer, 0, n);
+    case kFloat16: return Float16Array::New(buffer, 0, n);
     case kBuffer: {
       Local<Uint8Array> view = Uint8Array::New(buffer, 0, n);
       if (!buffer_proto.IsEmpty() && buffer_proto->IsObject()) {
@@ -2232,6 +2234,12 @@ class ViewSerializerDelegate : public ValueSerializer::Delegate {
       return ValueSerializer::Delegate::WriteHostObject(isolate, object);
     }
     Local<ArrayBufferView> view = object.As<ArrayBufferView>();
+    // Node copies a view through a new Uint8Array over its buffer, which fails once the
+    // buffer is detached.
+    if (view->Buffer()->WasDetached()) {
+      ThrowDataCloneError(String::NewFromUtf8Literal(isolate, "Cannot clone a view of a detached ArrayBuffer"));
+      return Nothing<bool>();
+    }
     size_t length = view->ByteLength();
     if (length > 0xFFFFFFFFu) {
       ThrowDataCloneError(String::NewFromUtf8Literal(isolate, "Array buffer view is too large"));

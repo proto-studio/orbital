@@ -387,13 +387,18 @@ const cases = [
   'const m = new Map([[1, 2]]); m[Symbol.iterator] = function* () { yield [9, 9]; }; throw { m };',
   'JSON.stringify = () => "{}"; const e = new RangeError("json"); e.code = "J"; throw e;',
   'const b = Buffer.from("hi"); Object.setPrototypeOf(b, Object.create(Buffer.prototype)); const e = new Error("sub"); e.buf = b; throw e;',
+  'globalThis.require = () => ({ inspect: () => "FAKE" }); throw { f() {} };',
+  'const e = new Error("cg"); Object.defineProperty(e, "cause", { get() { throw new Error("no"); }, configurable: true }); throw e;',
+  'Number.prototype[Symbol.for("nodejs.util.inspect.custom")] = () => "boxed"; throw 1;',
+  'const u = new Uint8Array(4); if (typeof u.buffer.transfer === "function") u.buffer.transfer(); else { const c = new (require("worker_threads").MessageChannel)(); c.port1.postMessage(null, [u.buffer]); c.port1.close(); } const e = new Error("det"); e.u = u; e.code = 9; throw e;',
 ];
 const describe = (e) => {
+  if (e instanceof Error && e.message === 'cg') return 'Error cg hasCause=' + Object.prototype.hasOwnProperty.call(e, 'cause');
   if (typeof e === 'symbol') return 'symbol ' + String(e) + ' registered=' + (Symbol.keyFor(e) !== undefined);
   // Inspected text is cut at its first brace: util.inspect itself is not under test.
   if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e).replace(/ ?\{[\s\S]*$/, ' {...}');
   if (e instanceof DataView) return 'DataView ' + new Uint8Array(e.buffer, e.byteOffset, e.byteLength).join(',');
-  if (Object.getPrototypeOf(e) === null) return 'null prototype ' + require('util').inspect(e);
+  if (Object.getPrototypeOf(e) === null) return 'null prototype ' + require('util').inspect(e) + ' hasCause=' + Object.prototype.hasOwnProperty.call(e, 'cause');
   if (e instanceof ArrayBuffer) return 'ArrayBuffer ' + new Uint8Array(e).join(',');
   const props = Object.getOwnPropertyNames(e).filter((k) => k !== 'stack').sort()
     .map((k) => k + '=' + (typeof e[k] === 'object' && e[k] !== null ? Object.prototype.toString.call(e[k]) : String(e[k])) +
@@ -407,7 +412,8 @@ const describe = (e) => {
       (k === 'cause' && e[k] instanceof Error ? ':' + e[k].constructor.name + ',' + e[k].message + ',code=' + e[k].code + ',own=' + Object.getOwnPropertyNames(e[k]).filter((n) => n !== 'stack').sort() : '') +
       (k === 'ro' ? ':writable=' + Object.getOwnPropertyDescriptor(e, k).writable : '') +
       (k === 'm' ? ':' + JSON.stringify([...e[k]]) : '') +
-      (k === 'buf' ? ':isBuffer=' + Buffer.isBuffer(e[k]) + ',read=' + (typeof e[k].readUInt16LE === 'function' ? e[k].readUInt16LE(0) : '-') : ''));
+      (k === 'buf' ? ':isBuffer=' + Buffer.isBuffer(e[k]) + ',read=' + (typeof e[k].readUInt16LE === 'function' ? e[k].readUInt16LE(0) : '-') : '') +
+      (k === 'h' ? ':' + Object.prototype.toString.call(e[k]) + ',' + Array.from(e[k]).map((x) => Object.is(x, -0) ? '-0' : x) : ''));
   return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
     typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
 };
@@ -441,7 +447,7 @@ next(0);
 		"Error true [object Error] string - buf=[object ArrayBuffer]:1,2:isBuffer=false,read=- message=ab name=Error",
 		"Error true [object Error] string - message=sab",
 		"Object false [object Object] undefined - __proto__=[object Object]:own flag=undefined a=1",
-		"null prototype CUSTOM C",
+		"null prototype CUSTOM C hasCause=false",
 		"Error true [object Error] string - d=[object Date]:NaN message=d name=Error",
 		"DataView 2,3",
 		"TypeError true [object Error] string - code=E_TEST message=boom name=TypeError view=[object DataView]:DataView:0,0",
@@ -463,6 +469,10 @@ next(0);
 		"Object false [object Object] undefined - m=[object Map]:[[1,2]]",
 		"RangeError true [object Error] string - code=J message=json name=RangeError",
 		"Error true [object Error] string - buf=[object Uint8Array]:Buffer:104,105:isBuffer=true,read=26984 message=sub name=Error",
+		"string  {...}",
+		"Error cg hasCause=false",
+		"number 1",
+		"Error true [object Error] string - message=det",
 	}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
@@ -752,5 +762,28 @@ func TestRunModuleAfterUncaught(t *testing.T) {
 	}
 	if !val.IsUndefined() {
 		t.Error("a module ran after the runtime ended")
+	}
+}
+
+// Float16Array is newer than Node 20, so this is checked without a Node capture: the view
+// keeps its type and values, -0 included, as the other typed arrays do.
+func TestWorkerErrorKeepsFloat16Array(t *testing.T) {
+	notes, err := runUncaught(t, `
+if (typeof Float16Array !== 'function') {
+  note('no Float16Array');
+} else {
+  const { Worker } = require('worker_threads');
+  const w = new Worker('const e = new Error("f16"); e.h = new Float16Array([1.5, -0]); throw e;', { eval: true });
+  w.on('error', (e) => note(Object.prototype.toString.call(e.h), Array.from(e.h).map((x) => Object.is(x, -0) ? '-0' : x).join(',')));
+}
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if len(notes) == 1 && notes[0] == "no Float16Array" {
+		t.Skip("this V8 has no Float16Array")
+	}
+	if want := []string{"[object Float16Array] 1.5,-0"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
