@@ -132,6 +132,48 @@ async function main() {
     }
   }
 
+  // Decoding stops at padding; stray characters are skipped.
+  for (const k of ['YQ==Yg', 'YQ=Yg', 'Y=Q', 'YWJj=ZA', 'YW=JjZA', 'Y!W*Jj']) {
+    try {
+      const key = await s.importKey('jwk', { kty: 'oct', k }, { name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
+      results['hmacK_' + k] = Buffer.from(await s.exportKey('raw', key)).toString('hex');
+    } catch (e) {
+      results['hmacK_' + k] = { name: e.name, message: e.message };
+    }
+  }
+
+  // Only known operations count as duplicates.
+  for (const [name, ops] of Object.entries({ dupUnknown: ['sign', 'bogus', 'bogus'], dupUnused: ['sign', 'verify', 'verify'], dupOtherCase: ['sign', 'Sign', 'Sign'] })) {
+    try {
+      results['keyOps_' + name] = (await s.importKey('jwk', { kty: 'oct', k: 'AAAA', key_ops: ops }, { name: 'HMAC', hash: 'SHA-256' }, true, ['sign'])).type;
+    } catch (e) {
+      results['keyOps_' + name] = { name: e.name, message: e.message };
+    }
+  }
+
+  // EC members are integers: leading zero bytes may be dropped or added. These keys
+  // were made by Node; the first has a leading zero byte in x, the second in d.
+  const shortX = { kty: 'EC', crv: 'P-256', x: 'Zv2aYhAJMR6VhMQvojXQfZIeWiJ_urg1N3heV8i2rg', y: 'G7SeCPh_LhZfN75eN16By4QhcxM6AhS9d39ppN2UCX4', d: 'wW9F_nk7T7lWeqG55Rj9NXFNT--xCHhvRquX_dAPtFg' };
+  const shortD = { kty: 'EC', crv: 'P-256', x: 'NXD7gTPIRjWTfv0ia_QZWCoPqekKueF_mTV3tji_DL4', y: 'H2XfA3ayWcqfx0GGgwO7jddxodETpyf_xzNel_NitTk', d: 'tRqH3oV8BnnX8hTwz5O1MHEkhcBIFRdgQRJ9C2i7Vw' };
+  const generator = { kty: 'EC', crv: 'P-256', x: 'axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY', y: 'T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU', d: 'AQ' };
+  const longX = { kty: 'EC', crv: 'P-256', x: 'AABm_ZpiEAkxHpWExC-iNdB9kh5aIn-6uDU3eF5XyLau', y: shortX.y };
+  const ecCases = {
+    shortXPublic: [{ kty: 'EC', crv: 'P-256', x: shortX.x, y: shortX.y }, ['verify']],
+    shortXPrivate: [shortX, ['sign']],
+    shortD: [shortD, ['sign']],
+    generatorD1: [generator, ['sign']],
+    longXPublic: [longX, ['verify']],
+  };
+  for (const [name, [jwk, usages]] of Object.entries(ecCases)) {
+    try {
+      const key = await s.importKey('jwk', jwk, ECDSA, true, usages);
+      const out = await s.exportKey('jwk', key);
+      results['ecShort_' + name] = [key.type, out.x, out.y, out.d];
+    } catch (e) {
+      results['ecShort_' + name] = { name: e.name, message: e.message };
+    }
+  }
+
   // Members are stored as Node would re-encode them.
   const padded = await s.importKey('jwk', { ...ecPub, x: ecPub.x + '=' }, ECDSA, true, ['verify']);
   results.paddedExportsCanonical = (await s.exportKey('jwk', padded)).x === ecPub.x;

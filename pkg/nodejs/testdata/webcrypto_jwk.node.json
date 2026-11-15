@@ -45,6 +45,36 @@
   "aes_ok": {
     "type": "secret"
   },
+  "ecShort_generatorD1": [
+    "private",
+    "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+    "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE"
+  ],
+  "ecShort_longXPublic": [
+    "public",
+    "AGb9mmIQCTEelYTEL6I10H2SHloif7q4NTd4XlfItq4",
+    "G7SeCPh_LhZfN75eN16By4QhcxM6AhS9d39ppN2UCX4",
+    null
+  ],
+  "ecShort_shortD": [
+    "private",
+    "NXD7gTPIRjWTfv0ia_QZWCoPqekKueF_mTV3tji_DL4",
+    "H2XfA3ayWcqfx0GGgwO7jddxodETpyf_xzNel_NitTk",
+    "ALUah96FfAZ51_IU8M-TtTBxJIXASBUXYEESfQtou1c"
+  ],
+  "ecShort_shortXPrivate": [
+    "private",
+    "AGb9mmIQCTEelYTEL6I10H2SHloif7q4NTd4XlfItq4",
+    "G7SeCPh_LhZfN75eN16By4QhcxM6AhS9d39ppN2UCX4",
+    "wW9F_nk7T7lWeqG55Rj9NXFNT--xCHhvRquX_dAPtFg"
+  ],
+  "ecShort_shortXPublic": [
+    "public",
+    "AGb9mmIQCTEelYTEL6I10H2SHloif7q4NTd4XlfItq4",
+    "G7SeCPh_LhZfN75eN16By4QhcxM6AhS9d39ppN2UCX4",
+    null
+  ],
   "ec_alg_bad": {
     "message": "JWK \"alg\" does not match the requested algorithm",
     "name": "DataError"
@@ -195,6 +225,12 @@
   "ext_string": {
     "type": "secret"
   },
+  "hmacK_Y!W*Jj": "616263",
+  "hmacK_Y=Q": "",
+  "hmacK_YQ==Yg": "61",
+  "hmacK_YQ=Yg": "61",
+  "hmacK_YW=JjZA": "61",
+  "hmacK_YWJj=ZA": "616263",
   "hmac_alg_mismatch": {
     "message": "JWK \"alg\" does not match the requested algorithm",
     "name": "DataError"
@@ -234,6 +270,12 @@
   "jwk_string": {
     "message": "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument can not be converted to a dictionary",
     "name": "TypeError"
+  },
+  "keyOps_dupOtherCase": "secret",
+  "keyOps_dupUnknown": "secret",
+  "keyOps_dupUnused": {
+    "message": "Duplicate key operation",
+    "name": "DataError"
   },
   "keyops_bogus": {
     "type": "secret"

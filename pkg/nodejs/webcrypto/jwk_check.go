@@ -15,7 +15,8 @@ import (
 // DataError instead of later.
 
 // decodeBase64Lenient decodes base64 or base64url as Node's decoder does:
-// either alphabet is accepted, and padding and other characters are skipped.
+// either alphabet is accepted, decoding stops at the first padding character,
+// and other characters are skipped.
 func decodeBase64Lenient(s string) []byte {
 	out := make([]byte, 0, len(s)*3/4)
 	var acc uint32
@@ -34,6 +35,9 @@ func decodeBase64Lenient(s string) []byte {
 			v = 62
 		case c == '/' || c == '_':
 			v = 63
+		case c == '=':
+			i = len(s)
+			continue
 		default:
 			continue
 		}
@@ -71,15 +75,34 @@ type jwkCheckResult struct {
 	Error string `json:"error,omitempty"`
 	// Canonical base64url of the decoded members, to store in place of the
 	// caller's spelling.
-	K string `json:"k,omitempty"`
-	X string `json:"x,omitempty"`
-	Y string `json:"y,omitempty"`
-	D string `json:"d,omitempty"`
+	K *string `json:"k,omitempty"`
+	X *string `json:"x,omitempty"`
+	Y *string `json:"y,omitempty"`
+	D *string `json:"d,omitempty"`
 	// KeyBytes is the length of an oct key.
 	KeyBytes int `json:"keyBytes"`
 }
 
 const invalidKeyData = "Invalid keyData"
+
+func b64uPtr(b []byte) *string {
+	s := b64uEnc(b)
+	return &s
+}
+
+// fixedWidth writes the big-endian integer b in exactly size bytes, or
+// reports that it doesn't fit.
+func fixedWidth(b []byte, size int) ([]byte, bool) {
+	for len(b) > 0 && b[0] == 0 {
+		b = b[1:]
+	}
+	if len(b) > size {
+		return nil, false
+	}
+	out := make([]byte, size)
+	copy(out[size-len(b):], b)
+	return out, true
+}
 
 // checkJWKMaterial checks the key members of a JWK whose kty and crv
 // webcrypto.js has already matched to the algorithm.
@@ -95,15 +118,20 @@ func checkJWKMaterial(members map[string]json.RawMessage) jwkCheckResult {
 		if k == nil {
 			return jwkCheckResult{Error: invalidKeyData}
 		}
-		return jwkCheckResult{K: b64uEnc(k), KeyBytes: len(k)}
+		return jwkCheckResult{K: b64uPtr(k), KeyBytes: len(k)}
 
 	case "EC":
 		curve, err := ecdhCurveByName(crv)
 		if err != nil || x == nil || y == nil {
 			return jwkCheckResult{Error: invalidKeyData}
 		}
+		// Node reads EC members as big-endian integers, so leading zero
+		// bytes may be missing or extra.
 		size := map[string]int{"P-256": 32, "P-384": 48, "P-521": 66}[crv]
-		if len(x) != size || len(y) != size {
+		var okX, okY bool
+		x, okX = fixedWidth(x, size)
+		y, okY = fixedWidth(y, size)
+		if !okX || !okY {
 			return jwkCheckResult{Error: invalidKeyData}
 		}
 		point := append(append([]byte{0x04}, x...), y...)
@@ -111,16 +139,17 @@ func checkJWKMaterial(members map[string]json.RawMessage) jwkCheckResult {
 		if err != nil {
 			return jwkCheckResult{Error: invalidKeyData}
 		}
-		res := jwkCheckResult{X: b64uEnc(x), Y: b64uEnc(y)}
+		res := jwkCheckResult{X: b64uPtr(x), Y: b64uPtr(y)}
 		if d != nil {
-			if len(d) != size {
+			var okD bool
+			if d, okD = fixedWidth(d, size); !okD {
 				return jwkCheckResult{Error: invalidKeyData}
 			}
 			priv, err := curve.NewPrivateKey(d)
 			if err != nil || !priv.PublicKey().Equal(pub) {
 				return jwkCheckResult{Error: invalidKeyData}
 			}
-			res.D = b64uEnc(d)
+			res.D = b64uPtr(d)
 		}
 		return res
 
@@ -128,7 +157,7 @@ func checkJWKMaterial(members map[string]json.RawMessage) jwkCheckResult {
 		if x == nil || len(x) != 32 {
 			return jwkCheckResult{Error: invalidKeyData}
 		}
-		res := jwkCheckResult{X: b64uEnc(x)}
+		res := jwkCheckResult{X: b64uPtr(x)}
 		if d != nil {
 			if len(d) != 32 {
 				return jwkCheckResult{Error: invalidKeyData}
@@ -147,7 +176,7 @@ func checkJWKMaterial(members map[string]json.RawMessage) jwkCheckResult {
 			if !bytes.Equal(derived, x) {
 				return jwkCheckResult{Error: invalidKeyData}
 			}
-			res.D = b64uEnc(d)
+			res.D = b64uPtr(d)
 		}
 		return res
 	}
