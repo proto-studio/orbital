@@ -130,7 +130,15 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		if (typeof key === 'string') {
 			return Buffer.from(key, 'utf8');
 		}
-		return ArrayBuffer.isView(key) ? viewBytes(key) : Buffer.from(key);
+		if (ArrayBuffer.isView(key)) {
+			return viewBytes(key);
+		}
+		// Buffer.from(arrayBuffer) shares its memory; copy so the key is fixed
+		// when the Hmac is made, as in Node.
+		if (key instanceof ArrayBuffer) {
+			return Buffer.from(new Uint8Array(key));
+		}
+		return Buffer.from(key);
 	}
 
 	function encodeDigest(hexDigest, encoding) {
