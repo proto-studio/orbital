@@ -115,3 +115,36 @@ setTimeout(() => { w.close(); done({ copied, events }); }, 600);
 `, dir))
 	wantJSON(t, got, map[string]any{"copied": "f", "events": []any{"rename gone"}})
 }
+
+// A relative path given to watchFile or watch keeps naming the same file after
+// process.chdir, as in Node.
+func TestFS_WatchKeepsPathAfterChdir(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"one", "two"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, "f"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(start)
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+process.chdir(dir + '/one');
+const polled = [];
+fs.watchFile('f', { interval: 20 }, (curr) => polled.push(curr.size));
+const watched = [];
+const w = fs.watch('f', (type) => watched.push(type));
+process.chdir(dir + '/two');
+setTimeout(() => fs.writeFileSync(dir + '/two/f', 'changed in two'), 150);
+setTimeout(() => fs.writeFileSync(dir + '/one/f', 'changed'), 400);
+setTimeout(() => { fs.unwatchFile(dir + '/one/f'); w.close(); done({ polled, watched: watched.length > 0 }); }, 800);
+`, dir))
+	wantJSON(t, got, map[string]any{"polled": []any{7.0}, "watched": true})
+}

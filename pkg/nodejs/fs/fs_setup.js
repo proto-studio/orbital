@@ -1395,6 +1395,14 @@
   const statWatchers = new Map();
   // Watchers are found by absolute path, so another spelling of the same path finds one.
   const watchKey = (filename) => (pathModule() ? pathModule().resolve(String(pathString(filename))) : String(filename));
+  // The path a watcher polls: on a filesystem where relative paths start at the working
+  // directory, made absolute once, so a later process.chdir doesn't change what is watched.
+  const cwdRelative = !!fs.__cwdRelative;
+  delete fs.__cwdRelative;
+  const watchTarget = (filename) => {
+    const p = pathString(filename);
+    return cwdRelative && typeof p === 'string' && pathModule() ? pathModule().resolve(p) : p;
+  };
   function pathString(p) {
     if (ArrayBuffer.isView(p)) return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
     if (p && typeof p === 'object' && typeof p.href === 'string' && p.protocol === 'file:') return decodeURIComponent(p.pathname);
@@ -1410,6 +1418,7 @@
     }
     const opts = Object.assign({ interval: 5007, persistent: true }, options);
     const key = watchKey(filename);
+    filename = watchTarget(filename);
     let watcher = statWatchers.get(key);
     if (!watcher) {
       const EventEmitter = eventEmitter();
@@ -1496,8 +1505,9 @@
     }
     if (typeof options === 'string') options = { encoding: options };
     const opts = Object.assign({ persistent: true, recursive: false }, options);
-    // A Buffer or URL path becomes a string, for the path helpers.
-    filename = pathString(filename);
+    // A Buffer or URL path becomes a string, for the path helpers, and a relative one is
+    // fixed against the working directory now.
+    filename = watchTarget(filename);
     let entries;
     try {
       entries = snapshot(filename, opts.recursive);
