@@ -835,7 +835,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if len(names) == 0 {
 		// What goes before the brace: a class's name, or [Object: null prototype]. reduceObject
 		// adds it otherwise.
-		prefix, _ := c.inspectCall("objectPrefix", v)
+		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(level(depth)))
 		return prefix + "{}"
 	}
 	// Past the depth limit, a value with properties is never expanded, which also bounds the
@@ -847,7 +847,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	c.enter(depth)
 	parts := c.formatProperties(v, names, depth)
 	if len(parts) == 0 {
-		prefix, _ := c.inspectCall("objectPrefix", v)
+		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(level(depth)))
 		return prefix + "{}"
 	}
 	ref := c.leave()
