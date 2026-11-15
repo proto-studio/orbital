@@ -49,3 +49,22 @@ setTimeout(() => done({ order, threw }), 0);
 `)
 	wantJSON(t, result, map[string]any{"order": []any{"p1", "qm", "qm2", "p2"}, "threw": nil})
 }
+
+// The tick queue is the runtime's own: a script that changes Array's species or adds index
+// setters to Array.prototype does not reach it.
+func TestNextTick_IgnoresArrayPatches(t *testing.T) {
+	result := runJS(t, &runtime.Config{}, `
+const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+Object.defineProperty(Array, Symbol.species, { get() { throw new Error('species'); }, configurable: true });
+Object.defineProperty(Array.prototype, '3', { set() { throw new Error('index setter'); }, configurable: true });
+let n = 0;
+const step = () => { if (++n < 3000) process.nextTick(step); };
+process.nextTick(step);
+setTimeout(() => {
+  Object.defineProperty(Array, Symbol.species, species);
+  delete Array.prototype[3];
+  done({ n });
+}, 0);
+`)
+	wantJSON(t, result, map[string]any{"n": float64(3000)})
+}

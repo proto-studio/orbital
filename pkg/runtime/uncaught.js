@@ -92,8 +92,9 @@
   // empty, so a tick runs ahead of promise reactions queued by the same code. V8 also runs its
   // microtasks by itself once the stack empties, which is why the ticks run before that.
 
+  // A null prototype keeps setters or species a script adds to Array out of the queue.
   const tickQueue = [];
-  const splice = Array.prototype.splice;
+  Object.setPrototypeOf(tickQueue, null);
   const kCompactAfter = 1024;
   let tickHead = 0;
   // depth counts the callbacks into JavaScript on the stack; only the outermost one runs
@@ -144,7 +145,9 @@
           // A tick that queues the next one keeps the queue growing at its end while it
           // drains from the front, so drop the used half once it is large.
           if (tickHead >= kCompactAfter && tickHead * 2 >= tickQueue.length) {
-            apply(splice, tickQueue, [0, tickHead]);
+            const live = tickQueue.length - tickHead;
+            for (let i = 0; i < live; i++) tickQueue[i] = tickQueue[tickHead + i];
+            tickQueue.length = live;
             tickHead = 0;
           }
           try {
