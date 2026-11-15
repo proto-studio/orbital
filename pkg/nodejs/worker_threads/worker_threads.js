@@ -113,8 +113,15 @@
   const kInspectedSymbol = 'S';
   const kCustomInspectedObject = 'C';
 
+  // util is registered before this module, so its inspect is taken now, before any
+  // program code could replace it.
+  const utilInspect = global.__util_module && typeof global.__util_module.inspect === 'function'
+    ? global.__util_module.inspect
+    : null;
+
   function inspect(value) {
-    return global.require('util').inspect(value);
+    if (utilInspect === null) return String(value);
+    return apply(utilInspect, undefined, [value]);
   }
 
   function inspectOrString(value) {
@@ -150,6 +157,8 @@
         }
       }
       if (key === 'cause') {
+        // A cause whose getter threw is left out, as Node leaves it out.
+        if (!('value' in descriptor)) continue;
         descriptor.value = serializeThrown(descriptor.value);
         delete descriptor.get;
         delete descriptor.set;
@@ -186,7 +195,7 @@
       // Try the next form.
     }
     try {
-      if (error !== null && error !== undefined && inspectCustom in Object(error)) {
+      if ((typeof error === 'object' && error !== null || typeof error === 'function') && inspectCustom in error) {
         return kCustomInspectedObject + inspect(error);
       }
     } catch (e) {
