@@ -226,3 +226,30 @@ for (const s of ['./prim', './nul', './arr', './own']) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// An explicit type 'javascript' that a hook lets through is the same module as no
+// type, and a "__proto__" attribute key survives the hook bridge to be rejected.
+// Expected from Node 20.18.1.
+func TestImportAttributes_ImplicitTypeAndProtoKey(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs":  `export default Math.random();`,
+		"dep2.mjs": `export default 1;`,
+		"hooks.mjs": `export async function resolve(s, c, n) { return n(s, c); }
+export async function load(u, c, n) {
+  if (u.endsWith('dep.mjs')) return { format: 'module', source: 'export default Math.random();', shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('./dep.mjs');
+const b = await import('./dep.mjs', { with: { type: 'javascript' } });
+log.push(a === b);
+try { await import('./dep2.mjs', { with: { ['__proto__']: 'x' } }); log.push('loaded'); } catch (e) { log.push(e.code, e.message); }`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `[true,"ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","Import attribute \"__proto__\" with value \"x\" is not supported"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

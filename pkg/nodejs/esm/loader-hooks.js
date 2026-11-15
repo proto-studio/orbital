@@ -354,7 +354,11 @@
   function decodeAttrs(text) {
     const attrs = {};
     for (const [k, v] of JSON.parse(text || '[]')) {
-      attrs[k] = v !== null && typeof v === 'object' && v.undefined === true ? undefined : v;
+      // defineProperty, so a "__proto__" key stays an own attribute.
+      Object.defineProperty(attrs, k, {
+        value: v !== null && typeof v === 'object' && v.undefined === true ? undefined : v,
+        writable: true, enumerable: true, configurable: true,
+      });
     }
     return attrs;
   }

@@ -106,7 +106,8 @@ const typeKeySep = '\x01'
 // a JSON module's value per file, so every import of it shares the first.
 func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
 	typ, ok := attrType(attrs)
-	if !ok || format == "json" {
+	// No type and the implicit one are the same module, as in attrCheckKey.
+	if !ok || typ == implicitType || format == "json" {
 		return url
 	}
 	key := url + string(typeKeySep) + typ
