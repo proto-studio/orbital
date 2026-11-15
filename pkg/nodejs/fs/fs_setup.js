@@ -87,9 +87,16 @@
     ['dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size', 'blocks'].forEach((key, i) => {
       b[key] = s[kExact] ? BigInt(s[kExact][i]) : BigInt(Math.trunc(s[key]));
     });
-    for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
-      b[key + 'Ms'] = BigInt(Math.floor(s[key + 'Ms']));
-    }
+    // Whole milliseconds come from the exact nanoseconds when there are any, since the
+    // Number can round up into the next millisecond.
+    ['atime', 'mtime', 'ctime', 'birthtime'].forEach((key, i) => {
+      if (s[kNs]) {
+        const ns = BigInt(s[kNs][i]);
+        b[key + 'Ms'] = ns >= 0n ? ns / NS_PER_MS : -((-ns + NS_PER_MS - 1n) / NS_PER_MS);
+      } else {
+        b[key + 'Ms'] = BigInt(Math.floor(s[key + 'Ms']));
+      }
+    });
     ['atime', 'mtime', 'ctime', 'birthtime'].forEach((key, i) => {
       const ms = s[key + 'Ms'];
       b[key + 'Ns'] = s[kNs] ? BigInt(s[kNs][i])
