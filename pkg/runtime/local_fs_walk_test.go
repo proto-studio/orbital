@@ -133,3 +133,85 @@ func TestLocalFS_WalkMakesAndRemoves(t *testing.T) {
 		t.Error("Remove of the root succeeded")
 	}
 }
+
+// The walk goes through a directory that can be searched but not listed, ends at the
+// directory a link to "." leads to, keeps few descriptors however deep the path, leaves an
+// existing link alone for an exclusive create, and removes what it can around a directory it
+// can't empty.
+func TestLocalFS_WalkDetails(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+
+	if err := os.MkdirAll(filepath.Join(root, "search", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "search", "inner", "f"), []byte("found"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "search"), 0o111); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(root, "search"), 0o755)
+	if data, err := l.ReadFile("/search/inner/f"); err != nil || string(data) != "found" {
+		t.Errorf("ReadFile through a search-only directory = %q, %v", data, err)
+	}
+	os.Chmod(filepath.Join(root, "search"), 0o755)
+
+	if err := os.Symlink(".", filepath.Join(root, "self")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join(root, "top")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/self", "/top", "/in/../self"} {
+		if info, err := l.Stat(p); err != nil || !info.IsDir {
+			t.Errorf("Stat %s = %+v, %v; want the root directory", p, info, err)
+		}
+		if entries, err := l.ReadDir(p); err != nil || !hasEntry(entries, "a.txt") {
+			t.Errorf("ReadDir %s = %v, %v", p, entries, err)
+		}
+	}
+
+	deep := "/deep"
+	for range 200 {
+		deep += "/d"
+	}
+	if err := l.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.WriteFile(deep+"/f", []byte("deep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := l.ReadFile(deep + "/../d/f"); err != nil || string(data) != "deep" {
+		t.Errorf("ReadFile deep = %q, %v", data, err)
+	}
+
+	if err := os.Symlink("missing-target", filepath.Join(root, "dangling-in")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.OpenFile("/dangling-in", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644); !errors.Is(err, os.ErrExist) {
+		t.Errorf("exclusive create over a link = %v, want EEXIST", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "missing-target")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing-target was made: %v", err)
+	}
+
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(root, "rm", "a-locked")
+		if err := os.MkdirAll(filepath.Join(locked, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "rm", "b-file"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(locked, 0o555)
+		defer os.Chmod(locked, 0o755)
+		if err := l.RemoveAll("/rm"); err == nil {
+			t.Error("RemoveAll of a tree with a locked directory succeeded")
+		}
+		if _, err := os.Lstat(filepath.Join(root, "rm", "b-file")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("b-file beside the locked directory was kept: %v", err)
+		}
+	}
+}
