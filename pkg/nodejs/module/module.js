@@ -280,8 +280,16 @@
 					source +
 					'\n})\n//# sourceURL=' + resolved;
 
-				// Compile and run
-				const compiledWrapper = (0, eval)(wrapper);
+				// Compile as a script named after the file, so import() in the module
+				// resolves relative to it. eval reports the first error properly, so it
+				// compiles a wrapper that native compilation could not; source with a
+				// NUL character goes there too, since it cannot cross to the native side.
+				let compiledWrapper = source.indexOf('\0') === -1
+					? __compileModuleWrapper(wrapper, resolved)
+					: undefined;
+				if (typeof compiledWrapper !== 'function') {
+					compiledWrapper = (0, eval)(wrapper);
+				}
 
 				compiledWrapper.call(
 					mod.exports,

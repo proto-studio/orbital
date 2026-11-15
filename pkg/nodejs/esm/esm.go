@@ -46,16 +46,18 @@ func (e *ESM) Name() string {
 	return "esm"
 }
 
-// Register sets up the ES Module runtime.
+// Register sets up the ES Module runtime. The loader is installed right away so
+// import() works from code that never loads an ES module itself, such as a
+// CommonJS entry: until the dynamic-import callback is set, V8 rejects import()
+// with "Not supported".
 func (e *ESM) Register(rt *runtime.Runtime) error {
 	e.rt = rt
-	return nil
+	return e.ensureLoader()
 }
 
-// ensureLoader lazily installs the JS loader. It can't run at Register time
-// because the CommonJS module system (which the loader uses via require) is
-// registered after ESM; by the time any module is actually loaded, everything
-// is available.
+// ensureLoader installs the JS helpers, the dynamic-import callback and the
+// module.register bridge, once. None of them needs the CommonJS module system
+// (registered after ESM) until a module is actually resolved.
 func (e *ESM) ensureLoader() error {
 	if e.loaderReady {
 		return nil
