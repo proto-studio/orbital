@@ -1,44 +1,168 @@
 (function() {
 	'use strict';
 
+	// UTF-8 bytes of a string, with lone surrogates replaced by U+FFFD.
+	function utf8Bytes(str) {
+		const bytes = [];
+		for (let i = 0; i < str.length; i++) {
+			let c = str.charCodeAt(i);
+			if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+				const d = str.charCodeAt(i + 1);
+				if (d >= 0xdc00 && d <= 0xdfff) {
+					c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+					i++;
+				}
+			}
+			if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+			if (c < 0x80) bytes.push(c);
+			else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+			else if (c < 0x10000) bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+			else bytes.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+		}
+		return bytes;
+	}
+
+	// Decodes UTF-8, replacing invalid sequences with U+FFFD.
+	function utf8Decode(bytes) {
+		let out = '';
+		for (let i = 0; i < bytes.length;) {
+			const b = bytes[i];
+			let need = 0, cp = 0, min = 0;
+			if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
+			else if (b >= 0xc2 && b <= 0xdf) { need = 1; cp = b & 31; min = 0x80; }
+			else if (b >= 0xe0 && b <= 0xef) { need = 2; cp = b & 15; min = 0x800; }
+			else if (b >= 0xf0 && b <= 0xf4) { need = 3; cp = b & 7; min = 0x10000; }
+			else { out += '�'; i++; continue; }
+			let j = 1;
+			for (; j <= need; j++) {
+				const n = bytes[i + j];
+				if (n === undefined || (n & 0xc0) !== 0x80) break;
+				cp = (cp << 6) | (n & 63);
+			}
+			if (j <= need || cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+				out += '�';
+				i += Math.max(1, j);
+				continue;
+			}
+			out += String.fromCodePoint(cp);
+			i += need + 1;
+		}
+		return out;
+	}
+
+	const isHex = (c) => /^[0-9a-fA-F]$/.test(c);
+
+	// Percent-decodes a string; malformed escapes are kept as they are.
+	function percentDecode(str) {
+		const bytes = [];
+		for (let i = 0; i < str.length; i++) {
+			if (str[i] === '%' && isHex(str[i + 1] || '') && isHex(str[i + 2] || '')) {
+				bytes.push(parseInt(str.slice(i + 1, i + 3), 16));
+				i += 2;
+			} else {
+				const c = str.codePointAt(i);
+				if (c > 0xffff) i++;
+				bytes.push(...utf8Bytes(String.fromCodePoint(c)));
+			}
+		}
+		return utf8Decode(bytes);
+	}
+
+	const hexByte = (b) => '%' + (b < 16 ? '0' : '') + b.toString(16).toUpperCase();
+
+	// application/x-www-form-urlencoded serialization of one name or value.
+	function formEncode(str) {
+		let out = '';
+		for (const b of utf8Bytes(str)) {
+			if (b === 0x20) out += '+';
+			else if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) ||
+				b === 0x2a || b === 0x2d || b === 0x2e || b === 0x5f) out += String.fromCharCode(b);
+			else out += hexByte(b);
+		}
+		return out;
+	}
+
+	// application/x-www-form-urlencoded parsing.
+	function formParse(str) {
+		const list = [];
+		for (const part of str.split('&')) {
+			if (!part) continue;
+			const eq = part.indexOf('=');
+			const name = eq === -1 ? part : part.slice(0, eq);
+			const value = eq === -1 ? '' : part.slice(eq + 1);
+			list.push([percentDecode(name.replace(/\+/g, ' ')), percentDecode(value.replace(/\+/g, ' '))]);
+		}
+		return list;
+	}
+
+	// Percent-encodes a query the way the URL parser does: controls, space,
+	// ", #, <, > and non-ASCII (and ' for special schemes) are escaped.
+	function encodeQuery(str, special) {
+		let out = '';
+		for (const ch of str) {
+			const c = ch.codePointAt(0);
+			if (c < 0x21 || c > 0x7e || ch === '"' || ch === '#' || ch === '<' || ch === '>' || (special && ch === "'")) {
+				for (const b of utf8Bytes(ch)) out += hexByte(b);
+			} else {
+				out += ch;
+			}
+		}
+		return out;
+	}
+
 	// URLSearchParams class
 	class URLSearchParams {
 		constructor(init) {
 			this._params = [];
+			// The URL this object belongs to, which is updated when it changes.
+			this._url = null;
 
-			if (typeof init === 'string') {
+			if (init !== undefined && init !== null && typeof init === 'object' && typeof init[Symbol.iterator] === 'function' && !(init instanceof URLSearchParams)) {
+				for (const pair of init) {
+					const entry = [...pair];
+					if (entry.length !== 2) {
+						const err = new TypeError('Each query pair must be an iterable [name, value] tuple');
+						err.code = 'ERR_INVALID_TUPLE';
+						throw err;
+					}
+					this._params.push([String(entry[0]), String(entry[1])]);
+				}
+			} else if (init instanceof URLSearchParams) {
+				this._params = init._params.map(([key, value]) => [key, value]);
+			} else if (init !== undefined && init !== null && typeof init === 'object') {
+				Object.keys(init).forEach(key => {
+					this._params.push([key, String(init[key])]);
+				});
+			} else if (init !== undefined) {
+				init = String(init);
 				if (init.startsWith('?')) {
 					init = init.slice(1);
 				}
-				if (init) {
-					init.split('&').forEach(pair => {
-						const [key, value] = pair.split('=').map(decodeURIComponent);
-						this._params.push([key, value !== undefined ? value : '']);
-					});
-				}
-			} else if (Array.isArray(init)) {
-				init.forEach(([key, value]) => {
-					this._params.push([String(key), String(value)]);
-				});
-			} else if (init && typeof init === 'object') {
-				if (init instanceof URLSearchParams) {
-					init.forEach((value, key) => {
-						this._params.push([key, value]);
-					});
-				} else {
-					Object.keys(init).forEach(key => {
-						this._params.push([key, String(init[key])]);
-					});
-				}
+				this._params = formParse(init);
 			}
+		}
+
+		// Called after every change so the owning URL's query follows.
+		_update() {
+			if (!this._url) return;
+			const serialized = this.toString();
+			this._url._query = serialized === '' ? null : serialized;
 		}
 
 		append(name, value) {
 			this._params.push([String(name), String(value)]);
+			this._update();
 		}
 
-		delete(name) {
-			this._params = this._params.filter(([key]) => key !== name);
+		delete(name, value) {
+			name = String(name);
+			if (value === undefined) {
+				this._params = this._params.filter(([key]) => key !== name);
+			} else {
+				value = String(value);
+				this._params = this._params.filter(([key, v]) => key !== name || v !== value);
+			}
+			this._update();
 		}
 
 		get(name) {
@@ -72,15 +196,18 @@
 			} else {
 				this._params.push([String(name), String(value)]);
 			}
+			this._update();
 		}
 
 		sort() {
-			this._params.sort((a, b) => a[0].localeCompare(b[0]));
+			// Stable, by UTF-16 code units.
+			this._params.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+			this._update();
 		}
 
 		toString() {
 			return this._params
-				.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+				.map(([key, value]) => `${formEncode(key)}=${formEncode(value)}`)
 				.join('&');
 		}
 
@@ -185,10 +312,12 @@
 			this._hostname = parsed.hostname || '';
 			this._port = parsed.port || '';
 			this._pathname = parsed.pathname || '/';
-			this._search = parsed.search || '';
+			// The query as parsed (without '?'), or null when the URL has none.
+			this._query = parsed.search ? encodeQuery(parsed.search.slice(1), URL._isSpecial(this._protocol)) : null;
 			this._hash = parsed.hash || '';
 			this._slashes = !!parsed.slashes;
-			this._searchParams = new URLSearchParams(this._search);
+			this._searchParams = new URLSearchParams(this._query || '');
+			this._searchParams._url = this;
 		}
 
 		static _parse(url) {
@@ -430,12 +559,16 @@
 			this._pathname = value;
 		}
 
-		get search() { return this._search; }
+		static _isSpecial(protocol) {
+			return /^(https?|wss?|ftp|file):$/.test(protocol);
+		}
+
+		get search() { return this._query ? '?' + this._query : ''; }
 		set search(value) {
 			value = String(value);
-			if (value && !value.startsWith('?')) value = '?' + value;
-			this._search = value;
-			this._searchParams = new URLSearchParams(value);
+			if (value.startsWith('?')) value = value.slice(1);
+			this._query = value === '' ? null : encodeQuery(value, URL._isSpecial(this._protocol));
+			this._searchParams._params = formParse(this._query || '');
 		}
 
 		get searchParams() {
@@ -469,10 +602,8 @@
 			// URL standard writes "/." before it.
 			if (!hasAuthority && this._pathname.startsWith('//')) url += '/.';
 			url += this._pathname;
-			// Sync searchParams to search
-			const params = this._searchParams.toString();
-			if (params) {
-				url += '?' + params;
+			if (this._query !== null) {
+				url += '?' + this._query;
 			}
 			url += this._hash;
 			return url;
@@ -485,10 +616,10 @@
 			this._hostname = newUrl._hostname;
 			this._port = newUrl._port;
 			this._pathname = newUrl._pathname;
-			this._search = newUrl._search;
+			this._query = newUrl._query;
 			this._hash = newUrl._hash;
 			this._slashes = newUrl._slashes;
-			this._searchParams = newUrl._searchParams;
+			this._searchParams._params = newUrl._searchParams._params;
 		}
 
 		toString() {
