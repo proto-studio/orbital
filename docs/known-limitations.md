@@ -156,10 +156,20 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `mkdir` and the other callback forms, and `fs.createWriteStream`'s writes, do their work on
   the JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a
   path, `stat`, `access` and read streams run off the thread. (#131)
-- **[gap] Some `fs` calls are still missing,** including `accessSync`, `exists`, `truncate`,
-  `ftruncate`, `fsync`, `fdatasync`, `chmod`, `fchmod`, `chown`, `fchown`, `utimes`, `futimes`,
-  `mkdtemp`, `opendir`, `cp`, `statfs`, `readv`, `writev`, `watch`, `watchFile`, `openAsBlob`,
-  and the `fs.Stats`, `fs.Dirent` and `fs.Dir` classes. (#132)
+- **[gap] `fs.mkdtemp` and the symbolic link calls are missing.** (#87)
+- **[approx] `fs.watch` and `fs.watchFile` poll.** `watch` checks every 100 ms and reports
+  `'rename'` when an entry appears or goes and `'change'` when its stats change, so it can
+  miss a change undone within one poll and doesn't report the events in Node's exact order.
+  `watchFile` polls at its `interval`, as Node's does.
+- **[approx] `fs.opendir` and `fs.openAsBlob` read when they open.** A `Dir` lists the
+  directory when it's opened rather than as it's read, and `openAsBlob` reads the file into
+  the `Blob` at once.
+- **[approx] `fs.cp` copies what a symbolic link points to,** because `lstat` still follows
+  links (#87), and doesn't copy sockets, FIFOs or devices specially.
+- **[approx] Some `fs.Stats` details depend on the filesystem.** On Linux `birthtime` is the
+  change time. A custom `Filesystem` without `MetadataFilesystem` reports default `dev`,
+  `ino`, `uid` and the like, and fails `truncate`, `chmod`, `chown` and `utimes` with
+  `ENOSYS`; without `StatfsFilesystem`, `statfs` fails with `ENOSYS`.
 
 ## os and child_process (`pkg/nodejs/os`, `child_process`, `internal/sysconst`)
 

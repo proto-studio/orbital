@@ -87,15 +87,35 @@
       },
 
       truncate(len) {
-        return fsPromises.truncate(path, len);
+        return attempt(() => fs.ftruncateSync(fd, len));
       },
 
       sync() {
-        return Promise.resolve();
+        return attempt(() => fs.fsyncSync(fd));
       },
 
       datasync() {
-        return Promise.resolve();
+        return attempt(() => fs.fdatasyncSync(fd));
+      },
+
+      chmod(mode) {
+        return attempt(() => fs.fchmodSync(fd, mode));
+      },
+
+      chown(uid, gid) {
+        return attempt(() => fs.fchownSync(fd, uid, gid));
+      },
+
+      utimes(atime, mtime) {
+        return attempt(() => fs.futimesSync(fd, atime, mtime));
+      },
+
+      readv(buffers, position) {
+        return attempt(() => ({ bytesRead: fs.readvSync(fd, buffers, position), buffers }));
+      },
+
+      writev(buffers, position) {
+        return attempt(() => ({ bytesWritten: fs.writevSync(fd, buffers, position), buffers }));
       },
 
       // These two work from the current offset, unlike their fs.promises namesakes.
@@ -239,34 +259,11 @@
 
     // Check access permissions
     access: function(path, mode) {
-      return new Promise((resolve, reject) => {
-        try {
-          if (fs.existsSync(path)) {
-            resolve();
-          } else {
-            reject(new Error(`ENOENT: no such file or directory, access '${path}'`));
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.accessSync(path, mode));
     },
 
-    // Truncate file
     truncate: function(path, len) {
-      return new Promise((resolve, reject) => {
-        try {
-          // Read, truncate, write back. Growing a file pads it with NUL bytes.
-          const size = len || 0;
-          const content = fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0);
-          const resized = Buffer.alloc(size);
-          content.copy(resized, 0, 0, Math.min(size, content.length));
-          fs.writeFileSync(path, resized);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.truncateSync(path, len));
     },
 
     // Create symbolic link (stub - may not work in sandbox)
@@ -291,19 +288,30 @@
       });
     },
 
-    // Change file mode (stub)
     chmod: function(path, mode) {
-      return Promise.resolve(); // No-op in sandbox
+      return attempt(() => fs.chmodSync(path, mode));
     },
 
-    // Change file owner (stub)
     chown: function(path, uid, gid) {
-      return Promise.resolve(); // No-op in sandbox
+      return attempt(() => fs.chownSync(path, uid, gid));
     },
 
-    // Update file timestamps (stub)
     utimes: function(path, atime, mtime) {
-      return Promise.resolve(); // No-op in sandbox
+      return attempt(() => fs.utimesSync(path, atime, mtime));
+    },
+
+    statfs: function(path, options) {
+      return attempt(() => fs.statfsSync(path, options));
+    },
+
+    opendir: function(path, options) {
+      return attempt(() => fs.opendirSync(path, options));
+    },
+
+    cp: function(src, dest, options) {
+      return new Promise((resolve, reject) => {
+        fs.cp(src, dest, options || {}, (err) => (err ? reject(err) : resolve()));
+      });
     },
 
     // Watch for file changes (stub)

@@ -1,37 +1,95 @@
 'use strict';
-// Attach Node fs.Stats-style predicate methods to the plain objects returned by
-// the native stat implementations. The native layer (Go) only sets the boolean
-// props (_isFile/_isDirectory/...); Node code universally calls the *methods*
-// (stat.isFile(), stat.isDirectory(), ...), so real-world packages (TypeScript's
-// compiler host, etc.) break without them. Wrapping the sync entry points here
-// keeps a single Stats shape across the sync, callback, and promise APIs.
+// fs.Stats and fs.Dirent, and the wrappers that make the native layer's plain objects into
+// them. Node code calls their methods (stat.isFile(), dirent.isDirectory()), and some checks
+// `instanceof fs.Stats`, so the sync, callback and promise APIs all return these classes.
 (function () {
   const fs = globalThis.__fs_module;
   if (!fs) return;
 
-  function addStatsMethods(s) {
-    if (!s || typeof s !== 'object') return s;
-    s.isDirectory = function () { return !!this._isDirectory; };
-    s.isFile = function () { return !!this._isFile; };
-    s.isSymbolicLink = function () { return !!this._isSymbolicLink; };
-    s.isBlockDevice = function () { return !!this._isBlockDevice; };
-    s.isCharacterDevice = function () { return !!this._isCharacterDevice; };
-    s.isFIFO = function () { return !!this._isFIFO; };
-    s.isSocket = function () { return !!this._isSocket; };
-    // Node exposes timestamps as Date objects (mtime/atime/ctime/birthtime)
-    // alongside the numeric *Ms fields. The native layer only sets the *Ms
-    // numbers; build the Dates here so consumers like `send`
-    // (stat.mtime.toUTCString()) and `etag` (stat.mtime.getTime()) work.
-    if (typeof s.mtimeMs === 'number' && !(s.mtime instanceof Date)) {
-      s.mtime = new Date(s.mtimeMs);
-      s.atime = new Date(typeof s.atimeMs === 'number' ? s.atimeMs : s.mtimeMs);
-      s.ctime = new Date(typeof s.ctimeMs === 'number' ? s.ctimeMs : s.mtimeMs);
-      s.birthtime = new Date(typeof s.birthtimeMs === 'number' ? s.birthtimeMs : s.mtimeMs);
-    }
-    return s;
+  const S_IFMT = 0o170000, S_IFREG = 0o100000, S_IFDIR = 0o040000, S_IFCHR = 0o020000,
+    S_IFBLK = 0o060000, S_IFIFO = 0o010000, S_IFLNK = 0o120000, S_IFSOCK = 0o140000;
+
+  function dateFromMs(ms) {
+    return new Date(Math.round(Number(ms)));
   }
-  // Exposed so the promise/callback layers can share the exact same shape.
+
+  // new fs.Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs,
+  // mtimeMs, ctimeMs, birthtimeMs), as in Node, where it is also callable without new.
+  function Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks,
+    atimeMs, mtimeMs, ctimeMs, birthtimeMs) {
+    if (!(this instanceof Stats)) {
+      return new Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks,
+        atimeMs, mtimeMs, ctimeMs, birthtimeMs);
+    }
+    this.dev = dev;
+    this.mode = mode;
+    this.nlink = nlink;
+    this.uid = uid;
+    this.gid = gid;
+    this.rdev = rdev;
+    this.blksize = blksize;
+    this.ino = ino;
+    this.size = size;
+    this.blocks = blocks;
+    this.atimeMs = atimeMs;
+    this.mtimeMs = mtimeMs;
+    this.ctimeMs = ctimeMs;
+    this.birthtimeMs = birthtimeMs;
+    this.atime = dateFromMs(atimeMs);
+    this.mtime = dateFromMs(mtimeMs);
+    this.ctime = dateFromMs(ctimeMs);
+    this.birthtime = dateFromMs(birthtimeMs);
+  }
+  function isType(type) {
+    return function () { return (this.mode & S_IFMT) === type; };
+  }
+  Object.assign(Stats.prototype, {
+    isDirectory: isType(S_IFDIR),
+    isFile: isType(S_IFREG),
+    isBlockDevice: isType(S_IFBLK),
+    isCharacterDevice: isType(S_IFCHR),
+    isSymbolicLink: isType(S_IFLNK),
+    isFIFO: isType(S_IFIFO),
+    isSocket: isType(S_IFSOCK)
+  });
+
+  // libuv's entry types, which the native readdir reports.
+  const UV_DIRENT_FILE = 1, UV_DIRENT_DIR = 2, UV_DIRENT_LINK = 3, UV_DIRENT_FIFO = 4,
+    UV_DIRENT_SOCKET = 5, UV_DIRENT_CHAR = 6, UV_DIRENT_BLOCK = 7;
+  const kType = Symbol('type');
+  class Dirent {
+    constructor(name, type, path) {
+      this.name = name;
+      this.parentPath = path;
+      this.path = path;
+      this[kType] = type;
+    }
+    isDirectory() { return this[kType] === UV_DIRENT_DIR; }
+    isFile() { return this[kType] === UV_DIRENT_FILE; }
+    isBlockDevice() { return this[kType] === UV_DIRENT_BLOCK; }
+    isCharacterDevice() { return this[kType] === UV_DIRENT_CHAR; }
+    isSymbolicLink() { return this[kType] === UV_DIRENT_LINK; }
+    isFIFO() { return this[kType] === UV_DIRENT_FIFO; }
+    isSocket() { return this[kType] === UV_DIRENT_SOCKET; }
+  }
+  fs.Stats = Stats;
+  fs.Dirent = Dirent;
+
+  // An fs.Stats from the native layer's description, or the value itself if it is a failure
+  // or already a Stats.
+  function addStatsMethods(s) {
+    if (!s || typeof s !== 'object' || s.__fsError || s instanceof Stats) return s;
+    return new Stats(s.dev, s.mode, s.nlink, s.uid, s.gid, s.rdev, s.blksize, s.ino, s.size,
+      s.blocks, s.atimeMs, s.mtimeMs, s.ctimeMs, s.birthtimeMs);
+  }
+  // Exposed so the promise and callback layers return the same class.
   fs.__addStatsMethods = addStatsMethods;
+  // A Dirent for each { name, type } entry the native readdir returns for withFileTypes.
+  fs.__direntsOf = function (entries, path) {
+    if (!Array.isArray(entries)) return entries;
+    const parent = typeof path === 'string' ? path : String(path);
+    return entries.map((e) => (e && typeof e === 'object' && !(e instanceof Dirent) ? new Dirent(e.name, e.type, parent) : e));
+  };
 
   function wrapStat(name) {
     const orig = fs[name];
@@ -413,18 +471,12 @@
     return bytes.length;
   };
 
-  // readdirSync(path, { withFileTypes: true }) returns Dirent-like objects; the
-  // native layer sets the boolean props, so attach the predicate methods here.
+  // readdirSync(path, { withFileTypes: true }) returns fs.Dirent objects, which the native
+  // layer describes by name and type.
   const _readdirSync = fs.readdirSync;
   if (typeof _readdirSync === 'function') {
-    fs.readdirSync = function () {
-      const result = _readdirSync.apply(this, arguments);
-      if (Array.isArray(result)) {
-        for (const e of result) {
-          if (e && typeof e === 'object') addStatsMethods(e);
-        }
-      }
-      return result;
+    fs.readdirSync = function (path) {
+      return fs.__direntsOf(_readdirSync.apply(this, arguments), path);
     };
   }
 
@@ -855,6 +907,558 @@
     };
   }
 
+  // Argument checks for the calls below, with Node's errors.
+  function checkInt(name, value, min, max) {
+    if (typeof value !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "' + name + '" argument must be of type number. Received ' + receivedType(value));
+    }
+    if (!Number.isInteger(value)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be an integer. Received ' + value);
+    }
+    if (value < min || value > max) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be >= ' + min + ' && <= ' + max + '. Received ' + receivedNumber(value));
+    }
+    return value;
+  }
+  const fdArg = (fd) => checkInt('fd', fd, 0, 2147483647);
+  const idArg = (name, id) => checkInt(name, id, -1, 4294967295);
+  // A mode that chmod requires: a number, or a string of octal digits.
+  function modeArg(mode) {
+    if (mode === undefined || mode === null) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "mode" argument must be of type number. Received ' + receivedType(mode));
+    }
+    return writeMode({ mode });
+  }
+  // Node's toUnixTimestamp: seconds, from a number, a numeric string or a Date. A negative
+  // number means now.
+  function timeArg(time) {
+    if (typeof time === 'string' && +time == time) return +time; // eslint-disable-line eqeqeq
+    if (typeof time === 'number' && Number.isFinite(time)) return time < 0 ? Date.now() / 1000 : time;
+    if (time instanceof Date) return time.getTime() / 1000;
+    throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+      'The "time" argument must be an instance of Date or an Time in seconds. Received ' + receivedType(time));
+  }
+  // A length for truncate: an integer, where a negative one means 0.
+  function lenArg(len) {
+    if (len === undefined || len === null) return 0;
+    return Math.max(0, checkInt('len', len, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+  }
+  // access's mode: F_OK when missing, or an integer from 0 to 7.
+  function accessMode(mode) {
+    if (mode === undefined || mode === null) return 0;
+    if (typeof mode !== 'number' || mode !== (mode | 0)) {
+      if (typeof mode === 'number' && Number.isFinite(mode)) mode |= 0;
+      else throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'mode must be int32 or null/undefined');
+    }
+    if (mode < 0 || mode > 7) throw codedError(RangeError, 'ERR_OUT_OF_RANGE', 'mode is out of range: >= 0 && <= 7');
+    return mode;
+  }
+  function checkBuffers(buffers) {
+    if (!Array.isArray(buffers) || !buffers.every((b) => ArrayBuffer.isView(b))) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "buffers" argument must be an ArrayBufferView[]. Received ' + receivedType(buffers));
+    }
+    return buffers;
+  }
+
+  // Defines fs[name + 'Sync'] and its callback form fs[name]. prepare checks and normalizes
+  // the arguments, throwing as Node does before touching the file, so a bad argument throws
+  // from the callback form too; run does the work; shape gives the callback's values.
+  function defineCall(name, prepare, run, shape) {
+    fs[name + 'Sync'] = function () {
+      return run.apply(null, prepare.apply(null, arguments));
+    };
+    fs[name] = function () {
+      const args = Array.prototype.slice.call(arguments);
+      const callback = args.pop();
+      checkCallback(callback);
+      const prepared = prepare.apply(null, args);
+      let result;
+      try {
+        result = run.apply(null, prepared);
+      } catch (e) {
+        process.nextTick(callback, e);
+        return;
+      }
+      const values = shape ? shape(result, prepared) : (result === undefined ? [] : [result]);
+      process.nextTick(() => callback(null, ...values));
+    };
+  }
+
+  const native = {};
+  for (const name of ['truncateSync', 'ftruncateSync', 'fsyncSync', 'fdatasyncSync', 'chmodSync',
+    'fchmodSync', 'chownSync', 'fchownSync', 'utimesSync', 'futimesSync', 'accessSync', 'statfsSync']) {
+    native[name] = fs[name];
+    delete fs[name];
+  }
+  const call = (name) => function () { return check(native[name].apply(fs, arguments)); };
+
+  // truncate also takes a descriptor, as Node's still does.
+  defineCall('truncate', (path, len) => [path, lenArg(len)],
+    (path, len) => (typeof path === 'number' ? call('ftruncateSync')(path, len) : call('truncateSync')(path, len)));
+  defineCall('ftruncate', (fd, len) => [fdArg(fd), lenArg(len)], call('ftruncateSync'));
+  defineCall('fsync', (fd) => [fdArg(fd)], call('fsyncSync'));
+  defineCall('fdatasync', (fd) => [fdArg(fd)], call('fdatasyncSync'));
+  defineCall('chmod', (path, mode) => [path, modeArg(mode)], call('chmodSync'));
+  defineCall('fchmod', (fd, mode) => [fdArg(fd), modeArg(mode)], call('fchmodSync'));
+  defineCall('chown', (path, uid, gid) => [path, idArg('uid', uid), idArg('gid', gid)], call('chownSync'));
+  defineCall('fchown', (fd, uid, gid) => [fdArg(fd), idArg('uid', uid), idArg('gid', gid)], call('fchownSync'));
+  defineCall('utimes', (path, atime, mtime) => [path, timeArg(atime), timeArg(mtime)], call('utimesSync'));
+  defineCall('futimes', (fd, atime, mtime) => [fdArg(fd), timeArg(atime), timeArg(mtime)], call('futimesSync'));
+
+  // accessSync(path[, mode]); the callback form runs off the thread, natively.
+  fs.accessSync = function (path, mode) {
+    check(native.accessSync.call(fs, path, accessMode(mode)));
+  };
+  const _access = fs.access;
+  fs.access = function (path, mode, callback) {
+    if (typeof mode === 'function') {
+      callback = mode;
+      mode = undefined;
+    }
+    checkCallback(callback);
+    _access.call(fs, path, accessMode(mode), callback);
+  };
+  // exists(path, callback) calls back with only true or false.
+  fs.exists = function (path, callback) {
+    checkCallback(callback);
+    try {
+      fs.access(path, 0, (err) => callback(!err));
+    } catch (e) {
+      process.nextTick(callback, false);
+    }
+  };
+
+  // fs.statfs: the description of the filesystem a path is on, with BigInt fields when asked.
+  class StatFs {
+    constructor(type, bsize, blocks, bfree, bavail, files, ffree) {
+      this.type = type;
+      this.bsize = bsize;
+      this.blocks = blocks;
+      this.bfree = bfree;
+      this.bavail = bavail;
+      this.files = files;
+      this.ffree = ffree;
+    }
+  }
+  defineCall('statfs', (path, options) => [path, !!(options && typeof options === 'object' && options.bigint)],
+    (path, bigint) => {
+      const s = call('statfsSync')(path);
+      const v = (n) => (bigint ? BigInt(n) : n);
+      return new StatFs(v(s.type), v(s.bsize), v(s.blocks), v(s.bfree), v(s.bavail), v(s.files), v(s.ffree));
+    });
+
+  // readv and writev read into, or write from, each buffer in turn, stopping at the end of
+  // the file. A numeric position moves along with them; any other means the file's offset.
+  function vectored(op) {
+    return (fd, buffers, position) => {
+      let pos = typeof position === 'number' ? position : null;
+      let total = 0;
+      for (const buffer of buffers) {
+        const n = op(fd, buffer, 0, buffer.byteLength, pos);
+        total += n;
+        if (pos !== null) pos += n;
+        if (n < buffer.byteLength) break;
+      }
+      return total;
+    };
+  }
+  const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), position];
+  defineCall('readv', vectorArgs, vectored((...a) => fs.readSync(...a)), (n, args) => [n, args[1]]);
+  defineCall('writev', vectorArgs, vectored((...a) => fs.writeSync(...a)), (n, args) => [n, args[1]]);
+
+  // fs.Dir, from opendir: the directory's entries, read when it is opened.
+  function dirClosed() {
+    return codedError(Error, 'ERR_DIR_CLOSED', 'Directory handle was closed');
+  }
+  class Dir {
+    constructor(path, entries) {
+      this._path = path;
+      this._entries = entries;
+      this._closed = false;
+    }
+    get path() { return this._path; }
+    readSync() {
+      if (this._closed) throw dirClosed();
+      return this._entries.length ? this._entries.shift() : null;
+    }
+    read(callback) {
+      if (typeof callback !== 'function') {
+        return new Promise((resolve) => resolve(this.readSync()));
+      }
+      let entry;
+      try {
+        entry = this.readSync();
+      } catch (e) {
+        process.nextTick(callback, e);
+        return;
+      }
+      process.nextTick(callback, null, entry);
+    }
+    closeSync() {
+      if (this._closed) throw dirClosed();
+      this._closed = true;
+      this._entries = [];
+    }
+    close(callback) {
+      if (typeof callback !== 'function') {
+        return new Promise((resolve) => resolve(this.closeSync()));
+      }
+      try {
+        this.closeSync();
+      } catch (e) {
+        process.nextTick(callback, e);
+        return;
+      }
+      process.nextTick(callback, null);
+    }
+    async * entries() {
+      try {
+        for (;;) {
+          const entry = await this.read();
+          if (entry === null) break;
+          yield entry;
+        }
+      } finally {
+        if (!this._closed) await this.close();
+      }
+    }
+    [Symbol.asyncIterator]() {
+      return this.entries();
+    }
+  }
+  fs.Dir = Dir;
+  // Node's opendirSync names neither the path nor scandir in its error; its callback form
+  // names the path.
+  function openDir(path, withPath) {
+    let entries;
+    try {
+      entries = fs.readdirSync(path, { withFileTypes: true });
+    } catch (e) {
+      if (e && e.syscall === 'scandir') {
+        e.syscall = 'opendir';
+        e.message = e.message.replace(/, scandir '.*'$/, withPath ? ", opendir '" + e.path + "'" : ', opendir');
+        if (!withPath) delete e.path;
+      }
+      throw e;
+    }
+    return new Dir(typeof path === 'string' ? path : String(path), entries);
+  }
+  defineCall('opendir', (path) => [path], (path) => openDir(path, true));
+  fs.opendirSync = function (path) {
+    return openDir(path, false);
+  };
+
+  // fs.cp: copies a file, or with recursive a directory, as Node's cp does.
+  function cpError(code, prefix, errnoCode, errno, message, path) {
+    const e = new Error(prefix + ': cp returned ' + errnoCode + ' (' + message + ') ' + path);
+    e.name = 'SystemError';
+    e.code = code;
+    e.errno = errno;
+    e.syscall = 'cp';
+    e.path = path;
+    e.info = { message, path, syscall: 'cp', errno, code: errnoCode };
+    return e;
+  }
+  function cpOptions(options) {
+    const opts = Object.assign({ dereference: false, errorOnExist: false, force: true,
+      preserveTimestamps: false, recursive: false, verbatimSymlinks: false, mode: 0 }, options);
+    for (const key of ['dereference', 'errorOnExist', 'force', 'preserveTimestamps', 'recursive', 'verbatimSymlinks']) {
+      if (typeof opts[key] !== 'boolean') {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options.' + key + '" property must be of type boolean. Received ' + receivedType(opts[key]));
+      }
+    }
+    if (opts.filter !== undefined && typeof opts.filter !== 'function') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options.filter" property must be of type function. Received ' + receivedType(opts.filter));
+    }
+    return opts;
+  }
+  const statFor = (opts) => (opts.dereference ? fs.statSync : fs.lstatSync);
+  const pathModule = () => globalThis.__path_module || (typeof require === 'function' ? require('path') : null);
+  function cpSyncImpl(src, dest, opts) {
+    const path = pathModule();
+    const srcStat = statFor(opts)(src);
+    let destStat;
+    try {
+      destStat = statFor(opts)(dest);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+    if (destStat) {
+      if (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev) {
+        throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22, 'src and dest cannot be the same', dest);
+      }
+      if (srcStat.isDirectory() && !destStat.isDirectory()) {
+        throw cpError('ERR_FS_CP_DIR_TO_NON_DIR', 'Cannot overwrite non-directory with directory', 'EISDIR', 21,
+          'cannot overwrite non-directory ' + dest + ' with directory ' + src, dest);
+      }
+      if (!srcStat.isDirectory() && destStat.isDirectory()) {
+        throw cpError('ERR_FS_CP_NON_DIR_TO_DIR', 'Cannot overwrite directory with non-directory', 'ENOTDIR', 20,
+          'cannot overwrite directory ' + dest + ' with non-directory ' + src, dest);
+      }
+    }
+    if (srcStat.isDirectory()) {
+      const from = path.resolve(src);
+      const to = path.resolve(dest);
+      if (to === from || to.startsWith(from + path.sep)) {
+        throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22,
+          'cannot copy ' + src + ' to a subdirectory of self ' + dest, dest);
+      }
+    }
+    if (opts.filter) {
+      const keep = opts.filter(src, dest);
+      if (keep && typeof keep.then === 'function') {
+        throw codedError(TypeError, 'ERR_INVALID_RETURN_VALUE',
+          'Expected boolean to be returned from the "filter" function but got an instance of Promise.');
+      }
+      if (!keep) return;
+    }
+    copyEntry(srcStat, destStat, src, dest, opts);
+  }
+  function copyEntry(srcStat, destStat, src, dest, opts) {
+    if (srcStat.isDirectory()) {
+      if (!opts.recursive) {
+        // Node's errno here is EINVAL from cpSync and EISDIR from cp.
+        throw cpError('ERR_FS_EISDIR', 'Path is a directory', 'EISDIR', opts.async ? 21 : 22, src + ' is a directory (not copied)', src);
+      }
+      if (!destStat) fs.mkdirSync(dest, { mode: srcStat.mode & 0o7777 });
+      const path = pathModule();
+      for (const name of fs.readdirSync(src)) {
+        const from = path.join(src, name);
+        const to = path.join(dest, name);
+        if (opts.filter && !opts.filter(from, to)) continue;
+        let toStat;
+        try {
+          toStat = statFor(opts)(to);
+        } catch (e) {
+          if (e.code !== 'ENOENT') throw e;
+        }
+        copyEntry(statFor(opts)(from), toStat, from, to, opts);
+      }
+      if (!destStat) fs.chmodSync(dest, srcStat.mode & 0o7777);
+      return;
+    }
+    if (destStat) {
+      if (opts.force) {
+        fs.unlinkSync(dest);
+      } else {
+        if (opts.errorOnExist) {
+          throw cpError('ERR_FS_CP_EEXIST', 'Target already exists', 'EEXIST', 17, dest + ' already exists', dest);
+        }
+        return;
+      }
+    }
+    fs.copyFileSync(src, dest, opts.mode);
+    if (opts.preserveTimestamps) fs.utimesSync(dest, srcStat.atime, srcStat.mtime);
+    fs.chmodSync(dest, srcStat.mode & 0o7777);
+  }
+  fs.cpSync = function (src, dest, options) {
+    cpSyncImpl(src, dest, cpOptions(options));
+  };
+  fs.cp = function (src, dest, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    checkCallback(callback);
+    const opts = Object.assign(cpOptions(options), { async: true });
+    // An async filter may return a promise here, so each answer is awaited.
+    const filter = opts.filter;
+    const run = async () => {
+      if (!filter) return cpSyncImpl(src, dest, opts);
+      const answers = new Map();
+      const ask = async (from, to) => {
+        const keep = await filter(from, to);
+        answers.set(from + '\0' + to, !!keep);
+      };
+      await walkForFilter(src, dest, opts, ask);
+      return cpSyncImpl(src, dest, Object.assign({}, opts, { filter: (from, to) => answers.get(from + '\0' + to) }));
+    };
+    run().then(() => callback(null), (e) => callback(e));
+  };
+  // Asks an async filter about each path cp will reach, before the copy, which then uses the
+  // answers.
+  async function walkForFilter(src, dest, opts, ask) {
+    await ask(src, dest);
+    let stat;
+    try {
+      stat = statFor(opts)(src);
+    } catch (e) {
+      return;
+    }
+    if (!stat.isDirectory() || !opts.recursive) return;
+    const path = pathModule();
+    for (const name of fs.readdirSync(src)) {
+      await walkForFilter(path.join(src, name), path.join(dest, name), opts, ask);
+    }
+  }
+
+  // fs.openAsBlob(path[, { type }]): a Blob of the file's contents, read when it is opened.
+  fs.openAsBlob = function (path, options) {
+    const type = options && typeof options === 'object' && options.type !== undefined ? options.type : '';
+    if (typeof type !== 'string') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options.type" property must be of type string. Received ' + receivedType(type));
+    }
+    let contents;
+    try {
+      contents = fs.readFileSync(path);
+    } catch (e) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', 'Unable to open file as blob');
+    }
+    return Promise.resolve(new Blob([contents], { type }));
+  };
+
+  // fs.watchFile and fs.unwatchFile: poll a file's stats, and call the listeners with the new
+  // and old stats when they change. A missing file has zeroed stats.
+  const eventEmitter = () => {
+    const events = globalThis.__events_module;
+    return events && (events.EventEmitter || events);
+  };
+  function zeroStats() {
+    return new Stats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+  function statOrZero(path) {
+    try {
+      return fs.statSync(path);
+    } catch (e) {
+      return zeroStats();
+    }
+  }
+  function sameStats(a, b) {
+    return a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.size === b.size && a.mode === b.mode &&
+      a.ino === b.ino && a.dev === b.dev && a.uid === b.uid && a.gid === b.gid;
+  }
+  const statWatchers = new Map();
+  fs.watchFile = function (filename, options, listener) {
+    if (typeof options === 'function') {
+      listener = options;
+      options = undefined;
+    }
+    if (typeof listener !== 'function') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "listener" argument must be of type function. Received ' + receivedType(listener));
+    }
+    const opts = Object.assign({ interval: 5007, persistent: true }, options);
+    const key = String(filename);
+    let watcher = statWatchers.get(key);
+    if (!watcher) {
+      const EventEmitter = eventEmitter();
+      watcher = new EventEmitter();
+      let prev = statOrZero(filename);
+      watcher._timer = setInterval(() => {
+        const curr = statOrZero(filename);
+        if (!sameStats(curr, prev)) {
+          const old = prev;
+          prev = curr;
+          watcher.emit('change', curr, old);
+        }
+      }, opts.interval);
+      if (!opts.persistent && watcher._timer.unref) watcher._timer.unref();
+      watcher.ref = function () { if (this._timer.ref) this._timer.ref(); return this; };
+      watcher.unref = function () { if (this._timer.unref) this._timer.unref(); return this; };
+      watcher.stop = function () {
+        clearInterval(this._timer);
+        statWatchers.delete(key);
+        process.nextTick(() => this.emit('stop'));
+      };
+      statWatchers.set(key, watcher);
+    }
+    watcher.addListener('change', listener);
+    return watcher;
+  };
+  fs.unwatchFile = function (filename, listener) {
+    const key = String(filename);
+    const watcher = statWatchers.get(key);
+    if (!watcher) return;
+    if (typeof listener === 'function') watcher.removeListener('change', listener);
+    else watcher.removeAllListeners('change');
+    if (watcher.listenerCount('change') === 0) watcher.stop();
+  };
+
+  // fs.watch: an FSWatcher that polls a file, or a directory's entries, every 100 ms and
+  // reports 'rename' when one appears or goes and 'change' when one changes.
+  function snapshot(target, recursive) {
+    const path = pathModule();
+    const entries = new Map();
+    const stat = fs.statSync(target);
+    if (!stat.isDirectory()) {
+      entries.set(path.basename(String(target)), stat);
+      return entries;
+    }
+    const walk = (dir, prefix) => {
+      let names;
+      try {
+        names = fs.readdirSync(dir);
+      } catch (e) {
+        return;
+      }
+      for (const name of names) {
+        const rel = prefix ? path.join(prefix, name) : name;
+        let s;
+        try {
+          s = fs.statSync(path.join(dir, name));
+        } catch (e) {
+          continue;
+        }
+        entries.set(rel, s);
+        if (recursive && s.isDirectory()) walk(path.join(dir, name), rel);
+      }
+    };
+    walk(target, '');
+    return entries;
+  }
+  fs.watch = function (filename, options, listener) {
+    if (typeof options === 'function') {
+      listener = options;
+      options = undefined;
+    }
+    if (typeof options === 'string') options = { encoding: options };
+    const opts = Object.assign({ persistent: true, recursive: false }, options);
+    let entries;
+    try {
+      entries = snapshot(filename, opts.recursive);
+    } catch (e) {
+      if (e && e.syscall) {
+        e.syscall = 'watch';
+        e.message = e.message.replace(/, stat '/, ", watch '");
+      }
+      throw e;
+    }
+    const EventEmitter = eventEmitter();
+    const watcher = new EventEmitter();
+    if (typeof listener === 'function') watcher.on('change', listener);
+    const timer = setInterval(() => {
+      let next;
+      try {
+        next = snapshot(filename, opts.recursive);
+      } catch (e) {
+        next = new Map();
+      }
+      for (const [name, stat] of next) {
+        const old = entries.get(name);
+        if (!old) watcher.emit('change', 'rename', name);
+        else if (!sameStats(old, stat)) watcher.emit('change', 'change', name);
+      }
+      for (const name of entries.keys()) {
+        if (!next.has(name)) watcher.emit('change', 'rename', name);
+      }
+      entries = next;
+    }, 100);
+    if (!opts.persistent && timer.unref) timer.unref();
+    let closed = false;
+    watcher.close = function () {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer);
+      process.nextTick(() => watcher.emit('close'));
+    };
+    watcher.ref = function () { if (timer.ref) timer.ref(); return watcher; };
+    watcher.unref = function () { if (timer.unref) timer.unref(); return watcher; };
+    if (opts.signal) {
+      if (opts.signal.aborted) process.nextTick(() => watcher.close());
+      else opts.signal.addEventListener('abort', () => watcher.close(), { once: true });
+    }
+    return watcher;
+  };
+
   // The open flags come from Go, because their values depend on the platform.
   if (!fs.constants) {
     fs.constants = Object.assign({ F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 }, fs.__openFlags,
@@ -885,7 +1489,12 @@
     readFile: ['path'], writeFile: ['path'], appendFile: ['path'], stat: ['path'], lstat: ['path'],
     access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path'],
     mkdir: ['path'], rmdir: ['path'], rm: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
-    rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest']
+    rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest'],
+    truncateSync: ['path'], truncate: ['path'], chmodSync: ['path'], chmod: ['path'],
+    chownSync: ['path'], chown: ['path'], utimesSync: ['path'], utimes: ['path'],
+    statfsSync: ['path'], statfs: ['path'], opendirSync: ['path'], opendir: ['path'],
+    cpSync: ['src', 'dest'], cp: ['src', 'dest'], openAsBlob: ['path'], watch: ['filename'],
+    watchFile: ['filename']
   };
   for (const name of Object.keys(PATH_ARGUMENTS)) {
     const original = fs[name];

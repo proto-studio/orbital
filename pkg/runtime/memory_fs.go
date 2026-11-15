@@ -23,6 +23,10 @@ type memFile struct {
 	mode    fs.FileMode
 	modTime time.Time
 	isDir   bool
+
+	// Set by Chown and Chtimes; zero until then.
+	uid, gid   int
+	accessTime time.Time
 }
 
 // NewMemoryFilesystem creates a new in-memory filesystem.
@@ -66,12 +70,19 @@ func (m *MemoryFilesystem) Stat(path string) (*FileInfo, error) {
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
+	atime := f.accessTime
+	if atime.IsZero() {
+		atime = f.modTime
+	}
 	return &FileInfo{
-		Name:    filepath.Base(path),
-		Size:    int64(len(f.data)),
-		Mode:    f.mode,
-		ModTime: f.modTime,
-		IsDir:   f.isDir,
+		Name:       filepath.Base(path),
+		Size:       int64(len(f.data)),
+		Mode:       f.mode,
+		ModTime:    f.modTime,
+		IsDir:      f.isDir,
+		AccessTime: atime,
+		Uid:        f.uid,
+		Gid:        f.gid,
 	}, nil
 }
 
@@ -438,3 +449,111 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 		append:   flag&os.O_APPEND != 0,
 	}, nil
 }
+
+// change runs op on the file at path, or fails with ENOENT naming op.
+func (m *MemoryFilesystem) change(op, path string, apply func(*memFile) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	path = m.normalizePath(path)
+	mf, ok := m.files[path]
+	if !ok {
+		return &fs.PathError{Op: op, Path: path, Err: syscall.ENOENT}
+	}
+	return apply(mf)
+}
+
+// resize sets the size of a file, cutting it or padding it with zeros.
+func (mf *memFile) resize(op, path string, size int64) error {
+	switch {
+	case mf.isDir:
+		return &fs.PathError{Op: op, Path: path, Err: syscall.EISDIR}
+	case size < 0:
+		return &fs.PathError{Op: op, Path: path, Err: syscall.EINVAL}
+	case size <= int64(len(mf.data)):
+		mf.data = mf.data[:size]
+	default:
+		mf.data = append(mf.data, make([]byte, size-int64(len(mf.data)))...)
+	}
+	mf.modTime = time.Now()
+	return nil
+}
+
+// Truncate sets the size of a file, cutting it or padding it with zeros.
+func (m *MemoryFilesystem) Truncate(path string, size int64) error {
+	return m.change("truncate", path, func(mf *memFile) error { return mf.resize("truncate", path, size) })
+}
+
+// Chmod sets the permission bits of a file.
+func (m *MemoryFilesystem) Chmod(path string, mode fs.FileMode) error {
+	return m.change("chmod", path, func(mf *memFile) error {
+		mf.mode = mf.mode&^fs.ModePerm | mode&fs.ModePerm
+		return nil
+	})
+}
+
+// Chown records the owner and group of a file.
+func (m *MemoryFilesystem) Chown(path string, uid, gid int) error {
+	return m.change("chown", path, func(mf *memFile) error {
+		// -1 leaves a value as it is, as in chown(2).
+		if uid != -1 {
+			mf.uid = uid
+		}
+		if gid != -1 {
+			mf.gid = gid
+		}
+		return nil
+	})
+}
+
+// Chtimes sets the access and modification times of a file.
+func (m *MemoryFilesystem) Chtimes(path string, atime, mtime time.Time) error {
+	return m.change("utime", path, func(mf *memFile) error {
+		mf.accessTime, mf.modTime = atime, mtime
+		return nil
+	})
+}
+
+// Access checks that a path exists and that its owner permission bits allow mode: there is
+// one user here, who owns everything.
+func (m *MemoryFilesystem) Access(path string, mode uint32) error {
+	return m.change("access", path, func(mf *memFile) error {
+		owner := uint32(mf.mode.Perm()>>6) & 7
+		if mode&7&^owner != 0 {
+			return &fs.PathError{Op: "access", Path: path, Err: syscall.EACCES}
+		}
+		return nil
+	})
+}
+
+// Truncate sets the size of the open file.
+func (f *memFileHandle) Truncate(size int64) error {
+	if !f.writable {
+		return &fs.PathError{Op: "ftruncate", Path: f.path, Err: syscall.EINVAL}
+	}
+	return f.fs.change("ftruncate", f.path, func(mf *memFile) error { return mf.resize("ftruncate", f.path, size) })
+}
+
+// Sync has nothing to flush: writes reach the file at once.
+func (f *memFileHandle) Sync() error {
+	return nil
+}
+
+// Chmod sets the permission bits of the open file.
+func (f *memFileHandle) Chmod(mode fs.FileMode) error {
+	return f.fs.Chmod(f.path, mode)
+}
+
+// Chown records the owner and group of the open file.
+func (f *memFileHandle) Chown(uid, gid int) error {
+	return f.fs.Chown(f.path, uid, gid)
+}
+
+// Chtimes sets the access and modification times of the open file.
+func (f *memFileHandle) Chtimes(atime, mtime time.Time) error {
+	return f.fs.Chtimes(f.path, atime, mtime)
+}
+
+var (
+	_ MetadataFilesystem = (*MemoryFilesystem)(nil)
+	_ MetadataFile       = (*memFileHandle)(nil)
+)

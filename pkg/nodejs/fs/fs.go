@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -259,6 +260,9 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 		return err
 	}
 	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
+		return err
+	}
+	if err := f.registerMetadata(regFn); err != nil {
 		return err
 	}
 
@@ -551,11 +555,11 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	arr, _ := ctx.NewArray(len(entries))
 	for i, entry := range entries {
 		if withFileTypes {
+			// fs_setup.js makes an fs.Dirent of each, from its name and libuv's type number.
 			obj, _ := ctx.NewObject()
 			name, _ := ctx.NewString(entry.Name)
 			obj.Set("name", name)
-			obj.Set("_isDirectory", ctx.NewBoolean(entry.IsDir))
-			obj.Set("_isFile", ctx.NewBoolean(!entry.IsDir))
+			obj.Set("type", ctx.NewInteger(direntType(entry)))
 			arr.SetIndex(i, obj)
 		} else {
 			name, _ := ctx.NewString(entry.Name)
@@ -564,6 +568,14 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	return arr
+}
+
+// direntType is libuv's number for an entry's type: UV_DIRENT_FILE (1) or UV_DIRENT_DIR (2).
+func direntType(entry runtime.DirEntry) int64 {
+	if entry.IsDir {
+		return 2
+	}
+	return 1
 }
 
 // statSyncFunc implements fs.statSync.
@@ -609,47 +621,84 @@ func (f *FS) rmTargetSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return f.createStatObject(ctx, stat)
 }
 
-// createStatObject creates a stat object from FileInfo
+// createStatObject describes stat with Node's fs.Stats fields. fs_setup.js turns it into an
+// fs.Stats (__addStatsMethods), which adds the Date fields and the isFile()-style methods.
+// What the Filesystem doesn't report gets a plain default, and its times mirror ModTime.
 func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value {
 	obj, _ := ctx.NewObject()
+	num := func(key string, v float64) { obj.Set(key, ctx.NewNumber(v)) }
+	ms := func(t time.Time) float64 {
+		if t.IsZero() {
+			t = stat.ModTime
+		}
+		return float64(t.UnixNano()) / 1e6
+	}
 
-	// Basic properties
-	obj.Set("size", ctx.NewNumber(float64(stat.Size)))
-	obj.Set("mode", ctx.NewInteger(int64(stat.Mode)))
-
-	// Standard numeric Stats fields. Orbital's FileInfo doesn't track most of
-	// these, but they must be present as numbers: the `etag` module's isStats()
-	// guard requires `ino` (and `size`) to be numbers before it will hash a
-	// Stats object, and `send` calls etag(stat) for file responses.
-	obj.Set("dev", ctx.NewNumber(0))
-	obj.Set("ino", ctx.NewNumber(0))
-	obj.Set("nlink", ctx.NewNumber(1))
-	obj.Set("uid", ctx.NewNumber(0))
-	obj.Set("gid", ctx.NewNumber(0))
-	obj.Set("rdev", ctx.NewNumber(0))
-	obj.Set("blksize", ctx.NewNumber(4096))
-	blocks := (stat.Size + 511) / 512
-	obj.Set("blocks", ctx.NewNumber(float64(blocks)))
-
-	// Timestamps as milliseconds. Node's fs.Stats exposes both the numeric
-	// *Ms fields and Date objects (mtime/atime/ctime/birthtime); the Date
-	// objects are built in fs_setup.js (__addStatsMethods) since constructing a
-	// JS Date is far simpler there than across the V8 boundary. Real packages
-	// depend on the Date form: `send` calls stat.mtime.toUTCString() and the
-	// `etag` module calls stat.mtime.getTime(). Orbital's FileInfo only tracks
-	// ModTime, so atime/ctime/birthtime mirror it.
-	ms := float64(stat.ModTime.UnixMilli())
-	obj.Set("mtimeMs", ctx.NewNumber(ms))
-	obj.Set("atimeMs", ctx.NewNumber(ms))
-	obj.Set("ctimeMs", ctx.NewNumber(ms))
-	obj.Set("birthtimeMs", ctx.NewNumber(ms))
-
-	isDir := ctx.NewBoolean(stat.IsDir)
-	isFile := ctx.NewBoolean(!stat.IsDir)
-	obj.Set("_isDirectory", isDir)
-	obj.Set("_isFile", isFile)
-
+	// These must be numbers even when unknown: the `etag` module's isStats() guard requires
+	// `ino` and `size` to be, and `send` calls etag(stat) for file responses.
+	dev, ino, nlink, rdev := float64(stat.Dev), float64(stat.Ino), float64(stat.Nlink), float64(stat.Rdev)
+	blksize, blocks := float64(stat.Blksize), float64(stat.Blocks)
+	if !stat.HasDetails {
+		nlink, blksize, blocks = 1, 4096, float64((stat.Size+511)/512)
+	}
+	num("dev", dev)
+	num("mode", float64(posixMode(stat.Mode)))
+	num("nlink", nlink)
+	num("uid", float64(stat.Uid))
+	num("gid", float64(stat.Gid))
+	num("rdev", rdev)
+	num("blksize", blksize)
+	num("ino", ino)
+	num("size", float64(stat.Size))
+	num("blocks", blocks)
+	num("atimeMs", ms(stat.AccessTime))
+	num("mtimeMs", ms(stat.ModTime))
+	num("ctimeMs", ms(stat.ChangeTime))
+	num("birthtimeMs", ms(stat.BirthTime))
 	return obj
+}
+
+// POSIX file type and mode bits, as st_mode carries them and Node's fs.Stats reports them.
+const (
+	sIFIFO  = 0o010000
+	sIFCHR  = 0o020000
+	sIFDIR  = 0o040000
+	sIFBLK  = 0o060000
+	sIFREG  = 0o100000
+	sIFLNK  = 0o120000
+	sIFSOCK = 0o140000
+)
+
+// posixMode turns a Go FileMode into the st_mode number Node reports, such as 0o100644 for
+// a regular file.
+func posixMode(mode fs.FileMode) uint32 {
+	m := uint32(mode.Perm())
+	if mode&fs.ModeSetuid != 0 {
+		m |= 0o4000
+	}
+	if mode&fs.ModeSetgid != 0 {
+		m |= 0o2000
+	}
+	if mode&fs.ModeSticky != 0 {
+		m |= 0o1000
+	}
+	switch {
+	case mode&fs.ModeDir != 0:
+		m |= sIFDIR
+	case mode&fs.ModeSymlink != 0:
+		m |= sIFLNK
+	case mode&fs.ModeNamedPipe != 0:
+		m |= sIFIFO
+	case mode&fs.ModeSocket != 0:
+		m |= sIFSOCK
+	case mode&fs.ModeCharDevice != 0:
+		m |= sIFCHR
+	case mode&fs.ModeDevice != 0:
+		m |= sIFBLK
+	default:
+		m |= sIFREG
+	}
+	return m
 }
 
 // openFlagConstants returns the open flags for fs.constants. They are the platform's own
@@ -1099,8 +1148,7 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, syscallName, path), ctx.Null())
 				return
 			}
-			statObj := f.createStatObject(ctx, stat)
-			f.callFsHelper(ctx, "__addStatsMethods", statObj)
+			statObj := f.callFsHelper(ctx, "__addStatsMethods", f.createStatObject(ctx, stat))
 			f.rt.MakeCallback(callback, nil, ctx.Null(), statObj)
 		})
 	}()
@@ -1108,8 +1156,9 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	return nil
 }
 
-// accessFunc implements the async fs.access. Only existence is checked (the R/W/X
-// mode bits are ignored), which is what send/express.static rely on.
+// accessFunc implements the async fs.access(path[, mode], callback), checking mode's R_OK,
+// W_OK and X_OK bits as access(2) does. A Filesystem that can't check them is asked only
+// whether the path exists.
 func (f *FS) accessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
@@ -1120,6 +1169,10 @@ func (f *FS) accessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if !callback.IsFunction() {
 		return nil
 	}
+	var mode uint32
+	if len(args) >= 3 && args[1].IsNumber() {
+		mode = uint32(args[1].Integer())
+	}
 
 	ctx := info.Context()
 	fsys := f.fs()
@@ -1128,15 +1181,19 @@ func (f *FS) accessFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		exists := fsys.Exists(path)
+		var err error
+		if m, ok := fsys.(runtime.MetadataFilesystem); ok {
+			err = m.Access(path, mode)
+		} else if !fsys.Exists(path) {
+			err = syscall.ENOENT
+		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
-			if exists {
-				f.rt.MakeCallback(callback, nil, ctx.Null())
+			if err != nil {
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, "access", path))
 				return
 			}
-			errVal := f.makeFsError(ctx, "ENOENT", "ENOENT: no such file or directory, access '"+path+"'", path, "access")
-			f.rt.MakeCallback(callback, nil, errVal)
+			f.rt.MakeCallback(callback, nil, ctx.Null())
 		})
 	}()
 
