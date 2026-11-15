@@ -233,7 +233,8 @@
 		function sortOutput(output, start = 0) {
 			if (!opts.sorted || output.length - start < 2) return;
 			const sorted = output.slice(start).sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
-			output.splice(start, sorted.length, ...sorted);
+			// Copied back one by one, as spreading them into splice would pass one argument each.
+			for (let i = 0; i < sorted.length; i++) output[start + i] = sorted[i];
 		}
 
 		function formatObject(obj, depth) {

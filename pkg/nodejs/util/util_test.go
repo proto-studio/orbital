@@ -502,3 +502,23 @@ func TestUtil_InspectLargeArraySymbols(t *testing.T) {
 		t.Errorf("inspecting took %d ms; the elements were probably walked", got.Ms)
 	}
 }
+
+// sorted handles an object with more properties than a function takes arguments. Node sorts
+// the entries as text, so k100000: 0 comes before k1: 0.
+func TestUtil_InspectSortedManyKeys(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const many = {};
+		for (let i = 0; i < 200000; i++) many['k' + (199999 - i)] = 0;
+		const text = __util_module.inspect(many, { sorted: true, breakLength: Infinity });
+		text.slice(0, 30);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ k0: 0, k100000: 0, k100001: "; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
