@@ -7,8 +7,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -1346,5 +1348,103 @@ done({
 		"emptyCN":     "Cert does not contain a DNS name",
 		"noSubject":   "Cert does not contain a DNS name",
 		"number":      "ok",
+	})
+}
+
+// Certificates the default identity check must refuse as Node does: a name that only matches
+// after Unicode case folding, DNS names in a SAN extension with trailing data, and a Common
+// Name outside its CA's name constraints. Run with ORBITAL_CAPTURE_NODE=1 to check the
+// expected values against node.
+func TestTLSConnect_IdentityEdgeCasesFollowNode(t *testing.T) {
+	ca := newTestCA(t)
+	constrained := func() *testCA {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber:          big.NewInt(2),
+			Subject:               pkix.Name{CommonName: "Orbital Constrained CA"},
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              time.Now().Add(time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign,
+			PermittedDNSDomains:   []string{"allowed.test"},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &testCA{cert: cert, key: key, pem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}
+	}()
+	// SEQUENCE { [2] "wrong.test" } followed by a DER NULL.
+	sanWithTrailer := append([]byte{0x30, 0x0c, 0x82, 0x0a}, append([]byte("wrong.test"), 0x05, 0x00)...)
+	oidSAN := asn1.ObjectIdentifier{2, 5, 29, 17}
+
+	type attempt struct {
+		ca         *testCA
+		cert       tls.Certificate
+		servername string
+	}
+	attempts := map[string]attempt{
+		"unicodeCN": {ca, ca.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "İ.example.test" }), "i.example.test"},
+		"sanTrailer": {ca, ca.issueTemplate(t, func(c *x509.Certificate) {
+			c.Subject.CommonName = "localhost"
+			c.ExtraExtensions = []pkix.Extension{{Id: oidSAN, Value: sanWithTrailer}}
+		}), "localhost"},
+		"constrainedCN":    {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "blocked.test"},
+		"constrainedCNOK":  {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "www.allowed.test" }), "www.allowed.test"},
+		"constrainedOther": {constrained, constrained.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "blocked.test" }), "www.allowed.test"},
+	}
+	var cases strings.Builder
+	for name, a := range attempts {
+		fmt.Fprintf(&cases, "  %q: { port: %d, ca: %q, servername: %q },\n", name, newTLSServer(t, a.cert), a.ca.pem, a.servername)
+	}
+	script := `
+const tls = require('tls');
+const cases = {
+` + cases.String() + `};
+const results = {};
+(async () => {
+  for (const [name, c] of Object.entries(cases)) {
+    results[name] = await new Promise((resolve) => {
+      const socket = tls.connect({ host: '127.0.0.1', port: c.port, ca: c.ca, servername: c.servername }, () => {
+        resolve('authorized');
+        socket.destroy();
+      });
+      socket.on('error', (e) => resolve(e.code + ': ' + e.message));
+    });
+  }
+  if (globalThis.done) done(results);
+  else process.stdout.write(JSON.stringify(results));
+})();
+`
+	var got map[string]any
+	if captureFromNode(t) {
+		path := t.TempDir() + "/edges.js"
+		if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.Command("node", path).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(output, &got); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		got = runJS(t, &runtime.Config{}, script)
+	}
+	wantJSON(t, got, map[string]any{
+		"unicodeCN":        "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: i.example.test. is not cert's CN: \u0130.example.test",
+		"sanTrailer":       "ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: Host: localhost. is not in the cert's altnames: DNS:wrong.test",
+		"constrainedCN":    "UNSPECIFIED: permitted subtree violation",
+		"constrainedCNOK":  "authorized",
+		"constrainedOther": "UNSPECIFIED: permitted subtree violation",
 	})
 }
