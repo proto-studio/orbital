@@ -281,3 +281,57 @@ func TestURL_LegacyParseIPv6(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+// href keeps the query as parsed, percent-encoding only what the URL parser does, and
+// searchParams parses and serializes application/x-www-form-urlencoded and writes the
+// query back only when it changes. Expected values are Node 20.18.1's.
+func TestURL_QueryAsParsed(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const out = [];
+const show = (u) => out.push([u.href, u.search]);
+show(new URL('http://h/?q&a=%41b+c'));
+show(new URL('http://h/?'));
+show(new URL('http://h/p?a b"<>é\'`+"`"+`#f'));
+show(new URL('foo://h/p?a b"\'x'));
+show(new URL('http://h/?a=%zz&b=%41'));
+let u = new URL('http://h/?q&a=%41b+c'); u.searchParams.append('n', 'x y'); show(u);
+u = new URL('http://h/?a=1'); u.searchParams.delete('a'); show(u);
+u = new URL('http://h/?b=2&a=1'); u.searchParams.sort(); show(u);
+u = new URL('http://h/?a=1'); u.searchParams.set('a', 'é&='); show(u);
+u = new URL('http://h/?a=1'); u.search = 'x y=1&z'; show(u); out.push([...u.searchParams].join('|'));
+u = new URL('http://h/?a=1'); u.search = ''; show(u);
+u = new URL('http://h/'); u.searchParams.append('k', '~*-._!\'()'); show(u);
+const p = new URLSearchParams('a=b+c&d=%2B&e=%zz&&f&=g&h=1=2');
+out.push(JSON.stringify([...p]), p.toString());
+out.push(new URLSearchParams({ 'a b': 'c+d', e: '\u{1F600}' }).toString());
+out.push(new URLSearchParams([['x', 'y z']]).toString());
+u = new URL('http://h/?a=1#frag'); u.searchParams.append('b', '2'); show(u); out.push(u.hash);
+JSON.stringify(out);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["http://h/?q&a=%41b+c","?q&a=%41b+c"],["http://h/?",""],["http://h/p?a%20b%22%3C%3E%C3%A9%27` + "`" + `#f","?a%20b%22%3C%3E%C3%A9%27` + "`" + `"],["foo://h/p?a%20b%22'x","?a%20b%22'x"],["http://h/?a=%zz&b=%41","?a=%zz&b=%41"],["http://h/?q=&a=Ab+c&n=x+y","?q=&a=Ab+c&n=x+y"],["http://h/",""],["http://h/?a=1&b=2","?a=1&b=2"],["http://h/?a=%C3%A9%26%3D","?a=%C3%A9%26%3D"],["http://h/?x%20y=1&z","?x%20y=1&z"],"x y,1|z,",["http://h/",""],["http://h/?k=%7E*-._%21%27%28%29","?k=%7E*-._%21%27%28%29"],"[[\"a\",\"b c\"],[\"d\",\"+\"],[\"e\",\"%zz\"],[\"f\",\"\"],[\"\",\"g\"],[\"h\",\"1=2\"]]","a=b+c&d=%2B&e=%25zz&f=&=g&h=1%3D2","a+b=c%2Bd&e=%F0%9F%98%80","x=y+z",["http://h/?a=1&b=2#frag","?a=1&b=2"],"#frag"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
+
+// searchParams decodes escapes as UTF-8, with U+FFFD for malformed bytes, and encodes a
+// lone surrogate as U+FFFD, as Node 20.18.1 does.
+func TestURLSearchParams_UTF8(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`JSON.stringify([[...new URLSearchParams('a=%C3%A9&b=%FF%41&c=%E2%82&d=%F0%9F%98%80&e=\uD800x')], new URLSearchParams({ x: '\uD800y' }).toString()])`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[[["a","é"],["b","�A"],["c","�"],["d","😀"],["e","�x"]],"x=%EF%BF%BDy"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}

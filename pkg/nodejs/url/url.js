@@ -1,6 +1,129 @@
 (function() {
 	'use strict';
 
+	const hex = '0123456789ABCDEF';
+
+	// utf8Bytes is UTF-8 as the URL standard uses it; a lone surrogate becomes U+FFFD.
+	// The url module does not rely on TextEncoder, which an embedder may leave out.
+	function utf8Bytes(str) {
+		const out = [];
+		for (let i = 0; i < str.length; i++) {
+			let c = str.charCodeAt(i);
+			if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length) {
+				const d = str.charCodeAt(i + 1);
+				if (d >= 0xDC00 && d <= 0xDFFF) {
+					c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00);
+					i++;
+				} else {
+					c = 0xFFFD;
+				}
+			} else if (c >= 0xD800 && c <= 0xDFFF) {
+				c = 0xFFFD;
+			}
+			if (c < 0x80) out.push(c);
+			else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+			else if (c < 0x10000) out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+			else out.push(0xF0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+		}
+		return out;
+	}
+
+	// utf8Decode reads bytes as UTF-8, putting U+FFFD in place of each malformed sequence.
+	function utf8Decode(bytes) {
+		let out = '';
+		for (let i = 0; i < bytes.length;) {
+			const b = bytes[i];
+			let need = 0;
+			let c = 0;
+			let min = 0;
+			if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
+			if (b >= 0xC2 && b <= 0xDF) { need = 1; c = b & 31; min = 0x80; }
+			else if (b >= 0xE0 && b <= 0xEF) { need = 2; c = b & 15; min = 0x800; }
+			else if (b >= 0xF0 && b <= 0xF4) { need = 3; c = b & 7; min = 0x10000; }
+			else { out += '\uFFFD'; i++; continue; }
+			let j = 1;
+			for (; j <= need && i + j < bytes.length && (bytes[i + j] & 0xC0) === 0x80; j++) {
+				c = (c << 6) | (bytes[i + j] & 63);
+			}
+			if (j <= need || c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
+				out += '\uFFFD';
+				i += Math.max(1, j);
+				continue;
+			}
+			out += String.fromCodePoint(c);
+			i += need + 1;
+		}
+		return out;
+	}
+
+	function isHex(b) {
+		return (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66);
+	}
+
+	// percentDecode turns %XX escapes into bytes and reads the result as UTF-8; an escape
+	// that is not two hex digits is kept as written.
+	function percentDecode(str) {
+		const input = utf8Bytes(str);
+		const out = [];
+		for (let i = 0; i < input.length; i++) {
+			const b = input[i];
+			if (b === 0x25 && i + 2 < input.length && isHex(input[i + 1]) && isHex(input[i + 2])) {
+				out.push(parseInt(String.fromCharCode(input[i + 1], input[i + 2]), 16));
+				i += 2;
+			} else {
+				out.push(b);
+			}
+		}
+		return utf8Decode(out);
+	}
+
+	// parseUrlencoded is the application/x-www-form-urlencoded parser: "+" is a space and
+	// empty pairs are skipped.
+	function parseUrlencoded(input) {
+		const list = [];
+		for (const pair of String(input).split('&')) {
+			if (pair === '') continue;
+			const eq = pair.indexOf('=');
+			const name = eq === -1 ? pair : pair.slice(0, eq);
+			const value = eq === -1 ? '' : pair.slice(eq + 1);
+			list.push([percentDecode(name.replace(/\+/g, ' ')), percentDecode(value.replace(/\+/g, ' '))]);
+		}
+		return list;
+	}
+
+	// serializeUrlencoded keeps *-._ and ASCII alphanumerics, writes a space as "+", and
+	// percent-encodes every other UTF-8 byte.
+	function serializeUrlencoded(str) {
+		let out = '';
+		for (const b of utf8Bytes(String(str))) {
+			if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) ||
+					b === 0x2A || b === 0x2D || b === 0x2E || b === 0x5F) {
+				out += String.fromCharCode(b);
+			} else if (b === 0x20) {
+				out += '+';
+			} else {
+				out += '%' + hex[b >> 4] + hex[b & 15];
+			}
+		}
+		return out;
+	}
+
+	// encodeQuery percent-encodes what the URL parser encodes in a query: controls, space,
+	// '"', '#', '<', '>', anything outside ASCII, and for special schemes "'". Escapes
+	// already present are kept.
+	function encodeQuery(query, special) {
+		let out = '';
+		for (const ch of String(query)) {
+			const c = ch.codePointAt(0);
+			if (c < 0x21 || c > 0x7E || ch === '"' || ch === '#' || ch === '<' || ch === '>' || (special && ch === "'")) {
+				for (const b of utf8Bytes(ch)) out += '%' + hex[b >> 4] + hex[b & 15];
+			} else {
+				out += ch;
+			}
+		}
+		return out;
+	}
+
 	// URLSearchParams class
 	class URLSearchParams {
 		constructor(init) {
@@ -10,12 +133,7 @@
 				if (init.startsWith('?')) {
 					init = init.slice(1);
 				}
-				if (init) {
-					init.split('&').forEach(pair => {
-						const [key, value] = pair.split('=').map(decodeURIComponent);
-						this._params.push([key, value !== undefined ? value : '']);
-					});
-				}
+				this._params = parseUrlencoded(init);
 			} else if (Array.isArray(init)) {
 				init.forEach(([key, value]) => {
 					this._params.push([String(key), String(value)]);
@@ -33,12 +151,22 @@
 			}
 		}
 
+		// The URL this belongs to, if any, takes the new query after each change, as the
+		// URL standard's update steps say.
+		_update() {
+			if (!this._url) return;
+			const query = this.toString();
+			this._url._search = query === '' ? '' : '?' + query;
+		}
+
 		append(name, value) {
 			this._params.push([String(name), String(value)]);
+			this._update();
 		}
 
 		delete(name) {
 			this._params = this._params.filter(([key]) => key !== name);
+			this._update();
 		}
 
 		get(name) {
@@ -72,15 +200,21 @@
 			} else {
 				this._params.push([String(name), String(value)]);
 			}
+			this._update();
 		}
 
 		sort() {
-			this._params.sort((a, b) => a[0].localeCompare(b[0]));
+			// Stable, by UTF-16 code units, as the standard says.
+			this._params = this._params
+				.map((entry, i) => [entry, i])
+				.sort((a, b) => (a[0][0] < b[0][0] ? -1 : a[0][0] > b[0][0] ? 1 : a[1] - b[1]))
+				.map(([entry]) => entry);
+			this._update();
 		}
 
 		toString() {
 			return this._params
-				.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+				.map(([key, value]) => serializeUrlencoded(key) + '=' + serializeUrlencoded(value))
 				.join('&');
 		}
 
@@ -135,6 +269,7 @@
 			this._hash = parsed.hash || '';
 			this._slashes = !!parsed.slashes;
 			this._searchParams = new URLSearchParams(this._search);
+			this._searchParams._url = this;
 		}
 
 		static _parse(url) {
@@ -217,7 +352,7 @@
 
 			const searchIndex = rest.indexOf('?');
 			if (searchIndex !== -1) {
-				search = rest.slice(searchIndex);
+				search = '?' + encodeQuery(rest.slice(searchIndex + 1), special);
 				pathname = rest.slice(0, searchIndex) || '/';
 			} else {
 				pathname = rest || '/';
@@ -304,12 +439,15 @@
 			this._pathname = value;
 		}
 
-		get search() { return this._search; }
+		get search() { return this._search === '?' ? '' : this._search; }
 		set search(value) {
+			// As in the URL standard: an empty value removes the query, a leading "?" is
+			// dropped, and searchParams (the same object) takes the new entries.
 			value = String(value);
-			if (value && !value.startsWith('?')) value = '?' + value;
-			this._search = value;
-			this._searchParams = new URLSearchParams(value);
+			if (value.startsWith('?')) value = value.slice(1);
+			const special = /^(https?|wss?|ftp|file):$/.test(this._protocol);
+			this._search = value === '' ? '' : '?' + encodeQuery(value, special);
+			this._searchParams._params = parseUrlencoded(value);
 		}
 
 		get searchParams() {
@@ -337,11 +475,8 @@
 				url += this.host;
 			}
 			url += this._pathname;
-			// Sync searchParams to search
-			const params = this._searchParams.toString();
-			if (params) {
-				url += '?' + params;
-			}
+			// The query as parsed; searchParams writes it back when it changes.
+			url += this._search;
 			url += this._hash;
 			return url;
 		}
@@ -355,7 +490,8 @@
 			this._pathname = newUrl._pathname;
 			this._search = newUrl._search;
 			this._hash = newUrl._hash;
-			this._searchParams = newUrl._searchParams;
+			// The same URLSearchParams object stays attached, with the new entries.
+			this._searchParams._params = newUrl._searchParams._params;
 		}
 
 		toString() {
