@@ -181,3 +181,27 @@ show({ x: 2, [Symbol('k')]: 1 }, { [Symbol()]: 1, [Symbol.iterator]: 2, [Symbol.
 console.log(u.inspect({ b: 1, [Symbol('z')]: 1, a: 2, a0: 3, A: 1, [Symbol('a')]: 2 }, { sorted: true }));
 console.log(u.inspect(Object.assign([3, 1], { [Symbol('b')]: 1, [Symbol('a')]: 2 }), { sorted: true }));
 console.log(u.inspect(new Map([[2, 1], [1, 2]]), { sorted: true }), u.inspect(new Set([2, 1]), { sorted: true }));
+// A value that holds itself is labeled <ref *N> where it starts, and [Circular *N] where it
+// appears inside itself, numbered in the order they're found. Checked before the depth limit.
+{
+  const o = { x: 2 }; o.self = o;
+  const a = [1]; a.push(a);
+  const p = { name: 'p' }; const c = { parent: p }; p.child = c; p.kids = [c, c];
+  const m = new Map(); m.set('me', m); m.set(m, 1);
+  const s = new Set(); s.add(s);
+  const two = { a: {}, b: {} }; two.a.up = two; two.b.up = two.b; two.a.side = two.b;
+  const d = new Date(0); d.self = d;
+  const e = new Error('loop'); e.stack = 'Error: loop\n    at f (file.js:1:1)'; e.self = e;
+  const deep = { l1: { l2: { l3: {} } } }; deep.l1.l2.l3.back = deep;
+  const nest = { inner: {} }; nest.inner.me = nest.inner;
+  const long = { aaaaaaaaaaaaaaaaaaaa: 1, bbbbbbbbbbbbbbbbbbbbbbb: 2, cccccccccccccccccc: 3 }; long.self = long;
+  const rx = /r/; rx.self = rx;
+  const ab = new ArrayBuffer(1); ab.self = ab;
+  show(o, a, p, m, s, two, d, e, deep, nest, long, rx, ab, [o, o], { o1: o, o2: o });
+  console.log(o, o);
+  console.log('%o %O', o, a);
+  console.log(u.format('%s', o), u.inspect(o, { compact: true }), u.inspect(long, { compact: false }));
+  console.log(u.inspect(o, { depth: 0 }));
+  const top = { a: { b: {} } }; top.a.b.c = top; top.a.b.d = [top.a];
+  show(top);
+}

@@ -115,13 +115,21 @@
 			getters: false
 		}, options);
 
-		const seen = new WeakSet();
 		// layout holds the options for laying out entries, and the level of the object whose
 		// entries were formatted last. inspectShared is the formatting util shares with
 		// console; util.go passes it in.
 		const layout = inspectShared.context(opts);
+		// track follows the objects being formatted, to find the ones that hold themselves;
+		// tracked counts them. reduce lays out the entries of the one visited last, which is
+		// done with them, so it leaves it, putting its <ref *N> first.
+		const track = inspectShared.tracker();
+		let tracked = 0;
+		const leave = () => {
+			tracked--;
+			return track.leave();
+		};
 		const reduce = (output, open, close, level, extra) =>
-			inspectShared.reduce(layout, output, open, close, level, extra);
+			inspectShared.reduce(layout, output, open, close, level, { ...extra, ref: leave() });
 
 		function inspectValue(value, currentDepth) {
 			// Handle null and undefined
@@ -138,61 +146,51 @@
 
 			// Objects
 			if (type === 'object') {
-				// Circular reference check
-				if (seen.has(value)) return '[Circular]';
-
-				// Errors are formatted before the depth cutoff. Node still
-				// prints the stack of a nested Error; only its extra fields
-				// are dropped once the depth is exceeded.
-				if (isBrandedError(value)) {
-					seen.add(value);
-					const result = formatError(value, currentDepth);
-					seen.delete(value);
-					return result;
+				const circular = track.visit(value);
+				if (circular !== null) return circular;
+				const mine = ++tracked;
+				try {
+					return formatObjectValue(value, currentDepth);
+				} finally {
+					// Left here unless reduce laid it out.
+					if (tracked === mine) leave();
 				}
-
-				// Past the depth limit, a value with entries is cut short.
-				if (currentDepth > opts.depth) {
-					const cut = inspectShared.cut(value);
-					if (cut !== null) return cut;
-				}
-
-				seen.add(value);
-
-				// Custom inspect
-				if (opts.customInspect && typeof value[Symbol.for('nodejs.util.inspect.custom')] === 'function') {
-					const result = value[Symbol.for('nodejs.util.inspect.custom')](currentDepth, opts);
-					seen.delete(value);
-					return typeof result === 'string' ? result : inspectValue(result, currentDepth);
-				}
-
-				// Described after the custom inspector has had its chance, which may make
-				// describing it unnecessary.
-				const bin = inspectShared.binary(value, layout.maxArrayLength);
-				const coll = bin === null ? inspectShared.collection(value, layout.maxArrayLength) : null;
-				const scalar = coll === null ? inspectShared.scalar(value) : null;
-				let result;
-				if (Array.isArray(value)) {
-					result = formatArray(value, currentDepth);
-				} else if (scalar !== null) {
-					result = formatScalar(value, scalar, currentDepth);
-				} else if (coll !== null) {
-					result = formatCollection(value, coll, currentDepth);
-				} else if (value instanceof Promise) {
-					result = 'Promise { <pending> }';
-				} else if (bin !== null) {
-					result = formatBinary(value, bin, currentDepth);
-				} else if (ArrayBuffer.isView(value)) {
-					result = inspectShared.view(value, layout, currentDepth);
-				} else {
-					result = formatObject(value, currentDepth);
-				}
-
-				seen.delete(value);
-				return result;
 			}
 
 			return String(value);
+		}
+
+		// formatObjectValue formats value, an object at currentDepth.
+		function formatObjectValue(value, currentDepth) {
+			// Errors are formatted before the depth cutoff. Node still
+			// prints the stack of a nested Error; only its extra fields
+			// are dropped once the depth is exceeded.
+			if (isBrandedError(value)) return formatError(value, currentDepth);
+
+			// Past the depth limit, a value with entries is cut short.
+			if (currentDepth > opts.depth) {
+				const cut = inspectShared.cut(value);
+				if (cut !== null) return cut;
+			}
+
+			// Custom inspect
+			if (opts.customInspect && typeof value[Symbol.for('nodejs.util.inspect.custom')] === 'function') {
+				const result = value[Symbol.for('nodejs.util.inspect.custom')](currentDepth, opts);
+				return typeof result === 'string' ? result : inspectValue(result, currentDepth);
+			}
+
+			// Described after the custom inspector has had its chance, which may make
+			// describing it unnecessary.
+			const bin = inspectShared.binary(value, layout.maxArrayLength);
+			const coll = bin === null ? inspectShared.collection(value, layout.maxArrayLength) : null;
+			const scalar = coll === null ? inspectShared.scalar(value) : null;
+			if (Array.isArray(value)) return formatArray(value, currentDepth);
+			if (scalar !== null) return formatScalar(value, scalar, currentDepth);
+			if (coll !== null) return formatCollection(value, coll, currentDepth);
+			if (value instanceof Promise) return 'Promise { <pending> }';
+			if (bin !== null) return formatBinary(value, bin, currentDepth);
+			if (ArrayBuffer.isView(value)) return inspectShared.view(value, layout, currentDepth);
+			return formatObject(value, currentDepth);
 		}
 
 		function formatFunction(fn) {

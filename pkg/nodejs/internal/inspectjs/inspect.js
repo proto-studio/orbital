@@ -3,8 +3,7 @@
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
 // { context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection,
-// scalar, isDate, field,
-// cut, entry, reduce }.
+// scalar, isDate, field, cut, entry, tracker, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -391,6 +390,39 @@
     return n;
   }
 
+  // tracker follows the objects being formatted, each inside the one before, to find those that
+  // hold themselves, as Node does. visit(value) starts formatting value, or, when value is being
+  // formatted already, answers [Circular *N], numbering value the first time. leave() finishes
+  // the value visited last, and answers <ref *N> when it held itself (or '' when not), which
+  // goes before the value: callers call it after formatting its entries and before laying them
+  // out, passing what it answers to reduce as ref. Numbers count from 1 again once the
+  // outermost value is done.
+  function tracker() {
+    const seen = [];
+    let circular = null;
+    return {
+      visit(value) {
+        if (!seen.includes(value)) {
+          seen.push(value);
+          return null;
+        }
+        if (circular === null) circular = new Map();
+        let index = circular.get(value);
+        if (index === undefined) {
+          index = circular.size + 1;
+          circular.set(value, index);
+        }
+        return `[Circular *${index}]`;
+      },
+      leave() {
+        const value = seen.pop();
+        const index = circular === null ? undefined : circular.get(value);
+        if (seen.length === 0) circular = null;
+        return index === undefined ? '' : `<ref *${index}>`;
+      }
+    };
+  }
+
   // An entry takes a comma and a space after it.
   const SEPARATOR = 2;
 
@@ -485,12 +517,18 @@
   const indent = (entry) => entry.replace(/\n/g, '\n  ');
 
   // reduce joins the entries of a value at level between open and close as util.inspect does.
-  // base, like an Error's stack, goes before open. Arrays' entries are grouped in columns, with
+  // base, like an Error's stack, goes before open, and ref, a value's <ref *N>, before both. Arrays' entries are grouped in columns, with
   // numbers (all numbers or BigInts) aligned right. The
   // entries go on one line when none spans lines, the value holds fewer than compact levels of
   // objects, and the line fits in breakLength. Otherwise each goes on its own line, indented
   // two spaces.
-  function reduce(ctx, output, open, close, level, { base = '', array = false, numbers = false } = {}) {
+  function reduce(ctx, output, open, close, level, { base = '', array = false, numbers = false, ref = '' } = {}) {
+    if (ref !== '') {
+      // Node puts it in the base, which counts toward the line's length, except with compact:
+      // true, where it goes in the brace.
+      if (ctx.compact === true) open = `${ref} ${open}`;
+      else base = base === '' ? ref : `${ref} ${base}`;
+    }
     const before = base ? `${base} ` : '';
     if (ctx.compact !== true) {
       if (typeof ctx.compact === 'number' && ctx.compact >= 1) {
@@ -514,6 +552,6 @@
 
   return {
     context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection, scalar,
-    isDate, field, cut, entry, reduce
+    isDate, field, cut, entry, tracker, reduce
   };
 })()

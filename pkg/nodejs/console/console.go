@@ -27,12 +27,12 @@ type Console struct {
 	counts     map[string]int
 	groupDepth int
 
-	// errorTools is the {classify, enter, leave, reset} object installed during
-	// Register. classify reports whether a value is an Error; the others track
-	// object identity so a property that points back at an Error is printed as
-	// Node's [Circular *n].
-	errorTools    *v8.Value
-	errorTracking bool
+	// errorTools is the {classify} object installed during Register. classify
+	// reports whether a value is an Error.
+	errorTools *v8.Value
+	// tracked counts the objects being printed, one inside another, that inspect's tracker
+	// follows; see track.
+	tracked int
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
@@ -734,6 +734,11 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	if length == 0 {
 		return "[]"
 	}
+	circular, done := c.track(v)
+	if done == nil {
+		return circular
+	}
+	defer done()
 	if depth <= 0 {
 		return "[Array]"
 	}
@@ -762,10 +767,11 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 		}
 	}
 	parts = append(parts, c.formatProperties(v, c.keyList(c.inspectValue("symbols", v)), depth)...)
-	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers)); ok {
+	ref := c.leave()
+	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers), c.refArg(ref)); ok {
 		return s
 	}
-	return multilineBraces("[", "]", parts)
+	return withRef(ref, multilineBraces("[", "]", parts))
 }
 
 // formatObject formats an object value.
@@ -775,6 +781,11 @@ func (c *Console) formatObject(v *v8.Value) string {
 
 // formatObjectWithDepth formats an object at depth.
 func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
+	circular, done := c.track(v)
+	if done == nil {
+		return circular
+	}
+	defer done()
 	// Errors are formatted even past the depth limit: Node still prints the
 	// stack for an Error that has no extra fields.
 	if s, ok := c.tryFormatError(v, depth); ok {
@@ -1011,13 +1022,16 @@ func (c *Console) enter(depth int) {
 
 // reduce lays out parts of a value at depth between open and close with inspect's reduce: on
 // one line when they fit, otherwise one per line. base, like an Error's stack, goes before open.
+// It lays out the object visited last, which is done with its entries, so it leaves it, putting
+// its <ref *N> first.
 func (c *Console) reduce(parts []string, open, close string, depth int, base string) string {
+	ref := c.leave()
 	if c.ctx != nil {
 		openVal, err1 := c.ctx.NewString(open)
 		closeVal, err2 := c.ctx.NewString(close)
 		baseVal, err3 := c.ctx.NewString(base)
 		if err1 == nil && err2 == nil && err3 == nil {
-			if s, ok := c.reduceJS("reduce", parts, openVal, closeVal, c.integer(level(depth)), baseVal); ok {
+			if s, ok := c.reduceJS("reduce", parts, openVal, closeVal, c.integer(level(depth)), baseVal, c.refArg(ref)); ok {
 				return s
 			}
 		}
@@ -1025,7 +1039,46 @@ func (c *Console) reduce(parts []string, open, close string, depth int, base str
 	if base != "" {
 		open = base + " " + open
 	}
-	return multilineBraces(open, close, parts)
+	return withRef(ref, multilineBraces(open, close, parts))
+}
+
+// track starts printing v, an object, with inspect's tracker. When v is being printed already,
+// it answers [Circular *N] and a nil done. Otherwise done finishes printing v, unless reduce
+// already has; the caller defers it.
+func (c *Console) track(v *v8.Value) (circular string, done func()) {
+	if s, ok := c.inspectCall("visit", v); ok {
+		return s, nil
+	}
+	c.tracked++
+	mine := c.tracked
+	return "", func() {
+		if c.tracked == mine {
+			c.leave()
+		}
+	}
+}
+
+// leave finishes printing the object tracked last, answering its <ref *N> when it held itself.
+func (c *Console) leave() *v8.Value {
+	c.tracked--
+	return c.inspectValue("leave")
+}
+
+// refArg is ref to pass to reduce: a <ref *N>, or empty when there's none.
+func (c *Console) refArg(ref *v8.Value) *v8.Value {
+	if ref != nil && ref.IsString() {
+		return ref
+	}
+	empty, _ := c.ctx.NewString("")
+	return empty
+}
+
+// withRef puts ref, a <ref *N> or empty, before s.
+func withRef(ref *v8.Value, s string) string {
+	if ref == nil || !ref.IsString() || ref.String() == "" {
+		return s
+	}
+	return ref.String() + " " + s
 }
 
 // reduceJS calls the console_inspect.js function name with parts as an array, followed by args.

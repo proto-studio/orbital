@@ -9,25 +9,15 @@ import (
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
-// errorToolsSource returns {classify, enter, leave, reset}.
+// errorToolsSource returns {classify}.
 // classify(value) is undefined when value is not an Error instance, otherwise
 // a descriptor with the constructor name Node's inspect uses, the enumerable
 // own keys, and whether non-enumerable cause / errors should be appended.
-// enter/leave/reset track object identity for circular Errors.
 //
 // Detection uses the native error brand (Error.isError when this V8 has it).
 // instanceof Error is false after Object.setPrototypeOf(err, null), but Node
 // still formats that value as "[Error: null prototype]: ...".
 const errorToolsSource = `(function () {
-  var active = [];
-  var refs = [];
-  var next = 1;
-  function find(list, v) {
-    for (var i = 0; i < list.length; i++) {
-      if (list[i] === v) return i;
-    }
-    return -1;
-  }
   function isBrandedError(v) {
     if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return false;
     if (typeof Error.isError === 'function') {
@@ -73,31 +63,7 @@ const errorToolsSource = `(function () {
     catch (e) { errors = false; }
     return { ctor: ctor, cause: cause, errors: errors };
   }
-  function enter(v) {
-    var i = find(active, v);
-    if (i !== -1) {
-      var id = refs[i];
-      if (!id) { id = next++; refs[i] = id; }
-      return id;
-    }
-    active.push(v);
-    refs.push(0);
-    return 0;
-  }
-  function leave(v) {
-    var i = find(active, v);
-    if (i === -1) return 0;
-    var id = refs[i] || 0;
-    active.splice(i, 1);
-    refs.splice(i, 1);
-    return id;
-  }
-  function reset() {
-    active = [];
-    refs = [];
-    next = 1;
-  }
-  return { classify: classify, enter: enter, leave: leave, reset: reset };
+  return { classify: classify };
 })()`
 
 // nullProtoNameRe matches the header of a "regular" stack Node is willing to
@@ -127,7 +93,7 @@ func (c *Console) installErrorClass(rt *runtime.Runtime) error {
 	if tools == nil || !tools.IsObject() {
 		return fmt.Errorf("console: error classifier did not compile")
 	}
-	for _, name := range []string{"classify", "enter", "leave", "reset"} {
+	for _, name := range []string{"classify"} {
 		fn, err := tools.Get(name)
 		if err != nil || fn == nil || !fn.IsFunction() {
 			return fmt.Errorf("console: error classifier missing %s", name)
@@ -161,31 +127,7 @@ func (c *Console) tryFormatError(v *v8.Value, depth int) (string, bool) {
 		return "", false
 	}
 
-	top := !c.errorTracking
-	if top {
-		c.errorTracking = true
-		_, _ = c.callErrorTool("reset")
-		defer func() {
-			c.errorTracking = false
-			_, _ = c.callErrorTool("reset")
-		}()
-	}
-
-	entered, err := c.callErrorTool("enter", v)
-	if err != nil || entered == nil {
-		return c.renderError(v, info, depth), true
-	}
-	if id := int(entered.Number()); id > 0 {
-		return fmt.Sprintf("[Circular *%d]", id), true
-	}
-
-	rendered := c.renderError(v, info, depth)
-	if left, err := c.callErrorTool("leave", v); err == nil && left != nil {
-		if ref := int(left.Number()); ref > 0 {
-			rendered = fmt.Sprintf("<ref *%d> %s", ref, rendered)
-		}
-	}
-	return rendered, true
+	return c.renderError(v, info, depth), true
 }
 
 func (c *Console) classifyError(v *v8.Value) (errorInfo, bool) {
