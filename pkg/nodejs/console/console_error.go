@@ -71,7 +71,7 @@ const errorToolsSource = `(function () {
     var errors = false;
     try { errors = keys.indexOf('errors') === -1 && Array.isArray(v.errors); }
     catch (e) { errors = false; }
-    return { ctor: ctor, keys: keys, cause: cause, errors: errors };
+    return { ctor: ctor, cause: cause, errors: errors };
   }
   function enter(v) {
     var i = find(active, v);
@@ -109,14 +109,14 @@ var nullProtoErrRe = regexp.MustCompile(`^([A-Za-z0-9_-]*Error)$`)
 type errorInfo struct {
 	nullProto bool
 	ctor      string
-	keys      []string
+	keys      []*v8.Value
 	cause     bool
 	errors    bool
 }
 
 type errorKey struct {
-	name   string
-	hidden bool // non-enumerable keys Node prints in brackets ([cause])
+	key  *v8.Value // an enumerable key, a string or a symbol
+	name string    // a non-enumerable key Node prints in brackets ([cause])
 }
 
 func (c *Console) installErrorClass(rt *runtime.Runtime) error {
@@ -206,17 +206,7 @@ func (c *Console) classifyError(v *v8.Value) (errorInfo, bool) {
 		info.ctor = ctorVal.String()
 	}
 
-	if keysVal, _ := res.Get("keys"); keysVal != nil && keysVal.IsArray() {
-		n := keysVal.ArrayLength()
-		info.keys = make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			k, err := keysVal.GetIndex(i)
-			if err != nil || k == nil {
-				continue
-			}
-			info.keys = append(info.keys, k.String())
-		}
-	}
+	info.keys = c.propertyNames(v)
 	if b, _ := res.Get("cause"); b != nil && b.Boolean() {
 		info.cause = true
 	}
@@ -247,10 +237,10 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 
 	keys := c.filterErrorKeys(v, info.keys, rawStack)
 	if info.cause {
-		keys = append(keys, errorKey{name: "cause", hidden: true})
+		keys = append(keys, errorKey{name: "cause"})
 	}
 	if info.errors {
-		keys = append(keys, errorKey{name: "errors", hidden: true})
+		keys = append(keys, errorKey{name: "errors"})
 	}
 
 	stack = improveStack(stack, name, info.ctor, info.nullProto)
@@ -271,6 +261,12 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 	c.enter(depth)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
+		if key.key != nil {
+			if part, ok := c.formatField(v, key.key, depth); ok {
+				parts = append(parts, part)
+			}
+			continue
+		}
 		val, err := v.Get(key.name)
 		var valStr string
 		if err != nil || val == nil {
@@ -281,11 +277,7 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 			// still needs to show its elements (Node's default depth is 2).
 			valStr = c.formatValueQuotedWithDepth(val, depth)
 		}
-		label := key.name
-		if key.hidden {
-			label = "[" + key.name + "]"
-		}
-		parts = append(parts, label+": "+valStr)
+		parts = append(parts, "["+key.name+"]: "+valStr)
 	}
 
 	return c.reduce(parts, "{", "}", depth, stack)
@@ -293,7 +285,7 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 
 // filterErrorKeys drops enumerable name/message/stack when that text is already
 // part of the stack, matching Node's removeDuplicateErrorKeys.
-func (c *Console) filterErrorKeys(v *v8.Value, keys []string, stack string) []errorKey {
+func (c *Console) filterErrorKeys(v *v8.Value, keys []*v8.Value, stack string) []errorKey {
 	drop := map[string]bool{}
 	if stack != "" {
 		for _, name := range []string{"name", "message", "stack"} {
@@ -309,10 +301,10 @@ func (c *Console) filterErrorKeys(v *v8.Value, keys []string, stack string) []er
 	}
 	out := make([]errorKey, 0, len(keys))
 	for _, key := range keys {
-		if drop[key] {
+		if key.IsString() && drop[key.String()] {
 			continue
 		}
-		out = append(out, errorKey{name: key})
+		out = append(out, errorKey{key: key})
 	}
 	return out
 }

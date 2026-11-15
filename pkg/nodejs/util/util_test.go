@@ -471,3 +471,34 @@ func TestUtil_InspectLargeTypedArrayPastDepth(t *testing.T) {
 		t.Errorf("inspecting took %d ms; the elements were probably walked", got.Ms)
 	}
 }
+
+// Listing an array's symbol keys mustn't walk its elements, as Object.keys would. Walking 10
+// million keys takes about half a second; listing the symbols takes under a millisecond.
+func TestUtil_InspectLargeArraySymbols(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const list = new Array(10000000).fill(0);
+		list[Symbol('k')] = 1;
+		const start = Date.now();
+		const text = __util_module.inspect(list, { maxArrayLength: 1 });
+		JSON.stringify({ text, ms: Date.now() - start });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	var got struct {
+		Text string
+		Ms   int
+	}
+	if err := json.Unmarshal([]byte(result.String()), &got); err != nil {
+		t.Fatalf("decoding %q: %v", result.String(), err)
+	}
+	if want := "[ 0, ... 9999999 more items, [Symbol(k)]: 1 ]"; got.Text != want {
+		t.Errorf("got %q, want %q", got.Text, want)
+	}
+	if got.Ms > 100 {
+		t.Errorf("inspecting took %d ms; the elements were probably walked", got.Ms)
+	}
+}

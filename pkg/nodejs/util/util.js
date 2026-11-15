@@ -221,14 +221,24 @@
 			if (arr.length > maxLen) {
 				items.push(inspectShared.more(arr.length - maxLen));
 			}
+			const elements = items.length;
+			for (const key of inspectShared.symbols(arr)) items.push(formatProperty(arr, key, depth));
+			sortOutput(items, elements);
 
 			return reduce(items, '[', ']', depth, { array: true, numbers });
 		}
 
+		// sortOutput sorts the entries of output from start on, as Node does with the sorted
+		// option: every entry of an object, Map or Set, and an array's keys after its elements.
+		function sortOutput(output, start = 0) {
+			if (!opts.sorted || output.length - start < 2) return;
+			const sorted = output.slice(start).sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
+			output.splice(start, sorted.length, ...sorted);
+		}
+
 		function formatObject(obj, depth) {
-			let keys = Object.keys(obj);
-			if (opts.sorted) keys.sort();
-			
+			const keys = inspectShared.keys(obj);
+
 			if (keys.length === 0) {
 				const proto = Object.getPrototypeOf(obj);
 				if (proto && proto.constructor && proto.constructor.name !== 'Object') {
@@ -239,6 +249,7 @@
 
 			layout.currentDepth = depth;
 			const items = keys.map(key => formatProperty(obj, key, depth));
+			sortOutput(items);
 
 			const proto = Object.getPrototypeOf(obj);
 			let prefix = '';
@@ -253,13 +264,13 @@
 		// for it, then its own keys.
 		function formatBinary(value, bin, depth) {
 			layout.currentDepth = depth;
-			const keys = bin.keys.concat(Object.keys(value));
+			const keys = bin.keys.concat(inspectShared.keys(value));
 			const output = bin.entries.concat(keys.map(key => {
 				const f = inspectShared.field(value, key);
 				return inspectShared.entry(layout, f.name, 'label' in f ? f.label : inspectValue(f.value, depth + 1));
 			}));
 			// Node sorts every entry, the ones binary describes included.
-			if (opts.sorted) output.sort(typeof opts.sorted === 'function' ? opts.sorted : undefined);
+			sortOutput(output);
 			return reduce(output, bin.name + ' {', '}', depth);
 		}
 
@@ -331,7 +342,7 @@
 			}
 
 			let keys = [];
-			try { keys = Object.keys(err); } catch (e) { keys = []; }
+			try { keys = inspectShared.keys(err); } catch (e) { keys = []; }
 			keys = keys.filter(key => {
 				if (key !== 'name' && key !== 'message' && key !== 'stack') return true;
 				if (!rawStack) return true;
@@ -362,6 +373,7 @@
 			for (const key of hidden) {
 				parts.push(inspectShared.entry(layout, '[' + key + ']', inspectValue(err[key], depth + 1)));
 			}
+			sortOutput(parts);
 
 			return reduce(parts, '{', '}', depth, { base: stack });
 		}
@@ -396,16 +408,15 @@
 		// between open and close, with base before them.
 		function formatKeys(value, first, open, close, depth, base) {
 			layout.currentDepth = depth;
-			const keys = Object.keys(value);
-			if (opts.sorted) keys.sort();
-			const output = first.concat(keys.map(key => formatProperty(value, key, depth)));
+			const output = first.concat(inspectShared.keys(value).map(key => formatProperty(value, key, depth)));
+			sortOutput(output);
 			return reduce(output, open, close, depth, { base });
 		}
 
 		// formatScalar prints a Date or RegExp as text, followed by any keys of its own, which a
 		// RegExp past the depth limit leaves out.
 		function formatScalar(value, text, depth) {
-			if (Object.keys(value).length === 0 || depth > opts.depth) return text;
+			if (inspectShared.keys(value).length === 0 || depth > opts.depth) return text;
 			return formatKeys(value, [], '{', '}', depth, text);
 		}
 
@@ -413,7 +424,7 @@
 		// then its own keys.
 		function formatCollection(value, coll, depth) {
 			const { entries } = coll;
-			if (entries.length === 0 && coll.more === 0 && Object.keys(value).length === 0) return `${coll.name} {}`;
+			if (entries.length === 0 && coll.more === 0 && inspectShared.keys(value).length === 0) return `${coll.name} {}`;
 			layout.currentDepth = depth;
 			const items = [];
 			if (coll.map) {

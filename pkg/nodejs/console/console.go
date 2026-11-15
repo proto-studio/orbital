@@ -761,6 +761,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 			parts = append(parts, more)
 		}
 	}
+	parts = append(parts, c.formatProperties(v, c.keyList(c.inspectValue("symbols", v)), depth)...)
 	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers)); ok {
 		return s
 	}
@@ -893,10 +894,15 @@ func (c *Console) formatCollection(v *v8.Value, depth int) (string, bool) {
 	return c.reduce(parts, name+" {", "}", depth, ""), true
 }
 
-// propertyNames lists the enumerable property keys of v.
+// propertyNames lists the keys inspect prints for v: its own enumerable string keys, then its
+// enumerable symbols.
 func (c *Console) propertyNames(v *v8.Value) []*v8.Value {
-	names, err := v.GetPropertyNames()
-	if err != nil || names == nil || !names.IsArray() {
+	return c.keyList(c.inspectValue("keys", v))
+}
+
+// keyList is the keys in names, an array.
+func (c *Console) keyList(names *v8.Value) []*v8.Value {
+	if names == nil || !names.IsArray() {
 		return nil
 	}
 	keys := make([]*v8.Value, 0, names.ArrayLength())

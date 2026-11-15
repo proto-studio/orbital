@@ -2,7 +2,8 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, primitive, numeric, more, view, binary, collection, scalar, isDate, field,
+// { context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection,
+// scalar, isDate, field,
 // cut, entry, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
@@ -21,8 +22,18 @@
     '\\x18', '\\x19', '\\x1A', '\\x1B', '\\x1C', '\\x1D', '\\x1E', '\\x1F'
   ];
 
-  // Quotes a string: single quotes unless the string holds one, control characters, DEL,
-  // backslashes and lone surrogates escaped.
+  // escape is how util.inspect writes a control character (0x00-0x1F, or DEL and the C1 controls
+  // 0x7F-0x9F), a backslash or a single quote where it escapes them.
+  function escape(char) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20) return META[code];
+    if (code === 0x5c || code === 0x27) return '\\' + char;
+    return '\\x' + code.toString(16).toUpperCase();
+  }
+  const ESCAPED = /[\x00-\x1f\x27\x5c\x7f-\x9f]/g;
+
+  // Quotes a string: single quotes unless the string holds one, control characters, DEL, C1
+  // controls, backslashes and lone surrogates escaped.
   function quote(str) {
     let q = "'";
     if (str.includes("'")) {
@@ -32,11 +43,8 @@
     let out = '';
     for (let i = 0; i < str.length; i++) {
       const code = str.charCodeAt(i);
-      if (code < 0x20) out += META[code];
-      // 0x7F is DEL.
-      else if (code === 0x7f) out += '\\x7F';
       // 0x5C is a backslash.
-      else if (code === 0x5c) out += '\\\\';
+      if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x5c) out += escape(str[i]);
       else if (str[i] === q) out += '\\' + q;
       // 0xD800-0xDFFF are UTF-16 surrogates: a high one (to 0xDBFF) followed by a low one
       // (0xDC00-0xDFFF) is a pair and prints as is, and any other is escaped.
@@ -82,8 +90,27 @@
     return quote(str) + trailer;
   }
 
-  // A key prints bare only when it is an identifier.
-  const key = (k) => (/^[a-zA-Z_][a-zA-Z_0-9]*$/.test(k) ? k : quote(k));
+  // A key prints bare only when it is an identifier. A symbol key prints in brackets as
+  // [Symbol(description)], with its control characters, backslashes and quotes escaped.
+  const key = (k) => {
+    if (typeof k === 'symbol') return `[${Symbol.prototype.toString.call(k).replace(ESCAPED, escape)}]`;
+    return /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(k) ? k : quote(k);
+  };
+
+  // symbols lists value's own enumerable symbol keys, which util.inspect prints after its other
+  // keys, as an array does after its elements.
+  function symbols(value) {
+    const all = Object.getOwnPropertySymbols(value);
+    return all.length === 0 ? all : all.filter((s) => Object.prototype.propertyIsEnumerable.call(value, s));
+  }
+
+  // keys lists the keys util.inspect prints for value: its own enumerable string keys, then its
+  // symbols. Not for arrays or typed arrays, whose elements are keys too.
+  function keys(value) {
+    const names = Object.keys(value);
+    const syms = symbols(value);
+    return syms.length === 0 ? names : names.concat(syms);
+  }
 
   // A primitive other than a string, as util.inspect prints one: a BigInt keeps its n suffix,
   // and negative zero prints as -0.
@@ -300,7 +327,7 @@
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
       return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
     }
-    const bare = Object.keys(value).length === 0;
+    const bare = keys(value).length === 0;
     if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : '[Map]';
     if (isSet(value)) return setSize.call(value) === 0 && bare ? null : '[Set]';
     if (isRegExp(value)) return null;
@@ -318,7 +345,7 @@
   function field(value, k) {
     const desc = Object.getOwnPropertyDescriptor(value, k);
     if (desc === undefined) return { name: key(k), value: value[k] };
-    const name = desc.enumerable ? key(k) : `[${k}]`;
+    const name = desc.enumerable ? key(k) : `[${typeof k === 'symbol' ? key(k) : k}]`;
     if ('value' in desc) return { name, value: desc.value };
     return { name, label: desc.get === undefined ? '[Setter]' : desc.set === undefined ? '[Getter]' : '[Getter/Setter]' };
   }
@@ -485,5 +512,8 @@
     return `${open}${ln}${output.map(indent).join(',\n  ')} ${close}`;
   }
 
-  return { context, quote, string, key, primitive, numeric, more, view, binary, collection, scalar, isDate, field, cut, entry, reduce };
+  return {
+    context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection, scalar,
+    isDate, field, cut, entry, reduce
+  };
 })()
