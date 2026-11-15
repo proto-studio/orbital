@@ -102,7 +102,73 @@
     return wrap(toHandle(input, false));
   }
 
+  function codedError(Type, code, message) {
+    const err = new Type(message);
+    err.code = code;
+    return err;
+  }
+
+  // Node's description of a rejected value, as in its ERR_INVALID_ARG_TYPE.
+  function describeReceived(value) {
+    if (value === null || value === undefined) return ' Received ' + value;
+    if (typeof value === 'function') return ' Received function ' + (value.name || '<anonymous>');
+    if (typeof value === 'object') {
+      if (value.constructor && value.constructor.name) {
+        return ' Received an instance of ' + value.constructor.name;
+      }
+      return ' Received ' + String(value);
+    }
+    let shown;
+    if (typeof value === 'string') {
+      shown = value.length > 28 ? value.slice(0, 25) + '...' : value;
+      shown = "'" + shown + "'";
+    } else if (typeof value === 'bigint') {
+      shown = String(value) + 'n';
+    } else if (typeof value === 'symbol') {
+      shown = String(value);
+    } else {
+      shown = Object.is(value, -0) ? '-0' : String(value);
+    }
+    return ' Received type ' + typeof value + ' (' + shown + ')';
+  }
+
+  // Node writes large out-of-range integers with _ separators.
+  function formatRangeValue(value) {
+    if (!Number.isInteger(value) || Math.abs(value) <= 2 ** 32) return String(value);
+    let digits = String(Math.abs(value));
+    let out = '';
+    while (digits.length > 3) {
+      out = '_' + digits.slice(-3) + out;
+      digits = digits.slice(0, -3);
+    }
+    return (value < 0 ? '-' : '') + digits + out;
+  }
+
+  function validateUint32(value, name) {
+    if (typeof value !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+        'The "' + name + '" property must be of type number.' + describeReceived(value));
+    }
+    if (!Number.isInteger(value)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+        'The value of "' + name + '" is out of range. It must be an integer. Received ' + value);
+    }
+    if (value < 0 || value > 4294967295) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+        'The value of "' + name + '" is out of range. It must be >= 0 && <= 4294967295. Received ' + formatRangeValue(value));
+    }
+  }
+
+  // Checks the options Node validates before generating, so bad values
+  // throw synchronously for both generateKeyPair and generateKeyPairSync.
+  function validateKeyPairOptions(type, options) {
+    if ((type === 'rsa' || type === 'rsa-pss') && options && options.publicExponent != null) {
+      validateUint32(options.publicExponent, 'options.publicExponent');
+    }
+  }
+
   function generateKeyPairSync(type, options) {
+    validateKeyPairOptions(type, options);
     const r = crypto._generateKeyPair(type, JSON.stringify(options || {}));
     return { publicKey: wrap(r.pub), privateKey: wrap(r.priv) };
   }
@@ -115,6 +181,7 @@
     if (typeof callback !== 'function') {
       throw new TypeError('The "callback" argument must be of type function');
     }
+    validateKeyPairOptions(type, options);
     Promise.resolve().then(function () {
       let r;
       try {
