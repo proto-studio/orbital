@@ -274,20 +274,24 @@ func (l *LocalFilesystem) underRoot(p, absRoot string) (string, bool) {
 
 // resolvedPrefix gives p with the links in its longest existing directory resolved.
 func resolvedPrefix(p string) string {
-	// A trailing separator is dropped first, so the last name isn't taken twice.
-	p = filepath.Clean(p)
-	dir, rest := filepath.Dir(p), filepath.Base(p)
-	for {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(real, rest)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return p
-		}
-		rest = filepath.Join(filepath.Base(dir), rest)
-		dir = parent
+	// A trailing separator or "/." is dropped first, so the last name isn't taken twice. The
+	// rest is left as written: ".." after a link must be resolved after that link.
+	for len(p) > 1 && (strings.HasSuffix(p, "/") || strings.HasSuffix(p, "/.")) {
+		p = strings.TrimSuffix(strings.TrimSuffix(p, "."), "/")
 	}
+	// The longest leading part that exists is resolved; filepath.Dir isn't used for it, since
+	// it would collapse a ".." before the links ahead of it are resolved.
+	names := strings.Split(p, string(filepath.Separator))
+	for k := len(names) - 1; k > 0; k-- {
+		dir := strings.Join(names[:k], string(filepath.Separator))
+		if dir == "" {
+			dir = string(filepath.Separator)
+		}
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{real}, names[k:]...)...)
+		}
+	}
+	return p
 }
 
 func readlinkat(dir int, name string) (string, error) {
@@ -588,7 +592,8 @@ func (l *LocalFilesystem) rootedCopy(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := l.rootedOpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
+	// The copy only writes the destination, so it doesn't ask to read it.
+	out, err := l.rootedOpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		return err
 	}

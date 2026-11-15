@@ -390,3 +390,39 @@ func TestLocalFS_WalkTrailingSlashAndFIFO(t *testing.T) {
 		t.Error("closing the FIFO didn't end the waiting read")
 	}
 }
+
+// An absolute link target with ".." after a link resolves that link first, as the OS does,
+// and Copy writes over a destination it may write but not read.
+func TestLocalFS_WalkDotDotAfterLinkAndWriteOnlyCopy(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "f"), []byte("a/f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "f"), []byte("f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a/b", filepath.Join(root, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(base+"/rootlink/jump/../f", filepath.Join(root, "dotdot")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := l.ReadFile("/dotdot"); err != nil || string(data) != "a/f" {
+		t.Errorf("ReadFile dotdot = %q, %v; want a/f", data, err)
+	}
+
+	if os.Geteuid() != 0 {
+		dst := filepath.Join(root, "write-only")
+		if err := os.WriteFile(dst, []byte("old"), 0o200); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Copy("/a.txt", "/write-only"); err != nil {
+			t.Errorf("Copy onto a write-only file: %v", err)
+		}
+	}
+}
