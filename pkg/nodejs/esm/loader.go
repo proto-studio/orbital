@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 var (
@@ -1269,8 +1270,9 @@ func jsQuote(s string) string {
 
 // ---- combined default (fast path, no hooks) -------------------------------
 
-// resolveAndLoadDefault is the no-hooks path: resolve, load, finalize.
-func (e *ESM) resolveAndLoadDefault(specifier, referrer string) (esmSource, url string, err error) {
+// resolveAndLoadDefault is the no-hooks path: resolve, load, check the import's
+// attributes (attrs is nil for an entry point, which has none to check), finalize.
+func (e *ESM) resolveAndLoadDefault(specifier, referrer string, attrs []v8.ImportAttribute) (esmSource, url string, err error) {
 	url, err = e.resolveToURL(specifier, referrer)
 	if err != nil {
 		return "", "", err
@@ -1278,6 +1280,11 @@ func (e *ESM) resolveAndLoadDefault(specifier, referrer string) (esmSource, url 
 	src, format, err := e.loadURL(url)
 	if err != nil {
 		return "", "", err
+	}
+	if attrs != nil {
+		if err := e.checkAttributesOnce(url, format, attrs); err != nil {
+			return "", "", err
+		}
 	}
 	final, err := e.finalize(url, src, format)
 	if err != nil {

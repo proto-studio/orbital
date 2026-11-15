@@ -15,7 +15,9 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 using namespace v8;
 
@@ -1820,6 +1822,39 @@ static Local<Value> resolveFailure(Isolate* isolate, void* error_value,
         String::NewFromUtf8(isolate, fallback.c_str()).ToLocalChecked());
 }
 
+// importAttributes flattens an import's attributes into key, value, key, ...
+// strings. V8 lists them as (key, value) pairs for import(), and as (key, value,
+// source offset) triples for a static import: stride says which.
+static std::vector<std::string> importAttributes(Isolate* isolate,
+                                                 Local<Context> context,
+                                                 Local<FixedArray> attrs,
+                                                 int stride) {
+    std::vector<std::string> out;
+    if (attrs.IsEmpty()) return out;
+    for (int i = 0; i + 1 < attrs->Length(); i += stride) {
+#if V8_MAJOR_VERSION >= 15
+        Local<Data> key = attrs->Get(i);
+        Local<Data> value = attrs->Get(i + 1);
+#else
+        Local<Data> key = attrs->Get(context, i);
+        Local<Data> value = attrs->Get(context, i + 1);
+#endif
+        if (!key->IsValue() || !value->IsValue()) continue;
+        String::Utf8Value k(isolate, key.As<Value>());
+        String::Utf8Value v(isolate, value.As<Value>());
+        out.emplace_back(*k ? *k : "");
+        out.emplace_back(*v ? *v : "");
+    }
+    return out;
+}
+
+// cStrings exposes strings to Go as a char* array (valid while strs lives).
+static std::vector<char*> cStrings(std::vector<std::string>& strs) {
+    std::vector<char*> out;
+    for (auto& s : strs) out.push_back(const_cast<char*>(s.c_str()));
+    return out;
+}
+
 // ES Module resolver callback - called by V8 when it encounters an import
 static MaybeLocal<Module> moduleResolveCallback(
     Local<Context> context,
@@ -1858,9 +1893,13 @@ static MaybeLocal<Module> moduleResolveCallback(
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
     void* resolve_error = nullptr;
+    std::vector<std::string> attrs =
+        importAttributes(isolate, context, import_attributes, 3);
+    std::vector<char*> attr_ptrs = cStrings(attrs);
     int result = goModuleResolve(cw->module_resolver_id, 
         const_cast<char*>(specifier_str), 
         const_cast<char*>(referrer_name.c_str()), 
+        attr_ptrs.data(), static_cast<int>(attr_ptrs.size()),
         &resolved_source, &resolved_name, &resolve_error);
     
     if (result != 0 || !resolved_source || !resolved_name) {
@@ -2009,14 +2048,17 @@ static bool runDynamicImport(ContextWrapper* cw, Isolate* isolate,
                              Local<Context> context,
                              Local<Promise::Resolver> resolver,
                              const std::string& spec,
-                             const std::string& referrer) {
+                             const std::string& referrer,
+                             std::vector<std::string>& attrs) {
     // Resolve + load the specifier's source via the Go loader.
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
     void* resolve_error = nullptr;
+    std::vector<char*> attr_ptrs = cStrings(attrs);
     int r = goModuleResolve(cw->dynamic_resolver_id,
                             const_cast<char*>(spec.c_str()),
                             const_cast<char*>(referrer.c_str()),
+                            attr_ptrs.data(), static_cast<int>(attr_ptrs.size()),
                             &resolved_source, &resolved_name, &resolve_error);
     if (r != 0 || !resolved_source || !resolved_name) {
         if (resolved_source) free(resolved_source);
@@ -2092,12 +2134,23 @@ static void dynamicImportJob(const FunctionCallbackInfo<Value>& info) {
     if (!cw || !info.Data()->IsArray()) return;
 
     Local<Array> data = info.Data().As<Array>();
-    Local<Value> resolver_v, spec_v, referrer_v;
+    Local<Value> resolver_v, spec_v, referrer_v, attrs_v;
     if (!data->Get(context, 0).ToLocal(&resolver_v) ||
         !data->Get(context, 1).ToLocal(&spec_v) ||
         !data->Get(context, 2).ToLocal(&referrer_v) ||
+        !data->Get(context, 3).ToLocal(&attrs_v) ||
         !resolver_v->IsPromise()) {
         return;
+    }
+    std::vector<std::string> attrs;
+    if (attrs_v->IsArray()) {
+        Local<Array> list = attrs_v.As<Array>();
+        for (uint32_t i = 0; i < list->Length(); i++) {
+            Local<Value> item;
+            if (!list->Get(context, i).ToLocal(&item)) return;
+            String::Utf8Value item_utf8(isolate, item);
+            attrs.emplace_back(*item_utf8 ? *item_utf8 : "");
+        }
     }
     // Run it at most once, however often the scheduler calls it.
     if (!data->Set(context, 0, Undefined(isolate)).FromMaybe(false)) return;
@@ -2107,7 +2160,7 @@ static void dynamicImportJob(const FunctionCallbackInfo<Value>& info) {
     std::string spec = *spec_utf8 ? *spec_utf8 : "";
     std::string referrer = *referrer_utf8 ? *referrer_utf8 : "";
     runDynamicImport(cw, isolate, context, resolver_v.As<Promise::Resolver>(),
-                     spec, referrer);
+                     spec, referrer, attrs);
 }
 
 // Dynamic import() host callback. V8 calls this for every import() expression;
@@ -2121,7 +2174,7 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
     Local<Data> /*host_defined_options*/,
     Local<Value> resource_name,
     Local<String> specifier,
-    Local<FixedArray> /*import_attributes*/) {
+    Local<FixedArray> import_attributes) {
 
 #if V8_MAJOR_VERSION >= 15
     Isolate* isolate = Isolate::GetCurrent();
@@ -2143,12 +2196,22 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
         referrer_value = resource_name;
     }
 
+    std::vector<std::string> attrs =
+        importAttributes(isolate, context, import_attributes, 2);
+
     Local<Value> scheduler;
     if (context->Global()->Get(context, String::NewFromUtf8(isolate,
                 "__esmScheduleDynamicImport").ToLocalChecked())
             .ToLocal(&scheduler) && scheduler->IsFunction()) {
-        Local<Value> items[3] = { resolver, specifier, referrer_value };
-        Local<Array> data = Array::New(isolate, items, 3);
+        std::vector<Local<Value>> attr_values;
+        for (auto& a : attrs) {
+            attr_values.push_back(String::NewFromUtf8(isolate, a.c_str())
+                                      .ToLocalChecked());
+        }
+        Local<Value> items[4] = {
+            resolver, specifier, referrer_value,
+            Array::New(isolate, attr_values.data(), attr_values.size())};
+        Local<Array> data = Array::New(isolate, items, 4);
         Local<Function> job;
         if (!Function::New(context, dynamicImportJob, data, 0,
                            ConstructorBehavior::kThrow).ToLocal(&job)) {
@@ -2166,7 +2229,7 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
     String::Utf8Value referrer_utf8(isolate, referrer_value);
     std::string spec = *spec_utf8 ? *spec_utf8 : "";
     std::string referrer = *referrer_utf8 ? *referrer_utf8 : "";
-    if (!runDynamicImport(cw, isolate, context, resolver, spec, referrer)) {
+    if (!runDynamicImport(cw, isolate, context, resolver, spec, referrer, attrs)) {
         return MaybeLocal<Promise>();
     }
     return promise;

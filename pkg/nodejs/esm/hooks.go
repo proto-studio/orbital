@@ -209,6 +209,22 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			return c.Throw("Cannot load module '" + url + "': " + lerr.Error())
 		}
 		obj, _ := c.NewObject()
+		// Like Node's default load, check the import's attributes against the
+		// format the chain settled on (context.format), or the detected one.
+		if argString(info, 3) != "" {
+			checkFormat := argString(info, 1)
+			if checkFormat == "" {
+				checkFormat = format
+			}
+			if cerr := checkImportAttributes(url, checkFormat, parseAttrsJSON(argString(info, 2))); cerr != nil {
+				me := cerr.(*moduleError)
+				mv, _ := c.NewString(me.msg)
+				cv, _ := c.NewString(me.code)
+				obj.Set("message", mv)
+				obj.Set("code", cv)
+				return obj
+			}
+		}
 		sv, _ := c.NewString(src)
 		fv, _ := c.NewString(format)
 		obj.Set("source", sv)
@@ -257,11 +273,11 @@ func (e *ESM) registerHook(specifier, parentURL string) error {
 
 // resolveAndLoadHooked runs the registered hook chain (in the isolated loader
 // realm) around the Go defaults, then finalizes in the application realm.
-func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url string, err error) {
+func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.ImportAttribute) (source, url string, err error) {
 	lrt := e.loader.rt
 
-	// resolve chain -> { url, format }
-	resP, err := e.callLoaderRealm("__runResolve", specifier, referrer)
+	// resolve chain -> { url, format, importAttributes }
+	resP, err := e.callLoaderRealm("__runResolve", specifier, referrer, attrsJSON(attrs))
 	if err != nil {
 		return "", "", err
 	}
@@ -280,9 +296,14 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 		return "", "", err
 	}
 	preFormat := objString(resolved, "format")
+	// The default load checks the attributes, except for an entry point.
+	check := ""
+	if attrs != nil {
+		check = "1"
+	}
 
 	// load chain -> { source, format }
-	loadP, err := e.callLoaderRealm("__runLoad", url, preFormat)
+	loadP, err := e.callLoaderRealm("__runLoad", url, preFormat, objString(resolved, "importAttributes"), check)
 	if err != nil {
 		return "", "", err
 	}
