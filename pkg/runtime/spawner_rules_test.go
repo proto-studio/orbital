@@ -186,3 +186,35 @@ func TestSandboxedSpawnerRelativeCwd(t *testing.T) {
 		t.Fatalf("blocked: err = %v, want ErrCommandNotAllowed", err)
 	}
 }
+
+// A program can act on the name it runs under, so an entry allows it only under the
+// entry's name. Run under another name, it gets the entry's path as argv[0].
+func TestSandboxedSpawnerKeepsEntryName(t *testing.T) {
+	sh := hostPath(t, "sh")
+	dir := t.TempDir()
+	approved := filepath.Join(dir, "approved")
+	other := filepath.Join(dir, "other")
+	for _, link := range []string{approved, other} {
+		if err := os.Symlink(sh, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewAllowListProcessSpawner(approved)
+	args := []string{"-c", "echo $0"}
+
+	if out, err := runOutput(s, approved, args, nil); err != nil || out != approved {
+		t.Fatalf("by the entry: out = %q, err = %v", out, err)
+	}
+	for _, command := range []string{other, sh} {
+		if out, err := runOutput(s, command, args, nil); err != nil || out != approved {
+			t.Fatalf("%s: out = %q, err = %v, want argv[0] %q", command, out, err, approved)
+		}
+		out, _, _, err := s.ExecFile(context.Background(), command, args, nil)
+		if got := strings.TrimSpace(string(out)); err != nil || got != approved {
+			t.Fatalf("ExecFile %s: out = %q, err = %v", command, got, err)
+		}
+	}
+	if out, err := runOutput(s, approved, args, &SpawnOptions{Argv0: "renamed"}); err != nil || out != approved {
+		t.Fatalf("with Argv0: out = %q, err = %v", out, err)
+	}
+}
