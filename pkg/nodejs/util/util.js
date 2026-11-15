@@ -146,6 +146,13 @@
 
 			// Objects
 			if (type === 'object') {
+				// As in Node, a custom inspector runs before value counts as being formatted, so
+				// a replacement that holds value formats it afresh. One that answers value
+				// itself leaves it to be formatted as usual.
+				if (opts.customInspect && typeof value[Symbol.for('nodejs.util.inspect.custom')] === 'function') {
+					const result = value[Symbol.for('nodejs.util.inspect.custom')](currentDepth, opts);
+					if (result !== value) return typeof result === 'string' ? result : inspectValue(result, currentDepth);
+				}
 				const circular = track.visit(value);
 				if (circular !== null) return circular;
 				const mine = ++tracked;
@@ -171,12 +178,6 @@
 			if (currentDepth > opts.depth) {
 				const cut = inspectShared.cut(value);
 				if (cut !== null) return cut;
-			}
-
-			// Custom inspect
-			if (opts.customInspect && typeof value[Symbol.for('nodejs.util.inspect.custom')] === 'function') {
-				const result = value[Symbol.for('nodejs.util.inspect.custom')](currentDepth, opts);
-				return typeof result === 'string' ? result : inspectValue(result, currentDepth);
 			}
 
 			// Described after the custom inspector has had its chance, which may make

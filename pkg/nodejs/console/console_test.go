@@ -481,3 +481,30 @@ func TestConsole_LogManyObjectsTime(t *testing.T) {
 		t.Errorf("unexpected output start %q", out[:min(len(out), 80)])
 	}
 }
+
+// A console call made while another is printing, by a getter here, gets cycle tracking of its
+// own: the array it prints again isn't inside itself.
+func TestConsole_LogReentrantNoCycle(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	_, err := rt.RunScript(`
+		let busy = false;
+		const arr = [0];
+		Object.defineProperty(arr, 0, {
+			get() { if (!busy) { busy = true; console.log(arr); busy = false; } return 1; },
+			enumerable: true
+		});
+		console.log(arr);
+		const loop = { name: 'loop' };
+		loop.self = loop;
+		console.log(loop);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := stdout.String(), "[ 1 ]\n[ 1 ]\n<ref *1> { name: 'loop', self: [Circular *1] }\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
