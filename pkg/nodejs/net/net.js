@@ -1163,8 +1163,9 @@
     if (typeof value !== 'number' || !Number.isInteger(value)) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', `The "${name}" property must be of type number.`);
     }
-    if (value < 1) {
-      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', `The value of "${name}" is out of range. It must be >= 1 && <= 4294967295. Received ${value}`);
+    // Like Node, an int32: a timer can't wait longer.
+    if (value < 1 || value > 2147483647) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', `The value of "${name}" is out of range. It must be >= 1 && <= 2147483647. Received ${value}`);
     }
     return value < 10 ? 10 : value;
   }
