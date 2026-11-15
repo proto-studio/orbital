@@ -230,6 +230,33 @@ async function testFailures() {
     });
   });
 
+  // Destroyed before its open finishes, a stream waits for the open, announces it with the
+  // descriptor, and then closes it.
+  const destroyEarly = async (name, options, use) => {
+    const events = [];
+    const ws = fs.createWriteStream(file(name), options);
+    use(ws, (label) => (e) => events.push(label + ' ' + (e ? e.code : 'ok')));
+    ws.on('open', (fd) => events.push('open ' + typeof fd + ' ' + typeof ws.fd));
+    for (const event of ['ready', 'finish']) ws.on(event, () => events.push(event));
+    ws.on('error', (e) => events.push('error ' + (e.code || e.message)));
+    ws.on('close', () => events.push('close ' + ws.fd));
+    await tick();
+    return { events, destroyed: ws.destroyed };
+  };
+  results.ws_destroy_before_open = await destroyEarly('destroy_early', {}, (ws) => ws.destroy());
+  results.ws_destroy_error_before_open = await destroyEarly('destroy_early_error', {}, (ws) => ws.destroy(new Error('boom')));
+  results.ws_destroy_write_before_open = await destroyEarly('destroy_early_write', {}, (ws, callback) => {
+    ws.write('x', callback('write1'));
+    ws.destroy();
+  });
+  results.ws_destroy_end_before_open = await destroyEarly('destroy_early_end', {}, (ws, callback) => {
+    ws.end('x', callback('end'));
+    ws.destroy();
+  });
+  results.ws_destroy_no_close_before_open = await destroyEarly('destroy_early_no_close', { emitClose: false }, (ws) => ws.destroy());
+  const soon = new AbortController();
+  results.ws_signal_before_open = await destroyEarly('signal_before_open', { signal: soon.signal }, () => soon.abort());
+
   // A FileHandle given as fd is written through, and closed with the stream.
   const handle = await fs.promises.open(file('handle_stream'), 'w');
   results.ws_filehandle = await openOutcome('handle_stream', { fd: handle }, (ws, callback) => {
