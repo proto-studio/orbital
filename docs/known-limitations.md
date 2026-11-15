@@ -152,10 +152,11 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## fs (`pkg/nodejs/fs`)
 
-- **[perf] `fs` callback calls run synchronously.** `fs.appendFile`, `open`, `write`, `read`,
-  `mkdir` and the other callback forms, and `fs.createWriteStream`'s writes, do their work on
-  the JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a
-  path, `stat`, `access` and read streams run off the thread. (#131)
+- **[perf] A few `fs` calls still run on the JavaScript thread.** `fs.realpath` checks the
+  path off the thread but reports a failure synchronously, a `FileHandle`'s `readFile` and
+  `writeFile` read and write synchronously, and `fs.createWriteStream` opens its file
+  synchronously. The other callback and promise forms, and write streams' writes, run off
+  the thread.
 - **[gap] `fs.mkdtemp` and the symbolic link calls are missing.** (#87)
 - **[approx] `fs.watch` and `fs.watchFile` poll.** `watch` checks every 100 ms and reports
   `'rename'` when an entry appears or goes and `'change'` when its stats change, so it can

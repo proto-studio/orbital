@@ -24,6 +24,14 @@
     return new Promise((resolve) => resolve(operation()));
   }
 
+  // Runs fs[name], a callback form, which does its work off the JavaScript thread, as a
+  // promise of its result. A bad argument it throws rejects the promise.
+  function viaCallback(name, ...args) {
+    return new Promise((resolve, reject) => {
+      fs[name](...args, (err, value) => (err ? reject(err) : resolve(value)));
+    });
+  }
+
   // What writeFile and appendFile write to: a path, or the descriptor of a FileHandle. Unlike
   // the callback forms, these refuse a bare descriptor, as Node's do.
   function target(path) {
@@ -64,58 +72,62 @@
           }
           const start = offset === undefined || offset === null ? 0 : offset;
           const count = length === undefined || length === null ? buffer.byteLength - start : length;
-          const bytesRead = fs.readSync(fd, buffer, start, count, position === undefined ? null : position);
-          return { bytesRead, buffer };
-        });
+          return { buffer, start, count, position: position === undefined ? null : position };
+        }).then(({ buffer, start, count, position }) => new Promise((resolve, reject) => {
+          fs.read(fd, buffer, start, count, position, (err, bytesRead) => (err ? reject(err) : resolve({ bytesRead, buffer })));
+        }));
       },
 
       write(data, ...args) {
-        return attempt(() => ({ bytesWritten: fs.writeSync(fd, data, ...args), buffer: data }));
-      },
-
-      close() {
-        return attempt(() => {
-          if (handle.fd !== -1) {
-            handle.fd = -1;
-            fs.closeSync(fd);
-          }
+        return new Promise((resolve, reject) => {
+          fs.write(fd, data, ...args, (err, bytesWritten) => (err ? reject(err) : resolve({ bytesWritten, buffer: data })));
         });
       },
 
+      close() {
+        if (handle.fd === -1) return Promise.resolve();
+        handle.fd = -1;
+        return viaCallback('close', fd);
+      },
+
       stat() {
-        return attempt(() => fs.fstatSync(fd));
+        return viaCallback('fstat', fd);
       },
 
       truncate(len) {
-        return attempt(() => fs.ftruncateSync(fd, len));
+        return viaCallback('ftruncate', fd, len);
       },
 
       sync() {
-        return attempt(() => fs.fsyncSync(fd));
+        return viaCallback('fsync', fd);
       },
 
       datasync() {
-        return attempt(() => fs.fdatasyncSync(fd));
+        return viaCallback('fdatasync', fd);
       },
 
       chmod(mode) {
-        return attempt(() => fs.fchmodSync(fd, mode));
+        return viaCallback('fchmod', fd, mode);
       },
 
       chown(uid, gid) {
-        return attempt(() => fs.fchownSync(fd, uid, gid));
+        return viaCallback('fchown', fd, uid, gid);
       },
 
       utimes(atime, mtime) {
-        return attempt(() => fs.futimesSync(fd, atime, mtime));
+        return viaCallback('futimes', fd, atime, mtime);
       },
 
       readv(buffers, position) {
-        return attempt(() => ({ bytesRead: fs.readvSync(fd, buffers, position), buffers }));
+        return new Promise((resolve, reject) => {
+          fs.readv(fd, buffers, position, (err, bytesRead) => (err ? reject(err) : resolve({ bytesRead, buffers })));
+        });
       },
 
       writev(buffers, position) {
-        return attempt(() => ({ bytesWritten: fs.writevSync(fd, buffers, position), buffers }));
+        return new Promise((resolve, reject) => {
+          fs.writev(fd, buffers, position, (err, bytesWritten) => (err ? reject(err) : resolve({ bytesWritten, buffers })));
+        });
       },
 
       // These two work from the current offset, unlike their fs.promises namesakes.
@@ -140,130 +152,27 @@
 
   // Promise-based versions of fs functions
   const fsPromises = {
-    // Read file contents
-    readFile: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          const result = fs.readFileSync(path, options);
-          if (result === null || result === undefined) {
-            reject(new Error(`ENOENT: no such file or directory, open '${path}'`));
-          } else {
-            resolve(result);
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Write file contents
-    writeFile: function(path, data, options) {
-      return attempt(() => fs.writeFileSync(target(path), data, options));
-    },
-
-    // Append to file
-    appendFile: function(path, data, options) {
-      return attempt(() => fs.appendFileSync(target(path), data, options));
-    },
-
-    // Delete file
-    unlink: function(path) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.unlinkSync(path);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Rename file
-    rename: function(oldPath, newPath) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.renameSync(oldPath, newPath);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Copy file
-    copyFile: function(src, dest, mode) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.copyFileSync(src, dest, mode);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Create directory
-    mkdir: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.mkdirSync(path, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Remove directory
-    rmdir: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          fs.rmdirSync(path, options);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Remove file or directory (recursive)
-    rm: function(path, options) {
-      return attempt(() => fs.rmSync(path, options));
-    },
-
-    // Read directory contents
-    readdir: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          const result = fs.readdirSync(path, options);
-          if (result === null || result === undefined) {
-            reject(new Error(`ENOENT: no such file or directory, scandir '${path}'`));
-          } else {
-            resolve(result);
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
-
-    // Get file stats. The sync calls throw Node's error, which rejects the promise.
-    stat: function(path, options) {
-      return attempt(() => fs.statSync(path));
-    },
-
-    // Get file stats (don't follow symlinks)
-    lstat: function(path, options) {
-      return attempt(() => fs.lstatSync(path));
-    },
+    // These run off the JavaScript thread, through the callback forms.
+    readFile: (path, options) => viaCallback('readFile', path, options),
+    writeFile: (path, data, options) => attempt(() => target(path)).then((t) => viaCallback('writeFile', t, data, options)),
+    appendFile: (path, data, options) => attempt(() => target(path)).then((t) => viaCallback('appendFile', t, data, options)),
+    unlink: (path) => viaCallback('unlink', path),
+    rename: (oldPath, newPath) => viaCallback('rename', oldPath, newPath),
+    copyFile: (src, dest, mode) => viaCallback('copyFile', src, dest, mode),
+    mkdir: (path, options) => viaCallback('mkdir', path, options),
+    rmdir: (path, options) => viaCallback('rmdir', path, options),
+    rm: (path, options) => viaCallback('rm', path, options),
+    readdir: (path, options) => viaCallback('readdir', path, options),
+    stat: (path, options) => viaCallback('stat', path),
+    lstat: (path, options) => viaCallback('lstat', path),
 
     // Check access permissions
     access: function(path, mode) {
-      return attempt(() => fs.accessSync(path, mode));
+      return viaCallback('access', path, mode);
     },
 
     truncate: function(path, len) {
-      return attempt(() => fs.truncateSync(path, len));
+      return viaCallback('truncate', path, len);
     },
 
     // Create symbolic link (stub - may not work in sandbox)
@@ -289,23 +198,23 @@
     },
 
     chmod: function(path, mode) {
-      return attempt(() => fs.chmodSync(path, mode));
+      return viaCallback('chmod', path, mode);
     },
 
     chown: function(path, uid, gid) {
-      return attempt(() => fs.chownSync(path, uid, gid));
+      return viaCallback('chown', path, uid, gid);
     },
 
     utimes: function(path, atime, mtime) {
-      return attempt(() => fs.utimesSync(path, atime, mtime));
+      return viaCallback('utimes', path, atime, mtime);
     },
 
     statfs: function(path, options) {
-      return attempt(() => fs.statfsSync(path, options));
+      return viaCallback('statfs', path, options);
     },
 
     opendir: function(path, options) {
-      return attempt(() => fs.opendirSync(path, options));
+      return viaCallback('opendir', path, options);
     },
 
     cp: function(src, dest, options) {
