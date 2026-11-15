@@ -2146,10 +2146,25 @@ enum ViewType : uint32_t {
   kDataView, kBuffer, kBigInt64, kBigUint64, kViewTypeCount
 };
 
+// inheritsFrom reports whether proto is on object's prototype chain. A typed array is not a
+// proxy, but a prototype above it can be, and GetPrototype on a proxy runs its trap, so the
+// walk stops at the first proxy, and after a bounded number of steps.
+bool inheritsFrom(Local<Object> object, Local<Value> proto) {
+  Local<Value> current = object->GetPrototype();
+  for (int depth = 0; depth < 64 && current->IsObject(); depth++) {
+    if (current->StrictEquals(proto)) return true;
+    if (current->IsProxy()) return false;
+    current = current.As<Object>()->GetPrototype();
+  }
+  return false;
+}
+
 bool viewTypeOf(Local<Object> object, Local<Value> buffer_proto, uint32_t* type) {
   if (object->IsUint8Array()) {
+    // Node checks view.constructor === Buffer, which holds for anything inheriting from
+    // Buffer.prototype.
     *type = (!buffer_proto.IsEmpty() && buffer_proto->IsObject() &&
-             object->GetPrototype()->StrictEquals(buffer_proto)) ? kBuffer : kUint8;
+             inheritsFrom(object, buffer_proto)) ? kBuffer : kUint8;
   } else if (object->IsInt8Array()) { *type = kInt8; }
   else if (object->IsUint8ClampedArray()) { *type = kUint8Clamped; }
   else if (object->IsInt16Array()) { *type = kInt16; }
