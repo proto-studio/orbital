@@ -2,9 +2,9 @@
 //
 // A domain follows the work started inside it: timers, immediates, process.nextTick
 // callbacks and event emitters created while it is active run with it active again, and an exception none of them catches goes to the domain's 'error'
-// listeners. Node does this through async_hooks; here the schedulers and EventEmitter
-// are wrapped the first time a domain is created, so programs that never use domains
-// are not affected.
+// listeners. Node does this through async_hooks; here the schedulers are wrapped when the
+// runtime starts (doing nothing while no domain is active), and EventEmitter and the
+// uncaught exception path are hooked the first time a domain is created.
 (function(global) {
   'use strict';
 
@@ -121,10 +121,6 @@
       };
     }
 
-    wrapScheduler(global, 'setTimeout', 0);
-    wrapScheduler(global, 'setInterval', 0);
-    wrapScheduler(global, 'setImmediate', 0);
-    if (p) wrapScheduler(p, 'nextTick', 0);
 
     // Emitters created while a domain is active belong to it.
     EventEmitter.usingDomains = true;
@@ -321,6 +317,14 @@
   }
 
   exports.Domain = Domain;
+
+  // The schedulers are wrapped now, before any program code runs, so a reference a program
+  // keeps (const { setTimeout } = require('timers')) still follows domains created later,
+  // as Node's async hooks do. The wrappers only bind while a domain is active.
+  wrapScheduler(global, 'setTimeout', 0);
+  wrapScheduler(global, 'setInterval', 0);
+  wrapScheduler(global, 'setImmediate', 0);
+  if (getProcess()) wrapScheduler(getProcess(), 'nextTick', 0);
 
   function create() {
     return new Domain();

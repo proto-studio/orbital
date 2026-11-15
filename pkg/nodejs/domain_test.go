@@ -3,6 +3,7 @@ package nodejs
 import (
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -196,6 +197,33 @@ d.run(() => { throw new Error('boom'); });
 		t.Fatalf("Run returned %v", err)
 	}
 	want := []string{"process handler boom false 0", "later 0 null", "process handler removed"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}
+
+// Schedulers a program took before creating its first domain still follow domains, as
+// Node's async hooks make them do.
+func TestDomain_CachedSchedulers(t *testing.T) {
+	notes, err := runUncaught(t, `
+const { setTimeout: cachedTimeout, setImmediate: cachedImmediate } = require('timers');
+const nextTick = process.nextTick;
+const domain = require('domain');
+const d = domain.create();
+let n = 0;
+d.on('error', (e) => { note('caught', e.message); if (++n === 3) note('done'); });
+d.run(() => {
+  cachedTimeout(() => { throw new Error('timeout'); }, 1);
+  cachedImmediate(() => { throw new Error('immediate'); });
+  nextTick(() => { throw new Error('tick'); });
+});
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	// Which of the timer and the immediate runs first is up to timing, in Node too.
+	sort.Strings(notes)
+	want := []string{"caught immediate", "caught tick", "caught timeout", "done"}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
