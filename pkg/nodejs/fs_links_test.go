@@ -154,8 +154,9 @@ done({
   symlink: code(() => fs.symlinkSync('/x', url)),
   link: code(() => fs.linkSync(url, dir + '/h')),
   readlink: code(() => fs.readlinkSync(url)),
+  mkdtemp: code(() => fs.mkdtempSync(url)),
   made: fs.existsSync(dir + '/out'),
 });
 `, dir))
-	wantJSON(t, got, map[string]any{"symlink": "ERR_INVALID_ARG_VALUE", "link": "ERR_INVALID_ARG_VALUE", "readlink": "ERR_INVALID_ARG_VALUE", "made": false})
+	wantJSON(t, got, map[string]any{"symlink": "ERR_INVALID_ARG_VALUE", "link": "ERR_INVALID_ARG_VALUE", "readlink": "ERR_INVALID_ARG_VALUE", "mkdtemp": "ERR_INVALID_ARG_VALUE", "made": false})
 }

@@ -1132,7 +1132,7 @@
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
         'The "prefix" argument must be of type string or an instance of Buffer or URL. Received ' + receivedType(prefix));
     }
-    return pathString(prefix);
+    return checkedPath(prefix, 'prefix');
   }
   defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), options], 'mkdtemp', (path, [, options]) => namedIn(path, options));
 
