@@ -1,0 +1,646 @@
+{
+  "errors": [
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"path\" argument must be of type string. Received type number (5)",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"paths[1]\" argument must be of type string. Received an instance of Object",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"suffix\" argument must be of type string. Received type number (3)",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"from\" argument must be of type string. Received null",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"pathObject\" argument must be of type object. Received null",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"pathObject\" argument must be of type object. Received type string ('x')",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"path\" argument must be of type string. Received type symbol (Symbol(s))",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"pathObject\" argument must be of type object. Received an instance of Array",
+      "name": "TypeError"
+    },
+    {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"path\" argument must be of type string. Received type number (1)",
+      "name": "TypeError"
+    }
+  ],
+  "posix.basename": [
+    "..",
+    "b",
+    "a",
+    "b",
+    "",
+    ".",
+    "..",
+    "",
+    "a\\b",
+    ".hidden",
+    "x.",
+    ".a.b",
+    "b.c.d",
+    "C:\\x"
+  ],
+  "posix.dirname": [
+    "/foo/bar//baz/asdf/quux",
+    "a",
+    "//",
+    "///a",
+    ".",
+    ".",
+    ".",
+    "/",
+    ".",
+    "/x",
+    ".",
+    ".",
+    "/a",
+    "."
+  ],
+  "posix.extname": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ".",
+    ".b",
+    ".d",
+    ""
+  ],
+  "posix.format": [
+    "/x",
+    "/a/b.c",
+    ""
+  ],
+  "posix.isAbsolute": [
+    true,
+    false,
+    true,
+    true,
+    false,
+    false,
+    false,
+    true,
+    false,
+    true,
+    false,
+    false,
+    true,
+    false
+  ],
+  "posix.join": [
+    "/a/c",
+    "a/b/",
+    ".",
+    "a\u0000b/c"
+  ],
+  "posix.normalize": [
+    "/foo/bar/baz/asdf",
+    "a/b/",
+    "/a",
+    "/a/b",
+    ".",
+    ".",
+    "..",
+    "/",
+    "a\\b",
+    "/x/.hidden",
+    "x.",
+    ".a.b",
+    "/a/b.c.d",
+    "C:\\x"
+  ],
+  "posix.parse": [
+    {
+      "base": "..",
+      "dir": "/foo/bar//baz/asdf/quux",
+      "ext": "",
+      "name": "..",
+      "root": "/"
+    },
+    {
+      "base": "b",
+      "dir": "a",
+      "ext": "",
+      "name": "b",
+      "root": ""
+    },
+    {
+      "base": "a",
+      "dir": "/",
+      "ext": "",
+      "name": "a",
+      "root": "/"
+    },
+    {
+      "base": "b",
+      "dir": "///a",
+      "ext": "",
+      "name": "b",
+      "root": "/"
+    },
+    {
+      "base": "",
+      "dir": "",
+      "ext": "",
+      "name": "",
+      "root": ""
+    },
+    {
+      "base": ".",
+      "dir": "",
+      "ext": "",
+      "name": ".",
+      "root": ""
+    },
+    {
+      "base": "..",
+      "dir": "",
+      "ext": "",
+      "name": "..",
+      "root": ""
+    },
+    {
+      "base": "",
+      "dir": "/",
+      "ext": "",
+      "name": "",
+      "root": "/"
+    },
+    {
+      "base": "a\\b",
+      "dir": "",
+      "ext": "",
+      "name": "a\\b",
+      "root": ""
+    },
+    {
+      "base": ".hidden",
+      "dir": "/x",
+      "ext": "",
+      "name": ".hidden",
+      "root": "/"
+    },
+    {
+      "base": "x.",
+      "dir": "",
+      "ext": ".",
+      "name": "x",
+      "root": ""
+    },
+    {
+      "base": ".a.b",
+      "dir": "",
+      "ext": ".b",
+      "name": ".a",
+      "root": ""
+    },
+    {
+      "base": "b.c.d",
+      "dir": "/a",
+      "ext": ".d",
+      "name": "b.c",
+      "root": "/"
+    },
+    {
+      "base": "C:\\x",
+      "dir": "",
+      "ext": "",
+      "name": "C:\\x",
+      "root": ""
+    }
+  ],
+  "posix.relative": [
+    "../../impl/bbb",
+    "",
+    "..",
+    "a/b"
+  ],
+  "posix.resolve": [
+    "/a/c",
+    "/b",
+    true,
+    true
+  ],
+  "posix.toNamespacedPath": [
+    "/foo/bar//baz/asdf/quux/..",
+    "a/b/",
+    "//a",
+    "///a/b",
+    "",
+    ".",
+    "..",
+    "/",
+    "a\\b",
+    "/x/.hidden",
+    "x.",
+    ".a.b",
+    "/a/b.c.d",
+    "C:\\x"
+  ],
+  "shape": [
+    "object",
+    "object",
+    true,
+    true,
+    true,
+    true,
+    true,
+    "\\",
+    ";",
+    "/",
+    ":",
+    true,
+    true,
+    true
+  ],
+  "win32.basename": [
+    "test",
+    "package.json",
+    "c",
+    "",
+    "foo",
+    "",
+    "file.txt",
+    "share",
+    "x",
+    "y",
+    "device",
+    "c",
+    "",
+    ".",
+    "x",
+    "foo.tar.gz",
+    "foo",
+    ".hidden",
+    "file:stream",
+    "c",
+    "y.",
+    "",
+    "a",
+    "y"
+  ],
+  "win32.basename suffix": [
+    "b",
+    "b.txt",
+    "aa",
+    "file"
+  ],
+  "win32.dirname": [
+    "C:\\foo",
+    "C:\\foo\\test\\bar",
+    "c:/a/b/..",
+    "C:",
+    "C:",
+    "C:\\",
+    "\\\\server\\share\\dir",
+    "\\\\server\\share",
+    "//server/share/",
+    "\\\\?\\C:\\x",
+    "\\\\.\\device",
+    "a\\b\\..\\..\\..",
+    ".",
+    ".",
+    "..",
+    ".",
+    "\\",
+    "C:\\x",
+    ".",
+    "a/b",
+    "C:\\x",
+    "\\",
+    "\\",
+    "D:\\x\\"
+  ],
+  "win32.extname": [
+    "",
+    ".json",
+    "",
+    "",
+    "",
+    "",
+    ".txt",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ".gz",
+    "",
+    "",
+    "",
+    "",
+    ".",
+    "",
+    "",
+    ""
+  ],
+  "win32.format": [
+    "C:\\path\\dir\\file.txt",
+    "C:\\file.txt",
+    "\\\\s\\h\\x.y"
+  ],
+  "win32.isAbsolute": [
+    true,
+    true,
+    true,
+    false,
+    false,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+    true,
+    false,
+    false,
+    true,
+    true,
+    true,
+    true
+  ],
+  "win32.join": [
+    "C:\\a\\c",
+    "\\\\server\\share\\",
+    "\\\\server\\share\\x",
+    ".",
+    "a\\C:",
+    "c:\\file",
+    "\\x"
+  ],
+  "win32.normalize": [
+    "C:\\foo\\test",
+    "C:\\foo\\test\\bar\\package.json",
+    "c:\\a\\c",
+    "C:.",
+    "C:foo",
+    "C:\\",
+    "\\\\server\\share\\dir\\file.txt",
+    "\\\\server\\share\\",
+    "\\\\server\\share\\x",
+    "\\\\?\\C:\\x\\y",
+    "\\\\.\\device\\",
+    "..\\c",
+    ".",
+    ".",
+    "..\\x",
+    "foo.tar.gz",
+    "\\foo\\",
+    "C:\\x\\.hidden",
+    "file:stream",
+    "a\\b\\c",
+    "C:\\x\\y.",
+    "\\",
+    "\\a",
+    "D:\\x\\y\\"
+  ],
+  "win32.parse": [
+    {
+      "base": "test",
+      "dir": "C:\\foo",
+      "ext": "",
+      "name": "test",
+      "root": "C:\\"
+    },
+    {
+      "base": "package.json",
+      "dir": "C:\\foo\\test\\bar",
+      "ext": ".json",
+      "name": "package",
+      "root": "C:\\"
+    },
+    {
+      "base": "c",
+      "dir": "c:/a/b/..",
+      "ext": "",
+      "name": "c",
+      "root": "c:/"
+    },
+    {
+      "base": "",
+      "dir": "C:",
+      "ext": "",
+      "name": "",
+      "root": "C:"
+    },
+    {
+      "base": "foo",
+      "dir": "C:",
+      "ext": "",
+      "name": "foo",
+      "root": "C:"
+    },
+    {
+      "base": "",
+      "dir": "C:\\",
+      "ext": "",
+      "name": "",
+      "root": "C:\\"
+    },
+    {
+      "base": "file.txt",
+      "dir": "\\\\server\\share\\dir",
+      "ext": ".txt",
+      "name": "file",
+      "root": "\\\\server\\share\\"
+    },
+    {
+      "base": "",
+      "dir": "\\\\server\\share",
+      "ext": "",
+      "name": "",
+      "root": "\\\\server\\share"
+    },
+    {
+      "base": "x",
+      "dir": "//server/share/",
+      "ext": "",
+      "name": "x",
+      "root": "//server/share/"
+    },
+    {
+      "base": "y",
+      "dir": "\\\\?\\C:\\x",
+      "ext": "",
+      "name": "y",
+      "root": "\\\\?\\C:\\"
+    },
+    {
+      "base": "",
+      "dir": "\\\\.\\device",
+      "ext": "",
+      "name": "",
+      "root": "\\\\.\\device"
+    },
+    {
+      "base": "c",
+      "dir": "a\\b\\..\\..\\..",
+      "ext": "",
+      "name": "c",
+      "root": ""
+    },
+    {
+      "base": "",
+      "dir": "",
+      "ext": "",
+      "name": "",
+      "root": ""
+    },
+    {
+      "base": ".",
+      "dir": "",
+      "ext": "",
+      "name": ".",
+      "root": ""
+    },
+    {
+      "base": "x",
+      "dir": "..",
+      "ext": "",
+      "name": "x",
+      "root": ""
+    },
+    {
+      "base": "foo.tar.gz",
+      "dir": "",
+      "ext": ".gz",
+      "name": "foo.tar",
+      "root": ""
+    },
+    {
+      "base": "foo",
+      "dir": "\\",
+      "ext": "",
+      "name": "foo",
+      "root": "\\"
+    },
+    {
+      "base": ".hidden",
+      "dir": "C:\\x",
+      "ext": "",
+      "name": ".hidden",
+      "root": "C:\\"
+    },
+    {
+      "base": "file:stream",
+      "dir": "",
+      "ext": "",
+      "name": "file:stream",
+      "root": ""
+    },
+    {
+      "base": "c",
+      "dir": "a/b",
+      "ext": "",
+      "name": "c",
+      "root": ""
+    },
+    {
+      "base": "y.",
+      "dir": "C:\\x",
+      "ext": ".",
+      "name": "y",
+      "root": "C:\\"
+    },
+    {
+      "base": "",
+      "dir": "\\",
+      "ext": "",
+      "name": "",
+      "root": "\\"
+    },
+    {
+      "base": "a",
+      "dir": "\\",
+      "ext": "",
+      "name": "a",
+      "root": "\\"
+    },
+    {
+      "base": "y",
+      "dir": "D:\\x\\",
+      "ext": "",
+      "name": "y",
+      "root": "D:\\"
+    }
+  ],
+  "win32.relative": [
+    "bar\\package.json",
+    "..\\..\\impl\\bbb",
+    "C",
+    "D:\\a",
+    "..\\baz-quux",
+    "\\\\foo\\bar\\baz",
+    ""
+  ],
+  "win32.resolve": [
+    "C:\\a\\c",
+    "D:\\b",
+    "\\\\server\\share\\b",
+    "C:\\b",
+    "c:\\some\\file"
+  ],
+  "win32.toNamespacedPath": [
+    "\\\\?\\C:\\foo\\test",
+    "\\\\?\\C:\\foo\\test\\bar\\package.json",
+    "\\\\?\\c:\\a\\c",
+    "\\\\?\\C:\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs",
+    "\\\\?\\C:\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs\\foo",
+    "\\\\?\\C:\\",
+    "\\\\?\\UNC\\server\\share\\dir\\file.txt",
+    "\\\\?\\UNC\\server\\share\\",
+    "\\\\?\\UNC\\server\\share\\x",
+    "\\\\?\\C:\\x\\y",
+    "\\\\.\\device\\",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\c",
+    "",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\x",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs\\foo.tar.gz",
+    "\\foo",
+    "\\\\?\\C:\\x\\.hidden",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs\\file:stream",
+    "\\Users\\andrewcurioso\\Documents\\ProtoStudio\\gnode\\.claude\\worktrees\\path-win32\\pkg\\nodejs\\a\\b\\c",
+    "\\\\?\\C:\\x\\y.",
+    "\\\\",
+    "\\\\a",
+    "\\\\?\\D:\\x\\y"
+  ]
+}

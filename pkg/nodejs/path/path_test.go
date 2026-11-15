@@ -88,7 +88,7 @@ func TestPath_Extname(t *testing.T) {
 		{`__path_module.extname('index.coffee.md')`, ".md"},
 		{`__path_module.extname('index.')`, "."},
 		{`__path_module.extname('index')`, ""},
-		{`__path_module.extname('.index')`, ".index"}, // Go behavior differs from Node
+		{`__path_module.extname('.index')`, ""},
 	}
 
 	for _, tt := range tests {
