@@ -60,29 +60,44 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: refs/heads/main
+          # The label check walks the manifest's history.
+          fetch-depth: 0
 
       # A manifest change alone isn't enough, because a version bump is one too.
       - name: Compare the pin to the published version
         id: check
         env:
           EVENT: ${{ github.event_name }}
-          PUSHED: ${{ github.sha }}
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          # The pull request that merged as the pushed commit. If GitHub can't say, this
-          # step fails rather than release a pin someone meant to hold back.
+          f=internal/v8dist/manifest.json
+          version="$(jq -r .module_version "$f")"
+          pin() { jq -S 'del(.module_version)'; }
+          # Check the label on the pull request that set the pin this run would publish,
+          # which is the latest on main, not necessarily the push that started the run.
+          # Version bumps change only module_version, so they're passed over. If the
+          # source or its labels can't be found, this fails rather than publish a pin
+          # someone meant to hold back.
           if [ "$EVENT" = push ]; then
-            labels="$(gh api "repos/$GH_REPO/commits/$PUSHED/pulls" \
+            source=""
+            for c in $(git log --format=%H -- "$f"); do
+              if [ "$(git show "$c:$f" | pin)" != "$( (git show "$c^:$f" 2>/dev/null || true) | pin)" ]; then
+                source="$c"
+                break
+              fi
+            done
+            if [ -z "$source" ]; then
+              echo "Couldn't find the commit that set the current pin." >&2
+              exit 1
+            fi
+            labels="$(gh api "repos/$GH_REPO/commits/$source/pulls" \
               --jq '.[] | select(.merged_at != null) | .labels[].name')"
             if printf '%s\n' "$labels" | grep -qx skip-release; then
-              echo "The pull request merged as $PUSHED is labeled skip-release, so this waits for the next release."
+              echo "The pin on main came from $source, whose pull request is labeled skip-release, so this waits for the next release."
               echo "run=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
-          f=internal/v8dist/manifest.json
-          version="$(jq -r .module_version "$f")"
-          pin() { jq -S 'del(.module_version)'; }
           if [ "$EVENT" != workflow_dispatch ] \
             && published="$(gh release download "$version" -p manifest.json -O - 2>/dev/null)" \
             && [ "$(printf '%s' "$published" | pin)" = "$(pin < "$f")" ]; then
