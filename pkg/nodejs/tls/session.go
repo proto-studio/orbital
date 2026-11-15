@@ -92,9 +92,10 @@ func (c *clientSessions) Put(key string, cs *tls.ClientSessionState) {
 	}
 }
 
-// useSessions installs the cache on a client's configuration. A script's session is only
-// offered when the script's options are in charge of the configuration: with the embedder's,
-// resumption comes from the embedder's own cache, if it has one.
+// useSessions installs the cache on a client's configuration. Sessions pass between the
+// connection and the script only when the script's options are in charge of the
+// configuration: with the embedder's, resumption comes from the embedder's own cache, if it
+// has one.
 func (t *TLS) useSessions(cfg *tls.Config, embedder bool, session string, onSession *v8.Value) {
 	cache := &clientSessions{next: cfg.ClientSessionCache}
 	if session != "" && !embedder {
@@ -104,7 +105,9 @@ func (t *TLS) useSessions(cfg *tls.Config, embedder bool, session string, onSess
 			}
 		}
 	}
-	if onSession != nil && onSession.IsFunction() {
+	// Sessions made under the embedder's configuration stay in its cache: they can carry
+	// the embedder's client identity, so the script never sees them.
+	if onSession != nil && onSession.IsFunction() && !embedder {
 		cache.onNew = func(session, ticket []byte) {
 			t.deliver(func(ctx *v8.Context) {
 				t.rt.MakeCallback(onSession, ctx.Undefined(),
