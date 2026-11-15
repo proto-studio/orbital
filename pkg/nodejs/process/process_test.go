@@ -79,14 +79,14 @@ func TestProcess_Version(t *testing.T) {
 	rt := setupRuntime(t)
 	defer rt.Dispose()
 
-	result, err := rt.RunScript(`process.version`, "test.js")
+	result, err := rt.RunScript(`process.version + ' ' + process.versions.node`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
 
-	version := result.String()
-	if version == "" {
-		t.Error("process.version should not be empty")
+	// The Node release Orbital matches, which its comparison tests are captured from.
+	if got, want := result.String(), "v20.18.1 20.18.1"; got != want {
+		t.Errorf("process.version and versions.node = %q, want %q", got, want)
 	}
 }
 
