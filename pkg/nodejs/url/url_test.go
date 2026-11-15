@@ -355,3 +355,24 @@ JSON.stringify(out);
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// Resolving against an authority-less base whose path starts with "//" keeps it a path;
+// url.resolve() merges against the base as written; url.parse() keeps a file: path that
+// has no leading slash. Expected values are Node 20.18.1's.
+func TestURL_LegacyAndDoubleSlashBases(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+JSON.stringify([new URL('b', 'foo:/.//host/a').href, new URL('?q=1', 'foo:/.//host/a').href, new URL('#h', 'foo:/.//host/a').href,
+  __url_module.resolve('http://h/a/b/..', 'c'), __url_module.resolve('http://h/a/./b', 'c'), __url_module.parse('file:notes.txt').pathname, __url_module.parse('file:notes.txt').path,
+  __url_module.parse('file:C:/a').pathname, __url_module.resolve('http://h/a/b/', '../c')]);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `["foo:/.//host/b","foo:/.//host/a?q=1","foo:/.//host/a#h","http://h/a/b/c","http://h/a/c","notes.txt","notes.txt","C:/a","http://h/a/c"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}

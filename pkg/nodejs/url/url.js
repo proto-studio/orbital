@@ -278,7 +278,10 @@
 			// A path made of segments loses its "." and ".." segments, as the WHATWG URL
 			// parser removes them. An opaque path, such as mailto:'s, is kept as is.
 			// A file: URL's path is always rooted: file:notes.txt is /notes.txt.
-			if (protocol === 'file:' && !pathname.startsWith('/')) pathname = '/' + pathname;
+			// url.parse() keeps it as written, as Node's legacy parser does.
+			if (protocol === 'file:' && !pathname.startsWith('/') && dotSegmentMode !== 'keep') {
+				pathname = '/' + pathname;
+			}
 			// url.parse() keeps the path as written, and url.resolve() only removes literal
 			// dot segments, as Node's legacy API does.
 			if (pathname.startsWith('/') && dotSegmentMode !== 'keep') {
@@ -300,24 +303,29 @@
 			// The base's scheme and, only if it has one, its authority with any user info:
 			// a base like foo:/a has none, and must not gain an empty one.
 			const prefix = base._authorityPrefix();
+			// Without an authority, a path starting with "//" would read back as one, so it
+			// goes in behind "/." as href writes it.
+			const basePathname = !base._hasAuthority() && base.pathname.startsWith('//')
+				? '/.' + base.pathname
+				: base.pathname;
 
 			if (relative.startsWith('/')) {
 				return prefix + relative;
 			}
 
 			if (relative.startsWith('?')) {
-				return prefix + base.pathname + relative;
+				return prefix + basePathname + relative;
 			}
 
 			if (relative.startsWith('#')) {
-				return prefix + base.pathname + base.search + relative;
+				return prefix + basePathname + base.search + relative;
 			}
 
 			// Relative path. A file: URL whose path is only a drive letter keeps it, as
 			// the URL standard never shortens the drive away.
 			const basePath = base.protocol === 'file:' && /^\/[A-Za-z]:$/.test(base.pathname)
 				? base.pathname + '/'
-				: base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1);
+				: basePathname.slice(0, basePathname.lastIndexOf('/') + 1);
 			return prefix + basePath + relative;
 		}
 
@@ -685,8 +693,11 @@
 	}
 
 	// url.resolve function
+	// Node's legacy resolve takes the base as written and removes the literal dot segments
+	// only from the merged path.
 	function resolve(from, to) {
-		return withDotSegmentMode('literal', () => new URL(to, from).href);
+		const base = withDotSegmentMode('keep', () => new URL(from));
+		return withDotSegmentMode('literal', () => new URL(to, base).href);
 	}
 
 	// domainToASCII and domainToUnicode (simplified - no actual punycode)
