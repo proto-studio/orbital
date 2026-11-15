@@ -49,11 +49,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   uint32 exponent of 3 or more; Go's `crypto/rsa` can't use or export a key whose
   exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
   back with) an error for those instead (`generateRSAKey`).
-- **[perf] Key generation is synchronous.** The async `generateKeyPair(…, cb)`
-  and `promisify` forms run the actual keygen inside a microtask on the main
-  thread (`keyobject.js`), so RSA-2048/4096 generation blocks the event loop.
-  Node offloads to the libuv threadpool. Needs a Go goroutine + event-loop
-  completion to be truly async. (#113)
 - **[gap] No node:crypto one-shot sign/verify/encrypt with KeyObject.** The
   KeyObject surface covers generate / import / export / equals only. `crypto.sign`,
   `crypto.verify`, `privateEncrypt`, `publicDecrypt`, `createSign/createVerify`,
@@ -65,9 +60,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[perf] `crypto.randomInt` has modulo bias.** `randomIntFunc` uses
   `n % rangeSize` (`crypto.go`); Node uses rejection sampling for a uniform
   distribution. Pre-existing, noted here for completeness. (#114)
-- **[perf] `crypto.randomBytes(size, cb)` async form is synchronous.** It fills
-  bytes immediately and calls back via a microtask (`crypto.go`), not the
-  threadpool. (#113)
 
 ## WebCrypto — SubtleCrypto (`pkg/nodejs/webcrypto/webcrypto.js`)
 

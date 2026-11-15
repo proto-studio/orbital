@@ -183,23 +183,24 @@
       throw new TypeError('The "callback" argument must be of type function');
     }
     validateKeyPairOptions(type, options);
-    Promise.resolve().then(function () {
-      let r;
-      try {
-        r = crypto._generateKeyPair(type, JSON.stringify(options || {}));
-      } catch (e) {
-        callback(e);
+    // Generation runs off the JS thread; see async.go.
+    crypto._generateKeyPairAsync(type, JSON.stringify(options || {}), function (message, pub, priv) {
+      if (message !== undefined) {
+        callback(new Error(message));
         return;
       }
-      callback(null, wrap(r.pub), wrap(r.priv));
+      callback(null, wrap(pub), wrap(priv));
     });
   }
 
   // Node special-cases util.promisify(generateKeyPair) to resolve with an object
   // { publicKey, privateKey } rather than just the first callback value.
   generateKeyPair[Symbol.for('nodejs.util.promisify.custom')] = function (type, options) {
-    return Promise.resolve().then(function () {
-      return generateKeyPairSync(type, options);
+    return new Promise(function (resolve, reject) {
+      generateKeyPair(type, options, function (err, publicKey, privateKey) {
+        if (err) reject(err);
+        else resolve({ publicKey: publicKey, privateKey: privateKey });
+      });
     });
   };
 
