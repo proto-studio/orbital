@@ -196,6 +196,12 @@ results.encodings = (() => {
   const ct = ctr(false).update('héllo wörld');
   const d = ctr(true);
   r.push([d.update(ct.subarray(0, 2), undefined, 'utf8'), d.update(ct.subarray(2), undefined, 'utf8'), d.final('utf8')]);
+  const d3 = ctr(true);
+  r.push([d3.update(ct.subarray(0, 2), undefined, 'utf8'), d3.update(ct.subarray(2), undefined, 'utf-8'), d3.final('UTF8')]);
+  r.push(outcome(() => ctr(false).update('abc', 'hex')));
+  const noArg = crypto.createCipheriv('aes-128-cbc', key, iv);
+  noArg.setAutoPadding();
+  r.push(Buffer.concat([noArg.update(bytes(16, 1)), noArg.final()]).length);
   const d2 = ctr(true);
   r.push([d2.update(ct.subarray(0, 2), undefined, 'utf-8'), d2.update(ct.subarray(2), undefined, 'utf-8'), d2.final('utf-8')]);
   return r;
