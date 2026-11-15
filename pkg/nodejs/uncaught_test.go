@@ -952,9 +952,10 @@ const run = (src) => new Promise((resolve) => new Worker(src, { eval: true }).on
   note('rejection', await run('Promise.reject(1)'));
   note('listener', await run('process.on("exit", (c) => { process.exitCode = c + 5; }); process.exitCode = 1'));
   for (const src of ['process.exitCode = 3; process.on("exit", () => { throw new TypeError("in exit"); })',
-    'process.on("exit", () => { throw new TypeError("in exit"); })']) {
+    'process.on("exit", () => { throw new TypeError("in exit"); })',
+    'process.exitCode = 4; process.on("exit", () => { throw ""; })']) {
     const w = new Worker(src, { eval: true });
-    w.on('error', (e) => note('error', String(e.message).includes('in exit')));
+    w.on('error', (e) => note('error', String(e && e.message !== undefined ? e.message : e).includes('in exit')));
     note('throwing listener', await new Promise((resolve) => w.on('exit', resolve)));
   }
 })();
@@ -963,7 +964,7 @@ const run = (src) => new Promise((resolve) => new Worker(src, { eval: true }).on
 		t.Fatalf("Run returned %v", err)
 	}
 	want := []string{"set 3", "string 7", "rejection 1", "listener 6",
-		"error true", "throwing listener 3", "error true", "throwing listener 0"}
+		"error true", "throwing listener 3", "error true", "throwing listener 0", "error false", "throwing listener 4"}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
