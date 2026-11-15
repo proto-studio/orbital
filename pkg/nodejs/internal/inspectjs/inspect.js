@@ -254,7 +254,10 @@
       text = Number.isNaN(time) ? 'Invalid Date' : Date.prototype.toISOString.call(value);
       fallback = 'Date';
     } else if (isRegExp(value)) {
-      text = RegExp.prototype.toString.call(value);
+      // toString reads source and flags as properties, which a RegExp without a prototype
+      // doesn't have. Like Node, copy it first: new RegExp takes them from its internal state.
+      const plain = Object.getPrototypeOf(value) === null ? new RegExp(value) : value;
+      text = RegExp.prototype.toString.call(plain);
       fallback = 'RegExp';
     } else {
       return null;

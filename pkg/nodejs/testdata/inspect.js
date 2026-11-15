@@ -112,10 +112,14 @@ const stamped = new Date(86400000);
 stamped.tz = 'UTC';
 const bareMap = Object.setPrototypeOf(new Map([[1, 2]]), null);
 const bareSet = Object.setPrototypeOf(new Set(), null);
+// Without a prototype a RegExp has no source or flags properties; with an own source, that's shown.
+const bareRegExp = Object.setPrototypeOf(/hi\/x/g, null);
+const ownSource = /x/m;
+Object.defineProperty(ownSource, 'source', { value: 'own' });
 show(new Map([['a', 1], ['b', { c: [1, 2] }]]), new Set([1, 'two', [3]]), new Map(), new Set(),
   new Date(Date.UTC(2024, 0, 1)), new Date(NaN), /a\/b/gi, new RegExp(''), 1n, -12345678901234567890n, -0, 0,
   Symbol('sym'), Symbol(), new MyMap([[1, 2]]), new MySet([1]), new MyDate(0), new MyRegExp('r', 'y'),
-  keyed, marked, stamped, bareMap, bareSet,
+  keyed, marked, stamped, bareMap, bareSet, bareRegExp, ownSource,
   { map: new Map([[{ k: 1 }, new Set([2])]]), set: new Set([new Map()]), date: new Date(0), re: /z/m },
   [1n, -0, 0, Symbol.iterator, new Date(0), /q/], { big: 2n, neg: -0, sym: Symbol('s') },
   new Map([[1n, -0]]), new Set([-0, 3n]), { a: { b: { c: new Map([[1, 2]]), d: new Set([1]), e: new Map() } } },
