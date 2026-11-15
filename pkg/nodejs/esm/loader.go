@@ -13,6 +13,7 @@ package esm
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	pathpkg "path"
@@ -87,7 +88,7 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 		}
 	}
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
-		rest, suffix = rest[:i], rest[i:]
+		rest, suffix = rest[:i], normalizeSuffix(rest[i:])
 	}
 	encodedSep = hasEncodedSeparator(rest)
 	// Only the specifier is URL-encoded; dir is already a file path.
@@ -104,6 +105,32 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 // escapePath is a file path as it appears in a file: URL.
 func escapePath(p string) string {
 	return (&url.URL{Path: filepath.ToSlash(p)}).EscapedPath()
+}
+
+// normalizeSuffix serializes a URL's query and fragment the way the URL parser
+// does (percent-encoding what it encodes, leaving existing escapes alone), so
+// equivalent spellings such as "?a b" and "?a%20b" name the same module.
+func normalizeSuffix(s string) string {
+	query, fragment := s, ""
+	if i := strings.IndexByte(s, '#'); i >= 0 {
+		query, fragment = s[:i], s[i:]
+	}
+	return percentEncode(query, "\"#<>'") + percentEncode(fragment, "\"<>`")
+}
+
+// percentEncode escapes controls, spaces, non-ASCII bytes and the given
+// characters (the leading "?" or "#" is never among them).
+func percentEncode(s, set string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c <= ' ' || c >= 0x7f || (i > 0 && strings.IndexByte(set, c) >= 0) {
+			b.WriteString(fmt.Sprintf("%%%02X", c))
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // hasEncodedSeparator reports an escaped "/" or "\" in a URL path, which Node
