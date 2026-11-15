@@ -115,6 +115,7 @@ func registerNative(rt *runtime.Runtime) error {
 		"decrypt":     nativeDecrypt,
 		"deriveBits":  nativeDeriveBits,
 		"pbkdf2":      nativePbkdf2,
+		"checkJWK":    nativeCheckJWK,
 		"aesKwWrap":   nativeAesKwWrap,
 		"aesKwUnwrap": nativeAesKwUnwrap,
 	}

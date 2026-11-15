@@ -75,10 +75,11 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   is accepted by `importKey` (it's in the import allowlist) but `deriveBits`
   throws `NotSupportedError` for it — an inconsistency to resolve when HKDF
   derivation is implemented natively. (#115)
-- **[approx] JWK validation is presence-only.** `assertValidJWK` checks that the
-  required members exist for the `kty` (e.g. RSA needs `n`,`e`); it does not do
-  full structural validation (coordinate lengths, on-curve checks, base64url
-  charset). Enough to reject the structurally-empty keys libraries probe with. (#116)
+- **[approx] `importKey` doesn't check key usages against the key type.** JWK members
+  are checked as Node does (`kty`, `crv`, `alg`, `use`, `key_ops`, `ext`, coordinate
+  lengths, on-curve points, private keys matching public ones), but usages are not:
+  Node rejects, for example, a secret key imported with no usages, or a public key
+  with `sign`, with a `SyntaxError`.
 - **[gap] ML-DSA and other non-allowlisted algorithms are rejected by design.**
   `SUPPORTED_IMPORT_ALGS` gates `importKey`; anything outside it throws
   `NotSupportedError` (matches Node). Expanding real algorithm support means

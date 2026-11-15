@@ -155,6 +155,133 @@
     }
   }
 
+  // ---- importKey('jwk') checks ---------------------------------------------------
+  // What Node 20 checks before it imports a JWK, in the same order and with the
+  // same errors. checkJWK (jwk_check.go) checks the key material itself.
+  function dataError(message) {
+    return new DOMException(message, 'DataError');
+  }
+
+  const AES_ALG_SUFFIX = { 'AES-GCM': 'GCM', 'AES-CBC': 'CBC', 'AES-CTR': 'CTR', 'AES-KW': 'KW' };
+  const HASH_DIGITS = { 'SHA-1': '1', 'SHA-256': '256', 'SHA-384': '384', 'SHA-512': '512' };
+  const EC_ALG = { 'P-256': 'ES256', 'P-384': 'ES384', 'P-521': 'ES512' };
+  const RSA_ALG_HASH = {
+    'RSASSA-PKCS1-v1_5': { RS1: 'SHA-1', RS256: 'SHA-256', RS384: 'SHA-384', RS512: 'SHA-512' },
+    'RSA-PSS': { PS1: 'SHA-1', PS256: 'SHA-256', PS384: 'SHA-384', PS512: 'SHA-512' },
+    'RSA-OAEP': { 'RSA-OAEP': 'SHA-1', 'RSA-OAEP-256': 'SHA-256', 'RSA-OAEP-384': 'SHA-384', 'RSA-OAEP-512': 'SHA-512' },
+  };
+
+  function upperHash(h) {
+    const name = hashName(h);
+    return typeof name === 'string' ? name.toUpperCase() : name;
+  }
+
+  // The checks every key type makes, after its kty (and crv) check: use,
+  // key_ops, then ext.
+  function checkJWKUseOpsExt(keyData, expectedUse, extractable, usages) {
+    if (usages.length > 0 && keyData.use !== undefined && keyData.use !== expectedUse) {
+      throw dataError('Invalid JWK "use" Parameter');
+    }
+    if (keyData.key_ops !== undefined) {
+      const ops = Array.from(keyData.key_ops);
+      if (new Set(ops).size !== ops.length) {
+        throw dataError('Duplicate key operation');
+      }
+      for (const u of usages) {
+        if (!ops.includes(u)) throw dataError('Key operations and usage mismatch');
+      }
+    }
+    if (keyData.ext !== undefined && keyData.ext === false && extractable === true) {
+      throw dataError('JWK "ext" Parameter and extractable mismatch');
+    }
+  }
+
+  function checkJWKImport(keyData, algo, extractable, usages) {
+    if (keyData === null || keyData === undefined) {
+      throw dataError('Invalid keyData');
+    }
+    if (typeof keyData !== 'object' && typeof keyData !== 'function') {
+      throw new TypeError("Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument can not be converted to a dictionary");
+    }
+    const ops = keyData.key_ops;
+    if (ops !== undefined && (ops === null || typeof ops !== 'object' || typeof ops[Symbol.iterator] !== 'function')) {
+      throw new TypeError("Failed to execute 'importKey' on 'SubtleCrypto': 'key_ops' of 'JsonWebKey' (2nd argument) can not be converted to sequence.");
+    }
+    if (!keyData.kty) {
+      throw dataError('Invalid keyData');
+    }
+
+    const name = algo.name;
+    const jwk = pickJWK(keyData);
+    const material = () => {
+      const res = JSON.parse(native.checkJWK(JSON.stringify(jwk)));
+      if (res.error) throw dataError(res.error);
+      for (const f of ['k', 'x', 'y', 'd']) if (res[f] !== undefined) jwk[f] = res[f];
+      return res;
+    };
+
+    if (AES_ALG_SUFFIX[name] || name === 'HMAC') {
+      if (keyData.kty !== 'oct') throw dataError('Invalid JWK "kty" Parameter');
+      checkJWKUseOpsExt(keyData, name === 'HMAC' ? 'sig' : 'enc', extractable, usages);
+      const res = material();
+      let alg;
+      if (name === 'HMAC') {
+        alg = 'HS' + HASH_DIGITS[upperHash(algo.hash)];
+      } else {
+        if (res.keyBytes !== 16 && res.keyBytes !== 24 && res.keyBytes !== 32) {
+          throw dataError('Invalid key length');
+        }
+        alg = 'A' + res.keyBytes * 8 + AES_ALG_SUFFIX[name];
+      }
+      if (keyData.alg !== undefined && keyData.alg !== alg) {
+        throw dataError('JWK "alg" does not match the requested algorithm');
+      }
+      return jwk;
+    }
+
+    if (name === 'ECDSA' || name === 'ECDH') {
+      if (keyData.kty !== 'EC') throw dataError('Invalid JWK "kty" Parameter');
+      if (keyData.crv !== algo.namedCurve) {
+        throw dataError('JWK "crv" does not match the requested algorithm');
+      }
+      checkJWKUseOpsExt(keyData, name === 'ECDH' ? 'enc' : 'sig', extractable, usages);
+      if (name === 'ECDSA' && keyData.alg !== undefined && keyData.alg !== EC_ALG[algo.namedCurve]) {
+        throw dataError('JWK "alg" does not match the requested algorithm');
+      }
+      material();
+      return jwk;
+    }
+
+    if (name === 'Ed25519' || name === 'EdDSA' || name === 'X25519') {
+      if (keyData.kty !== 'OKP') throw dataError('Invalid JWK "kty" Parameter');
+      if (keyData.crv !== (name === 'X25519' ? 'X25519' : 'Ed25519')) {
+        throw dataError('JWK "crv" Parameter and algorithm name mismatch');
+      }
+      checkJWKUseOpsExt(keyData, name === 'X25519' ? 'enc' : 'sig', extractable, usages);
+      material();
+      return jwk;
+    }
+
+    if (RSA_ALG_HASH[name]) {
+      if (keyData.kty !== 'RSA') throw dataError('Invalid JWK "kty" Parameter');
+      checkJWKUseOpsExt(keyData, name === 'RSA-OAEP' ? 'enc' : 'sig', extractable, usages);
+      if (keyData.alg !== undefined && RSA_ALG_HASH[name][keyData.alg] !== upperHash(algo.hash)) {
+        throw dataError('JWK "alg" does not match the requested algorithm');
+      }
+      if (keyData.n === undefined || keyData.e === undefined) throw dataError('Invalid keyData');
+      if (keyData.d !== undefined) {
+        for (const f of ['p', 'q', 'dp', 'dq', 'qi']) {
+          if (keyData[f] === undefined) throw dataError('Invalid keyData');
+        }
+      }
+      return jwk;
+    }
+
+    // PBKDF2 and HKDF keys: the presence check Orbital has always made.
+    assertValidJWK(jwk);
+    return jwk;
+  }
+
   class SubtleCrypto {
     async digest(algorithm, data) {
       const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
@@ -198,7 +325,7 @@
       if (format === 'raw') {
         jwk = { kty: 'oct', k: bytesToB64url(u8(keyData)) };
       } else if (format === 'jwk') {
-        jwk = pickJWK(keyData);
+        jwk = checkJWKImport(keyData, algo, extractable, keyUsages || []);
       } else if (format === 'spki' || format === 'pkcs8') {
         // Convert the DER (SPKI public / PKCS#8 private) to a JWK via the native
         // KeyObject bridge, then proceed as for a jwk import.
@@ -208,7 +335,7 @@
       } else {
         throw new DOMException('Unsupported key format: ' + format, 'NotSupportedError');
       }
-      assertValidJWK(jwk);
+      if (format !== 'jwk') assertValidJWK(jwk);
       const keyAlgo = buildKeyAlgorithm(algo, jwk);
       const type = keyTypeFromJWK(jwk);
       return new CryptoKey(type, extractable, keyAlgo, keyUsages, jwk);

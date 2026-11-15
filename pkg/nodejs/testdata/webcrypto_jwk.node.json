@@ -1,0 +1,356 @@
+{
+  "aes_a128cbc": {
+    "type": "secret"
+  },
+  "aes_a128ctr": {
+    "type": "secret"
+  },
+  "aes_a128gcm": {
+    "type": "secret"
+  },
+  "aes_a128kw": {
+    "type": "secret"
+  },
+  "aes_alg_mismatch": {
+    "message": "JWK \"alg\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "aes_badchars": {
+    "message": "Invalid key length",
+    "name": "DataError"
+  },
+  "aes_cbc_gcmalg": {
+    "message": "JWK \"alg\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "aes_k_number": {
+    "message": "Invalid key length",
+    "name": "DataError"
+  },
+  "aes_kty_rsa": {
+    "message": "Invalid JWK \"kty\" Parameter",
+    "name": "DataError"
+  },
+  "aes_len15": {
+    "message": "Invalid key length",
+    "name": "DataError"
+  },
+  "aes_len_param": {
+    "type": "secret"
+  },
+  "aes_no_k": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "aes_ok": {
+    "type": "secret"
+  },
+  "ec_alg_bad": {
+    "message": "JWK \"alg\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "ec_crv_bad": {
+    "message": "JWK \"crv\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "ec_crv_mismatch": {
+    "message": "JWK \"crv\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "ec_d31": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_d_mismatch": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_ext_false": {
+    "message": "JWK \"ext\" Parameter and extractable mismatch",
+    "name": "DataError"
+  },
+  "ec_keyops_mismatch": {
+    "message": "Key operations and usage mismatch",
+    "name": "DataError"
+  },
+  "ec_kty_bad": {
+    "message": "Invalid JWK \"kty\" Parameter",
+    "name": "DataError"
+  },
+  "ec_kty_missing": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_kty_rsa": {
+    "message": "Invalid JWK \"kty\" Parameter",
+    "name": "DataError"
+  },
+  "ec_no_y": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_offcurve": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_ok": {
+    "type": "public"
+  },
+  "ec_padded": {
+    "type": "public"
+  },
+  "ec_skippedchars": {
+    "type": "public"
+  },
+  "ec_use_enc": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "ec_use_sig": {
+    "type": "public"
+  },
+  "ec_x31": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_x33": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ec_x_number": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ecdh_alg_any": {
+    "type": "public"
+  },
+  "ecdh_ok": {
+    "type": "public"
+  },
+  "ecdh_priv_d_wrong": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ecdh_priv_d_zero": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ecdh_priv_ok": {
+    "type": "private"
+  },
+  "ecdh_use_enc_with_usages": {
+    "type": "private"
+  },
+  "ecdh_use_sig_empty_usages": {
+    "type": "public"
+  },
+  "ecdh_use_sig_with_usages": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "ecdsa384_alg_ok": {
+    "message": "Key operations and usage mismatch",
+    "name": "DataError"
+  },
+  "ed_alg_bad": {
+    "type": "public"
+  },
+  "ed_alg_eddsa": {
+    "type": "public"
+  },
+  "ed_crv_x25519": {
+    "message": "JWK \"crv\" Parameter and algorithm name mismatch",
+    "name": "DataError"
+  },
+  "ed_d31": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ed_d_mismatch": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ed_kty_ec": {
+    "message": "Invalid JWK \"kty\" Parameter",
+    "name": "DataError"
+  },
+  "ed_no_crv": {
+    "message": "JWK \"crv\" Parameter and algorithm name mismatch",
+    "name": "DataError"
+  },
+  "ed_ok": {
+    "type": "public"
+  },
+  "ed_use_enc": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "ed_x31": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "ext_false_nonextract": {
+    "type": "secret"
+  },
+  "ext_string": {
+    "type": "secret"
+  },
+  "hmac_alg_mismatch": {
+    "message": "JWK \"alg\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "hmac_badchars": {
+    "type": "secret"
+  },
+  "hmac_empty": {
+    "type": "secret"
+  },
+  "hmac_hs1": {
+    "type": "secret"
+  },
+  "hmac_hs256": {
+    "type": "secret"
+  },
+  "hmac_hs512": {
+    "type": "secret"
+  },
+  "hmac_len_param": {
+    "type": "secret"
+  },
+  "hmac_length_mismatch": {
+    "type": "secret"
+  },
+  "hmac_no_k": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "hmac_ok": {
+    "type": "secret"
+  },
+  "jwk_null": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "jwk_string": {
+    "message": "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument can not be converted to a dictionary",
+    "name": "TypeError"
+  },
+  "keyops_bogus": {
+    "type": "secret"
+  },
+  "keyops_dup": {
+    "message": "Duplicate key operation",
+    "name": "DataError"
+  },
+  "keyops_notarray": {
+    "message": "Failed to execute 'importKey' on 'SubtleCrypto': 'key_ops' of 'JsonWebKey' (2nd argument) can not be converted to sequence.",
+    "name": "TypeError"
+  },
+  "keyops_superset": {
+    "type": "secret"
+  },
+  "order_alg_vs_len": {
+    "message": "Invalid key length",
+    "name": "DataError"
+  },
+  "order_crv_vs_use": {
+    "message": "JWK \"crv\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "order_ec_alg_vs_x": {
+    "message": "Key operations and usage mismatch",
+    "name": "DataError"
+  },
+  "order_ext_vs_alg": {
+    "message": "JWK \"ext\" Parameter and extractable mismatch",
+    "name": "DataError"
+  },
+  "order_ext_vs_keyops": {
+    "message": "Key operations and usage mismatch",
+    "name": "DataError"
+  },
+  "order_keyops_vs_use": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "order_kty_vs_ext": {
+    "message": "Invalid JWK \"kty\" Parameter",
+    "name": "DataError"
+  },
+  "paddedExportsCanonical": true,
+  "rsa_alg_mismatch": {
+    "message": "JWK \"alg\" does not match the requested algorithm",
+    "name": "DataError"
+  },
+  "rsa_alg_ok": {
+    "type": "public"
+  },
+  "rsa_e_empty": {
+    "type": "public"
+  },
+  "rsa_n_badchars": {
+    "type": "public"
+  },
+  "rsa_n_empty": {
+    "type": "public"
+  },
+  "rsa_n_number": {
+    "type": "public"
+  },
+  "rsa_no_e": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "rsa_oaep_alg": {
+    "type": "public"
+  },
+  "rsa_oaep_alg1": {
+    "type": "public"
+  },
+  "rsa_ok": {
+    "type": "public"
+  },
+  "rsa_priv_bad_d": {
+    "type": "private"
+  },
+  "rsa_priv_no_p": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "rsa_priv_only_d": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  },
+  "rsa_pss_alg": {
+    "type": "public"
+  },
+  "rsa_rs1": {
+    "type": "public"
+  },
+  "rsa_small_n": {
+    "type": "public"
+  },
+  "rsa_use_enc_sign": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "use_aes_sig": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "use_bogus": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "use_hmac_enc": {
+    "message": "Invalid JWK \"use\" Parameter",
+    "name": "DataError"
+  },
+  "x_ok": {
+    "type": "public"
+  },
+  "x_x33": {
+    "message": "Invalid keyData",
+    "name": "DataError"
+  }
+}
