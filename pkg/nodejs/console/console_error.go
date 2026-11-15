@@ -37,8 +37,15 @@ const errorToolsSource = `(function () {
       return false;
     }
   }
+  // Node's isError: a native error, or any object inheriting from
+  // Error.prototype, such as the error a worker's exception becomes in its
+  // parent.
+  function isError(v) {
+    if (isBrandedError(v)) return true;
+    try { return v instanceof Error; } catch (e) { return false; }
+  }
   function classify(v) {
-    if (!isBrandedError(v)) return undefined;
+    if (!isError(v)) return undefined;
     var ctor = null;
     var obj = v;
     while (obj) {

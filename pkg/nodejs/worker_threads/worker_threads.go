@@ -289,6 +289,8 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 		return
 	}
 	deliverFn, _ := wrt.GetGlobal("__wt_deliver")
+	// Taken before the entry runs, so the worker's own code cannot replace it.
+	serializeFn, _ := wrt.GetGlobal("__wt_serialize_thrown")
 
 	// Incoming-message pump + termination watcher.
 	pumpStarted = true
@@ -353,17 +355,39 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 		code = exit.Code
 	} else if runErr != nil {
 		if !wrt.IsKilled() {
-			wk.fromWorker <- wtEvent{kind: "error", data: runErr.Error()}
+			ev := wtEvent{kind: "error", data: runErr.Error()}
 			code = 1
 			// The 7 for a throwing handler is a whole process's exit code, and Node's
 			// workers report 1 for it.
 			var uncaught *goruntime.UncaughtError
-			if errors.As(runErr, &uncaught) && !uncaught.HandlerThrew {
-				code = uncaught.ExitCode
+			if errors.As(runErr, &uncaught) {
+				if !uncaught.HandlerThrew {
+					code = uncaught.ExitCode
+				}
+				if data, ok := serializeThrown(wrt, serializeFn, uncaught.Thrown); ok {
+					ev = wtEvent{kind: "thrown", data: data}
+				}
 			}
+			wk.fromWorker <- ev
 		}
 	}
 	wk.fromWorker <- wtEvent{kind: "exit", code: code}
+}
+
+// serializeThrown encodes the value that ended a worker for the parent's 'error' event, in
+// the worker's context while it is still alive.
+func serializeThrown(wrt *goruntime.Runtime, fn, thrown *v8.Value) (string, bool) {
+	if fn == nil || !fn.IsFunction() || wrt.IsKilled() {
+		return "", false
+	}
+	if thrown == nil {
+		thrown = wrt.Context().Undefined()
+	}
+	result, err := fn.Call(nil, thrown)
+	if err != nil || result == nil || !result.IsString() {
+		return "", false
+	}
+	return result.String(), true
 }
 
 func (w *WorkerThreads) setWorkerFunc(wrt *goruntime.Runtime, name string, cb v8.FunctionCallback) error {

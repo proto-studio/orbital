@@ -157,6 +157,18 @@ func TestConsole_ErrorObject(t *testing.T) {
 			want:   []string{"{ message: 'x', stack: 'Error: x' }\n"},
 			reject: []string{"[Error: null prototype]"},
 		},
+		{
+			// Node's isError takes anything inheriting from Error.prototype, which is
+			// what a worker's exception becomes in its parent.
+			name:   "inherits from Error without the brand",
+			script: `console.error(Object.create(Error.prototype)); console.error(Object.create(RangeError.prototype, { message: { value: 'mm' } }));`,
+			want:   []string{"[Error]\n", "[RangeError: mm]\n"},
+		},
+		{
+			name:   "inherits from Error, with a stack",
+			script: `class X extends Error {} const c = Object.create(X.prototype); c.stack = 'X: s\n    at foo (f.js:1:1)'; c.extra = 1; console.error(c);`,
+			want:   []string{"X: s\n    at foo (f.js:1:1) {\n  extra: 1\n}\n"},
+		},
 	}
 
 	for _, tt := range tests {

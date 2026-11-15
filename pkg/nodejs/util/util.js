@@ -21,6 +21,18 @@
 		}
 	}
 
+	// What inspect formats as an error: Node's isError, a native error or any
+	// object inheriting from Error.prototype, such as the error a worker's
+	// exception becomes in its parent.
+	function isErrorForInspect(v) {
+		if (isBrandedError(v)) return true;
+		try {
+			return v instanceof Error;
+		} catch (e) {
+			return false;
+		}
+	}
+
 	// Node's %s inspects objects (so an Error keeps its stack). null stays
 	// "null"; primitives use String().
 	function formatStringSpecifier(arg, inspectOptions) {
@@ -172,7 +184,7 @@
 			// Errors are formatted before the depth cutoff. Node still
 			// prints the stack of a nested Error; only its extra fields
 			// are dropped once the depth is exceeded.
-			if (isBrandedError(value)) return formatError(value, currentDepth);
+			if (isErrorForInspect(value)) return formatError(value, currentDepth);
 
 			// Past the depth limit, a value with entries is cut short.
 			if (currentDepth > opts.depth) {

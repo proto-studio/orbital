@@ -124,6 +124,19 @@ func TestUtil_InspectError(t *testing.T) {
 	if !native.Boolean() {
 		t.Error("isNativeError should follow the error brand, including null prototypes")
 	}
+
+	// Like Node's isError, inspect formats anything inheriting from Error.prototype as an
+	// error, though isNativeError stays false for it.
+	inherited, err := rt.RunScript(`
+		const made = Object.create(RangeError.prototype, { message: { value: 'mm' } });
+		JSON.stringify([__util_module.inspect(made), __util_module.types.isNativeError(made)]);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := inherited.String(), `["[RangeError: mm]",false]`; got != want {
+		t.Errorf("inspect(object inheriting from RangeError) = %s, want %s", got, want)
+	}
 }
 
 func TestUtil_Types_IsArray(t *testing.T) {
