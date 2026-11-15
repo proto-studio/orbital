@@ -165,7 +165,8 @@
         // There is no IPC channel, so there is nothing at this descriptor.
         entries.push({ type: 'ignore' });
       } else if (typeof entry === 'number') {
-        entries.push({ type: 'fd', fd: entry });
+        // As in Node, a negative number asks for the default, a pipe.
+        entries.push(entry < 0 ? { type: 'pipe' } : { type: 'fd', fd: entry });
       } else if (typeof entry.fd === 'number') {
         entries.push({ type: 'fd', fd: entry.fd });
       } else if (ArrayBuffer.isView(entry) || typeof entry === 'string') {
@@ -709,7 +710,9 @@
     for (const name of ['stdout', 'stderr']) {
       if (encoding) child[name].setEncoding(encoding);
       child[name].on('data', (chunk) => {
-        const length = chunk.length;
+        if (lengths[name] > options.maxBuffer) return;
+        // maxBuffer counts bytes, and a decoded chunk's length counts characters.
+        const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
         lengths[name] += length;
         if (lengths[name] > options.maxBuffer) {
           outputs[name].push(chunk.slice(0, options.maxBuffer - (lengths[name] - length)));

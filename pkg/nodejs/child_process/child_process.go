@@ -241,7 +241,7 @@ type spawnOptions struct {
 	// child itself.
 	Input      string  `json:"input"`
 	Timeout    float64 `json:"timeout"`
-	MaxBuffer  float64 `json:"maxBuffer"` // negative means no limit
+	MaxBuffer  float64 `json:"maxBuffer"` // 0 or negative means no limit
 	KillSignal int     `json:"killSignal"`
 }
 
@@ -378,9 +378,10 @@ type syncRun struct {
 	killSignal syscall.Signal
 	maxBuffer  float64
 
-	mu      sync.Mutex
-	failure syscall.Errno
-	stopped bool
+	mu       sync.Mutex
+	failure  syscall.Errno
+	stopped  bool
+	buffered float64 // bytes collected from every descriptor, guarded by mu
 }
 
 // fail ends the run early. As in Node it closes the pipes along with killing the process,
@@ -405,7 +406,12 @@ func (r *syncRun) collect(reader io.Reader) []byte {
 	for {
 		n, err := reader.Read(buf)
 		out = append(out, buf[:n]...)
-		if r.maxBuffer >= 0 && float64(len(out)) > r.maxBuffer {
+		// As in Node, the limit applies to all output together, and 0 means none.
+		r.mu.Lock()
+		r.buffered += float64(n)
+		over := r.maxBuffer > 0 && r.buffered > r.maxBuffer
+		r.mu.Unlock()
+		if over {
 			r.fail(syscall.ENOBUFS)
 		}
 		if err != nil {

@@ -282,5 +282,16 @@ const execResult = (start) => new Promise((resolve) => {
   });
 
   for (const name of new Set(made)) fs.unlinkSync(name);
+  // maxBuffer counts bytes, whatever the encoding; for the sync calls it covers all output
+  // together, and 0 turns it off.
+  out.execFileHexMaxBuffer = await execResult((cb) => cp.execFile('printf', ['abc'], { encoding: 'hex', maxBuffer: 4 }, cb));
+  out.execFileBase64Chunks = await execResult((cb) => cp.execFile('/bin/sh', ['-c', 'printf a; sleep 0.1; printf b'], { encoding: 'base64' }, cb));
+  out.spawnSyncMaxBufferZero = syncResult(cp.spawnSync('printf', ['ok'], { maxBuffer: 0 }));
+  // How much output arrives before the kill is a race, so only the error is compared.
+  out.spawnSyncMaxBufferCombined = (cp.spawnSync('/bin/sh', ['-c', 'printf %040d 0; printf %040d 0 >&2'], { maxBuffer: 60 }).error || {}).code;
+  // A negative stdio entry asks for the default, a pipe.
+  out.spawnSyncNegativeStdio = syncResult(cp.spawnSync('/bin/echo', ['ok'], { stdio: [-1, -1, -1] }));
+  out.spawnNegativeStdio = await ran(cp.spawn('/bin/echo', ['ok'], { stdio: [-1, -1, -1] }));
+
   finish(out);
 })();

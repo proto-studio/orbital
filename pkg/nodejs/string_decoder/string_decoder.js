@@ -16,6 +16,8 @@
       this.lastChar = new Uint8Array(4); // Max 4 bytes for UTF-8
       this.lastNeed = 0;
       this.lastTotal = 0;
+      // Base64 encodes 3 bytes at a time. Bytes short of a group wait for the next write.
+      this.base64Rest = new Uint8Array(0);
     }
 
     /**
@@ -26,6 +28,10 @@
       let r = '';
       if (buf && buf.length) {
         r = this.write(buf);
+      }
+      if (this.encoding === 'base64' && this.base64Rest.length) {
+        r += btoa(String.fromCharCode.apply(null, this.base64Rest));
+        this.base64Rest = new Uint8Array(0);
       }
       if (this.lastNeed) {
         // We have an incomplete character
@@ -193,12 +199,21 @@
      * Decode Base64 bytes.
      */
     _decodeBase64(bytes) {
-      // Base64 works in groups of 3 bytes -> 4 characters
+      // Base64 works in groups of 3 bytes -> 4 characters. A partial group would be padded
+      // in the middle of the output, so it waits for more bytes or for end().
+      if (this.base64Rest.length) {
+        const joined = new Uint8Array(this.base64Rest.length + bytes.length);
+        joined.set(this.base64Rest, 0);
+        joined.set(bytes, this.base64Rest.length);
+        bytes = joined;
+      }
+      const whole = bytes.length - (bytes.length % 3);
+      this.base64Rest = bytes.slice(whole);
       let str = '';
-      for (let i = 0; i < bytes.length; i++) {
+      for (let i = 0; i < whole; i++) {
         str += String.fromCharCode(bytes[i]);
       }
-      return btoa(str);
+      return str ? btoa(str) : '';
     }
 
     /**
