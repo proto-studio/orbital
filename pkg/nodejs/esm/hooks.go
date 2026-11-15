@@ -205,7 +205,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 	if err != nil {
 		return "", "", err
 	}
-	resolved, err := awaitPromiseRT(lrt, resP)
+	resolved, err := awaitPromiseRT(lrt, resP, e.rt.ExecutionContext())
 	if err != nil {
 		return "", "", err
 	}
@@ -223,7 +223,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 	if err != nil {
 		return "", "", err
 	}
-	loaded, err := awaitPromiseRT(lrt, loadP)
+	loaded, err := awaitPromiseRT(lrt, loadP, e.rt.ExecutionContext())
 	if err != nil {
 		return "", "", err
 	}
