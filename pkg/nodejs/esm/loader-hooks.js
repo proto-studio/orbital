@@ -384,7 +384,11 @@
       const attrs = stashed.get(encoded.id);
       stashed.delete(encoded.id);
       if (clone && attrs !== null && typeof attrs === 'object') {
-        try { return clone(attrs); } catch (e) { /* not cloneable: rebuild below */ }
+        try {
+          const copy = clone(attrs);
+          // A clone can't keep an own "__proto__" key; rebuild then instead.
+          if (Object.keys(copy).length === Object.keys(attrs).length) return copy;
+        } catch (e) { /* not cloneable: rebuild below */ }
       }
     }
     return decodeAttrs(text);
