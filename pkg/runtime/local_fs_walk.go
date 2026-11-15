@@ -124,9 +124,20 @@ func (l *LocalFilesystem) walkTo(p string, opts walkOptions) (*walk, error) {
 	}
 	// The root itself may be reached through links, such as /tmp on macOS: it is the
 	// embedder's choice, so the OS follows those.
-	rootFd, err := unix.Open(absRoot, searchFlag|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.EINVAL) && searchFlag != unix.O_RDONLY {
-		rootFd, err = unix.Open(absRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	openRoot := func() (int, error) {
+		fd, err := unix.Open(absRoot, searchFlag|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if errors.Is(err, unix.EINVAL) && searchFlag != unix.O_RDONLY {
+			fd, err = unix.Open(absRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		}
+		return fd, err
+	}
+	rootFd, err := openRoot()
+	if errors.Is(err, unix.ENOENT) && opts.makeDirs {
+		// MkdirAll makes a root that doesn't exist yet, as it did before the walk.
+		if err := os.MkdirAll(absRoot, fs.FileMode(opts.perm)&fs.ModePerm); err != nil {
+			return nil, err
+		}
+		rootFd, err = openRoot()
 	}
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: p, Err: err}
@@ -227,7 +238,7 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 			if linked {
 				return w.fail("mkdir", unix.EEXIST)
 			}
-			if err := unix.Mkdirat(w.dir(), name, opts.perm); err != nil && !errors.Is(err, unix.EEXIST) {
+			if err := mkdirAt(w.dir(), name, opts.perm); err != nil && !errors.Is(err, unix.EEXIST) {
 				return w.fail("mkdir", err)
 			}
 			queue = append([]string{name}, queue...)
@@ -288,7 +299,10 @@ func resolvedPrefix(p string) string {
 			dir = string(filepath.Separator)
 		}
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(append([]string{real}, names[k:]...)...)
+			// The rest is appended as written: a missing name followed by ".." must still
+			// be looked up by the walk.
+			return strings.TrimSuffix(real, string(filepath.Separator)) + string(filepath.Separator) +
+				strings.Join(names[k:], string(filepath.Separator))
 		}
 	}
 	return p
@@ -468,7 +482,7 @@ func (l *LocalFilesystem) rootedMkdir(p string, perm fs.FileMode) error {
 		return err
 	}
 	defer w.close()
-	return w.fail("mkdir", unix.Mkdirat(w.dir(), w.name, syscallMode(perm)))
+	return w.fail("mkdir", mkdirAt(w.dir(), w.name, syscallMode(perm)))
 }
 
 func (l *LocalFilesystem) rootedMkdirAll(p string, perm fs.FileMode) error {
@@ -615,4 +629,20 @@ func newFile(fd int, name string) *os.File {
 		}
 	}
 	return os.NewFile(uintptr(fd), name)
+}
+
+// mkdirAt makes name in dir with mode. macOS's mkdir drops the sticky bit, so, as os.Mkdir
+// does there, it is set afterwards.
+func mkdirAt(dir int, name string, mode uint32) error {
+	if err := unix.Mkdirat(dir, name, mode); err != nil {
+		return err
+	}
+	if mode&unix.S_ISVTX != 0 && !mkdirKeepsSticky {
+		var st unix.Stat_t
+		if err := unix.Fstatat(dir, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return err
+		}
+		return unix.Fchmodat(dir, name, uint32(st.Mode&0o7777)|unix.S_ISVTX, unix.AT_SYMLINK_NOFOLLOW)
+	}
+	return nil
 }
