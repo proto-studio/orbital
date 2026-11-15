@@ -18,6 +18,8 @@
       this.lastTotal = 0;
       // Base64 encodes 3 bytes at a time. Bytes short of a group wait for the next write.
       this.base64Rest = new Uint8Array(0);
+      // The start of a UTF-8 character whose other bytes have not arrived yet.
+      this.utf8Rest = new Uint8Array(0);
     }
 
     /**
@@ -29,18 +31,18 @@
       if (buf && buf.length) {
         r = this.write(buf);
       }
-      if (this.encoding === 'base64' && this.base64Rest.length) {
-        r += btoa(String.fromCharCode.apply(null, this.base64Rest));
+      if (this.base64Rest.length) {
+        const rest = btoa(String.fromCharCode.apply(null, this.base64Rest));
+        r += this.encoding === 'base64url' ? toBase64Url(rest) : rest;
         this.base64Rest = new Uint8Array(0);
       }
-      if (this.lastNeed) {
-        // We have an incomplete character
-        const total = this.lastTotal;
-        const need = this.lastNeed;
-        // Return replacement character for incomplete sequence
+      if (this.utf8Rest.length) {
+        // An incomplete character at the end, as Node reports it.
         r += '\ufffd';
-        this.lastNeed = 0;
+        this.utf8Rest = new Uint8Array(0);
       }
+      // As in Node, a lone UTF-16 byte at the end is dropped.
+      this.lastNeed = 0;
       return r;
     }
 
@@ -77,6 +79,8 @@
           return this._decodeUtf16le(bytes);
         case 'base64':
           return this._decodeBase64(bytes);
+        case 'base64url':
+          return toBase64Url(this._decodeBase64(bytes));
         case 'latin1':
         case 'binary':
           return this._decodeLatin1(bytes);
@@ -94,72 +98,25 @@
      * Decode UTF-8 bytes, handling incomplete multi-byte sequences.
      */
     _decodeUtf8(bytes) {
-      let result = '';
-      let i = 0;
-
-      // Handle any incomplete character from previous chunk
-      if (this.lastNeed > 0) {
-        const needed = Math.min(bytes.length, this.lastNeed);
-        for (let j = 0; j < needed; j++) {
-          this.lastChar[this.lastTotal - this.lastNeed] = bytes[j];
-          this.lastNeed--;
-        }
-        i = needed;
-
-        if (this.lastNeed === 0) {
-          // Complete character - decode it
-          const charBytes = this.lastChar.slice(0, this.lastTotal);
-          try {
-            result += new TextDecoder('utf-8', { fatal: true }).decode(charBytes);
-          } catch (e) {
-            result += '\ufffd'; // Replacement character
-          }
-        }
+      if (this.utf8Rest.length) {
+        const joined = new Uint8Array(this.utf8Rest.length + bytes.length);
+        joined.set(this.utf8Rest, 0);
+        joined.set(bytes, this.utf8Rest.length);
+        bytes = joined;
       }
-
-      // Process remaining bytes
-      while (i < bytes.length) {
-        const byte = bytes[i];
-
-        // Determine character length from first byte
-        let charLen;
-        if (byte < 0x80) {
-          charLen = 1;
-        } else if ((byte & 0xe0) === 0xc0) {
-          charLen = 2;
-        } else if ((byte & 0xf0) === 0xe0) {
-          charLen = 3;
-        } else if ((byte & 0xf8) === 0xf0) {
-          charLen = 4;
-        } else {
-          // Invalid start byte - emit replacement character
-          result += '\ufffd';
-          i++;
-          continue;
-        }
-
-        const remaining = bytes.length - i;
-        if (remaining >= charLen) {
-          // Complete character
-          const charBytes = bytes.slice(i, i + charLen);
-          try {
-            result += new TextDecoder('utf-8', { fatal: true }).decode(charBytes);
-          } catch (e) {
-            result += '\ufffd';
-          }
-          i += charLen;
-        } else {
-          // Incomplete character - save for next chunk
-          this.lastTotal = charLen;
-          this.lastNeed = charLen - remaining;
-          for (let j = 0; j < remaining; j++) {
-            this.lastChar[j] = bytes[i + j];
-          }
-          break;
-        }
+      // Keep back a character that has started but not finished: a lead byte within the last
+      // three bytes, followed only by continuation bytes, and too few of them.
+      let keep = 0;
+      for (let back = 1; back <= Math.min(3, bytes.length); back++) {
+        const b = bytes[bytes.length - back];
+        if ((b & 0xc0) === 0x80) continue;
+        const len = b >= 0xf0 && b <= 0xf4 ? 4 : b >= 0xe0 ? 3 : b >= 0xc2 && b < 0xe0 ? 2 : 1;
+        if (len > back) keep = back;
+        break;
       }
-
-      return result;
+      this.utf8Rest = bytes.slice(bytes.length - keep);
+      // The rest decodes on its own, with invalid bytes replaced as Node replaces them.
+      return utf8Decoder.decode(bytes.subarray(0, bytes.length - keep));
     }
 
     /**
@@ -260,6 +217,12 @@
   /**
    * Normalize encoding name to standard form.
    */
+  const utf8Decoder = new TextDecoder('utf-8');
+
+  function toBase64Url(str) {
+    return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
   function normalizeEncoding(enc) {
     if (!enc) return 'utf8';
     
@@ -276,6 +239,8 @@
         return 'utf16le';
       case 'base64':
         return 'base64';
+      case 'base64url':
+        return 'base64url';
       case 'latin1':
       case 'binary':
         return 'latin1';

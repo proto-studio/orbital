@@ -1277,6 +1277,51 @@
       "stderr": "function"
     }
   },
+  "execFileBase64Url": {
+    "err": null,
+    "stdout": "YWJj-w",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileUtf8Recovery": {
+    "err": null,
+    "stdout": "�A😀",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
+  "execFileUtf16OddByte": {
+    "err": null,
+    "stdout": "a",
+    "stderr": "",
+    "kinds": {
+      "stdio": [
+        "object",
+        "object",
+        "object"
+      ],
+      "stdin": "function",
+      "stdout": "function",
+      "stderr": "function"
+    }
+  },
   "spawnSyncMaxBufferZero": {
     "pidType": "number",
     "pidPositive": true,
