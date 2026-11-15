@@ -990,12 +990,24 @@
       "function"
     ]
   },
+  "watchFile_missing": {
+    "value": [
+      [
+        0,
+        0,
+        0
+      ]
+    ]
+  },
   "watchFile_no_listener": {
     "error": {
       "code": "ERR_INVALID_ARG_TYPE",
       "message": "The \"listener\" argument must be of type function. Received undefined",
       "name": "TypeError"
     }
+  },
+  "watch_buffer_directory": {
+    "value": true
   },
   "watch_buffer_names": {
     "value": true

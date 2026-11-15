@@ -417,6 +417,23 @@ async function testWatch() {
     await tick(150);
     return calls;
   });
+  await attemptAsync('watchFile_missing', async () => {
+    const seen = [];
+    const listener = (curr, prev) => seen.push([curr.size, curr.mtimeMs, prev.mtimeMs]);
+    fs.watchFile(file('w/never'), { interval: 20 }, listener);
+    await tick(100);
+    fs.unwatchFile(file('w/never'), listener);
+    return seen;
+  });
+  await attemptAsync('watch_buffer_directory', async () => {
+    const names = [];
+    const w = fs.watch(Buffer.from(file('w')), (type, name) => names.push(name));
+    await tick(150);
+    fs.writeFileSync(file('w/from_buffer'), 'b');
+    for (let i = 0; i < 100 && !names.includes('from_buffer'); i++) await tick(20);
+    w.close();
+    return names.includes('from_buffer');
+  });
   attempt('watchFile_no_listener', () => fs.watchFile(file('w/polled')));
 }
 
