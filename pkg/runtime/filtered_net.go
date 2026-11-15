@@ -63,6 +63,30 @@ func (f *FilteredSocketFactory) ListenInherited(fd int) (TCPServer, error) {
 	return &FilteredTCPServer{underlying: server, policy: f.policy, listenPort: port}, nil
 }
 
+// SocketInherited wraps an inherited connected socket from the underlying factory if the
+// policy allows a connection to its peer, as for connect. A descriptor with no network peer
+// to check, such as a pipe, is refused.
+func (f *FilteredSocketFactory) SocketInherited(fd int) (TCPSocket, error) {
+	inherited, ok := f.underlying.(InheritedSocketFactory)
+	if !ok {
+		return nil, &ErrFileDescriptor{Type: "UNKNOWN"}
+	}
+	socket, err := inherited.SocketInherited(fd)
+	if err != nil {
+		return nil, err
+	}
+	addr, ok := socket.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		socket.Close()
+		return nil, &ErrFileDescriptor{Type: "UNKNOWN"}
+	}
+	if err := f.policy.CheckConnection(ProtocolTCP, DirectionOutbound, addr.IP.String(), addr.Port); err != nil {
+		socket.Close()
+		return nil, err
+	}
+	return &FilteredTCPSocket{underlying: socket, policy: f.policy, connected: true}, nil
+}
+
 func (f *FilteredSocketFactory) CreateTCPServer() TCPServer {
 	return &FilteredTCPServer{
 		underlying: f.underlying.CreateTCPServer(),

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -249,67 +248,10 @@ type SocketFactory interface {
 
 // RealSocketFactory creates real network sockets.
 type RealSocketFactory struct {
-	// inheritedListeners are the file descriptors scripts may listen on. None by default.
-	inheritedListeners []int
-}
-
-// InheritedListenerFactory is an optional extension of SocketFactory for listening sockets
-// the process was given when it started, such as by systemd socket activation or a
-// supervisor, which scripts name by file descriptor as in server.listen({ fd }).
-type InheritedListenerFactory interface {
-	// ListenInherited returns a server accepting on the inherited listening socket fd. A
-	// factory refuses any descriptor it was not told a script may use.
-	ListenInherited(fd int) (TCPServer, error)
-}
-
-// ErrNotInherited reports a file descriptor that is not one the embedder made available.
-// Node reports EINVAL for a descriptor it can't listen on.
-var ErrNotInherited = fmt.Errorf("inherited listener: %w", syscall.EINVAL)
-
-// AllowInheritedListeners lets scripts listen on the given inherited listening sockets.
-// Nothing else in the process can be reached by descriptor.
-func (f *RealSocketFactory) AllowInheritedListeners(fds ...int) {
-	f.inheritedListeners = append(f.inheritedListeners, fds...)
-}
-
-// ListenInherited listens on fd if it was allowed with AllowInheritedListeners.
-func (f *RealSocketFactory) ListenInherited(fd int) (TCPServer, error) {
-	allowed := false
-	for _, a := range f.inheritedListeners {
-		if a == fd {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return nil, ErrNotInherited
-	}
-	// The descriptor stays the embedder's: only a copy is wrapped and closed here.
-	// ForkLock keeps a concurrent fork from inheriting the copy before it is close-on-exec.
-	syscall.ForkLock.RLock()
-	dup, err := syscall.Dup(fd)
-	if err == nil {
-		syscall.CloseOnExec(dup)
-	}
-	syscall.ForkLock.RUnlock()
-	if err != nil {
-		return nil, ErrNotInherited
-	}
-	file := os.NewFile(uintptr(dup), "inherited")
-	defer file.Close()
-	// A connected socket would pass as a TCP listener and then fail every accept.
-	if !isListening(dup) {
-		return nil, ErrNotInherited
-	}
-	listener, err := net.FileListener(file)
-	if err != nil {
-		return nil, ErrNotInherited
-	}
-	// Only TCP: a Unix socket's path is checked differently, by the Unix socket factory.
-	if _, ok := listener.Addr().(*net.TCPAddr); !ok {
-		listener.Close()
-		return nil, ErrNotInherited
-	}
-	return &RealTCPServer{listener: listener}, nil
+	// inheritedFDs are the file descriptors scripts may use, and allInherited lets them
+	// use any. None by default.
+	inheritedFDs []int
+	allInherited bool
 }
 
 // NewRealSocketFactory creates a factory for real sockets.
@@ -1345,16 +1287,3 @@ func (s *RealUDPSocket) sockoptInt(option int) (int, error) {
 	return value, sockErr
 }
 
-// isListening reports whether fd is a listening socket. Where SO_ACCEPTCONN can't be read,
-// as on macOS, a socket with a peer is refused and listen is called, which fails for a
-// connected socket and leaves a listening one listening.
-func isListening(fd int) bool {
-	listening, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ACCEPTCONN)
-	if err == nil {
-		return listening != 0
-	}
-	if _, err := syscall.Getpeername(fd); err == nil {
-		return false
-	}
-	return syscall.Listen(fd, syscall.SOMAXCONN) == nil
-}

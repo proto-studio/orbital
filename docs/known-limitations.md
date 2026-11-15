@@ -144,12 +144,8 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `process.nextTick` callbacks the handler queued have run; Orbital handles them together. A
   handler that calls `res.write` and then `res.end`, for example, sees the request end first.
   (#172)
-- **Only inherited listening sockets can be used by file descriptor.** `server.listen({ fd })`
-  works on TCP listeners the embedder allows (see `docs/network.md`), and the CLI allows the
-  ones systemd passes. Any other descriptor fails with `EINVAL`. `new net.Socket({ fd })`
-  is not supported: a connected socket from elsewhere in the process has no destination
-  for a network policy to check. `server.listen(handle)` takes only a handle with an `fd`.
-  (#128)
+- **`server.listen(handle)` takes only a handle with an `fd`,** not a `net.Server` or
+  `net.Socket` object. (#128)
 - **`net.connect` with an IPv6 zone** (`fe80::1%en0`) fails with `ENOTFOUND`, because a zone
   is free-form text a policy could be made to match on. `net.isIP` still accepts it.
 - **Happy-eyeballs is sequential.** Addresses are tried in order, and `'lookup'` fires once

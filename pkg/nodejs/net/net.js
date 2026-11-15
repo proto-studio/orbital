@@ -92,11 +92,28 @@
     constructor(options) {
       if (typeof options === 'number') options = { fd: options };
       options = { ...options };
-      if (options.fd !== undefined) {
-        throw codedError(Error, 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM', 'Opening a socket from a file descriptor is not supported');
-      }
-      const netId = options._netId;
+      let netId = options._netId;
       delete options._netId;
+      const fd = options.fd;
+      if (fd !== undefined) {
+        if (typeof fd !== 'number' || !Number.isInteger(fd)) {
+          throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', `The "fd" argument must be of type number. Received ${typeof fd}`);
+        }
+        if (fd < 0 || fd > 2147483647) {
+          throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+            `The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${fd}`);
+        }
+        // Only descriptors the runtime's socket factory makes available can be wrapped.
+        const opened = internal.socketInherited(fd);
+        if (typeof opened === 'string') {
+          const desc = JSON.parse(opened);
+          if (desc.code === 'ERR_INVALID_FD_TYPE') {
+            throw codedError(TypeError, desc.code, desc.message.replace(/^ERR_INVALID_FD_TYPE: /, ''));
+          }
+          throw nodeError(desc);
+        }
+        netId = opened;
+      }
       super({
         ...options,
         allowHalfOpen: !!options.allowHalfOpen,
@@ -125,6 +142,8 @@
 
       if (options.signal) addAbortSignal(options.signal, this);
       if (netId !== undefined) this._loadAddresses();
+      // As in Node, a socket made from a descriptor starts reading at once.
+      if (fd !== undefined && options.readable !== false && !options.manualStart) this.read(0);
     }
 
     get pending() { return this._id === null || this.connecting; }

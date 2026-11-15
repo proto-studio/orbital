@@ -75,6 +75,7 @@ func (n *Net) Register(rt *runtime.Runtime) error {
 		"listen":           n.listenFunc,
 		"listenUnix":       n.listenUnixFunc,
 		"listenInherited":  n.listenInheritedFunc,
+		"socketInherited":  n.socketInheritedFunc,
 		"accept":           n.acceptFunc,
 		"closeServer":      n.closeServerFunc,
 		"getServerAddress": n.getServerAddressFunc,
@@ -837,6 +838,28 @@ func (n *Net) listenInheritedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	s.srv = srv
 	s.mu.Unlock()
 	return ctx.Null()
+}
+
+// socketInherited(fd) returns the id of a socket over a descriptor the process has, if the
+// runtime's socket factory offers it, or a JSON error.
+func (n *Net) socketInheritedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 1 {
+		return ctx.Throw("net: invalid arguments")
+	}
+	fd := int(args[0].Integer())
+	var socket runtime.TCPSocket
+	var err error = &runtime.ErrFileDescriptor{Type: "UNKNOWN"}
+	if factory, ok := n.rt.SocketFactory().(runtime.InheritedSocketFactory); ok {
+		socket, err = factory.SocketInherited(fd)
+	}
+	if err != nil {
+		return jsJSON(ctx, netdial.Describe(err, "open", "", 0))
+	}
+	id, conn := n.newConn()
+	conn.SetSocket(socket)
+	return ctx.NewNumber(float64(id))
 }
 
 func (n *Net) listenFunc(info *v8.FunctionCallbackInfo) *v8.Value {

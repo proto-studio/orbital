@@ -78,12 +78,17 @@ about them. They work only with `RealSocketFactory` itself and an unrestricted f
 and otherwise fail with `EACCES`. A type that embeds `RealSocketFactory` does not inherit
 them. A custom factory can offer them by implementing `UnixSocketFactory`.
 
-## Inherited listening sockets
+## File descriptors
 
-A script can listen on a listening socket the process was given when it started, as with
-systemd socket activation, through `server.listen({ fd })`. Only descriptors the embedder
-names can be used: call `AllowInheritedListeners(fds...)` on a `RealSocketFactory`, or
-implement `InheritedListenerFactory` on a custom factory. `FilteredSocketFactory` passes them
-through, checking the address the socket listens on and the connections it accepts against
-the policy as for any other server. Only TCP listeners are accepted. The `orbital` CLI
-allows the descriptors systemd passes in `LISTEN_FDS` when `LISTEN_PID` is its own.
+Scripts can use descriptors the process already has, as Node allows: `server.listen({ fd })`
+on a listening socket, as with systemd socket activation, and `new net.Socket({ fd })` on a
+connected socket or a pipe. An embedder decides which: with nothing set, every descriptor is
+refused. Call `AllowInheritedDescriptors(fds...)` on a `RealSocketFactory` for specific ones,
+or `AllowAllInheritedDescriptors()` for all of them, as the `orbital` CLI does outside
+`--sandbox`. A custom factory can implement `InheritedListenerFactory` and
+`InheritedSocketFactory`.
+
+`FilteredSocketFactory` passes them through and holds them to its policy: a listening
+socket's address and the connections it accepts are checked as for any server, and a
+connected socket's peer as for a connection to it. Anything it can't check that way, such
+as a pipe or a Unix socket, is refused.
