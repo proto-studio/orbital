@@ -232,35 +232,77 @@
         localPort: options.localPort || 0
       });
 
+      // As in Node, a name with several addresses is tried address by address, alternating
+      // families, giving each a short time before moving on (happy eyeballs).
+      let autoSelectFamily = family === 0;
+      if (options.autoSelectFamily !== undefined) {
+        if (typeof options.autoSelectFamily !== 'boolean') {
+          throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options.autoSelectFamily" property must be of type boolean.');
+        }
+        autoSelectFamily = autoSelectFamily && options.autoSelectFamily;
+      } else {
+        autoSelectFamily = autoSelectFamily && defaultAutoSelectFamily;
+      }
+      let attemptTimeout = defaultAutoSelectFamilyAttemptTimeout;
+      if (options.autoSelectFamilyAttemptTimeout !== undefined) {
+        attemptTimeout = validateAttemptTimeout(options.autoSelectFamilyAttemptTimeout, 'options.autoSelectFamilyAttemptTimeout');
+      }
+
       if (typeof options.lookup === 'function' && !isIP(host)) {
-        this._connectWithLookup(options, host, port, family);
+        this._connectWithLookup(options, host, port, family, autoSelectFamily, attemptTimeout);
         return this;
       }
       if (options.lookup !== undefined && typeof options.lookup !== 'function') {
         throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "options.lookup" property must be of type function');
       }
 
-      internal.connect(this._id, host, port, nativeOptions, (encoded) => {
+      if (isIP(host)) {
+        // As in Node, an address connects on the next tick, so listeners added after
+        // connect() see 'connectionAttempt'.
+        process.nextTick(() => {
+          if (!this.connecting) return;
+          this._connectAttempts([{
+            address: host,
+            family: isIP(host),
+            dial: (callback) => internal.connect(this._id, host, port, nativeOptions, callback)
+          }], port, attemptTimeout);
+        });
+        return this;
+      }
+
+      internal.lookupAll(this._id, host, family, (encoded) => {
         const result = JSON.parse(encoded);
         if (!this.connecting) return;
-        const failedLookup = result.error && result.error.syscall === 'getaddrinfo';
-        if (result.isName || failedLookup) {
-          if (failedLookup) {
-            this.emit('lookup', nodeError(result.error), undefined, undefined, host);
-          } else {
-            this.emit('lookup', null, result.ip, isIP(result.ip), host);
-          }
+        if (result.error) {
+          const err = nodeError(result.error);
+          this.emit('lookup', err, undefined, undefined, host);
+          if (this.connecting) this._onConnectResult(result);
+          return;
+        }
+        const id = this._id;
+        const connectOptions = nativeOptions;
+        let addresses = result.addresses.map((entry, index) => ({
+          address: entry.address,
+          family: entry.family,
+          dial: (callback) => internal.connectAddress(id, index, port, connectOptions, callback)
+        }));
+        // Without happy eyeballs, Node connects to the first address only.
+        if (!autoSelectFamily) addresses = addresses.slice(0, 1);
+        for (const entry of addresses) {
+          this.emit('lookup', null, entry.address, entry.family, host);
           if (!this.connecting) return;
         }
-        this._onConnectResult(result);
+        this._connectAttempts(addresses, port, attemptTimeout);
       });
       return this;
     }
 
     // A script's lookup function chooses the address, so a policy only ever sees that
     // address: the name it answered for is not checked against anything.
-    _connectWithLookup(options, host, port, family) {
-      const dnsOptions = { family, hints: options.hints || 0, all: true };
+    _connectWithLookup(options, host, port, family, autoSelectFamily, attemptTimeout) {
+      const requested = options.family === 'IPv4' ? 4 : options.family === 'IPv6' ? 6 : options.family;
+      const dnsOptions = { family: requested, hints: options.hints || 0 };
+      if (autoSelectFamily) dnsOptions.all = true;
       const nativeOptions = JSON.stringify({
         family: 0,
         localAddress: options.localAddress || '',
@@ -277,38 +319,111 @@
           fail(err);
           return;
         }
-        const addresses = Array.isArray(address) ? address : [{ address, family: addressType }];
+        const addresses = dnsOptions.all && Array.isArray(address) ? address : [{ address, family: addressType }];
+        if (!dnsOptions.all) {
+          this.emit('lookup', null, address, addressType, host);
+          if (!this.connecting) return;
+        }
         for (const entry of addresses) {
           if (!isIP(entry.address)) {
             fail(codedError(TypeError, 'ERR_INVALID_IP_ADDRESS', `Invalid IP address: ${entry.address}`));
             return;
           }
         }
-        const first = addresses[0];
-        if (!first) {
+        if (addresses.length === 0) {
           fail(Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname: host }));
           return;
         }
-        this.emit('lookup', null, first.address, first.family, host);
-        if (!this.connecting) return;
-        const attempt = (index) => {
-          internal.connect(this._id, addresses[index].address, port, nativeOptions, (encoded) => {
+        if (dnsOptions.all) {
+          for (const entry of addresses) {
+            this.emit('lookup', null, entry.address, entry.family, host);
             if (!this.connecting) return;
-            const result = JSON.parse(encoded);
-            if (result.error && index + 1 < addresses.length) {
-              attempt(index + 1);
+          }
+        }
+        this._connectAttempts(addresses.map((entry) => ({
+          address: entry.address,
+          family: entry.family || isIP(entry.address),
+          dial: (callback) => internal.connect(this._id, entry.address, port, nativeOptions, callback)
+        })), port, attemptTimeout);
+      });
+    }
+
+    // Tries addresses one at a time, alternating families from the first address's, and
+    // gives each but the last attemptTimeout ms before moving on, as Node does.
+    _connectAttempts(addresses, port, attemptTimeout) {
+      const groups = [[], []];
+      let order = null;
+      for (const entry of addresses) {
+        if (entry.family !== 4 && entry.family !== 6) continue;
+        order = order || (entry.family === 6 ? { 6: 0, 4: 1 } : { 4: 0, 6: 1 });
+        const group = groups[order[entry.family]];
+        if (!group.some((other) => other.address === entry.address)) group.push(entry);
+      }
+      const toAttempt = [];
+      for (let i = 0; i < Math.max(groups[0].length, groups[1].length); i++) {
+        if (i < groups[0].length) toAttempt.push(groups[0][i]);
+        if (i < groups[1].length) toAttempt.push(groups[1][i]);
+      }
+      const multiple = toAttempt.length > 1;
+      if (multiple) this.autoSelectFamilyAttemptedAddresses = [];
+      const errors = [];
+      let current = 0;
+
+      const next = () => {
+        if (!this.connecting) return;
+        if (current === toAttempt.length) {
+          const err = new AggregateError(errors);
+          err.code = errors[0] && errors[0].code;
+          this._onConnectResult({ aggregate: err });
+          return;
+        }
+        const entry = toAttempt[current++];
+        const last = current === toAttempt.length;
+        if (multiple) this.autoSelectFamilyAttemptedAddresses.push(`${entry.address}:${port}`);
+        this.emit('connectionAttempt', entry.address, port, entry.family);
+        if (!this.connecting) return;
+
+        let settled = false;
+        let timer = null;
+        if (multiple && !last) {
+          timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            internal.abortAttempt(this._id);
+            if (!this.connecting) return;
+            this.emit('connectionAttemptTimeout', entry.address, port, entry.family);
+            errors.push(nodeError(JSON.parse(internal.timeoutError(entry.address, port))));
+            next();
+          }, attemptTimeout);
+        }
+        entry.dial((encoded) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          if (!this.connecting) return;
+          const result = JSON.parse(encoded);
+          if (result.error) {
+            const err = nodeError(result.error);
+            this.emit('connectionAttemptFailed', entry.address, port, entry.family, err);
+            if (multiple) {
+              errors.push(err);
+              next();
               return;
             }
-            this._onConnectResult(result);
-          });
-        };
-        attempt(0);
-      });
+          }
+          this._onConnectResult(result);
+        });
+      };
+      next();
     }
 
     _onConnectResult(result) {
       if (this._id === null || this.destroyed) return;
       this.connecting = false;
+      if (result.aggregate) {
+        this.destroy(result.aggregate);
+        return;
+      }
       if (result.error) {
         this.destroy(nodeError(result.error));
         return;
@@ -1022,6 +1137,17 @@
   let defaultAutoSelectFamily = true;
   let defaultAutoSelectFamilyAttemptTimeout = 250;
 
+  // Node allows no less than 10 ms between attempts.
+  function validateAttemptTimeout(value, name) {
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', `The "${name}" property must be of type number.`);
+    }
+    if (value < 1) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE', `The value of "${name}" is out of range. It must be >= 1 && <= 4294967295. Received ${value}`);
+    }
+    return value < 10 ? 10 : value;
+  }
+
   // Export module
   const net = {
     Socket,
@@ -1038,7 +1164,9 @@
     getDefaultAutoSelectFamily: () => defaultAutoSelectFamily,
     setDefaultAutoSelectFamily: (value) => { defaultAutoSelectFamily = !!value; },
     getDefaultAutoSelectFamilyAttemptTimeout: () => defaultAutoSelectFamilyAttemptTimeout,
-    setDefaultAutoSelectFamilyAttemptTimeout: (value) => { defaultAutoSelectFamilyAttemptTimeout = value; },
+    setDefaultAutoSelectFamilyAttemptTimeout: (value) => {
+      defaultAutoSelectFamilyAttemptTimeout = validateAttemptTimeout(value, 'value');
+    },
     _normalizeArgs: normalizeArgs
   };
 
