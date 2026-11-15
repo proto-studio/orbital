@@ -78,6 +78,18 @@ async function main() {
     aesLength100: [{ name: 'AES-GCM', length: 100 }, ['encrypt']],
     aesCbc192: [{ name: 'AES-CBC', length: 192 }, ['encrypt']],
     aesKw128: [{ name: 'AES-KW', length: 128 }, ['wrapKey']],
+    aesStringLength: [{ name: 'AES-GCM', length: '128' }, ['encrypt']],
+    aesFractionLength: [{ name: 'AES-GCM', length: 128.9 }, ['encrypt']],
+    aesArrayLength: [{ name: 'AES-GCM', length: [128] }, ['encrypt']],
+    aesNaNLength: [{ name: 'AES-GCM', length: 'abc' }, ['encrypt']],
+    aesNegativeLength: [{ name: 'AES-GCM', length: -128 }, ['encrypt']],
+    aesHugeLength: [{ name: 'AES-GCM', length: 65536 + 128 }, ['encrypt']],
+    aesNullLength: [{ name: 'AES-GCM', length: null }, ['encrypt']],
+    hmacStringLength: [{ name: 'HMAC', hash: 'SHA-256', length: '128' }, ['sign']],
+    hmacNaNLength: [{ name: 'HMAC', hash: 'SHA-256', length: 'abc' }, ['sign']],
+    hmacNegativeLength: [{ name: 'HMAC', hash: 'SHA-256', length: -128 }, ['sign']],
+    hmacTrueLength: [{ name: 'HMAC', hash: 'SHA-256', length: true }, ['sign']],
+    hmacHugeLength: [{ name: 'HMAC', hash: 'SHA-256', length: 65536 + 128 }, ['sign']],
   };
   for (const [name, [target, usages]] of Object.entries(targets)) {
     results['deriveKeyTarget_' + name] = await outcome(async () => {

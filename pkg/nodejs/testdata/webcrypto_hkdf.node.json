@@ -112,12 +112,30 @@
       "1ec9d4c54a1c4c1076236472719b5bd023972089771028f8de800b1cea7d183a"
     ]
   },
+  "deriveKeyTarget_aesArrayLength": {
+    "value": [
+      "AES-GCM",
+      128,
+      "76d3a6eaa6396e4f18c3f192b494d0e8"
+    ]
+  },
   "deriveKeyTarget_aesCbc192": {
     "value": [
       "AES-CBC",
       192,
       "76d3a6eaa6396e4f18c3f192b494d0e8fea6ff975a700082"
     ]
+  },
+  "deriveKeyTarget_aesFractionLength": {
+    "value": [
+      "AES-GCM",
+      128,
+      "76d3a6eaa6396e4f18c3f192b494d0e8"
+    ]
+  },
+  "deriveKeyTarget_aesHugeLength": {
+    "message": "Failed to normalize algorithm: 'length' of 'AesDerivedKeyParams' (passed algorithm) is outside the expected range of 0 to 65535.",
+    "name": "TypeError"
   },
   "deriveKeyTarget_aesKw128": {
     "value": [
@@ -130,9 +148,32 @@
     "message": "Invalid key length",
     "name": "OperationError"
   },
+  "deriveKeyTarget_aesNaNLength": {
+    "message": "Failed to normalize algorithm: 'length' of 'AesDerivedKeyParams' (passed algorithm) is not a finite number.",
+    "name": "TypeError"
+  },
+  "deriveKeyTarget_aesNegativeLength": {
+    "message": "Failed to normalize algorithm: 'length' of 'AesDerivedKeyParams' (passed algorithm) is outside the expected range of 0 to 65535.",
+    "name": "TypeError"
+  },
   "deriveKeyTarget_aesNoLength": {
     "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'AesDerivedKeyParams' because 'length' is required in 'AesDerivedKeyParams'.",
     "name": "TypeError"
+  },
+  "deriveKeyTarget_aesNullLength": {
+    "message": "Invalid key length",
+    "name": "OperationError"
+  },
+  "deriveKeyTarget_aesStringLength": {
+    "value": [
+      "AES-GCM",
+      128,
+      "76d3a6eaa6396e4f18c3f192b494d0e8"
+    ]
+  },
+  "deriveKeyTarget_hmacHugeLength": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
   },
   "deriveKeyTarget_hmacLength0": {
     "message": "Invalid key length",
@@ -148,6 +189,14 @@
       128,
       "76d3a6eaa6396e4f18c3f192b494d0e8"
     ]
+  },
+  "deriveKeyTarget_hmacNaNLength": {
+    "message": "Failed to normalize algorithm: 'length' of 'HmacImportParams' (passed algorithm) is not a finite number.",
+    "name": "TypeError"
+  },
+  "deriveKeyTarget_hmacNegativeLength": {
+    "message": "Failed to normalize algorithm: 'length' of 'HmacImportParams' (passed algorithm) is outside the expected range of 0 to 4294967295.",
+    "name": "TypeError"
   },
   "deriveKeyTarget_hmacSha1": {
     "value": [
@@ -176,6 +225,17 @@
       1024,
       "76d3a6eaa6396e4f18c3f192b494d0e8fea6ff975a70008299e8820ca49bdc1f5beaa535c58f5e6294b65cbba61a2b1faaf4b3f0228465b9816614b3c444c00351cc08fc22a3f93d6e1a571f96ff17eda95930544f91843a257a858831620f0fb041226bf40f90fb526528ef34588a1f840c592c9d236b1df4f40a1aa785aa37"
     ]
+  },
+  "deriveKeyTarget_hmacStringLength": {
+    "value": [
+      "HMAC",
+      128,
+      "76d3a6eaa6396e4f18c3f192b494d0e8"
+    ]
+  },
+  "deriveKeyTarget_hmacTrueLength": {
+    "message": "length must be a multiple of 8",
+    "name": "OperationError"
   },
   "deriveKeyWithOnlyDeriveKey": {
     "value": "76d3a6eaa6396e4f18c3f192b494d0e8"
