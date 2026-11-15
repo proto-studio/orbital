@@ -147,6 +147,10 @@
 
   function dataBytes(data, inputEncoding) {
     if (typeof data === 'string') {
+      if (inputEncoding === 'hex' && data.length % 2 !== 0) {
+        throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+          "The argument 'encoding' is invalid for data of length " + data.length + ". Received 'hex'");
+      }
       return Buffer.from(data, Buffer.isEncoding(inputEncoding) ? inputEncoding : 'utf8');
     }
     if (ArrayBuffer.isView(data)) return viewBytes(data);
@@ -175,12 +179,21 @@
     }
   }
 
+  function canonicalEncoding(encoding) {
+    const e = String(encoding).toLowerCase();
+    if (e === 'utf-8') return 'utf8';
+    if (e === 'ucs2' || e === 'ucs-2' || e === 'utf-16le') return 'utf16le';
+    if (e === 'binary') return 'latin1';
+    return e;
+  }
+
   function output(self, buf, outputEncoding) {
     if (outputEncoding && outputEncoding !== 'buffer') {
-      // Compare the encoding as asked for: decoders normalize aliases
-      // such as 'utf-8', and a new decoder would drop a partial character.
-      if (!self[kDecoder] || self[kDecoderEncoding] !== outputEncoding) {
-        self[kDecoderEncoding] = outputEncoding;
+      // Compare encodings by their canonical names, so an alias such as
+      // 'utf-8' keeps the decoder and any partial character it holds.
+      const canonical = canonicalEncoding(outputEncoding);
+      if (!self[kDecoder] || self[kDecoderEncoding] !== canonical) {
+        self[kDecoderEncoding] = canonical;
         if (outputEncoding === 'base64' || outputEncoding === 'base64url') {
           self[kDecoder] = new Base64Decoder(outputEncoding);
         } else {
@@ -249,7 +262,7 @@
 
     setAutoPadding(ap) {
       if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation setAutoPadding');
-      native(crypto._cipherSetAutoPadding, this[kHandle], ap === undefined ? true : !!ap);
+      native(crypto._cipherSetAutoPadding, this[kHandle], !!ap);
       return this;
     },
 

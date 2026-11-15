@@ -1311,6 +1311,17 @@
       "h",
       "éllo wörld",
       ""
+    ],
+    {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+      "name": "TypeError"
+    },
+    16,
+    [
+      "h",
+      "éllo wörld",
+      ""
     ]
   ],
   "gcm": {
