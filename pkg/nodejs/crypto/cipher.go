@@ -320,10 +320,13 @@ func (c *cipherCtx) final() ([]byte, error) {
 		return out, nil
 	}
 	if !c.padding {
-		if len(c.pending) != 0 {
+		// A block held back while padding was on is decrypted as it is.
+		if len(c.pending)%bs != 0 {
 			return nil, errWrongFinalLen
 		}
-		return []byte{}, nil
+		out := make([]byte, len(c.pending))
+		c.mode.CryptBlocks(out, c.pending)
+		return out, nil
 	}
 	if len(c.pending) != bs {
 		return nil, errWrongFinalLen
@@ -511,4 +514,12 @@ func (c *Crypto) cipherInfoFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	v, _ := ctx.NewString(out)
 	return v
+}
+
+// cipherCountFunc backs _cipherCount(): how many contexts are open, for tests.
+func (c *Crypto) cipherCountFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	c.cipherMu.Lock()
+	n := len(c.cipherCtxs)
+	c.cipherMu.Unlock()
+	return info.Context().NewNumber(float64(n))
 }

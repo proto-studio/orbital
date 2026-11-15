@@ -105,6 +105,7 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_cipherSetAuthTag":     c.cipherSetAuthTagFunc,
 		"_cipherFree":           c.cipherFreeFunc,
 		"_cipherInfo":           c.cipherInfoFunc,
+		"_cipherCount":          c.cipherCountFunc,
 	}
 
 	for name, fn := range funcs {

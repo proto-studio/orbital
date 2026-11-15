@@ -57,3 +57,29 @@ func TestCipher_GCMCounterWrapsIn32Bits(t *testing.T) {
 		t.Error("the counter carried past its low 32 bits")
 	}
 }
+
+// Finishing a cipher frees its context, so the table doesn't grow with use.
+func TestCipher_FinalFreesContext(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	if _, err := rt.RunScript(`
+		const c = __crypto_module;
+		for (let i = 0; i < 50; i++) {
+			const e = c.createCipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(12));
+			e.update('x');
+			e.final();
+			e.getAuthTag();
+			const d = c.createDecipheriv('aes-128-cbc', Buffer.alloc(16), Buffer.alloc(16));
+			try { d.final(); } catch (err) {}
+		}
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.RunScript(`__crypto_module._cipherCount()`, "count.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := result.Integer(); n != 0 {
+		t.Errorf("%d cipher contexts left after final", n)
+	}
+}
