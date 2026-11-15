@@ -159,6 +159,9 @@ type Conn struct {
 	// the socket's transport when it finishes late.
 	attemptSeq    uint64
 	attemptCancel context.CancelFunc
+	// promotedSeq is the attempt whose socket became the transport. Until JavaScript has
+	// accepted it, giving up on that attempt closes the transport too.
+	promotedSeq uint64
 }
 
 type resolvedHost struct {
@@ -424,6 +427,7 @@ func (c *Conn) finishAttempt(seq uint64, socket runtime.TCPSocket) bool {
 	if current {
 		c.socket = socket
 		c.attempt = nil
+		c.promotedSeq = seq
 	}
 	c.mu.Unlock()
 	if !current {
@@ -552,18 +556,7 @@ func (n *Net) abortAttemptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if !ok {
 		return nil
 	}
-	conn.mu.Lock()
-	conn.attemptSeq++
-	attempt, cancel := conn.attempt, conn.attemptCancel
-	conn.attempt, conn.attemptCancel = nil, nil
-	conn.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	// A socket may hold its lock while it dials, so it is closed off the JavaScript thread.
-	if attempt != nil {
-		go attempt.Close()
-	}
+	conn.abortAttempt()
 	return nil
 }
 
@@ -1318,4 +1311,31 @@ func (n *Net) timeoutErrorFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ip, port := args[0].String(), int(args[1].Integer())
 	err := &netdial.AddressError{Err: syscall.ETIMEDOUT, Address: ip, Port: port}
 	return jsJSON(info.Context(), netdial.Describe(err, "connect", ip, port))
+}
+
+// abortAttempt gives up on the connection attempt in progress.
+func (c *Conn) abortAttempt() {
+	c.mu.Lock()
+	// An attempt that connected just as JavaScript gave up on it has already become the
+	// transport; JavaScript will ignore its result, so the transport goes too.
+	var promoted runtime.TCPSocket
+	if c.socket != nil && c.promotedSeq == c.attemptSeq {
+		promoted = c.socket
+		c.socket = nil
+		c.promotedSeq = 0
+	}
+	c.attemptSeq++
+	attempt, cancel := c.attempt, c.attemptCancel
+	c.attempt, c.attemptCancel = nil, nil
+	c.mu.Unlock()
+	if promoted != nil {
+		go promoted.Close()
+	}
+	if cancel != nil {
+		cancel()
+	}
+	// A socket may hold its lock while it dials, so it is closed off the JavaScript thread.
+	if attempt != nil {
+		go attempt.Close()
+	}
 }
