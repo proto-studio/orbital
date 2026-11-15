@@ -2,6 +2,10 @@ package process
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -332,5 +336,27 @@ func TestStdoutWithoutBuffer(t *testing.T) {
 	}
 	if result.String() != "true" {
 		t.Fatalf("write returned %s", result.String())
+	}
+}
+
+// process.title starts as the name the program was run as, as Node's starts as "node",
+// and keeps what is assigned to it as a string.
+func TestProcess_TitleDefault(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const initial = process.title;
+		process.title = 'x';
+		const set = process.title;
+		process.title = 5;
+		JSON.stringify([initial, set, process.title, Object.keys(process).includes('title')]);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := fmt.Sprintf(`[%q,"x","5",true]`, strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe"))
+	if result.String() != want {
+		t.Errorf("got %s, want %s", result.String(), want)
 	}
 }

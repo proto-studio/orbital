@@ -3,6 +3,7 @@ package process
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -507,6 +508,34 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 			if (typeof stdin.read !== 'function') stdin.read = function () { return null; };
 		}
 	})();`, "process_events.js")
+	if err != nil {
+		return err
+	}
+	return p.defineTitle(rt)
+}
+
+// defineTitle adds process.title. As in Node it starts as the name the program was run
+// as ("orbital" for the CLI), and an assignment is kept as a string.
+func (p *Process) defineTitle(rt *goruntime.Runtime) error {
+	title := "node"
+	if len(os.Args) > 0 {
+		if base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe"); base != "" && base != "." && base != string(filepath.Separator) {
+			title = base
+		}
+	}
+	quoted, err := json.Marshal(title)
+	if err != nil {
+		return err
+	}
+	_, err = rt.RunScript(`(function (initial) {
+		var title = initial;
+		Object.defineProperty(process, 'title', {
+			get: function () { return title; },
+			set: function (value) { title = String(value); },
+			enumerable: true,
+			configurable: true
+		});
+	})(`+string(quoted)+`);`, "process_title.js")
 	return err
 }
 
