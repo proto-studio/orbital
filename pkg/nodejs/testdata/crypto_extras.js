@@ -178,6 +178,15 @@ async function main() {
   results.checkPrimeCallback = await callback((cb) => crypto.checkPrime(7n, cb));
   results.checkPrimeOptionsCallback = await callback((cb) => crypto.checkPrime(8n, { checks: 3 }, cb));
   results.generatePrimeCallback = await callback((cb) => crypto.generatePrime(16, { bigint: true }, (err, p) => cb(err, p.toString(2).length)));
+  const { AsyncLocalStorage } = require('async_hooks');
+  const als = new AsyncLocalStorage();
+  results.asyncContext = await Promise.all([
+    (cb) => crypto.randomFill(Buffer.alloc(4), cb),
+    (cb) => crypto.checkPrime(7n, cb),
+    (cb) => crypto.generatePrime(16, cb),
+  ].map((start, i) => new Promise((resolve) => {
+    als.run('request ' + i, () => start(() => resolve(als.getStore())));
+  })));
   results.generatePrimeErrorCallback = await callback((cb) => crypto.generatePrime(1, (err, p) => cb(err && err.message, p)));
   return results;
 }

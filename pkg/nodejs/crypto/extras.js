@@ -86,6 +86,13 @@
     if (value < min || value > 2147483647) throw outOfRange(name, '>= ' + min + ' && <= 2147483647', value);
   }
 
+  // Binds a callback to the AsyncLocalStorage context current when the work
+  // starts, so it runs in that context as in Node.
+  function bindContext(callback) {
+    const hooks = globalThis.__async_hooks_module;
+    return hooks ? hooks.AsyncLocalStorage.bind(callback) : callback;
+  }
+
   function isAnyArrayBuffer(value) {
     return value instanceof ArrayBuffer ||
       (typeof SharedArrayBuffer !== 'undefined' && value instanceof SharedArrayBuffer);
@@ -169,6 +176,7 @@
       return;
     }
     // The bytes are made off the JS thread and copied in on it.
+    callback = bindContext(callback);
     crypto._randomBase64(size, function (message, data) {
       if (message !== undefined) {
         callback(new Error(message));
@@ -226,7 +234,8 @@
   };
 
   crypto.checkPrime = function checkPrime(candidate, options = {}, callback) {
-    const [hex, checks, cb] = checkPrimeArgs(candidate, options, callback, false);
+    const [hex, checks, unbound] = checkPrimeArgs(candidate, options, callback, false);
+    const cb = bindContext(unbound);
     crypto._checkPrime(hex, checks, function (message, result) {
       if (message !== undefined) {
         cb(new Error(message));
@@ -276,6 +285,7 @@
     }
     validateFunction(callback, 'callback');
     const job = primeJob(size, options);
+    callback = bindContext(callback);
     crypto._generatePrime(...job.args, function (message, hex) {
       if (message !== undefined) {
         callback(new Error(message));
