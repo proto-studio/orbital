@@ -223,3 +223,15 @@ func TestSandboxedSpawnerKeepsEntryName(t *testing.T) {
 		t.Fatalf("with Argv0: out = %q, err = %v", out, err)
 	}
 }
+
+// In denylist mode every name may run, so argv[0] stays as given.
+func TestSandboxedSpawnerAllowAllKeepsName(t *testing.T) {
+	approved := filepath.Join(t.TempDir(), "approved")
+	if err := os.Symlink(hostPath(t, "sh"), approved); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowAll: true, AllowedCommands: []string{approved}})
+	if out, err := runOutput(s, "sh", []string{"-c", "echo $0"}, nil); err != nil || out != "sh" {
+		t.Fatalf("out = %q, err = %v, want sh", out, err)
+	}
+}

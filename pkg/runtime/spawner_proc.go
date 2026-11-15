@@ -540,15 +540,15 @@ func (s *SandboxedProcessSpawner) checkCommand(command string, options *SpawnOpt
 	if err := s.pathAllowed(resolved); err != nil {
 		return "", nil, err
 	}
-	// Some programs act on the name they are run by, as a multicall binary does, so an
-	// entry allows the program under its own name. A name that no entry for this program
-	// has is replaced with the first entry.
+	// Some programs act on the name they are run by, as a multicall binary does, so in
+	// allowlist mode an entry allows the program under its own name. A name that no entry
+	// for this program has is replaced with the first entry.
 	argv0 := opts.Argv0
 	if argv0 == "" {
 		argv0 = command
 	}
 	allowed, _, _ := s.rules()
-	if entries := allowed[resolved]; len(entries) > 0 {
+	if entries := allowed[resolved]; !s.AllowAll && len(entries) > 0 {
 		named := false
 		for _, entry := range entries {
 			if filepath.Base(entry) == filepath.Base(argv0) {
