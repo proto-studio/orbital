@@ -386,6 +386,7 @@ const cases = [
   'const e = new Error("g"); Object.defineProperty(e, "ro", { get() { return 5; }, enumerable: true, configurable: true }); throw e;',
   'const m = new Map([[1, 2]]); m[Symbol.iterator] = function* () { yield [9, 9]; }; throw { m };',
   'JSON.stringify = () => "{}"; const e = new RangeError("json"); e.code = "J"; throw e;',
+  'const b = Buffer.from("hi"); Object.setPrototypeOf(b, Object.create(Buffer.prototype)); const e = new Error("sub"); e.buf = b; throw e;',
 ];
 const describe = (e) => {
   if (typeof e === 'symbol') return 'symbol ' + String(e) + ' registered=' + (Symbol.keyFor(e) !== undefined);
@@ -405,7 +406,8 @@ const describe = (e) => {
       (['n', 's', 'b', 'big'].includes(k) ? ':' + typeof e[k] + ',' + e[k].valueOf() : '') +
       (k === 'cause' && e[k] instanceof Error ? ':' + e[k].constructor.name + ',' + e[k].message + ',code=' + e[k].code + ',own=' + Object.getOwnPropertyNames(e[k]).filter((n) => n !== 'stack').sort() : '') +
       (k === 'ro' ? ':writable=' + Object.getOwnPropertyDescriptor(e, k).writable : '') +
-      (k === 'm' ? ':' + JSON.stringify([...e[k]]) : ''));
+      (k === 'm' ? ':' + JSON.stringify([...e[k]]) : '') +
+      (k === 'buf' ? ':isBuffer=' + Buffer.isBuffer(e[k]) + ',read=' + (typeof e[k].readUInt16LE === 'function' ? e[k].readUInt16LE(0) : '-') : ''));
   return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
     typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
 };
@@ -436,7 +438,7 @@ next(0);
 		"string  {...}",
 		"SyntaxError true [object Error] string - message=Unexpected token ';' name=SyntaxError",
 		"ArrayBuffer 1,2",
-		"Error true [object Error] string - buf=[object ArrayBuffer]:1,2 message=ab name=Error",
+		"Error true [object Error] string - buf=[object ArrayBuffer]:1,2:isBuffer=false,read=- message=ab name=Error",
 		"Error true [object Error] string - message=sab",
 		"Object false [object Object] undefined - __proto__=[object Object]:own flag=undefined a=1",
 		"null prototype CUSTOM C",
@@ -445,7 +447,7 @@ next(0);
 		"TypeError true [object Error] string - code=E_TEST message=boom name=TypeError view=[object DataView]:DataView:0,0",
 		"string Promise {...}",
 		"Error true [object Error] string - message=w",
-		"Error true [object Error] string - buf=[object Uint8Array]:Buffer:104,105 message=f name=Error samples=[object Float64Array]:Float64Array:0,0,0,0,0,0,0,128,0,0,0,0,0,0,248,63:negzero=true sub=[object Uint16Array]:Uint16Array:3,4,5,6",
+		"Error true [object Error] string - buf=[object Uint8Array]:Buffer:104,105:isBuffer=true,read=26984 message=f name=Error samples=[object Float64Array]:Float64Array:0,0,0,0,0,0,0,128,0,0,0,0,0,0,248,63:negzero=true sub=[object Uint16Array]:Uint16Array:3,4,5,6",
 		"Object false [object Object] undefined - detail=[object Error]:stack=undefined,true",
 		"Object false [object Object] undefined - b=[object Boolean]:object,false big=[object BigInt]:object,3 n=[object Number]:object,5 s=[object String]:object,x",
 		"string  {...}",
@@ -460,6 +462,7 @@ next(0);
 		"Error true [object Error] string - message=g name=Error ro=5:writable=false",
 		"Object false [object Object] undefined - m=[object Map]:[[1,2]]",
 		"RangeError true [object Error] string - code=J message=json name=RangeError",
+		"Error true [object Error] string - buf=[object Uint8Array]:Buffer:104,105:isBuffer=true,read=26984 message=sub name=Error",
 	}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
