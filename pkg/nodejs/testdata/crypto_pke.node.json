@@ -1,0 +1,161 @@
+{
+  "errors": {
+    "badOaepHash": {
+      "code": "ERR_OSSL_EVP_INVALID_DIGEST",
+      "message": "Invalid digest used",
+      "name": "Error"
+    },
+    "ecKey": {
+      "code": "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE",
+      "message": "error:03000096:digital envelope routines::operation not supported for this keytype",
+      "name": "Error"
+    },
+    "noPaddingDecryptTooLarge": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_MODULUS",
+      "message": "error:02000084:rsa routines::data too large for modulus",
+      "name": "Error"
+    },
+    "noPaddingShort": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_SMALL_FOR_KEY_SIZE",
+      "message": "error:0200007A:rsa routines::data too small for key size",
+      "name": "Error"
+    },
+    "noPaddingTooLarge": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_MODULUS",
+      "message": "error:02000084:rsa routines::data too large for modulus",
+      "name": "Error"
+    },
+    "numberBuffer": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"buffer\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberOaepHash": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"key.oaepHash\" property must be of type string. Received type number (5)",
+      "name": "TypeError"
+    },
+    "oaepGarbage": {
+      "code": "ERR_OSSL_RSA_OAEP_DECODING_ERROR",
+      "message": "error:02000079:rsa routines::oaep decoding error",
+      "name": "Error"
+    },
+    "oaepLongest": {
+      "value": 128
+    },
+    "oaepTooLong": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "pkcs1TooLong": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "privateEncryptLongest": {
+      "value": 128
+    },
+    "privateEncryptTooLong": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "pssPadding": {
+      "message": "error:00000000:lib(0)::reason(0)",
+      "name": "Error"
+    },
+    "publicDecryptRandom": {
+      "code": "ERR_OSSL_RSA_INVALID_PADDING",
+      "message": "error:0200008A:rsa routines::invalid padding",
+      "name": "Error"
+    },
+    "publicDecryptTooLarge": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_MODULUS",
+      "message": "error:02000084:rsa routines::data too large for modulus",
+      "name": "Error"
+    },
+    "publicDecryptZero": {
+      "code": "ERR_OSSL_RSA_BLOCK_TYPE_IS_NOT_01",
+      "message": "error:0200006A:rsa routines::block type is not 01",
+      "name": "Error"
+    },
+    "publicKeyToPrivateDecrypt": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected private.",
+      "name": "TypeError"
+    },
+    "publicKeyToPrivateEncrypt": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected private.",
+      "name": "TypeError"
+    }
+  },
+  "fromPem": {
+    "value": "secret message"
+  },
+  "noPaddingPrivateEncrypt": {
+    "value": "6b82dd470e539022c7f4c8deccc8b216b3cbf6456f19bf9a382b38de44d12b5d210ff7fdee13c6185019b3f71e94c14a6785360a98b2e89d83d1bb8f81625c90fc5e7219008db4b9a517de51852b806c28d8b900bf3beb9a34b5e2cb59e7b06e79917ce074c801eb3a0a32df9ae2db24bbfc367dfe44f6d524e2da65324263c0"
+  },
+  "noPaddingPublicEncrypt": {
+    "value": "02886d8d1a4164e3436aba25958728cb570e8a6ad35ff4c7714f2435c65efb69455039810545beb0bba12b7d7a9614cc23212b449d34c8e6538035078c2525a508f4eddd5699d562a8ae794092deb3e72f521adf29fdd48737fc082be867511fa6e7495ea0a09c675db1f027cc084b6d54441fa04708fe67bf2697c927cc5eb4"
+  },
+  "noPaddingRoundTrip": {
+    "value": true
+  },
+  "noPaddingShortDecrypt": {
+    "value": 128
+  },
+  "oaep": {
+    "value": [
+      128,
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaep256": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaepLabel": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaepWrongHash": {
+    "code": "ERR_OSSL_RSA_OAEP_DECODING_ERROR",
+    "message": "error:02000079:rsa routines::oaep decoding error",
+    "name": "Error"
+  },
+  "oaepWrongLabel": {
+    "code": "ERR_OSSL_RSA_OAEP_DECODING_ERROR",
+    "message": "error:02000079:rsa routines::oaep decoding error",
+    "name": "Error"
+  },
+  "pkcs1Encrypt": {
+    "value": 128
+  },
+  "pkcs1PrivateDecrypt": {
+    "code": "ERR_INVALID_ARG_VALUE",
+    "message": "RSA_PKCS1_PADDING is no longer supported for private decryption, this can be reverted with --security-revert=CVE-2023-46809",
+    "name": "TypeError"
+  },
+  "privateEncrypt": {
+    "value": "7d863fdc15ff0a134e816d9ee3e1883777ac5312b024aea47fbeb98edfa3066b4d933078af8d3fbfcfdd20ac993ce29d63a8dcbe0958d0db0d6e9be5014b10b7819a0acbed39320e3e7ef31c0327aaee6467ef8761c606c5f861a2e670294bcbc324b8870b9b51d59e461c487cf28509c6db8cfa670c87e180a50d4d4a33961c"
+  },
+  "publicDecrypt": {
+    "value": "secret message"
+  },
+  "publicDecryptWithPrivate": {
+    "value": "secret message"
+  },
+  "stringData": {
+    "value": "secret message"
+  },
+  "withPrivateAsPublic": {
+    "value": "secret message"
+  }
+}

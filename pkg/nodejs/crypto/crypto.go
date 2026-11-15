@@ -91,6 +91,9 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_sign":   c.signFunc,
 		"_verify": c.verifyFunc,
 
+		// Public-key encryption (pke.go).
+		"_rsaCrypt": c.rsaCryptFunc,
+
 		// Key derivation (kdf.go).
 		"_digestSize":  c.digestSizeFunc,
 		"_pbkdf2":      c.pbkdf2Func,
@@ -381,6 +384,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// createSign, createVerify, sign and verify over _sign and _verify.
 	if _, err = rt.RunScript(signJS, "crypto_sign.js"); err != nil {
+		return err
+	}
+
+	// publicEncrypt and friends over _rsaCrypt.
+	if _, err = rt.RunScript(pkeJS, "crypto_pke.js"); err != nil {
 		return err
 	}
 

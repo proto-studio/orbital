@@ -59,10 +59,9 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
   back with) an error for those instead (`generateRSAKey`). `crypto.subtle.generateKey`
   shares the generator, so the same exponents give an `OperationError` there.
-- **[gap] No node:crypto public-key encryption with KeyObject.** The
-  KeyObject surface covers generate / import / export / equals and signing.
-  `privateEncrypt`, `publicDecrypt` and `diffieHellman` for KeyObjects are not
-  implemented. jose's default suite
+- **[gap] No node:crypto `diffieHellman` with KeyObject.** The KeyObject surface
+  covers generate / import / export / equals, signing and RSA encryption, but not
+  key agreement. jose's default suite
   uses the WebCrypto path, so this was not needed there. (#141)
 - **[approx] `KeyObject.equals` for asymmetric keys compares canonical JWK JSON**
   rather than DER (`keyEqualsFunc`). Functionally correct for equal keys; not the
