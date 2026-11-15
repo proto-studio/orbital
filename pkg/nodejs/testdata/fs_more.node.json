@@ -362,6 +362,13 @@
       "a"
     ]
   },
+  "cp_read_only_dir": {
+    "value": [
+      "ro",
+      "555",
+      "555"
+    ]
+  },
   "cp_same": {
     "error": {
       "code": "ERR_FS_CP_EINVAL",
@@ -596,6 +603,22 @@
       "name": "Error",
       "syscall": "opendir"
     }
+  },
+  "opendir_recursive": {
+    "value": [
+      "a \u003cdir\u003e/od",
+      "b \u003cdir\u003e/od",
+      "c \u003cdir\u003e/od/b",
+      "deep \u003cdir\u003e/od/b/c"
+    ]
+  },
+  "opendir_recursive_promise": {
+    "value": [
+      "a",
+      "b",
+      "c",
+      "deep"
+    ]
   },
   "opendir_sync": {
     "value": {
@@ -874,6 +897,9 @@
     "Stats function",
     "Dirent function"
   ],
+  "unwatchFile_other_spelling": {
+    "value": 0
+  },
   "utimes_callback": {
     "value": [
       7000000,

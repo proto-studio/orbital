@@ -1130,10 +1130,19 @@
   fs.Dir = Dir;
   // Node's opendirSync names neither the path nor scandir in its error; its callback form
   // names the path.
-  function openDir(path, withPath) {
+  // With recursive, the entries of each directory follow, breadth first, as in Node.
+  function openDir(path, options, withPath) {
     let entries;
     try {
       entries = fs.readdirSync(path, { withFileTypes: true });
+      if (options && typeof options === 'object' && options.recursive) {
+        const p = pathModule();
+        for (let i = 0; i < entries.length; i++) {
+          if (entries[i].isDirectory()) {
+            entries.push(...fs.readdirSync(p.join(entries[i].parentPath, entries[i].name), { withFileTypes: true }));
+          }
+        }
+      }
     } catch (e) {
       if (e && e.syscall === 'scandir') {
         e.syscall = 'opendir';
@@ -1144,9 +1153,9 @@
     }
     return new Dir(typeof path === 'string' ? path : String(path), entries);
   }
-  defineCall('opendir', (path) => [path], (path) => openDir(path, true));
-  fs.opendirSync = function (path) {
-    return openDir(path, false);
+  defineCall('opendir', (path, options) => [path, options], (path, options) => openDir(path, options, true));
+  fs.opendirSync = function (path, options) {
+    return openDir(path, options, false);
   };
 
   // fs.cp: copies a file, or with recursive a directory, as Node's cp does.
@@ -1205,6 +1214,18 @@
         throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22,
           'cannot copy ' + src + ' to a subdirectory of self ' + dest, dest);
       }
+      // A parent of dest reached through a link may still be src, so each existing one is
+      // compared with src by inode, as Node does.
+      if (srcStat.ino) {
+        for (let parent = path.dirname(to); ; parent = path.dirname(parent)) {
+          const parentStat = yield ['statOrNothing', parent];
+          if (parentStat && parentStat.ino === srcStat.ino && parentStat.dev === srcStat.dev) {
+            throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22,
+              'cannot copy ' + src + ' to a subdirectory of self ' + dest, dest);
+          }
+          if (parent === path.dirname(parent)) break;
+        }
+      }
     }
     if (opts.filter && !(yield ['filter', src, dest])) return;
     // Like Node's, cp makes the destination's missing parent directories.
@@ -1218,7 +1239,8 @@
         // Node's errno here is EINVAL from cpSync and EISDIR from cp.
         throw cpError('ERR_FS_EISDIR', 'Path is a directory', 'EISDIR', opts.async ? 21 : 22, src + ' is a directory (not copied)', src);
       }
-      if (!destStat) yield ['mkdir', dest, { mode: srcStat.mode & 0o7777 }];
+      // The directory gets its mode after its contents, so a read-only one can be filled.
+      if (!destStat) yield ['mkdir', dest];
       const path = pathModule();
       for (const name of yield ['readdir', src]) {
         const from = path.join(src, name);
@@ -1358,6 +1380,13 @@
       a.ino === b.ino && a.dev === b.dev && a.uid === b.uid && a.gid === b.gid;
   }
   const statWatchers = new Map();
+  // Watchers are found by absolute path, so another spelling of the same path finds one.
+  const watchKey = (filename) => (pathModule() ? pathModule().resolve(String(pathString(filename))) : String(filename));
+  function pathString(p) {
+    if (ArrayBuffer.isView(p)) return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
+    if (p && typeof p === 'object' && typeof p.href === 'string' && p.protocol === 'file:') return decodeURIComponent(p.pathname);
+    return p;
+  }
   fs.watchFile = function (filename, options, listener) {
     if (typeof options === 'function') {
       listener = options;
@@ -1367,7 +1396,7 @@
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "listener" argument must be of type function. Received ' + receivedType(listener));
     }
     const opts = Object.assign({ interval: 5007, persistent: true }, options);
-    const key = String(filename);
+    const key = watchKey(filename);
     let watcher = statWatchers.get(key);
     if (!watcher) {
       const EventEmitter = eventEmitter();
@@ -1395,7 +1424,7 @@
     return watcher;
   };
   fs.unwatchFile = function (filename, listener) {
-    const key = String(filename);
+    const key = watchKey(filename);
     const watcher = statWatchers.get(key);
     if (!watcher) return;
     if (typeof listener === 'function') watcher.removeListener('change', listener);
