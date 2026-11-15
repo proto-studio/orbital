@@ -338,7 +338,21 @@
     return { hash: normalizeHashName(algo.hash), info: u8(algo.info), salt: u8(algo.salt) };
   }
 
+  // WebIDL's conversion of the optional `unsigned long? length` argument:
+  // null stays null, anything else becomes an integer modulo 2^32.
+  function toUnsignedLong(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'bigint') {
+      throw new TypeError("Failed to execute 'deriveBits' on 'SubtleCrypto': 3rd argument is a BigInt and cannot be converted to a number.");
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    const t = Math.trunc(n) % 4294967296;
+    return t < 0 ? t + 4294967296 : t;
+  }
+
   function hkdfDeriveBits(algo, baseKey, length, usage) {
+    length = toUnsignedLong(length);
     const params = hkdfParams(algo);
     if (!baseKey._usages.includes(usage)) {
       throw new DOMException('baseKey does not have ' + usage + ' usage', 'InvalidAccessError');

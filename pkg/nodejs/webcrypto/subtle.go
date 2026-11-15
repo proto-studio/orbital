@@ -694,6 +694,9 @@ func nativePbkdf2(info *v8.FunctionCallbackInfo) *v8.Value {
 	if p.Iterations <= 0 {
 		return throwf(ctx, "pbkdf2: iterations must be positive")
 	}
+	if p.Length < 0 {
+		return throwf(ctx, "pbkdf2: invalid length %d", p.Length)
+	}
 	dk, err := pbkdf2.Key(nh, string(password), salt, p.Iterations, p.Length/8)
 	if err != nil {
 		return throwf(ctx, "pbkdf2: %v", err)
@@ -730,6 +733,9 @@ func nativeHkdf(info *v8.FunctionCallbackInfo) *v8.Value {
 	infoBytes, err := b64sDec(p.Info)
 	if err != nil {
 		return throwf(ctx, "hkdf: bad info: %v", err)
+	}
+	if p.Length <= 0 || p.Length%8 != 0 {
+		return throwf(ctx, "hkdf: invalid length %d", p.Length)
 	}
 	out, err := hkdf.Key(nh, secret, salt, string(infoBytes), p.Length/8)
 	if err != nil {
