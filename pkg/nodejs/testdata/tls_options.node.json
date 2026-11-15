@@ -38,6 +38,11 @@
       "cipher": "some non-GCM cipher",
       "protocol": "TLSv1.2"
     },
+    "excludeSSLv3": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-AES128-SHA",
+      "protocol": "TLSv1.2"
+    },
     "excludeTLSv10": {
       "error": true
     },
@@ -56,6 +61,11 @@
     },
     "noCommonTLS12Cipher": {
       "error": true
+    },
+    "onlyOpenSSLHasFallsToTLS13": {
+      "authorized": true,
+      "cipher": null,
+      "protocol": "TLSv1.3"
     },
     "pfx": {
       "authorized": true,
@@ -80,6 +90,9 @@
       "cipher": "ECDHE-ECDSA-AES256-GCM-SHA384",
       "protocol": "TLSv1.2"
     },
+    "sslv3Group": {
+      "error": true
+    },
     "tls13Only": {
       "authorized": true,
       "cipher": null,
@@ -96,9 +109,16 @@
     "ciphersAllExcluded": "ok",
     "ciphersExcludeGroup": "ok",
     "ciphersJoined": "ok",
+    "ciphersJoinedOpenSSLOnly": "ok",
     "ciphersKeywordAndName": "ok",
     "ciphersKeywords": "ok",
     "ciphersMedium": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersNoSuitesAnywhere": {
       "code": "ERR_SSL_NO_CIPHER_MATCH",
       "library": "SSL routines",
       "message": "error:0A0000B9:SSL routines::no cipher match",
@@ -110,6 +130,7 @@
       "message": "error:0A0000B9:SSL routines::no cipher match",
       "reason": "no cipher match"
     },
+    "ciphersOnlyOpenSSLHas": "ok",
     "ciphersSHA256": "ok",
     "ciphersSomeKnown": "ok",
     "ciphersTLS13Only": "ok",
