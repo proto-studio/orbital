@@ -32,7 +32,7 @@
     const parentURL = (context && context.parentURL) || '';
     const r = globalThis.__goResolve(specifier, parentURL);
     if (!r.found) {
-      const err = new Error(r.message);
+      const err = r.typeError ? new TypeError(r.message) : new Error(r.message);
       if (r.code) err.code = r.code;
       // The missing module's url lets resolve hooks rewrite the extension and
       // retry (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).

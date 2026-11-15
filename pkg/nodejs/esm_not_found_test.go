@@ -264,3 +264,19 @@ log.push((await import('./m.mjs%3Fvariant.mjs')).default);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A loader hook in the chain doesn't change the class of the default resolver's
+// errors.
+func TestDynamicImport_ResolveErrorClassThroughHooks(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) { return n(s, c); }`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['./a%2Fb.mjs', './nope.mjs']) {
+  try { await import(s); } catch (e) { log.push(e.name, e instanceof TypeError, e.code); }
+}`,
+	})
+	if want := `["TypeError",true,"ERR_INVALID_MODULE_SPECIFIER","Error",false,"ERR_MODULE_NOT_FOUND"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
