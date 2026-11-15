@@ -155,7 +155,13 @@ func (f *FS) schedule(fd int, work func()) {
 				return
 			}
 			next := q.pending[0]
+			// The slot is cleared, and an empty queue lets its array go, so a finished
+			// call's data isn't kept alive by the queue.
+			q.pending[0] = nil
 			q.pending = q.pending[1:]
+			if len(q.pending) == 0 {
+				q.pending = nil
+			}
 			q.mu.Unlock()
 			q.busy.Lock()
 			next()
