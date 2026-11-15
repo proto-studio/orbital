@@ -84,8 +84,15 @@
   const typedArrays = {
     Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
     Int32Array, Uint32Array, Float32Array, Float64Array,
-    BigInt64Array, BigUint64Array
+    BigInt64Array, BigUint64Array, DataView
   };
+  // Built-in objects the V8 serializer refuses: an object with any of these tags cannot be
+  // cloned, where an ordinary object would lose everything but its enumerable properties.
+  const uncloneableTags = new Set([
+    '[object Promise]', '[object WeakMap]', '[object WeakSet]', '[object WeakRef]',
+    '[object FinalizationRegistry]', '[object Symbol]', '[object Generator]',
+    '[object AsyncGenerator]', '[object Module]'
+  ]);
   const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
 
   function inspectValue(value) {
@@ -163,6 +170,12 @@
         for (const v of value) items.push(encodeValue(v, memo));
         return { t: 's', id, v: items };
       }
+      case '[object Number]':
+      case '[object String]':
+      case '[object Boolean]':
+      case '[object BigInt]':
+        // A boxed primitive.
+        return { t: 'box', id, k: typeof value.valueOf(), v: encodeValue(value.valueOf(), memo) };
       case '[object Array]': {
         const props = [];
         for (const k of Object.keys(value)) props.push([k, encodeValue(value[k], memo)]);
@@ -170,13 +183,16 @@
       }
     }
     if (ArrayBuffer.isView(value)) {
-      if (value instanceof DataView) throw uncloneable();
-      const name = typeof global.Buffer === 'function' && global.Buffer.isBuffer(value)
-        ? 'Buffer'
-        : value[Symbol.toStringTag];
+      // Node's serializer copies a view's own bytes into a new buffer of its type.
+      let name;
+      if (typeof global.Buffer === 'function' && global.Buffer.isBuffer(value)) name = 'Buffer';
+      else if (value instanceof DataView) name = 'DataView';
+      else name = value[Symbol.toStringTag];
       if (name !== 'Buffer' && !hasOwnProp.call(typedArrays, name)) throw uncloneable();
-      return { t: 'ta', id, c: name, v: Array.from(value, String) };
+      const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      return { t: 'ta', id, c: name, v: Array.from(bytes) };
     }
+    if (uncloneableTags.has(tag)) throw uncloneable();
     const props = [];
     for (const k of Object.keys(value)) props.push([k, encodeValue(value[k], memo)]);
     return { t: 'o', id, v: props };
@@ -210,9 +226,8 @@
         const Ctor = hasOwnProp.call(errorCtors, d.name) ? errorCtors[d.name] : Error;
         const err = 'message' in d ? new Ctor(d.message) : new Ctor();
         refs[d.id] = err;
-        if ('stack' in d) {
-          Object.defineProperty(err, 'stack', { value: d.stack, writable: true, configurable: true, enumerable: false });
-        }
+        // Without a stack the constructor's would point here; Node's clone has none.
+        Object.defineProperty(err, 'stack', { value: d.stack, writable: true, configurable: true, enumerable: false });
         if ('cause' in d) {
           Object.defineProperty(err, 'cause', { value: decodeValue(d.cause, refs), writable: true, configurable: true, enumerable: false });
         }
@@ -234,12 +249,19 @@
         return arr;
       }
       case 'ta': {
-        const big = d.c === 'BigInt64Array' || d.c === 'BigUint64Array';
-        const items = d.v.map(big ? BigInt : Number);
-        const out = d.c === 'Buffer' && typeof global.Buffer === 'function'
-          ? global.Buffer.from(items)
-          : typedArrays[d.c].from(items);
+        const buffer = new Uint8Array(d.v).buffer;
+        let out;
+        if (d.c === 'Buffer' && typeof global.Buffer === 'function') {
+          out = global.Buffer.from(buffer);
+        } else {
+          const Ctor = typedArrays[d.c];
+          out = Ctor === DataView ? new DataView(buffer) : new Ctor(buffer, 0, d.v.length / Ctor.BYTES_PER_ELEMENT);
+        }
         return (refs[d.id] = out);
+      }
+      case 'box': {
+        const v = decodeValue(d.v, refs);
+        return (refs[d.id] = Object(v));
       }
       case 'o': {
         const obj = (refs[d.id] = {});

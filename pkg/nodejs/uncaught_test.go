@@ -367,16 +367,30 @@ const cases = [
   'throw JSON.parse(\'{"__proto__":{"flag":true},"a":1}\');',
   'class C { [Symbol.for("nodejs.util.inspect.custom")]() { return "CUSTOM C"; } } throw new C();',
   'const e = new Error("d"); e.d = new Date(NaN); throw e;',
+  'throw new DataView(new Uint8Array([1, 2, 3]).buffer, 1, 2);',
+  'const e = new TypeError("boom"); e.view = new DataView(new ArrayBuffer(2)); e.code = "E_TEST"; throw e;',
+  'throw Promise.resolve(1);',
+  'const e = new Error("w"); e.wm = new WeakMap(); e.code = 1; throw e;',
+  'const e = new Error("f"); e.samples = new Float64Array([-0, 1.5]); e.sub = new Uint16Array(new Uint8Array([1, 2, 3, 4, 5, 6]).buffer, 2, 2); e.buf = Buffer.from("hi"); throw e;',
+  'const inner = new RangeError("in"); delete inner.stack; throw { detail: inner };',
+  'throw { n: new Number(5), s: new String("x"), b: new Boolean(false), big: Object(3n) };',
+  'throw { sym: Object(Symbol("q")) };',
 ];
 const describe = (e) => {
-  if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e);
+  // Inspected text is cut at its first brace: util.inspect itself is not under test.
+  if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e).replace(/ ?\{[\s\S]*$/, ' {...}');
+  if (e instanceof DataView) return 'DataView ' + new Uint8Array(e.buffer, e.byteOffset, e.byteLength).join(',');
   if (Object.getPrototypeOf(e) === null) return 'null prototype ' + require('util').inspect(e);
   if (e instanceof ArrayBuffer) return 'ArrayBuffer ' + new Uint8Array(e).join(',');
   const props = Object.getOwnPropertyNames(e).filter((k) => k !== 'stack').sort()
     .map((k) => k + '=' + (typeof e[k] === 'object' && e[k] !== null ? Object.prototype.toString.call(e[k]) : String(e[k])) +
       (e[k] instanceof ArrayBuffer ? ':' + new Uint8Array(e[k]).join(',') : '') +
       (e[k] instanceof Date ? ':' + String(e[k].getTime()) : '') +
-      (k === '__proto__' ? ':own flag=' + e.flag : ''));
+      (k === '__proto__' ? ':own flag=' + e.flag : '') +
+      (ArrayBuffer.isView(e[k]) ? ':' + e[k].constructor.name + ':' + Array.from(new Uint8Array(e[k].buffer, e[k].byteOffset, e[k].byteLength)) : '') +
+      (k === 'samples' ? ':negzero=' + Object.is(e[k][0], -0) : '') +
+      (k === 'detail' ? ':stack=' + typeof e[k].stack + ',' + Object.prototype.hasOwnProperty.call(e[k], 'stack') : '') +
+      (['n', 's', 'b', 'big'].includes(k) ? ':' + typeof e[k] + ',' + e[k].valueOf() : ''));
   return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
     typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
 };
@@ -398,13 +412,13 @@ next(0);
 		"RangeError true [object Error] string - g=1 message=custom name=MyErr",
 		"URIError true [object Error] string - message=later name=URIError",
 		"Error true [object Error] string TypeError:inner cause=[object Error] message=outer name=Error",
-		"Error true [object Error] string - b=10 d=[object Date]:0 m=[object Map] message=f n=NaN name=Error",
+		"Error true [object Error] string - b=10:bigint,10 d=[object Date]:0 m=[object Map] message=f n=NaN:number,NaN name=Error",
 		"Error true [object Error] string - message=nf",
 		"Error true [object Error] string - errors=[object Array] message=agg name=AggregateError",
 		"string a string",
 		"undefined undefined",
 		"Object false [object Object] undefined - a=1",
-		"string { f: [Function: f] }",
+		"string  {...}",
 		"SyntaxError true [object Error] string - message=Unexpected token ';' name=SyntaxError",
 		"ArrayBuffer 1,2",
 		"Error true [object Error] string - buf=[object ArrayBuffer]:1,2 message=ab name=Error",
@@ -412,6 +426,14 @@ next(0);
 		"Object false [object Object] undefined - __proto__=[object Object]:own flag=undefined a=1",
 		"null prototype CUSTOM C",
 		"Error true [object Error] string - d=[object Date]:NaN message=d name=Error",
+		"DataView 2,3",
+		"TypeError true [object Error] string - code=E_TEST message=boom name=TypeError view=[object DataView]:DataView:0,0",
+		"string Promise {...}",
+		"Error true [object Error] string - message=w",
+		"Error true [object Error] string - buf=[object Uint8Array]:Buffer:104,105 message=f name=Error samples=[object Float64Array]:Float64Array:0,0,0,0,0,0,0,128,0,0,0,0,0,0,248,63:negzero=true sub=[object Uint16Array]:Uint16Array:3,4,5,6",
+		"Object false [object Object] undefined - detail=[object Error]:stack=undefined,true",
+		"Object false [object Object] undefined - b=[object Boolean]:object,false big=[object BigInt]:object,3 n=[object Number]:object,5 s=[object String]:object,x",
+		"string  {...}",
 	}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
