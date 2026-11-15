@@ -161,7 +161,13 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 			w.names = nil
 			target = under
 		}
-		return append(splitNames(target), rest...), nil
+		names := splitNames(target)
+		// A target ending in "/" or "/." names a directory, so the name before it must be
+		// one: a "." after it makes the walk open it as one rather than end there.
+		if len(names) > 0 && (strings.HasSuffix(target, "/") || strings.HasSuffix(target, "/.")) {
+			names = append(names, ".")
+		}
+		return append(names, rest...), nil
 	}
 
 	for len(queue) > 0 {
@@ -169,6 +175,9 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 		queue = queue[1:]
 		last := len(queue) == 0
 		w.name = "."
+		if name == "." {
+			continue
+		}
 		if name == ".." {
 			if len(w.names) == 0 {
 				return ErrOutsideSandbox
@@ -339,29 +348,39 @@ func (w *walk) stat() (*FileInfo, error) {
 	return statInfo(filepath.Base(w.path), &st), nil
 }
 
+// rootedStat describes the file p names. Following, a link that appears at the final name
+// after the walk read it makes the walk run again, as in rootedOpenFile.
 func (l *LocalFilesystem) rootedStat(p string, follow bool) (*FileInfo, error) {
-	w, err := l.walkTo(p, walkOptions{followFinal: follow})
-	if err != nil {
-		return nil, err
+	for range maxLinkHops {
+		w, err := l.walkTo(p, walkOptions{followFinal: follow})
+		if err != nil {
+			return nil, err
+		}
+		info, err := w.stat()
+		w.close()
+		if err == nil && follow && info.Mode&fs.ModeSymlink != 0 {
+			continue
+		}
+		return info, err
 	}
-	defer w.close()
-	return w.stat()
+	return nil, &fs.PathError{Op: "stat", Path: p, Err: syscall.ELOOP}
 }
 
 // rootedOpenFile opens the file p names. A link that appears at the final name after the walk
 // read it is not followed by the OS: the open fails, and the walk runs again.
 func (l *LocalFilesystem) rootedOpenFile(p string, flag int, perm fs.FileMode) (*os.File, error) {
 	// An exclusive create acts on the name itself, so an existing link there is EEXIST, as
-	// O_EXCL makes it.
+	// O_EXCL makes it; and O_NOFOLLOW asked for by the caller refuses a link there with ELOOP.
 	exclusive := flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0
+	noFollow := flag&unix.O_NOFOLLOW != 0
 	for range maxLinkHops {
-		w, err := l.walkTo(p, walkOptions{followFinal: !exclusive})
+		w, err := l.walkTo(p, walkOptions{followFinal: !exclusive && !noFollow})
 		if err != nil {
 			return nil, err
 		}
 		fd, err := unix.Openat(w.dir(), w.name, flag|unix.O_NOFOLLOW|unix.O_CLOEXEC, syscallMode(perm))
 		w.close()
-		if errors.Is(err, unix.ELOOP) && flag&os.O_EXCL == 0 {
+		if errors.Is(err, unix.ELOOP) && !exclusive && !noFollow {
 			continue
 		}
 		if err != nil {
@@ -484,6 +503,10 @@ func removeAllAt(dir int, name string) error {
 		if err := unix.Unlinkat(dir, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
 			return err
 		}
+		return nil
+	}
+	// An empty directory goes at once, which needs no permission on the directory itself.
+	if err := unix.Unlinkat(dir, name, unix.AT_REMOVEDIR); err == nil || errors.Is(err, unix.ENOENT) {
 		return nil
 	}
 	fd, err := unix.Openat(dir, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
