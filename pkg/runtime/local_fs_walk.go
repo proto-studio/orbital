@@ -141,6 +141,10 @@ func (l *LocalFilesystem) walkTo(p string, opts walkOptions) (*walk, error) {
 
 func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, absRoot string) error {
 	hops := 0
+	// fromLink counts the names at the front of the queue that came from link targets.
+	// MkdirAll makes only the directories the path itself names, as os.MkdirAll does: a
+	// link to a missing directory is an existing name, not a place to make one.
+	fromLink := 0
 	// follow continues the walk at a link's target, in place of the link.
 	follow := func(name string, rest []string) ([]string, error) {
 		hops++
@@ -167,12 +171,17 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 		if len(names) > 0 && (strings.HasSuffix(target, "/") || strings.HasSuffix(target, "/.")) {
 			names = append(names, ".")
 		}
+		fromLink += len(names)
 		return append(names, rest...), nil
 	}
 
 	for len(queue) > 0 {
 		name := queue[0]
 		queue = queue[1:]
+		linked := fromLink > 0
+		if linked {
+			fromLink--
+		}
 		last := len(queue) == 0
 		w.name = "."
 		if name == "." {
@@ -215,6 +224,9 @@ func (l *LocalFilesystem) walkNames(w *walk, queue []string, opts walkOptions, a
 			continue
 		}
 		if errors.Is(err, unix.ENOENT) && opts.makeDirs {
+			if linked {
+				return w.fail("mkdir", unix.EEXIST)
+			}
 			if err := unix.Mkdirat(w.dir(), name, opts.perm); err != nil && !errors.Is(err, unix.EEXIST) {
 				return w.fail("mkdir", err)
 			}
@@ -418,23 +430,28 @@ func (l *LocalFilesystem) rootedReadDir(p string) ([]DirEntry, error) {
 		return nil, err
 	}
 	defer f.Close()
-	names, err := f.Readdirnames(-1)
+	// The entries' types come with the listing, which needs only read permission on the
+	// directory. For a filesystem that leaves a type out, Go looks the entry up by the
+	// directory's name, so the listing is read through a descriptor named by the host path
+	// rather than the caller's.
+	host, err := l.textualPath(p)
 	if err != nil {
 		return nil, err
 	}
-	slices.Sort(names)
-	// Each entry is described relative to the open directory, not by a path.
-	dir := int(f.Fd())
-	result := make([]DirEntry, 0, len(names))
-	for _, name := range names {
-		var st unix.Stat_t
-		if err := unix.Fstatat(dir, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				continue // removed since it was listed
-			}
-			return nil, &fs.PathError{Op: "lstat", Path: filepath.Join(p, name), Err: err}
-		}
-		result = append(result, DirEntry{Name: name, IsDir: st.Mode&unix.S_IFMT == unix.S_IFDIR})
+	dup, err := unix.Dup(int(f.Fd()))
+	if err != nil {
+		return nil, &fs.PathError{Op: "readdirent", Path: p, Err: err}
+	}
+	listing := os.NewFile(uintptr(dup), host)
+	defer listing.Close()
+	entries, err := listing.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	result := make([]DirEntry, len(entries))
+	for i, e := range entries {
+		result[i] = DirEntry{Name: e.Name(), IsDir: e.IsDir()}
 	}
 	return result, nil
 }
