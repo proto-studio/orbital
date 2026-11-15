@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 )
@@ -449,5 +450,34 @@ func TestConsole_LogBreaksLines(t *testing.T) {
 	want := "  [\n     0,  1,  2,  3,  4,  5,  6,  7,  8,\n     9, 10, 11, 12, 13, 14, 15, 16, 17,\n    18, 19, 20, 21, 22, 23, 24, 25, 26,\n    27, 28, 29\n  ]\n"
 	if got := stripAnsi(stdout.String()); got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Tracking which objects are being printed, to find the ones that hold themselves, costs a
+// little per object printed and nothing for objects left out. An object holding 20000 objects
+// prints in about 100 ms; walking objects it leaves out, like the elements of a long array,
+// would take far longer.
+func TestConsole_LogManyObjectsTime(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	start := time.Now()
+	_, err := rt.RunScript(`
+		const wide = {};
+		for (let i = 0; i < 20000; i++) wide['k' + i] = { v: i };
+		const long = Array.from({ length: 1000000 }, (_, i) => ({ v: i }));
+		wide.self = wide;
+		console.log(wide, long);
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("printing took %v", elapsed)
+	}
+	out := stdout.String()
+	if !strings.HasPrefix(out, "<ref *1> {\n  k0: { v: 0 },") || !strings.Contains(out, "self: [Circular *1]") {
+		t.Errorf("unexpected output start %q", out[:min(len(out), 80)])
 	}
 }
