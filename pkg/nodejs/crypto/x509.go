@@ -56,7 +56,16 @@ func parseCertificateInput(data []byte) (*x509.Certificate, error) {
 		rest = r
 		switch block.Type {
 		case "CERTIFICATE", "X509 CERTIFICATE", "TRUSTED CERTIFICATE":
-			cert, err := x509.ParseCertificate(block.Bytes)
+			der := block.Bytes
+			// A trusted certificate is the certificate followed by OpenSSL's
+			// trust settings; only the first SEQUENCE is the certificate.
+			if block.Type == "TRUSTED CERTIFICATE" {
+				var first asn1.RawValue
+				if _, err := asn1.Unmarshal(der, &first); err == nil {
+					der = first.FullBytes
+				}
+			}
+			cert, err := x509.ParseCertificate(der)
 			if err != nil {
 				return nil, errWrongTag
 			}

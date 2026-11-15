@@ -57,6 +57,12 @@ for (const name of ['ca', 'leaf', 'odd', 'ed', 'emptySubject']) {
 }
 
 const { ca, leaf, odd, ed } = parsed;
+// The CA as OpenSSL writes it with trust settings (openssl x509 -addtrust serverAuth -trustout).
+const trustedCA = "-----BEGIN TRUSTED CERTIFICATE-----\nMIID6DCCAtCgAwIBAgICAQIwDQYJKoZIhvcNAQELBQAwgZsxCzAJBgNVBAYTAlVT\nMREwDwYDVQQIEwhOZXcgWW9yazERMA8GA1UEBxMIQnJvb2tseW4xEzARBgNVBAoT\nCkV4YW1wbGUgQ28xGDAKBgNVBAsTA0VuZzAKBgNVBAsTA09wczEYMBYGA1UEAxMP\nRXhhbXBsZSBSb290IENBMR0wGwYJKoZIhvcNAQkBDA5jYUBleGFtcGxlLmNvbTAg\nFw0yNDAxMDUwMzA0MDVaGA8yMDYwMDEwNTAzMDQwNVowgZsxCzAJBgNVBAYTAlVT\nMREwDwYDVQQIEwhOZXcgWW9yazERMA8GA1UEBxMIQnJvb2tseW4xEzARBgNVBAoT\nCkV4YW1wbGUgQ28xGDAKBgNVBAsTA0VuZzAKBgNVBAsTA09wczEYMBYGA1UEAxMP\nRXhhbXBsZSBSb290IENBMR0wGwYJKoZIhvcNAQkBDA5jYUBleGFtcGxlLmNvbTCC\nASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALajF5thG4kgOXJeespVulxg\nsfHbg/voIiXkXBEHfyn4tOGLEoe3Uppz9kiuhy2NmV7dSK4EfCqUbwSnYnsxt+MI\nRLen28rkRkQcefeSico8fcpCUy2DWj6Y9BtTsdqNppaqoUOD8beh2vbVCTSerfgh\nak0/6xWyo2/agLhlCEAdnA5RVc+V7khGojYg2rc4+vL+0iZMX3zzIfli5Cdpr8ET\nnSRfQiY38e+KRN65wrL+CZ0DcRRb8Z5LjWv3491oSsIZcks5fWbmlS0XCITzzJT7\nMXEDWG6lUbvEIThthXKCBlykF7pRK6rO4w7L83cdlgmZWidkvhDedOSs2OLdEU0C\nAwEAAaMyMDAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wDQYDVR0O\nBAYEBAECAwQwDQYJKoZIhvcNAQELBQADggEBAAWoobx1rse2XTFiQXPEuJ9m0ceb\nGRhI5r07hndCdolgMaJWBPKGjNd7FE0Om41hvol0/tfrGIHSi5gyjeJN0aS0l8Sg\nAn0B63d72L2a0RWVpLg75iPDF0HYwgKH/hOy9N4HmTPfoYOeAoaX9ulUZABwOzlF\nSAsEmcOZjRSjioSmpE2iaj9vPx/yIT/odJcgmgG2Gq1GBs7XUsVGM85XzNjwpnfK\n7z5pSwTtvLYIXxgpdtCaC7VVqjQy0dUdVq4ZZ3KQb1x1ucH1fm6MF8h225QiPtl0\nJKUrbfNt9sU6xoOdLFg3augA4goub5DZ4URBgiLRgbZqm459xUUXUD0BGP4wDDAK\nBggrBgEFBQcDAQ==\n-----END TRUSTED CERTIFICATE-----\n";
+results.trusted = outcome(() => {
+  const t = new X509Certificate(trustedCA);
+  return [t.fingerprint256 === ca.fingerprint256, t.toString().split('\n')[0], t.subject === ca.subject];
+});
 results.fromDer = outcome(() => new X509Certificate(leaf.raw).fingerprint256 === leaf.fingerprint256);
 results.fromUint8Array = outcome(() => new X509Certificate(new Uint8Array(Buffer.from(certs.leaf))).serialNumber);
 results.withLeadingText = outcome(() => new X509Certificate('junk\n' + certs.leaf).serialNumber);
