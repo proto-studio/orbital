@@ -110,7 +110,8 @@
       for (let back = 1; back <= Math.min(3, bytes.length); back++) {
         const b = bytes[bytes.length - back];
         if ((b & 0xc0) === 0x80) continue;
-        const len = b >= 0xf0 && b <= 0xf4 ? 4 : b >= 0xe0 ? 3 : b >= 0xc2 && b < 0xe0 ? 2 : 1;
+        // Only a valid lead byte starts a character worth waiting for.
+        const len = b >= 0xf0 && b <= 0xf4 ? 4 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xc2 && b <= 0xdf ? 2 : 1;
         if (len > back) keep = back;
         break;
       }

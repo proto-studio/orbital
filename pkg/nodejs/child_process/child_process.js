@@ -661,8 +661,12 @@
       }
       if (!callback) return;
 
-      const stdout = encoding ? outputs.stdout.join('') : Buffer.concat(outputs.stdout);
-      const stderr = encoding ? outputs.stderr.join('') : Buffer.concat(outputs.stderr);
+      // As in Node, output is a string if the stream decodes, even when the caller set its
+      // encoding after exec returned.
+      const collect = (name) => (encoding || child[name].readableEncoding
+        ? outputs[name].join('') : Buffer.concat(outputs[name]));
+      const stdout = collect('stdout');
+      const stderr = collect('stderr');
 
       if (!ex && code === 0 && signal === null) {
         callback(null, stdout, stderr);
@@ -712,7 +716,8 @@
       child[name].on('data', (chunk) => {
         if (lengths[name] > options.maxBuffer) return;
         // maxBuffer counts bytes, and a decoded chunk's length counts characters.
-        const length = encoding ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        const streamEncoding = child[name].readableEncoding;
+        const length = streamEncoding ? Buffer.byteLength(chunk, streamEncoding) : chunk.length;
         lengths[name] += length;
         if (lengths[name] > options.maxBuffer) {
           outputs[name].push(chunk.slice(0, options.maxBuffer - (lengths[name] - length)));
