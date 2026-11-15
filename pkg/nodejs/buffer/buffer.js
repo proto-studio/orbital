@@ -512,14 +512,14 @@
 				case 'hex':
 					return string.length >>> 1;
 				case 'base64':
-					// Remove padding and calculate
+				case 'base64url': {
+					// As in Node, padding is optional for both; drop up to two
+					// trailing '=' before applying the 3/4 ratio.
 					let len = string.length;
 					if (string[len - 1] === '=') len--;
-					if (string[len - 1] === '=') len--;
+					if (len > 1 && string[len - 1] === '=') len--;
 					return (len * 3) >>> 2;
-				case 'base64url':
-					// base64url is unpadded; every 4 chars decode to 3 bytes.
-					return (string.length * 3) >>> 2;
+				}
 				case 'utf16le':
 					return string.length * 2;
 				case 'latin1':
