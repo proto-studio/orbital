@@ -1,10 +1,20 @@
 {
   "badCert": "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "inMemory": [
-    "client secure true TLSv1.3 encrypted=true",
-    "server secure",
-    "server got ping",
-    "client got pong"
+  "halfOpenThenClosed": [
+    "data bye",
+    "end",
+    "close"
   ],
-  "overNetSocket": "[secure true remote=undefined]hello"
+  "inMemory": {
+    "client": [
+      "secure true TLSv1.3 encrypted=true",
+      "got pong"
+    ],
+    "server": [
+      "secure",
+      "got ping"
+    ]
+  },
+  "overNetSocket": "[secure true remote=undefined]hello",
+  "slowStream": 20000
 }

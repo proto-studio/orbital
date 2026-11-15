@@ -34,20 +34,65 @@ function pair() {
 }
 async function inMemory() {
   const [a, b] = pair();
-  const log = [];
-  const server = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
-  server.on('secure', () => log.push('server secure'));
-  server.on('data', (d) => { log.push('server got ' + d); server.end('pong'); });
-  const client = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => {
-    log.push('client secure ' + client.authorized + ' ' + client.getProtocol() + ' encrypted=' + client.encrypted);
-    client.write('ping');
+  // Each side runs on its own, so their events are kept apart.
+  const server = [];
+  const client = [];
+  const serverSocket = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+  serverSocket.on('secure', () => server.push('secure'));
+  serverSocket.on('data', (d) => { server.push('got ' + d); serverSocket.end('pong'); });
+  const socket = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => {
+    client.push('secure ' + socket.authorized + ' ' + socket.getProtocol() + ' encrypted=' + socket.encrypted);
+    socket.write('ping');
   });
   let got = '';
-  client.on('data', (d) => { got += d; });
-  await new Promise((r) => { client.on('end', r); client.on('close', r); });
-  log.push('client got ' + got);
-  return log;
+  socket.on('data', (d) => { got += d; });
+  await new Promise((r) => socket.on('end', r));
+  client.push('got ' + got);
+  return { client, server };
 }
+
+async function slowStream() {
+  // A stream that takes its time with every write still gets everything, in order, before
+  // the TLS socket closes.
+  const [a, b] = pair();
+  const slow = new Duplex({
+    read() {},
+    write(c, e, cb) { setTimeout(() => a.write(c, cb), 5); },
+    final(cb) { setTimeout(() => { a.end(); cb(); }, 5); },
+  });
+  a.on('data', (d) => slow.push(d));
+  a.on('end', () => slow.push(null));
+  const serverSocket = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+  let received = 0;
+  // The server finishes first, so the client closes as soon as its own writes are done.
+  serverSocket.on('secure', () => serverSocket.end());
+  serverSocket.on('data', (d) => { received += d.length; });
+  const ended = new Promise((r) => serverSocket.on('end', r));
+  const socket = tls.connect({ socket: slow, servername: 'localhost', ca: cert }, () => {
+    for (let i = 0; i < 20; i++) socket.write(Buffer.alloc(1000, i));
+    socket.end();
+  });
+  await ended;
+  socket.destroy();
+  serverSocket.destroy();
+  return received;
+}
+
+async function halfOpenThenClosed() {
+  // A half-open TLS socket still closes when its stream does.
+  const [a, b] = pair();
+  const serverSocket = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+  serverSocket.on('secure', () => serverSocket.end('bye'));
+  const events = [];
+  const socket = tls.connect({ socket: a, servername: 'localhost', ca: cert, allowHalfOpen: true });
+  socket.on('data', (d) => events.push('data ' + d));
+  socket.on('end', () => { events.push('end'); setImmediate(() => a.destroy()); });
+  await new Promise((r) => socket.on('close', r));
+  events.push('close');
+  serverSocket.destroy();
+  return events;
+}
+
 async function overNetSocket() {
   const server = tls.createServer({ cert, key }, (s) => s.end('hello'));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -82,7 +127,7 @@ async function badCert() {
   });
 }
 (async () => {
-  const out = { inMemory: await inMemory(), overNetSocket: await overNetSocket(), badCert: await badCert() };
+  const out = { inMemory: await inMemory(), slowStream: await slowStream(), halfOpenThenClosed: await halfOpenThenClosed(), overNetSocket: await overNetSocket(), badCert: await badCert() };
   if (globalThis.done) done(out);
   else process.stdout.write(JSON.stringify(out));
 })();

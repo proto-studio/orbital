@@ -121,8 +121,13 @@ type Conn struct {
 	readErr    error
 	diverted   chan divertedRead
 	// noHold stops a waiting read from keeping the process running. A pipe's transport
-	// holds the event loop itself, only while it has bytes to process.
-	noHold bool
+	// holds the event loop itself, only while it has bytes to process, and hands that hold
+	// to the read that returns them through afterRead.
+	noHold     bool
+	beforeRead func()
+	afterRead  func()
+	// afterWrite, if set, waits until a write the transport accepted has gone on.
+	afterWrite func() error
 }
 
 type divertedRead struct {
@@ -446,13 +451,17 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return n.failSocketClosed(callback, "write")
 	}
 
+	conn.mu.Lock()
+	afterWrite := conn.afterWrite
+	conn.mu.Unlock()
+
 	// Like libuv, write at once what the socket takes without waiting. When that is
 	// everything, the write is done and JavaScript completes it in this turn, as Node does.
 	written, err := runtime.TryWrite(socket, data)
 	if errors.Is(err, errors.ErrUnsupported) {
 		written, err = 0, nil
 	}
-	if err == nil && written == len(data) {
+	if err == nil && written == len(data) && afterWrite == nil {
 		return info.Context().NewBoolean(true)
 	}
 	data = data[written:]
@@ -460,8 +469,11 @@ func (n *Net) writeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	n.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer n.rt.EventLoop().DonePendingWork()
-		if err == nil {
+		if err == nil && len(data) > 0 {
 			_, err = socket.Write(data)
+		}
+		if err == nil && afterWrite != nil {
+			err = afterWrite()
 		}
 		n.deliver(func(ctx *v8.Context) {
 			if err != nil {
@@ -507,13 +519,28 @@ func (n *Net) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	conn.updateHoldLocked()
 	pending := conn.readErr
 	conn.readErr = nil
+	beforeRead := conn.beforeRead
 	conn.mu.Unlock()
+	if beforeRead != nil {
+		beforeRead()
+	}
 
 	go func() {
 		buf := make([]byte, readBufferSize)
 		n2, err := 0, pending
 		if err == nil {
 			n2, err = socket.Read(buf)
+		}
+		conn.mu.Lock()
+		noHold, afterRead := conn.noHold, conn.afterRead
+		conn.mu.Unlock()
+		if noHold {
+			// Keep the loop running until what was read is delivered.
+			n.rt.EventLoop().AddPendingWork()
+			defer n.rt.EventLoop().DonePendingWork()
+		}
+		if afterRead != nil {
+			afterRead()
 		}
 
 		conn.mu.Lock()

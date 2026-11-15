@@ -192,10 +192,24 @@
     // Carries TLS over any duplex stream, as Node does for proxies and in-memory pipes.
     _adoptStream(stream) {
       this._wrapped = stream;
-      const id = internal.createPipe((data) => {
-        if (!stream.destroyed) stream.write(Buffer.from(data, 'base64'));
-      }, () => {
-        if (!stream.destroyed && !stream.writableEnded) stream.end();
+      const done = (seq) => (err) => {
+        internal.pipeWritten(id, seq, err ? String(err.message || err) : '');
+      };
+      // A write completes when the stream takes it, and the end when the stream finishes,
+      // so the stream's backpressure and flushing reach the TLS socket.
+      const id = internal.createPipe((data, seq) => {
+        if (stream.destroyed || stream.writableEnded) {
+          done(seq)(makeError('Cannot call write after a stream was destroyed', 'ERR_STREAM_DESTROYED'));
+          return;
+        }
+        stream.write(Buffer.from(data, 'base64'), done(seq));
+      }, (seq) => {
+        if (stream.destroyed || stream.writableFinished) {
+          done(seq)();
+          return;
+        }
+        if (!stream.writableEnded) stream.end();
+        stream.once('finish', () => done(seq)());
       });
       stream.on('data', (chunk) => {
         const buf = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
@@ -205,9 +219,12 @@
       stream.on('error', (err) => {
         if (!this.destroyed) this.destroy(err);
       });
+      // As in Node, the TLS socket closes with its stream, once what had arrived is read.
       stream.on('close', () => {
         internal.pipeEnd(id);
-        if (!this.destroyed && !stream.readableEnded) this.destroy();
+        if (this.destroyed) return;
+        if (this.readableEnded || !this.readable) this.destroy();
+        else this.once('end', () => this.destroy());
       });
       this._id = id;
       this._onAdopted();

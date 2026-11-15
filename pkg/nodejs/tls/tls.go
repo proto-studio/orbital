@@ -90,6 +90,7 @@ func (t *TLS) Register(rt *runtime.Runtime) error {
 		"createPipe":           t.createPipeFunc,
 		"pipePush":             t.pipePushFunc,
 		"pipeEnd":              t.pipeEndFunc,
+		"pipeWritten":          t.pipeWrittenFunc,
 	}
 
 	for name, fn := range funcs {
