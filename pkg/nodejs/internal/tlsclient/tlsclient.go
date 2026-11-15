@@ -159,8 +159,13 @@ func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) 
 	chains, err := leaf.Verify(opts)
 	if err == nil && v.nodeIdentity {
 		// OpenSSL also holds a Common Name to the chain's name constraints, which Go's
-		// verifier does not.
-		err = checkCommonNameConstraints(leaf, chains)
+		// verifier does not. When this check matches the host against the Common Name,
+		// the host is held to them as well.
+		host := ""
+		if !v.scriptChecksIdentity {
+			host = name
+		}
+		chains, err = checkCommonNameConstraints(leaf, chains, host)
 	}
 	if err == nil && !v.scriptChecksIdentity {
 		if v.nodeIdentity {
