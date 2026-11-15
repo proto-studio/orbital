@@ -154,3 +154,14 @@ const accessors = {
 };
 for (const getters of [false, true, 'get', 'set']) console.log(u.inspect(accessors, { getters }));
 console.log(accessors);
+// %d is Number of the value and %i parseInt of it, which reads a number's text, so 2 ** 70
+// (1.1805916207174113e+21) is 1. A BigInt keeps its n, and a symbol is NaN.
+const numbers = ['%i|%d|%d|%i|%f', 2 ** 70, '42', 42n, '1e3', '1.5x'];
+const conversions = ['%d %i %f %d %i %d %i %f', 1.5, -1.5, '-0', '', ' 7 ', null, true, Symbol('n')];
+const objects = ['%d %i %f %d %i', { valueOf: () => 3, toString: () => '4' }, { valueOf: () => 3, toString: () => '4' },
+  { toString: () => '2.5' }, [5], 1e-7];
+for (const args of [numbers, conversions, objects]) {
+  console.log(...args);
+  console.log(u.format(...args));
+  console.log(u.formatWithOptions({}, ...args));
+}
