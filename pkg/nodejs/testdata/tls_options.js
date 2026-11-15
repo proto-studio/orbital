@@ -78,7 +78,8 @@ function contexts() {
 
 function listen(options) {
   return new Promise((resolve) => {
-    const server = tls.createServer(options, (s) => s.end('hi'));
+    // A client that gives up can reset the connection; that isn't what is being tested.
+    const server = tls.createServer(options, (s) => { s.on('error', () => {}); s.end('hi'); });
     server.on('tlsClientError', () => {});
     server.listen(0, '127.0.0.1', () => resolve(server));
   });
