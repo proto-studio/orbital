@@ -1,0 +1,1472 @@
+{
+  "args": {
+    "arrayBufferKey": {
+      "value": "10cc8f36104791163cabe8793b2aa619"
+    },
+    "badIvLen": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "badKeyLen": {
+      "code": "ERR_CRYPTO_INVALID_KEYLEN",
+      "message": "Invalid key length",
+      "name": "RangeError"
+    },
+    "bothBad": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "cbcTagOption": {
+      "value": "Cipheriv"
+    },
+    "ecbEmptyIv": {
+      "value": "Cipheriv"
+    },
+    "ecbIv": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "ecbNullIv": {
+      "value": "Cipheriv"
+    },
+    "gcmEmptyIv": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "gcmTag3": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 3",
+      "name": "TypeError"
+    },
+    "gcmTag5": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 5",
+      "name": "TypeError"
+    },
+    "gcmTagNegative": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The property 'options.authTagLength' is invalid. Received -1",
+      "name": "TypeError"
+    },
+    "gcmTagString": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The property 'options.authTagLength' is invalid. Received 'x'",
+      "name": "TypeError"
+    },
+    "isTransform": true,
+    "nullIv": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "numberCipher": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"cipher\" argument must be of type string. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberData": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberIv": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"iv\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberKey": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"key\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received type number (5)",
+      "name": "TypeError"
+    },
+    "publicKeyObject": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected secret.",
+      "name": "TypeError"
+    },
+    "secretKeyObject": {
+      "value": "10cc8f36104791163cabe8793b2aa619"
+    },
+    "stringKeyIv": {
+      "value": "6a8f91e482e47d89b217168df38125a2"
+    },
+    "unknown": {
+      "code": "ERR_CRYPTO_UNKNOWN_CIPHER",
+      "message": "Unknown cipher",
+      "name": "Error"
+    },
+    "withoutNew": {
+      "value": true
+    }
+  },
+  "chunked": {
+    "value": "9512f24bf70bfd0f01dd3ffd5c61adc95c1f6d53224fe5ce60a474288f691aba05d95dc2d23dd84f5f17f624a0618ceb441a42e21332cc472ca2eb4fdd210bd1 0,0,16,0,16,16,16"
+  },
+  "cipherInfo": {
+    "badName": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"nameOrNid\" argument must be one of type string or number. Received type boolean (true)",
+      "name": "TypeError"
+    },
+    "byNid": {
+      "blockSize": 16,
+      "ivLength": 16,
+      "keyLength": 32,
+      "mode": "cbc",
+      "name": "aes-256-cbc",
+      "nid": 427
+    },
+    "cbc": {
+      "blockSize": 16,
+      "ivLength": 16,
+      "keyLength": 32,
+      "mode": "cbc",
+      "name": "aes-256-cbc",
+      "nid": 427
+    },
+    "des3": {
+      "blockSize": 8,
+      "ivLength": 8,
+      "keyLength": 24,
+      "mode": "cbc",
+      "name": "des-ede3-cbc",
+      "nid": 44
+    },
+    "ecb": {
+      "blockSize": 16,
+      "keyLength": 16,
+      "mode": "ecb",
+      "name": "aes-128-ecb",
+      "nid": 418
+    },
+    "gcm": {
+      "blockSize": 1,
+      "ivLength": 12,
+      "keyLength": 16,
+      "mode": "gcm",
+      "name": "id-aes128-gcm",
+      "nid": 895
+    },
+    "gcmIvLength": {
+      "blockSize": 1,
+      "ivLength": 16,
+      "keyLength": 16,
+      "mode": "gcm",
+      "name": "id-aes128-gcm",
+      "nid": 895
+    },
+    "keyLengthMatch": {
+      "blockSize": 16,
+      "ivLength": 16,
+      "keyLength": 16,
+      "mode": "cbc",
+      "name": "aes-128-cbc",
+      "nid": 419
+    },
+    "keyLengthMismatch": "undefined",
+    "unknown": "undefined",
+    "upper": {
+      "blockSize": 16,
+      "ivLength": 16,
+      "keyLength": 32,
+      "mode": "cbc",
+      "name": "aes-256-cbc",
+      "nid": 427
+    }
+  },
+  "cipher_AES-128-CBC": {
+    "len0": {
+      "value": [
+        "10cc8f36104791163cabe8793b2aa619",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "48466263b82df8231ded1034b0c5e78d",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "9519f7ee9b24a51f51682e214f7aaebc",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f970efd2ccbc4771e51ca70c58bf9e2b472",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f971654e6b7e4c3899bed6d8bce4846a9eb",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f97a4330eeddd18ff6f6586f732a34a8d38b7dc4312b46c52a860342f521d52a5a4",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-cbc": {
+    "len0": {
+      "value": [
+        "10cc8f36104791163cabe8793b2aa619",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "48466263b82df8231ded1034b0c5e78d",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "9519f7ee9b24a51f51682e214f7aaebc",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f970efd2ccbc4771e51ca70c58bf9e2b472",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f971654e6b7e4c3899bed6d8bce4846a9eb",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f97a4330eeddd18ff6f6586f732a34a8d38b7dc4312b46c52a860342f521d52a5a4",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-cfb": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "d3",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d47",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d47df",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d47df9e6bab61955d4e075ea3f0494648db03",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-cfb8": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "d3",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "d39a6df54154465604ef6ad0891e0e",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "d39a6df54154465604ef6ad0891e0e2a",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "d39a6df54154465604ef6ad0891e0e2a09",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "d39a6df54154465604ef6ad0891e0e2a09beb61397a71b0db777a50d5d954e94ae",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-ctr": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "d3",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d47",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d478f",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d478f5aabe9319362af21f0e9912c09a8261d",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-ecb": {
+    "len0": {
+      "value": [
+        "3752c0caba81859c1e8b325708e01b48",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "0c89cbec8cb9051eff478abf1d10ef95",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "b1683871405d595c140a115a6c25cff9",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "3396f7611480e5691efe78e9027aace63752c0caba81859c1e8b325708e01b48",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "3396f7611480e5691efe78e9027aace61f38a33e4e8141eca8ff398a34fc97e0",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "3396f7611480e5691efe78e9027aace6271b1dccd42da640dbceabd53085bb5ceb0b6d6d0f1966bb48386877485784fc",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-gcm": {
+    "len0": {
+      "value": [
+        "",
+        "3653996f91b9cf82300aad069d73fd5e",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "7f",
+        "2c90da567d0b6c870970fb00663d0e02",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001",
+        "ae5fba0452610d14fd71a228076882e3",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fd",
+        "5f3f49907178b5e05c5b92823607a595",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fdb4",
+        "99b1275e211a33af5c56cb17d3af1bb2",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fdb492f84f30d0fd2357f0267489387ba6da",
+        "649d1183f1c826b1cd8aaa0a0305be4f",
+        true
+      ]
+    }
+  },
+  "cipher_aes-128-ofb": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "d3",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d47",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d4791",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "d314b784d6bc04661c3a86a795cc7d4791be129e5df15f1a7465f62ba62fa5bef9",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-192-cbc": {
+    "len0": {
+      "value": [
+        "3fbf0dcfa17877079b746e2a89a3d05f",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "36a2d0c7b41ef514c0fb2ab8c13fdda5",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "ab7c58352bcd94812e1bfa9da1203e46",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "5833cf624058fd085a130d6ee4ae77cced9ce8a1841fcf347889388966995ada",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "5833cf624058fd085a130d6ee4ae77cc69c2e972797dec7d2af7efe61c397a62",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "5833cf624058fd085a130d6ee4ae77cc754bd7304718188516dc087da25b11bf77c1fe2831eec1f26d0d96e10346feca",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-192-cfb8": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "70",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "707d02fca60b9317b65abeea18c0bc",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "707d02fca60b9317b65abeea18c0bce2",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "707d02fca60b9317b65abeea18c0bce260",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "707d02fca60b9317b65abeea18c0bce260e0e7b76d61db41514b548b063322a8a1",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-192-gcm": {
+    "len0": {
+      "value": [
+        "",
+        "d0e3882bb60b56aacba5c22c48a21d78",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "8a",
+        "c35c3daa3bb6f5edfd74d333f6bfc057",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "8a2fe553732712a263194b39184b05",
+        "c4e7109fe290c81c43fcb4937e63cf14",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "8a2fe553732712a263194b39184b0569",
+        "abbf39d95b3ef8c17318eb356cbdfe92",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "8a2fe553732712a263194b39184b0569e8",
+        "157bea9e3e7f2d79b26e982860dc13e7",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "8a2fe553732712a263194b39184b0569e8e46918994d7d665100a997bcd37e46d1",
+        "1774f920fd309f9ca2bd88e4a28afd6d",
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-cbc": {
+    "len0": {
+      "value": [
+        "7b8ddcb32c1d84915539cd559d7bd977",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "c772c8a960e687f6093cbe2971b2d54e",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "957c4a1239750a8fb483a8aed9457825",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa3ddcf4209a8e06ed128c5c80b88e3a003",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa3349587d235ed1d116a2a41a1d1dc4bbf",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa371077f15473f11a3f6d13f5d562503b5aeeb5f89b8a53d626011c3c2601dce71",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-cfb": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "a2",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a90",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021ef",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021ef6bbe12df2487fc67354b31a1943b9e5d",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-ctr": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "a2",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a90",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021a3",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021a391dc2c3793fcb3b3020aa82a0e2fe0e7",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-ecb": {
+    "len0": {
+      "value": [
+        "ab0a0399a49b52508453a3055d1bbd59",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "bc74533962f791e3070a9d3af27f81d7",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "4c0cb2c1cdbd473f8fd0fba4e06e601d",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "e6d7686be01704763e44ca7fa11445f3ab0a0399a49b52508453a3055d1bbd59",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "e6d7686be01704763e44ca7fa11445f328bcabdcd7c7822652a855d1ed26b23a",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "e6d7686be01704763e44ca7fa11445f3b61da1e8a3d55414b200a6b5ca29d02cd0f715c2c3ce66e2ac41284d40b26a16",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-gcm": {
+    "len0": {
+      "value": [
+        "",
+        "688214041b37a4496fc01eaa31061660",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "3b",
+        "bc510892bc648e081fc80cb0f840192b",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "3b06ec69d7b553c470bc7aa2c764a2",
+        "040a57c1bafd84c1def0d8026829891c",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "3b06ec69d7b553c470bc7aa2c764a2bd",
+        "4dbcbf8415afa3d21e444e066fe734ff",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "3b06ec69d7b553c470bc7aa2c764a2bda6",
+        "3abc05c767e73b5cc2e25f87c25c0b31",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "3b06ec69d7b553c470bc7aa2c764a2bda68bdefb4082b536b2b05664aa1d100000",
+        "924623086cdb0a4e8d5f5442358f4796",
+        true
+      ]
+    }
+  },
+  "cipher_aes-256-ofb": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "a2",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a90",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a9021",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a902140",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "a22cb46ee0e2914ddaa79472d03a902140f09ba08b085044cc625dcd04b1289882",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes128": {
+    "len0": {
+      "value": [
+        "10cc8f36104791163cabe8793b2aa619",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "48466263b82df8231ded1034b0c5e78d",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "9519f7ee9b24a51f51682e214f7aaebc",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f970efd2ccbc4771e51ca70c58bf9e2b472",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f971654e6b7e4c3899bed6d8bce4846a9eb",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "89c2b7832ee9a281b56eeaf978b06f97a4330eeddd18ff6f6586f732a34a8d38b7dc4312b46c52a860342f521d52a5a4",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_aes256": {
+    "len0": {
+      "value": [
+        "7b8ddcb32c1d84915539cd559d7bd977",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "c772c8a960e687f6093cbe2971b2d54e",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "957c4a1239750a8fb483a8aed9457825",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa3ddcf4209a8e06ed128c5c80b88e3a003",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa3349587d235ed1d116a2a41a1d1dc4bbf",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "935ff6bbd02c539620537bf4a77f5aa371077f15473f11a3f6d13f5d562503b5aeeb5f89b8a53d626011c3c2601dce71",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_des-ede": {
+    "len0": {
+      "value": [
+        "191e57eecf603cdc",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "dc143b2ce3b4f8fd",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "41d27c665f34142cd647380aedf6d6c3",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "41d27c665f34142ce6435616a98cae1e191e57eecf603cdc",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "41d27c665f34142ce6435616a98cae1e9b2c6732e2c446fe",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "41d27c665f34142ce6435616a98cae1e9bac637c1b500343bbe665281497a4a4f6314245b72a74f8",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_des-ede-cbc": {
+    "len0": {
+      "value": [
+        "01c58a4e9c7def5b",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "fada969bb9d5c449",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "9bc05085b4eb2d35e9bb2e900ec9d246",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "9bc05085b4eb2d35a9c52fd1a4315643ab5c51499761c473",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "9bc05085b4eb2d35a9c52fd1a431564307f94125deb70a41",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "9bc05085b4eb2d35a9c52fd1a43156433f69189dcef65147407b4ecdfe7d0e27148f18d302899e4b",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_des-ede3": {
+    "len0": {
+      "value": [
+        "d8af732c0ab8a72d",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "3e271c68ded47d6c",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "12f0365ca5f9f67c7388bc5c66e1bcbc",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "12f0365ca5f9f67c7e9854b299b680d4d8af732c0ab8a72d",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "12f0365ca5f9f67c7e9854b299b680d4f6d4f8baa7dfd4d3",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "12f0365ca5f9f67c7e9854b299b680d47700b132fa9a13cf8a9fde34f9cc710239f759e01348ccb8",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_des-ede3-cbc": {
+    "len0": {
+      "value": [
+        "f4d9ac87368420b5",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "6a7258296506c5d6",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "a3e82fb56dd92a616328a72c88fcfa4c",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21accb0cf5bec448153",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21a443d35705040e0ba",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21a2e4c6981ebbe81d065215fe6b2a4ee65fc4772466cd2624b",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_des3": {
+    "len0": {
+      "value": [
+        "f4d9ac87368420b5",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "6a7258296506c5d6",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "a3e82fb56dd92a616328a72c88fcfa4c",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21accb0cf5bec448153",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21a443d35705040e0ba",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "a3e82fb56dd92a61125a815a7ebfd21a2e4c6981ebbe81d065215fe6b2a4ee65fc4772466cd2624b",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_id-aes128-GCM": {
+    "len0": {
+      "value": [
+        "",
+        "3653996f91b9cf82300aad069d73fd5e",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "7f",
+        "2c90da567d0b6c870970fb00663d0e02",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001",
+        "ae5fba0452610d14fd71a228076882e3",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fd",
+        "5f3f49907178b5e05c5b92823607a595",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fdb4",
+        "99b1275e211a33af5c56cb17d3af1bb2",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "7f1b6700cbe96f3e721f9be9859001fdb492f84f30d0fd2357f0267489387ba6da",
+        "649d1183f1c826b1cd8aaa0a0305be4f",
+        true
+      ]
+    }
+  },
+  "encodings": [
+    "",
+    "EeLksEo2J8P76aCqdNmBLA==",
+    "11e2e4b04a3627c3fbe9a0aa74d9812c",
+    [
+      "h",
+      "éllo wörld",
+      ""
+    ]
+  ],
+  "gcm": {
+    "badTag": {
+      "value": [
+        "secret",
+        {
+          "message": "Unsupported state or unable to authenticate data",
+          "name": "Error"
+        }
+      ]
+    },
+    "iv1": {
+      "value": [
+        "1889020fc436ffda6227be4d7748747dd5a22aee90ce9f26974d700c21cf9176fc297bf8806d6a",
+        "90c132cb42bc50aece80048fc4bc4e09",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv12tag13": {
+      "value": [
+        "8d1f1c71ca3ac8dace963e62175c831b355eb6ae175906c23bfb640990063eed8024981d2b7fb1",
+        "fc2e6c1a0a6e371f9a5579dcdc",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv12tag16": {
+      "value": [
+        "8d1f1c71ca3ac8dace963e62175c831b355eb6ae175906c23bfb640990063eed8024981d2b7fb1",
+        "fc2e6c1a0a6e371f9a5579dcdc0a9c18",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv12tag4": {
+      "value": [
+        "8d1f1c71ca3ac8dace963e62175c831b355eb6ae175906c23bfb640990063eed8024981d2b7fb1",
+        "fc2e6c1a",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv12tag8": {
+      "value": [
+        "8d1f1c71ca3ac8dace963e62175c831b355eb6ae175906c23bfb640990063eed8024981d2b7fb1",
+        "fc2e6c1a0a6e371f",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv16": {
+      "value": [
+        "708d346482df3a4156547a68dc92b8a56c3b7614808aaf33c16acf7cad7f5a21698c1e16d53f88",
+        "2e47c9d917dc65eb6fd0433dd6698c3b",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "iv60": {
+      "value": [
+        "c5718ba74317f3d5ce21d7cb62655606f97a7f447ab4dd9d109f6cd011ebbfa8cec87af5ec909c",
+        "9650ab8741665c5503751cf2639d6817",
+        "hello gcm, a little longer than a block"
+      ]
+    },
+    "noTag": {
+      "value": [
+        "e5",
+        {
+          "message": "Unsupported state or unable to authenticate data",
+          "name": "Error"
+        }
+      ]
+    },
+    "stringAAD": {
+      "value": "5984472c855b1bf5f7a3d73d40c4d2d7"
+    },
+    "wrongAAD": {
+      "value": {
+        "message": "Unsupported state or unable to authenticate data",
+        "name": "Error"
+      }
+    }
+  },
+  "padding": [
+    {
+      "value": true
+    },
+    {
+      "value": ""
+    },
+    {
+      "code": "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH",
+      "message": "error:1C80006B:Provider routines::wrong final block length",
+      "name": "Error"
+    },
+    {
+      "value": "5a4713e667a522e1e07edea1e3adb3ab8fedbfa342b317e1ca85311ac6b9e1df"
+    },
+    {
+      "value": ""
+    },
+    {
+      "code": "ERR_OSSL_BAD_DECRYPT",
+      "message": "error:1C800064:Provider routines::bad decrypt",
+      "name": "Error"
+    },
+    {
+      "value": ""
+    },
+    {
+      "code": "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH",
+      "message": "error:1C80006B:Provider routines::wrong final block length",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH",
+      "message": "error:1C80006B:Provider routines::wrong final block length",
+      "name": "Error"
+    },
+    {
+      "value": "bc31f3c67f556ce50f6c6869545c5855be10b39901c8d03ef575503e22c9ec86"
+    }
+  ],
+  "states": [
+    {
+      "value": "baa138b08421167cfd75460fe7e313c6"
+    },
+    {
+      "value": "f83ee8575287e6d3de2a92c73b81fec3"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state",
+      "name": "Error"
+    },
+    {
+      "message": "Trying to add data in unsupported state",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAutoPadding",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation getAuthTag",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAAD",
+      "name": "Error"
+    },
+    {
+      "value": 16
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 16",
+      "name": "TypeError"
+    },
+    {
+      "value": true
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAuthTag",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 3",
+      "name": "TypeError"
+    },
+    {
+      "value": true
+    },
+    "undefined",
+    "undefined"
+  ],
+  "stream": "b8539a88c602ced5954cdb",
+  "streamError": [
+    "ERR_OSSL_BAD_DECRYPT",
+    "error:1C800064:Provider routines::bad decrypt"
+  ]
+}

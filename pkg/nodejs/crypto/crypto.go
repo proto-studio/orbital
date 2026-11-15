@@ -29,6 +29,12 @@ type Crypto struct {
 	keyMu  sync.Mutex
 	keys   map[int64]*keyEntry
 	keySeq int64
+
+	// cipherCtxs holds the contexts behind Cipheriv and Decipheriv objects,
+	// by handle, like keys.
+	cipherMu   sync.Mutex
+	cipherCtxs map[int64]*cipherCtx
+	cipherSeq  int64
 }
 
 // New creates a new Crypto module.
@@ -88,6 +94,17 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_scryptCheck": c.scryptCheckFunc,
 		"_scrypt":      c.scryptFunc,
 		"_hkdf":        c.hkdfFunc,
+
+		// Ciphers (cipher.go).
+		"_cipherInit":           c.cipherInitFunc,
+		"_cipherUpdate":         c.cipherUpdateFunc,
+		"_cipherFinal":          c.cipherFinalFunc,
+		"_cipherSetAutoPadding": c.cipherSetAutoPaddingFunc,
+		"_cipherSetAAD":         c.cipherSetAADFunc,
+		"_cipherGetAuthTag":     c.cipherGetAuthTagFunc,
+		"_cipherSetAuthTag":     c.cipherSetAuthTagFunc,
+		"_cipherFree":           c.cipherFreeFunc,
+		"_cipherInfo":           c.cipherInfoFunc,
 	}
 
 	for name, fn := range funcs {
@@ -261,6 +278,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	// Install the KeyObject class + generateKeyPair/createSecretKey/... wrappers
 	// on top of the native helpers registered above.
 	if _, err = rt.RunScript(keyObjectJS, "crypto_keyobject.js"); err != nil {
+		return err
+	}
+
+	// createCipheriv and createDecipheriv over the cipher natives.
+	if _, err = rt.RunScript(cipherJS, "crypto_cipher.js"); err != nil {
 		return err
 	}
 
