@@ -250,7 +250,6 @@ traceability.
 - **[gap] Other `node:crypto` exports are missing.** `randomFill` / `randomFillSync`,
   `getRandomValues`, `webcrypto`, `subtle`, `checkPrime` / `generatePrime`, `getFips` and
   `Certificate` are `undefined`. `globalThis.crypto` has the WebCrypto object. (#144)
-- **[gap] `SubtleCrypto` HKDF derivation** — see the WebCrypto section above. (#115)
 
 ### Closed during this cycle
 
