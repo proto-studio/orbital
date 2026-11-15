@@ -7,6 +7,7 @@ package esm
 
 import (
 	"encoding/json"
+	neturl "net/url"
 	"strings"
 
 	"proto.zip/studio/orbital/pkg/v8"
@@ -26,9 +27,15 @@ var formatTypes = map[string]string{
 }
 
 // checkImportAttributes validates an import's attributes against the format of
-// the module it loads. url is the module's resolved url.
-// url is the module url as Node reports it (displayURL).
+// the module it loads. url is the module url as Node reports it (displayURL).
 func checkImportAttributes(url, format string, attrs []v8.ImportAttribute) error {
+	return checkHookAttributes(url, format, attrs, "")
+}
+
+// checkHookAttributes is checkImportAttributes for attributes a loader hook
+// supplied, where `type` may not be a string: typeReceived then describes the
+// value as Node's ERR_INVALID_ARG_TYPE does ("type number (42)").
+func checkHookAttributes(url, format string, attrs []v8.ImportAttribute, typeReceived string) error {
 	for _, a := range attrs {
 		if a.Key != "type" {
 			return attrTypeError("ERR_IMPORT_ATTRIBUTE_UNSUPPORTED",
@@ -45,20 +52,24 @@ func checkImportAttributes(url, format string, attrs []v8.ImportAttribute) error
 		if !hasType {
 			return nil
 		}
-		return invalidAttrType(url, typ)
-	case hasType && typ == want:
+		return invalidAttrType(url, typ, typeReceived)
+	case hasType && typ == want && typeReceived == "":
 		return nil
 	case !hasType:
 		return attrTypeError("ERR_IMPORT_ASSERTION_TYPE_MISSING",
 			`Module "`+url+`" needs an import attribute of type "`+want+`"`)
 	default:
-		return invalidAttrType(url, typ)
+		return invalidAttrType(url, typ, typeReceived)
 	}
 }
 
 // invalidAttrType is the error for a type the module's format doesn't take:
 // json (the one type Node accepts) on another format, or any other type.
-func invalidAttrType(url, typ string) error {
+func invalidAttrType(url, typ, typeReceived string) error {
+	if typeReceived != "" {
+		return attrTypeError("ERR_INVALID_ARG_TYPE",
+			`The "type" argument must be of type string. Received `+typeReceived)
+	}
 	if typ == "json" {
 		return attrTypeError("ERR_IMPORT_ASSERTION_TYPE_FAILED",
 			`Module "`+url+`" is not of type "`+typ+`"`)
@@ -110,7 +121,8 @@ func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
 	if !ok || typ == implicitType || format == "json" {
 		return url
 	}
-	key := url + string(typeKeySep) + typ
+	// Escaped, so the key has no NUL to cut it short in the glue.
+	key := url + string(typeKeySep) + neturl.QueryEscape(typ)
 	if e.keyPaths == nil {
 		e.keyPaths = map[string]string{}
 	}
@@ -167,30 +179,32 @@ func attrsJSON(attrs []v8.ImportAttribute) string {
 
 // parseAttrsJSON decodes the attributes the loader realm passes back: a JSON
 // array of [key, value] pairs (see encodeAttrs in loader-hooks.js), keeping
-// their order. A value that isn't a string becomes its string form, as Node
-// prints it.
-func parseAttrsJSON(s string) []v8.ImportAttribute {
+// their order. A value that isn't a string comes as {"text": String(value),
+// "received": how Node describes it}; it becomes its text, and for `type` the
+// description is returned too.
+func parseAttrsJSON(s string) (attrs []v8.ImportAttribute, typeReceived string) {
 	var pairs [][2]json.RawMessage
 	if json.Unmarshal([]byte(s), &pairs) != nil {
-		return nil
+		return nil, ""
 	}
-	attrs := make([]v8.ImportAttribute, 0, len(pairs))
+	attrs = make([]v8.ImportAttribute, 0, len(pairs))
 	for _, p := range pairs {
 		var key, val string
 		if json.Unmarshal(p[0], &key) != nil {
 			continue
 		}
-		var marker struct {
-			Undefined bool `json:"undefined"`
-		}
-		switch {
-		case json.Unmarshal(p[1], &val) == nil:
-		case json.Unmarshal(p[1], &marker) == nil && marker.Undefined:
-			val = "undefined"
-		default:
-			val = string(p[1])
+		if json.Unmarshal(p[1], &val) != nil {
+			var other struct {
+				Text     string `json:"text"`
+				Received string `json:"received"`
+			}
+			_ = json.Unmarshal(p[1], &other)
+			val = other.Text
+			if key == "type" {
+				typeReceived = other.Received
+			}
 		}
 		attrs = append(attrs, v8.ImportAttribute{Key: key, Value: val})
 	}
-	return attrs
+	return attrs, typeReceived
 }

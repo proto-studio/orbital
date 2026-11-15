@@ -341,26 +341,64 @@
     return { source: r.source, format: r.format, shortCircuit: true };
   }
 
-  // Attributes cross to Go as JSON [key, value] pairs, with undefined values
-  // marked (JSON.stringify would drop them), so every key is still checked.
+  // Attributes cross to Go as JSON [key, value] pairs. A value that isn't a
+  // string goes as { text, received, json?, undefined? }: its string form (what
+  // Node prints for an unknown key), how Node describes it in a type error, and
+  // what to rebuild it from for the load hooks' context.
   function encodeAttrs(attrs) {
     if (attrs == null || typeof attrs !== 'object') return '[]';
     return JSON.stringify(Object.keys(attrs).map((k) => {
       const v = attrs[k];
-      return [k, v === undefined ? { undefined: true } : v];
+      if (typeof v === 'string') return [k, v];
+      const other = { text: formatted(v), received: received(v) };
+      if (v === undefined) other.undefined = true;
+      else if (typeof v === 'bigint') other.bigint = String(v);
+      else if (v === null || typeof v === 'number' || typeof v === 'boolean') other.json = v;
+      else if (typeof v === 'object') {
+        try { other.json = JSON.parse(JSON.stringify(v)); } catch (e) { /* not representable */ }
+      }
+      return [k, other];
     }));
   }
 
   function decodeAttrs(text) {
     const attrs = {};
     for (const [k, v] of JSON.parse(text || '[]')) {
+      let value = v;
+      if (typeof v !== 'string') {
+        value = v.undefined ? undefined : 'bigint' in v ? BigInt(v.bigint) : 'json' in v ? v.json : v.text;
+      }
       // defineProperty, so a "__proto__" key stays an own attribute.
-      Object.defineProperty(attrs, k, {
-        value: v !== null && typeof v === 'object' && v.undefined === true ? undefined : v,
-        writable: true, enumerable: true, configurable: true,
-      });
+      Object.defineProperty(attrs, k, { value, writable: true, enumerable: true, configurable: true });
     }
     return attrs;
+  }
+
+  function safeString(v) {
+    try { return String(v); } catch (e) { return ''; }
+  }
+
+  // A value as Node's error messages print it (util.format's %s).
+  function formatted(v) {
+    if (typeof v === 'bigint') return v + 'n';
+    try {
+      const util = typeof require === 'function' ? require('util') : null;
+      if (util && typeof util.format === 'function') return util.format('%s', v);
+    } catch (e) { /* fall back */ }
+    return safeString(v);
+  }
+
+  // How Node's ERR_INVALID_ARG_TYPE describes the value it received.
+  function received(v) {
+    if (v == null) return String(v);
+    if (typeof v === 'function') return v.name ? 'function ' + v.name : 'function';
+    if (typeof v === 'object') {
+      const ctor = v.constructor && v.constructor.name;
+      return ctor ? 'an instance of ' + ctor : safeString(v);
+    }
+    let shown = typeof v === 'bigint' ? v + 'n' : safeString(v);
+    if (shown.length > 25) shown = shown.slice(0, 25) + '...';
+    return 'type ' + typeof v + ' (' + shown + ')';
   }
 
   // Whether the load in progress checks import attributes (not for an entry point).
