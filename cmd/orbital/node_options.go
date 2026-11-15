@@ -44,7 +44,7 @@ func (o *nodeOptions) args() []string {
 // spaces, with double quotes grouping and a backslash escaping the next
 // character inside quotes.
 func splitNodeOptions(s string) ([]string, error) {
-	var out []string
+	var out [][]byte
 	inString, startNew := false, true
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -62,17 +62,22 @@ func splitNodeOptions(s string) ([]string, error) {
 			inString = !inString
 			continue
 		}
+		// Bytes, not runes: a multi-byte UTF-8 character passes through whole.
 		if startNew {
-			out = append(out, string(c))
+			out = append(out, []byte{c})
 			startNew = false
 		} else {
-			out[len(out)-1] += string(c)
+			out[len(out)-1] = append(out[len(out)-1], c)
 		}
 	}
 	if inString {
 		return nil, errors.New("invalid value for NODE_OPTIONS (unterminated string)")
 	}
-	return out, nil
+	args := make([]string, len(out))
+	for i, a := range out {
+		args[i] = string(a)
+	}
+	return args, nil
 }
 
 // parseNodeOptions checks NODE_OPTIONS as Node 20.18.1 does, rejecting what Node
@@ -138,7 +143,8 @@ func parseNodeOptions(s string) (*nodeOptions, error) {
 		}
 		if kind == optValue {
 			if !hasValue {
-				if len(args) == 0 {
+				// The next argument is the value, unless it is another option.
+				if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 					return nil, errors.New(shown + " requires an argument")
 				}
 				value, args = args[0], args[1:]
@@ -153,14 +159,15 @@ func parseNodeOptions(s string) (*nodeOptions, error) {
 		case "--title":
 			opts.title = value
 		case "--input-type":
-			if value != "module" && value != "commonjs" {
-				return nil, errors.New(`--input-type must be "module" or "commonjs"`)
-			}
 			opts.inputType = value
 		case "--warnings":
 			off := negated
 			opts.noWarnings = &off
 		}
+	}
+	// Like Node, the value that counts is the last one.
+	if opts.inputType != "" && opts.inputType != "module" && opts.inputType != "commonjs" {
+		return nil, errors.New(`--input-type must be "module" or "commonjs"`)
 	}
 	return opts, nil
 }
