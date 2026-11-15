@@ -1,0 +1,319 @@
+{
+  "cp_link": {
+    "value": [
+      true,
+      "\u003cdir\u003e/f",
+      "hi"
+    ]
+  },
+  "dirents": {
+    "value": [
+      [
+        "d",
+        false,
+        false,
+        true
+      ],
+      [
+        "f",
+        false,
+        true,
+        false
+      ],
+      [
+        "l",
+        true,
+        false,
+        false
+      ],
+      [
+        "ld",
+        true,
+        false,
+        false
+      ]
+    ]
+  },
+  "link": {
+    "value": [
+      "hi",
+      2
+    ]
+  },
+  "link_callback": {
+    "value": "hi"
+  },
+  "link_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/h",
+      "errno": -17,
+      "message": "EEXIST: file already exists, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/h'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "link_missing": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/h2",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/nope' -\u003e '\u003cdir\u003e/h2'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "link"
+    }
+  },
+  "lstat_callback": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "lstat_dangling": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "lstat_dir_link": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "lstat_link": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "mkdtemp": {
+    "value": [
+      10,
+      true,
+      "700"
+    ]
+  },
+  "mkdtemp_bad": {
+    "error": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"prefix\" argument must be of type string or an instance of Buffer or URL. Received type number (1)",
+      "name": "TypeError"
+    }
+  },
+  "mkdtemp_callback": {
+    "value": 9
+  },
+  "mkdtemp_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, mkdtemp '\u003cdir\u003e/nodir/tmp-XXXXXX'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nodir/tmp-XXXXXX",
+      "syscall": "mkdtemp"
+    }
+  },
+  "promises": {
+    "value": [
+      "f",
+      "\u003cdir\u003e/f",
+      [
+        true,
+        false,
+        false,
+        "120000"
+      ],
+      8
+    ]
+  },
+  "promises_symlink_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/lp",
+      "errno": -17,
+      "message": "EEXIST: file already exists, symlink 'f' -\u003e '\u003cdir\u003e/lp'",
+      "name": "Error",
+      "path": "f",
+      "syscall": "symlink"
+    }
+  },
+  "read_through_link": {
+    "value": "hi"
+  },
+  "readdir_through_link": {
+    "value": [
+      "inner"
+    ]
+  },
+  "readlink": {
+    "value": "f"
+  },
+  "readlink_buffer": {
+    "value": [
+      102
+    ]
+  },
+  "readlink_callback": {
+    "value": "f"
+  },
+  "readlink_callback_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, readlink '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "readlink"
+    }
+  },
+  "readlink_file": {
+    "error": {
+      "code": "EINVAL",
+      "errno": -22,
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "readlink"
+    }
+  },
+  "readlink_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, readlink '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "readlink"
+    }
+  },
+  "realpath": {
+    "value": "\u003cdir\u003e/f"
+  },
+  "realpath_callback": {
+    "value": "\u003cdir\u003e/f"
+  },
+  "realpath_callback_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "lstat"
+    }
+  },
+  "realpath_dangling": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "stat"
+    }
+  },
+  "realpath_dir": {
+    "value": "\u003cdir\u003e/d/inner"
+  },
+  "realpath_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "lstat"
+    }
+  },
+  "realpath_native": {
+    "value": "\u003cdir\u003e/d/inner"
+  },
+  "realpath_native_callback": {
+    "value": "\u003cdir\u003e/f"
+  },
+  "realpath_native_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, realpath '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "realpath"
+    }
+  },
+  "rm_dir_link": {
+    "value": [
+      "inner"
+    ]
+  },
+  "stat_link": {
+    "value": [
+      false,
+      true,
+      false,
+      "100000"
+    ]
+  },
+  "symlink": {
+    "value": null
+  },
+  "symlink_bad_type": {
+    "error": {
+      "code": "ERR_FS_INVALID_SYMLINK_TYPE",
+      "message": "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"bogus\"",
+      "name": "Error"
+    }
+  },
+  "symlink_callback": {
+    "value": "f"
+  },
+  "symlink_dir": {
+    "value": null
+  },
+  "symlink_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/l",
+      "errno": -17,
+      "message": "EEXIST: file already exists, symlink 'f' -\u003e '\u003cdir\u003e/l'",
+      "name": "Error",
+      "path": "f",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_missing_dir": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/nodir/l",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, symlink 'f' -\u003e '\u003cdir\u003e/nodir/l'",
+      "name": "Error",
+      "path": "f",
+      "syscall": "symlink"
+    }
+  },
+  "types": [
+    "symlink function",
+    "symlinkSync function",
+    "readlink function",
+    "readlinkSync function",
+    "link function",
+    "linkSync function",
+    "mkdtemp function",
+    "mkdtempSync function"
+  ],
+  "unlink_link": {
+    "value": false
+  }
+}

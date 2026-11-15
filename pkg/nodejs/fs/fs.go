@@ -351,10 +351,21 @@ func dirMode(mode int64) fs.FileMode {
 	return perm
 }
 
-// direntType is libuv's number for an entry's type: UV_DIRENT_FILE (1) or UV_DIRENT_DIR (2).
+// direntType is libuv's number for an entry's type, such as UV_DIRENT_FILE (1).
 func direntType(entry runtime.DirEntry) int64 {
-	if entry.IsDir {
+	switch {
+	case entry.IsDir:
 		return 2
+	case entry.Type&fs.ModeSymlink != 0:
+		return 3 // UV_DIRENT_LINK
+	case entry.Type&fs.ModeNamedPipe != 0:
+		return 4 // UV_DIRENT_FIFO
+	case entry.Type&fs.ModeSocket != 0:
+		return 5 // UV_DIRENT_SOCKET
+	case entry.Type&fs.ModeCharDevice != 0:
+		return 6 // UV_DIRENT_CHAR
+	case entry.Type&fs.ModeDevice != 0:
+		return 7 // UV_DIRENT_BLOCK
 	}
 	return 1
 }
@@ -364,8 +375,7 @@ func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return f.statSync(info, "stat")
 }
 
-// lstatSyncFunc implements fs.lstatSync. Orbital's Stat follows symbolic links, so this
-// differs from statSyncFunc only in the call its errors name.
+// lstatSyncFunc implements fs.lstatSync, which describes a final symbolic link itself.
 func (f *FS) lstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return f.statSync(info, "lstat")
 }
@@ -379,11 +389,20 @@ func (f *FS) statSync(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 		return nil
 	}
 	path := args[0].String()
-	stat, err := f.fs().Stat(path)
+	stat, err := f.statFor(syscallName)(path)
 	if err != nil {
 		return fsFailure(ctx, err, syscallName, path)
 	}
 	return f.createStatObject(ctx, stat)
+}
+
+// statFor gives Stat for stat, and Lstat, which doesn't follow a final link, for lstat.
+func (f *FS) statFor(syscallName string) func(string) (*runtime.FileInfo, error) {
+	fsys := f.fs()
+	if syscallName == "lstat" {
+		return func(path string) (*runtime.FileInfo, error) { return runtime.Lstat(fsys, path) }
+	}
+	return fsys.Stat
 }
 
 // createStatObject describes stat with Node's fs.Stats fields. fs_setup.js turns it into an
@@ -747,8 +766,7 @@ func (f *FS) makeFsError(ctx *v8.Context, code, message, path, syscall string) *
 	return fallback
 }
 
-// statFunc implements the async fs.stat / fs.lstat. Orbital's filesystem does
-// not track symlinks separately, so both resolve through the same Stat; syscallName is the
+// statFunc implements the async fs.stat and fs.lstat; syscallName says which, and is the
 // call an error names.
 func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Value {
 	args := info.Args()
@@ -762,13 +780,13 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	}
 
 	ctx := info.Context()
-	fsys := f.fs()
+	statPath := f.statFor(syscallName)
 
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		stat, err := fsys.Stat(path)
+		stat, err := statPath(path)
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
