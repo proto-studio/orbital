@@ -307,3 +307,42 @@ func TestLocalFS_StatWhileNameChanges(t *testing.T) {
 		t.Errorf("Stat described the link itself %d times", links)
 	}
 }
+
+// MkdirAll doesn't make a missing directory a link names, and ReadDir lists a directory that
+// can be read but not searched.
+func TestLocalFS_WalkMakesOnlyNamedDirectories(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	if err := os.Symlink("missing-dir", filepath.Join(root, "to-missing")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.MkdirAll("/to-missing", 0o755); err == nil {
+		t.Error("MkdirAll of a link to a missing directory succeeded")
+	}
+	if err := l.MkdirAll("/to-missing/sub", 0o755); err == nil {
+		t.Error("MkdirAll under a link to a missing directory succeeded")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "missing-dir")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing-dir was made: %v", err)
+	}
+	if err := l.MkdirAll("/near/through-link", 0o755); err != nil {
+		t.Errorf("MkdirAll under a link to a directory: %v", err)
+	}
+
+	if os.Geteuid() != 0 {
+		listed := filepath.Join(root, "listed")
+		if err := os.MkdirAll(filepath.Join(listed, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(listed, "f"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(listed, 0o444)
+		defer os.Chmod(listed, 0o755)
+		entries, err := l.ReadDir("/listed")
+		if err != nil || len(entries) != 2 || !entries[1].IsDir || entries[0].IsDir {
+			t.Errorf("ReadDir of a read-only directory = %+v, %v", entries, err)
+		}
+	}
+}
