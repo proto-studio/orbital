@@ -629,6 +629,11 @@
       if (options.handle && fd === undefined) {
         throw codedError(Error, 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM', 'Listening on a handle other than a file descriptor is not supported');
       }
+      if (fd !== undefined && (typeof fd !== 'number' || !Number.isInteger(fd) || fd < 0)) {
+        const shown = typeof fd === 'string' ? `'${fd}'` : String(fd);
+        throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE',
+          `The argument 'options' must have the property "port" or "path". Received { fd: ${shown} }`);
+      }
       const port = options.port === undefined || options.port === null ? 0 : validatePort(options.port);
 
       if (callback) this.once('listening', callback);
@@ -638,9 +643,6 @@
 
       let encodedError;
       if (fd !== undefined) {
-        if (typeof fd !== 'number' || !Number.isInteger(fd) || fd < 0) {
-          throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The argument 'options' is invalid. Received ${String(fd)}`);
-        }
         // Only descriptors the embedder made available can be listened on.
         encodedError = internal.listenInherited(this._id, fd);
         if (encodedError) {
