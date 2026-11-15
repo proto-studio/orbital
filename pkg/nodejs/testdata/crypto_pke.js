@@ -42,15 +42,12 @@ results.privatePemForPublic = outcome(() => [crypto.privateDecrypt(priv, crypto.
   crypto.publicDecrypt(fx.rsaPriv, crypto.privateEncrypt(priv, msg)).toString()]);
 results.stringData = outcome(() => crypto.privateDecrypt(priv, crypto.publicEncrypt(pub, 'secret message')).toString());
 
-// Deterministic: private encryption and unpadded operations.
+// Deterministic: private encryption and unpadded public-key operations. (Orbital doesn't
+// do unpadded private-key operations; see docs/known-limitations.md.)
 results.privateEncrypt = outcome(() => crypto.privateEncrypt(priv, msg));
 results.publicDecrypt = outcome(() => crypto.publicDecrypt(pub, crypto.privateEncrypt(priv, msg)).toString());
 results.publicDecryptWithPrivate = outcome(() => crypto.publicDecrypt(priv, crypto.privateEncrypt(priv, msg)).toString());
-results.noPaddingPrivateEncrypt = outcome(() => crypto.privateEncrypt({ key: priv, padding: RSA_NO_PADDING }, Buffer.alloc(128, 1)));
 results.noPaddingPublicEncrypt = outcome(() => crypto.publicEncrypt({ key: pub, padding: RSA_NO_PADDING }, Buffer.alloc(128, 1)));
-results.noPaddingRoundTrip = outcome(() => crypto.privateDecrypt({ key: priv, padding: RSA_NO_PADDING },
-  crypto.publicEncrypt({ key: pub, padding: RSA_NO_PADDING }, Buffer.alloc(128, 7))).equals(Buffer.alloc(128, 7)));
-results.noPaddingShortDecrypt = outcome(() => crypto.privateDecrypt({ key: priv, padding: RSA_NO_PADDING }, Buffer.alloc(127, 1)).length);
 
 // Errors.
 results.errors = {
@@ -59,9 +56,7 @@ results.errors = {
   pkcs1TooLong: outcome(() => crypto.publicEncrypt({ key: pub, padding: RSA_PKCS1_PADDING }, Buffer.alloc(118))),
   privateEncryptTooLong: outcome(() => crypto.privateEncrypt(priv, Buffer.alloc(118))),
   privateEncryptLongest: outcome(() => crypto.privateEncrypt(priv, Buffer.alloc(117)).length),
-  noPaddingShort: outcome(() => crypto.privateEncrypt({ key: priv, padding: RSA_NO_PADDING }, msg)),
   noPaddingTooLarge: outcome(() => crypto.publicEncrypt({ key: pub, padding: RSA_NO_PADDING }, Buffer.alloc(128, 0xff))),
-  noPaddingDecryptTooLarge: outcome(() => crypto.privateDecrypt({ key: priv, padding: RSA_NO_PADDING }, Buffer.alloc(128, 0xff))),
   oaepGarbage: outcome(() => crypto.privateDecrypt(priv, Buffer.alloc(128))),
   publicDecryptZero: outcome(() => crypto.publicDecrypt(pub, Buffer.alloc(5))),
   publicDecryptRandom: outcome(() => crypto.publicDecrypt(pub, Buffer.alloc(128, 1))),

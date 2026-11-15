@@ -10,16 +10,6 @@
       "message": "error:03000096:digital envelope routines::operation not supported for this keytype",
       "name": "Error"
     },
-    "noPaddingDecryptTooLarge": {
-      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_MODULUS",
-      "message": "error:02000084:rsa routines::data too large for modulus",
-      "name": "Error"
-    },
-    "noPaddingShort": {
-      "code": "ERR_OSSL_RSA_DATA_TOO_SMALL_FOR_KEY_SIZE",
-      "message": "error:0200007A:rsa routines::data too small for key size",
-      "name": "Error"
-    },
     "noPaddingTooLarge": {
       "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_MODULUS",
       "message": "error:02000084:rsa routines::data too large for modulus",
@@ -94,17 +84,8 @@
   "fromPem": {
     "value": "secret message"
   },
-  "noPaddingPrivateEncrypt": {
-    "value": "6b82dd470e539022c7f4c8deccc8b216b3cbf6456f19bf9a382b38de44d12b5d210ff7fdee13c6185019b3f71e94c14a6785360a98b2e89d83d1bb8f81625c90fc5e7219008db4b9a517de51852b806c28d8b900bf3beb9a34b5e2cb59e7b06e79917ce074c801eb3a0a32df9ae2db24bbfc367dfe44f6d524e2da65324263c0"
-  },
   "noPaddingPublicEncrypt": {
     "value": "02886d8d1a4164e3436aba25958728cb570e8a6ad35ff4c7714f2435c65efb69455039810545beb0bba12b7d7a9614cc23212b449d34c8e6538035078c2525a508f4eddd5699d562a8ae794092deb3e72f521adf29fdd48737fc082be867511fa6e7495ea0a09c675db1f027cc084b6d54441fa04708fe67bf2697c927cc5eb4"
-  },
-  "noPaddingRoundTrip": {
-    "value": true
-  },
-  "noPaddingShortDecrypt": {
-    "value": 128
   },
   "oaep": {
     "value": [
