@@ -437,3 +437,20 @@ JSON.stringify([new URL('http:https://other/x', 'http://h/a/b').href, new URL('f
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// url.resolve() keeps a slashless special base's path as written, and takes the host of a
+// reference in another special scheme while keeping its dot segments. Expected values are
+// Node 20.18.1's.
+func TestURL_LegacyResolveSlashlessBases(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`JSON.stringify([[__url_module.resolve('http:example.com/a/b', '/x'), __url_module.resolve('http:example.com/a/b', 'x'), __url_module.resolve('http:example.com/a/b', '?q=1'), __url_module.resolve('http://h/a', 'http:/x'), __url_module.resolve('http://h/a/b', 'https:x')], [__url_module.resolve('http://h/a/b', 'https:x/../y'), __url_module.resolve('http://h/a/b', 'ftp:/o/./p'), __url_module.resolve('http://h/a/b', 'https://o/a/../b')]]);`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["http:/x","http:example.com/a/x","http:example.com/a/b?q=1","http://h/x","https://x/"],["https://x/../y","ftp://o/./p","https://o/a/../b"]]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
