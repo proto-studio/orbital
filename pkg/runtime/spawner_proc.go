@@ -361,8 +361,8 @@ type SandboxProcessConfig struct {
 	// run (0 = unlimited).
 	MaxProcesses int
 	// AllowShellCommands allows shell command lines even in allowlist mode: exec(), and
-	// spawn or execFile with shell: true. When false, these are refused unless AllowAll is
-	// true and /bin/sh is not blocked.
+	// spawn with shell: true. When false, these are refused unless AllowAll is true and
+	// /bin/sh is not blocked.
 	AllowShellCommands bool
 }
 
@@ -507,11 +507,8 @@ func (s *SandboxedProcessSpawner) Exec(ctx context.Context, command string, opti
 
 // ExecFile executes a file if it is allowed by the sandbox rules.
 func (s *SandboxedProcessSpawner) ExecFile(ctx context.Context, file string, args []string, options *SpawnOptions) ([]byte, []byte, int, error) {
-	if options != nil && options.Shell {
-		if !s.shellAllowed() {
-			return nil, nil, -1, ErrCommandNotAllowed
-		}
-	} else if !s.isCommandAllowed(file) {
+	// ExecFile runs file directly, without a shell, so the file is what gets checked.
+	if !s.isCommandAllowed(file) {
 		return nil, nil, -1, ErrCommandNotAllowed
 	}
 	if err := s.acquire(); err != nil {
