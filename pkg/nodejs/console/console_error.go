@@ -268,6 +268,7 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 		return "[" + info.ctor + "]"
 	}
 
+	c.enter(depth)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		val, err := v.Get(key.name)
@@ -287,10 +288,7 @@ func (c *Console) renderError(v *v8.Value, info errorInfo, depth int) string {
 		parts = append(parts, label+": "+valStr)
 	}
 
-	if strings.Contains(stack, "\n") || partsHaveNewline(parts) {
-		return stack + " " + multilineBraces("{", "}", parts)
-	}
-	return stack + " { " + strings.Join(parts, ", ") + " }"
+	return c.reduce(parts, "{", "}", depth, stack)
 }
 
 // filterErrorKeys drops enumerable name/message/stack when that text is already
@@ -486,15 +484,6 @@ func indexString(items []string, target string) int {
 		}
 	}
 	return -1
-}
-
-func partsHaveNewline(parts []string) bool {
-	for _, p := range parts {
-		if strings.Contains(p, "\n") {
-			return true
-		}
-	}
-	return false
 }
 
 // multilineBraces renders a collection the way Node does once a value contains

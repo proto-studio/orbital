@@ -86,13 +86,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `(len*3)>>2` assuming no padding; exact decoded length can be 1–2 bytes less
   for some inputs. The decode path itself (`fromString`) is exact.
 
-## util (`pkg/nodejs/util/util.js`)
-
-- **[approx] `util.inspect` line-wrapping differs from Node.** Orbital keeps
-  more output on one line; Node breaks at `breakLength`. This causes a yargs spec
-  (multiline object output) to be skipped — see the yargs section of the
-  core-packages README.
-
 ---
 
 ## Uncaught exceptions and rejections (`pkg/runtime/uncaught.go`, `uncaught.js`)
