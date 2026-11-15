@@ -208,7 +208,13 @@
       const options = this._tlsOptions;
       const host = options.host || (this._wrapped && this._wrapped._host) || 'localhost';
       const servername = options.servername || host;
-      const checkIdentity = typeof options.checkServerIdentity === 'function' ? options.checkServerIdentity : null;
+      // Node's own rules run natively unless the script brings its own check, or replaced
+      // tls.checkServerIdentity, which is what Node calls by default.
+      let checkIdentity = typeof options.checkServerIdentity === 'function' ? options.checkServerIdentity : null;
+      if (!checkIdentity && tls.checkServerIdentity !== checkServerIdentity &&
+          typeof tls.checkServerIdentity === 'function') {
+        checkIdentity = tls.checkServerIdentity;
+      }
 
       internal.upgradeClient(this._id, host, JSON.stringify(clientNativeOptions(options, checkIdentity !== null)), (encoded) => {
         if (this.destroyed) return;
@@ -217,7 +223,11 @@
         this.authorizationError = result.authorizationError || null;
 
         if (result.message) {
-          this.destroy(makeError(result.message, result.code));
+          if (result.reason !== undefined) {
+            this.destroy(identityError(result, this.getPeerCertificate(true)));
+          } else {
+            this.destroy(makeError(result.message, result.code));
+          }
           return;
         }
 
@@ -539,54 +549,224 @@
     ];
   }
 
-  // Whether a hostname matches a certificate name. A wildcard covers part or all of the
-  // leftmost label only, and needs at least three labels, as in Node.
-  function hostMatches(hostname, pattern, allowWildcard) {
-    const labels = (name) => name.replace(/\.$/, '').toLowerCase().split('.');
-    const host = labels(hostname);
-    const want = labels(pattern);
-    if (host.length !== want.length || want.includes('')) return false;
-    if (want.some((label) => /[^!-\u007f]/.test(label))) return false;
-    for (let i = 1; i < host.length; i++) {
-      if (host[i] !== want[i]) return false;
+  // The rest of this file's hostname checking is a port of Node 20's tls.checkServerIdentity.
+
+  function unfqdn(host) {
+    return host.replace(/[.]$/, '');
+  }
+
+  function splitHost(host) {
+    return unfqdn(host).toLowerCase().split('.');
+  }
+
+  // Whether a hostname, split into labels, matches a certificate name. A wildcard covers
+  // part or all of the leftmost label only, and needs at least three labels.
+  function check(hostParts, pattern, wildcards) {
+    if (!pattern) return false;
+    const patternParts = splitHost(pattern);
+    if (hostParts.length !== patternParts.length) return false;
+    if (patternParts.includes('')) return false;
+    // Unicode labels, control characters and blanks never match.
+    if (patternParts.some((part) => /[^!-\u007F]/u.test(part))) return false;
+    for (let i = hostParts.length - 1; i > 0; i -= 1) {
+      if (hostParts[i] !== patternParts[i]) return false;
     }
-    const parts = want[0].split('*');
-    if (parts.length === 1 || want[0].includes('xn--')) return host[0] === want[0];
-    if (!allowWildcard || parts.length > 2 || want.length <= 2) return false;
-    return host[0].length >= parts[0].length + parts[1].length &&
-      host[0].startsWith(parts[0]) && host[0].endsWith(parts[1]);
+    const hostSubdomain = hostParts[0];
+    const patternSubdomain = patternParts[0];
+    const patternSubdomainParts = patternSubdomain.split('*');
+    // A label with no wildcard, or an A-label, matches only as written.
+    if (patternSubdomainParts.length === 1 || patternSubdomain.includes('xn--')) {
+      return hostSubdomain === patternSubdomain;
+    }
+    if (!wildcards) return false;
+    if (patternSubdomainParts.length > 2) return false;
+    if (patternParts.length <= 2) return false;
+    const [prefix, suffix] = patternSubdomainParts;
+    if (prefix.length + suffix.length > hostSubdomain.length) return false;
+    return hostSubdomain.startsWith(prefix) && hostSubdomain.endsWith(suffix);
+  }
+
+  const jsonStringPattern = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/;
+
+  // Splits a subjectaltname string, whose entries may be quoted as JSON strings.
+  function splitEscapedAltNames(altNames) {
+    const result = [];
+    let currentToken = '';
+    let offset = 0;
+    while (offset !== altNames.length) {
+      const nextSep = altNames.indexOf(', ', offset);
+      const nextQuote = altNames.indexOf('"', offset);
+      if (nextQuote !== -1 && (nextSep === -1 || nextQuote < nextSep)) {
+        currentToken += altNames.substring(offset, nextQuote);
+        const match = jsonStringPattern.exec(altNames.substring(nextQuote));
+        if (!match) {
+          const err = new SyntaxError('Invalid subject alternative name string');
+          err.code = 'ERR_TLS_CERT_ALTNAME_FORMAT';
+          throw err;
+        }
+        currentToken += JSON.parse(match[0]);
+        offset = nextQuote + match[0].length;
+      } else if (nextSep !== -1) {
+        currentToken += altNames.substring(offset, nextSep);
+        result.push(currentToken);
+        currentToken = '';
+        offset = nextSep + 2;
+      } else {
+        currentToken += altNames.substring(offset);
+        offset = altNames.length;
+      }
+    }
+    result.push(currentToken);
+    return result;
+  }
+
+  function parseIPv4(text) {
+    const parts = text.split('.');
+    if (parts.length !== 4) return null;
+    const bytes = [];
+    for (const part of parts) {
+      if (!/^(0|[1-9][0-9]{0,2})$/.test(part) || Number(part) > 255) return null;
+      bytes.push(Number(part));
+    }
+    return bytes;
+  }
+
+  function parseIPv6(text) {
+    const zone = text.indexOf('%');
+    if (zone !== -1) text = text.slice(0, zone);
+    let tail = [];
+    const lastColon = text.lastIndexOf(':');
+    if (text.indexOf('.', lastColon) !== -1) {
+      const v4 = parseIPv4(text.slice(lastColon + 1));
+      if (!v4) return null;
+      tail = [(v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3]];
+      text = text.slice(0, lastColon + 1) + (text[lastColon - 1] === ':' ? '' : '0');
+      if (text.endsWith(':0')) {
+        text = text.slice(0, -2);
+        if (text === '') return null;
+      }
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) return null;
+    const words = (half) => {
+      if (half === '') return [];
+      return half.split(':').map((w) => (/^[0-9a-fA-F]{1,4}$/.test(w) ? parseInt(w, 16) : NaN));
+    };
+    const head = words(halves[0]);
+    const rest = halves.length === 2 ? words(halves[1]) : [];
+    const all = [...head, ...rest, ...tail];
+    if (all.some(Number.isNaN)) return null;
+    if (halves.length === 2) {
+      if (all.length > 7) return null;
+      return [...head, ...new Array(8 - all.length).fill(0), ...rest, ...tail];
+    }
+    return all.length === 8 ? all : null;
+  }
+
+  // The address in the form inet_ntop writes, or undefined if it is not one.
+  function canonicalizeIP(text) {
+    const v4 = parseIPv4(text);
+    if (v4) return v4.join('.');
+    const w = parseIPv6(text);
+    if (!w) return undefined;
+    let bestBase = -1;
+    let bestLen = 0;
+    for (let i = 0; i < 8;) {
+      if (w[i] !== 0) { i++; continue; }
+      let j = i;
+      while (j < 8 && w[j] === 0) j++;
+      if (j - i > bestLen) { bestBase = i; bestLen = j - i; }
+      i = j;
+    }
+    if (bestLen < 2) bestBase = -1;
+    let out = '';
+    for (let i = 0; i < 8; i++) {
+      if (bestBase !== -1 && i >= bestBase && i < bestBase + bestLen) {
+        if (i === bestBase) out += ':';
+        continue;
+      }
+      if (i !== 0) out += ':';
+      if (i === 6 && bestBase === 0 &&
+          (bestLen === 6 || (bestLen === 7 && w[7] !== 0x0001) || (bestLen === 5 && w[5] === 0xffff))) {
+        out += `${w[6] >> 8}.${w[6] & 0xff}.${w[7] >> 8}.${w[7] & 0xff}`;
+        break;
+      }
+      out += w[i].toString(16);
+    }
+    if (bestBase !== -1 && bestBase + bestLen === 8) out += ':';
+    return out;
+  }
+
+  // An error shaped like Node's: its stack and string name the code.
+  function altnameError(reason) {
+    const code = 'ERR_TLS_CERT_ALTNAME_INVALID';
+    const err = new Error(`Hostname/IP does not match certificate's altnames: ${reason}`);
+    if (typeof err.stack === 'string') err.stack = err.stack.replace(/^Error/, `Error [${code}]`);
+    Object.defineProperty(err, 'toString', {
+      value() { return `${this.name} [${code}]: ${this.message}`; },
+      enumerable: false, writable: true, configurable: true
+    });
+    err.code = code;
+    return err;
+  }
+
+  function identityError(result, cert) {
+    const err = altnameError(result.reason);
+    err.reason = result.reason;
+    err.host = result.host;
+    err.cert = cert;
+    return err;
   }
 
   /**
    * Check if name matches certificate. Returns an Error if it does not.
    */
   function checkServerIdentity(hostname, cert) {
-    hostname = String(hostname);
     const subject = cert.subject;
     const altNames = cert.subjectaltname;
-    const names = altNames ? altNames.split(', ') : [];
-    const dnsNames = names.filter((n) => n.startsWith('DNS:')).map((n) => n.slice(4));
-    const ips = names.filter((n) => n.startsWith('IP Address:')).map((n) => n.slice(11));
+    const dnsNames = [];
+    const ips = [];
+
+    hostname = '' + hostname;
+
+    if (altNames) {
+      const splitAltNames = altNames.includes('"') ? splitEscapedAltNames(altNames) : altNames.split(', ');
+      for (const name of splitAltNames) {
+        if (name.startsWith('DNS:')) {
+          dnsNames.push(name.slice(4));
+        } else if (name.startsWith('IP Address:')) {
+          ips.push(canonicalizeIP(name.slice(11)));
+        }
+      }
+    }
 
     let valid = false;
-    let reason = 'Cert does not contain a DNS name';
-    if (net.isIP(hostname)) {
-      valid = ips.includes(hostname);
-      reason = `IP: ${hostname} is not in the cert's list: ${ips.join(', ')}`;
-    } else if (dnsNames.length > 0) {
-      valid = dnsNames.some((name) => hostMatches(hostname, name, true));
-      reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
-    } else if (subject) {
-      const cn = subject.CN;
-      valid = Array.isArray(cn)
-        ? cn.some((name) => hostMatches(hostname, name, false))
-        : !!cn && hostMatches(hostname, cn, false);
-      reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
-    }
-    if (valid) return undefined;
+    let reason = 'Unknown reason';
 
-    const err = new Error(`Hostname/IP does not match certificate's altnames: ${reason}`);
-    err.code = 'ERR_TLS_CERT_ALTNAME_INVALID';
+    hostname = unfqdn(hostname);
+
+    if (net.isIP(hostname)) {
+      valid = ips.includes(canonicalizeIP(hostname));
+      if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ips.join(', ');
+    } else if (dnsNames.length > 0 || (subject && subject.CN)) {
+      const hostParts = splitHost(hostname);
+      const wildcard = (pattern) => check(hostParts, pattern, true);
+      if (dnsNames.length > 0) {
+        valid = dnsNames.some(wildcard);
+        if (!valid) reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
+      } else {
+        // The Common Name is used only when there are no DNS names.
+        const cn = subject.CN;
+        if (Array.isArray(cn)) valid = cn.some(wildcard);
+        else if (cn) valid = wildcard(cn);
+        if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
+      }
+    } else {
+      reason = 'Cert does not contain a DNS name';
+    }
+
+    if (valid) return undefined;
+    const err = altnameError(reason);
     err.reason = reason;
     err.host = hostname;
     err.cert = cert;

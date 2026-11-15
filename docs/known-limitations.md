@@ -107,10 +107,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## Network modules (`pkg/nodejs/net`, `tls`, `http`, `https`, `dns`, `dgram`)
 
-- **Hostname checks follow Go, not Node, unless a script passes `checkServerIdentity`.** A
-  certificate with only a Common Name and no SAN fails where Node accepts it. Only a
-  whole-label `*.` wildcard matches, not `f*.example.com`, and Go accepts `*.com` from a
-  trusted CA where Node rejects it. `tls.checkServerIdentity` itself follows Node. (#124)
 - **TLS options with no effect.** `ciphers`, `honorCipherOrder`, `ecdhCurve`, `dhparam` and
   `sigalgs` are ignored. `pfx` and encrypted keys are not supported and throw. Session
   resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no

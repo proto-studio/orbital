@@ -2,6 +2,7 @@ package nodejs
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -422,6 +423,18 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 	})
 	t.Run("ip mismatch fails", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{}, getScript(fmt.Sprintf("https://127.0.0.1:%d", wrong.port), caOption))
+		wantCode(t, result, "ERR_TLS_CERT_ALTNAME_INVALID")
+	})
+	t.Run("hostnames are checked with Node's rules", func(t *testing.T) {
+		// Node accepts a Common Name when there are no DNS names, and refuses a wildcard
+		// over a single label.
+		cnOnly := newH2Server(t, ca.issueTemplate(t, func(c *x509.Certificate) { c.Subject.CommonName = "localhost" }))
+		result := runJS(t, &runtime.Config{}, getScript(fmt.Sprintf("https://localhost:%d", cnOnly.port), caOption))
+		if result["body"] != "hello" {
+			t.Fatalf("Common Name only: result = %v", result)
+		}
+		tld := newH2Server(t, ca.issueTemplate(t, func(c *x509.Certificate) { c.DNSNames = []string{"*.localhost"} }))
+		result = runJS(t, &runtime.Config{}, getScript(fmt.Sprintf("https://localhost:%d", tld.port), fmt.Sprintf("{ ca: %q, servername: 'a.localhost' }", ca.pem)))
 		wantCode(t, result, "ERR_TLS_CERT_ALTNAME_INVALID")
 	})
 	t.Run("trusted ca works", func(t *testing.T) {
