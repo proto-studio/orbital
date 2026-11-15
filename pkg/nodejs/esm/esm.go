@@ -413,7 +413,11 @@ func (e *ESM) throwable(err error) error {
 		}
 		args[i] = v
 	}
-	args = append(args, ctx.NewBoolean(me.typeError))
+	kind, kerr := ctx.NewString(me.kind())
+	if kerr != nil {
+		return err
+	}
+	args = append(args, kind)
 	exc, cerr := mk.Call(nil, args...)
 	if cerr != nil || exc == nil {
 		return err
@@ -497,14 +501,15 @@ func codedError(reason *v8.Value) *moduleError {
 	if reason == nil || !reason.IsObject() {
 		return nil
 	}
-	code := objString(reason, "code")
-	if code == "" {
+	code, name := objString(reason, "code"), objString(reason, "name")
+	if code == "" && name != "URIError" {
 		return nil
 	}
 	return &moduleError{
 		msg:       objString(reason, "message"),
 		code:      code,
 		url:       objString(reason, "url"),
-		typeError: objString(reason, "name") == "TypeError",
+		typeError: name == "TypeError",
+		uriError:  name == "URIError",
 	}
 }
