@@ -260,12 +260,14 @@ out.filtered = await new Promise(async (resolve) => {
   const stranger = await bound();
   const b = dgram.createSocket('udp4');
   const got = [];
-  b.on('message', (m) => got.push(String(m)));
+  const finish = () => { clearTimeout(deadline); stranger.close(); b.close(); resolve(got); };
+  // Loopback keeps the order datagrams were sent in, so once the peer's
+  // datagram arrives the stranger's would already have been delivered.
+  const deadline = setTimeout(finish, 5000);
+  b.on('message', (m) => { got.push(String(m)); if (String(m) === 'peer') finish(); });
   b.connect(port, '127.0.0.1', () => {
     const p = b.address().port;
-    stranger.send('stranger', p, '127.0.0.1');
-    setTimeout(() => a.send('peer', p, '127.0.0.1'), 15);
-    setTimeout(() => { stranger.close(); b.close(); resolve(got); }, 50);
+    stranger.send('stranger', p, '127.0.0.1', () => a.send('peer', p, '127.0.0.1'));
   });
 });
 out.options = [a.setTTL(5), a.setMulticastTTL(6), a.setMulticastLoopback(true), a.getRecvBufferSize() > 0, a.getSendBufferSize() > 0, a.getSendQueueCount()];

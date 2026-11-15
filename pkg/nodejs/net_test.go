@@ -149,14 +149,21 @@ const byNumber = setTimeout(() => { fired = true; }, 5);
 clearTimeout(+byNumber);
 await new Promise((r) => setTimeout(r, 30));
 out.push(fired);
-let count = 0;
-const refreshed = setTimeout(() => { count++; }, 20);
-await new Promise((r) => setTimeout(r, 10));
-refreshed.refresh();
-await new Promise((r) => setTimeout(r, 15));
-out.push(count);
+// A synchronous spin can't be interrupted by the timer, so the refresh always
+// happens 60 ms into the timer's 100 ms delay whatever the runner's speed.
+// Without refresh the timer would fire about 40 ms after it.
+out.push(await new Promise((resolve) => {
+  let refreshedAt;
+  const refreshed = setTimeout(() => resolve(Date.now() - refreshedAt >= 99), 100);
+  setTimeout(() => {
+    const end = Date.now() + 60;
+    while (Date.now() < end);
+    refreshedAt = Date.now();
+    refreshed.refresh();
+  }, 0);
+}));
 done({ out });`)
-	wantJSON(t, result, map[string]any{"out": []any{"object", true, true, false, "number", false, float64(0)}})
+	wantJSON(t, result, map[string]any{"out": []any{"object", true, true, false, "number", false, true}})
 }
 
 // exitsPromptly fails if the script's handles keep the event loop running.
