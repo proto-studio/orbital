@@ -32,6 +32,9 @@ type ESM struct {
 	lexer *v8.Value
 	// cjsExports caches the export names found for each CommonJS file.
 	cjsExports map[string]*cjsNames
+	// makeError is esm-loader.js's __esmModuleError, captured when the loader is
+	// installed so code replacing the global cannot change the errors imports throw.
+	makeError *v8.Value
 }
 
 // New creates an ESM module runtime without a loader realm provider, so
@@ -74,12 +77,14 @@ func (e *ESM) ensureLoader() error {
 		return err
 	}
 	if existing, _ := global.Get("__esmFinishDynamicImport"); existing != nil && existing.IsFunction() {
+		e.makeError, _ = global.Get("__esmModuleError")
 		e.loaderReady = true
 		return nil
 	}
 	if _, err := e.rt.RunScript(esmLoaderJS, "esm-loader.js"); err != nil {
 		return err
 	}
+	e.makeError, _ = global.Get("__esmModuleError")
 	// Wire dynamic import() through the same JS resolver as static imports.
 	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
 		return e.resolveModule(specifier, referrer)
@@ -322,15 +327,11 @@ func (e *ESM) throwable(err error) error {
 	if !errors.As(err, &me) || e.rt.Ended() != nil {
 		return err
 	}
-	ctx := e.rt.Context()
-	global, gerr := ctx.Global()
-	if gerr != nil {
-		return err
-	}
-	mk, _ := global.Get("__esmModuleError")
+	mk := e.makeError
 	if mk == nil || !mk.IsFunction() {
 		return err
 	}
+	ctx := e.rt.Context()
 	args := make([]*v8.Value, 3)
 	for i, s := range []string{me.msg, me.code, me.url} {
 		v, serr := ctx.NewString(s)
