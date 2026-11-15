@@ -271,7 +271,7 @@
       }
 
       const nativeOptions = clientNativeOptions(options, checkIdentity !== null);
-      if (options.session) nativeOptions.session = Buffer.from(options.session).toString('base64');
+      if (options.session) nativeOptions.session = toBytes(options.session).toString('base64');
       const onSession = (session, ticket) => {
         if (this.destroyed) return;
         this._session = Buffer.from(session, 'base64');
@@ -407,8 +407,17 @@
     };
   }
 
+  // A copy of the bytes behind any ArrayBuffer view, whatever its element type.
+  function viewBytes(view) {
+    return Buffer.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+  }
+
+  function toBytes(value) {
+    return ArrayBuffer.isView(value) ? viewBytes(value) : Buffer.from(value);
+  }
+
   function bytesText(value) {
-    return typeof value === 'string' ? value : Buffer.from(value).toString('utf8');
+    return typeof value === 'string' ? value : toBytes(value).toString('utf8');
   }
 
   // Node's key option: PEM, or { pem, passphrase } objects, each decrypted with its own
@@ -434,9 +443,9 @@
     return (Array.isArray(pfx) ? pfx : [pfx]).map((item) => {
       if (item && typeof item === 'object' && !ArrayBuffer.isView(item) && item.buf !== undefined) {
         const passphrase = typeof item.passphrase === 'string' ? item.passphrase : fallback;
-        return { buf: Buffer.from(item.buf).toString('base64'), passphrase };
+        return { buf: toBytes(item.buf).toString('base64'), passphrase };
       }
-      return { buf: Buffer.from(item).toString('base64'), passphrase: fallback };
+      return { buf: toBytes(item).toString('base64'), passphrase: fallback };
     });
   }
 
@@ -538,7 +547,7 @@
       this._contexts = [];
       if (options.ticketKeys !== undefined) checkTicketKeys(options.ticketKeys);
       this._ticketKeys = options.ticketKeys !== undefined
-        ? Buffer.from(options.ticketKeys) : Buffer.from(internal.newTicketKeys(), 'base64');
+        ? viewBytes(options.ticketKeys) : Buffer.from(internal.newTicketKeys(), 'base64');
       this.handshakeTimeout = options.handshakeTimeout === undefined ? kDefaultHandshakeTimeout : options.handshakeTimeout;
       this.setSecureContext(options);
       if (secureConnectionListener) this.on('secureConnection', secureConnectionListener);
@@ -559,7 +568,7 @@
 
     setTicketKeys(keys) {
       checkTicketKeys(keys);
-      this._ticketKeys = Buffer.from(keys);
+      this._ticketKeys = viewBytes(keys);
     }
 
     _onConnection(rawSocket) {

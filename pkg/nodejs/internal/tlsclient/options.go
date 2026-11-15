@@ -6,110 +6,188 @@ import (
 	"strings"
 )
 
-// openSSLCiphers maps OpenSSL's TLS 1.2 cipher names to the suites crypto/tls implements.
-var openSSLCiphers = map[string]uint16{
-	"ECDHE-ECDSA-AES128-GCM-SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-	"ECDHE-RSA-AES128-GCM-SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-	"ECDHE-ECDSA-AES256-GCM-SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-	"ECDHE-RSA-AES256-GCM-SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-	"ECDHE-ECDSA-CHACHA20-POLY1305": tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	"ECDHE-RSA-CHACHA20-POLY1305":   tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-	"ECDHE-ECDSA-AES128-SHA256":     tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-	"ECDHE-RSA-AES128-SHA256":       tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
-	"ECDHE-ECDSA-AES128-SHA":        tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-	"ECDHE-RSA-AES128-SHA":          tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-	"ECDHE-ECDSA-AES256-SHA":        tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
-	"ECDHE-RSA-AES256-SHA":          tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-	"ECDHE-RSA-DES-CBC3-SHA":        tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
-	"AES128-GCM-SHA256":             tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-	"AES256-GCM-SHA384":             tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-	"AES128-SHA256":                 tls.TLS_RSA_WITH_AES_128_CBC_SHA256,
-	"AES128-SHA":                    tls.TLS_RSA_WITH_AES_128_CBC_SHA,
-	"AES256-SHA":                    tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-	"DES-CBC3-SHA":                  tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+// suiteInfo is a TLS 1.2 suite crypto/tls implements, with the properties OpenSSL's cipher
+// strings select on.
+type suiteInfo struct {
+	name string
+	id   uint16
+	kx   string // key exchange: ECDHE or RSA
+	auth string // RSA or ECDSA
+	enc  string // AES128GCM, AES256GCM, CHACHA20, AES128 or AES256
+	mac  string // AEAD, SHA1, SHA256 or SHA384
 }
 
-// openSSLKeywords are cipher-string words that stand for a group of ciphers. A list that
-// uses one keeps crypto/tls's default TLS 1.2 suites, less any named exclusions.
-var openSSLKeywords = map[string]bool{
-	"DEFAULT": true, "ALL": true, "HIGH": true, "MEDIUM": true, "SECURE128": true, "SECURE192": true,
-	"ECDHE": true, "EECDH": true, "ECDH": true, "kECDHE": true, "AESGCM": true, "AES": true,
-	"AES128": true, "AES256": true, "CHACHA20": true, "aRSA": true, "aECDSA": true, "SHA256": true,
-	"SHA384": true, "TLSv1.2": true, "kRSA": true, "RSA": true, "ECDSA": true, "COMPLEMENTOFDEFAULT": true,
+// openSSLCiphers lists, under OpenSSL's names, the TLS 1.2 suites crypto/tls implements that
+// OpenSSL 3 offers at its default security level. 3DES is left out, as it is there.
+var openSSLCiphers = []suiteInfo{
+	{"ECDHE-ECDSA-AES256-GCM-SHA384", tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, "ECDHE", "ECDSA", "AES256GCM", "AEAD"},
+	{"ECDHE-RSA-AES256-GCM-SHA384", tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, "ECDHE", "RSA", "AES256GCM", "AEAD"},
+	{"ECDHE-ECDSA-CHACHA20-POLY1305", tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, "ECDHE", "ECDSA", "CHACHA20", "AEAD"},
+	{"ECDHE-RSA-CHACHA20-POLY1305", tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, "ECDHE", "RSA", "CHACHA20", "AEAD"},
+	{"ECDHE-ECDSA-AES128-GCM-SHA256", tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, "ECDHE", "ECDSA", "AES128GCM", "AEAD"},
+	{"ECDHE-RSA-AES128-GCM-SHA256", tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, "ECDHE", "RSA", "AES128GCM", "AEAD"},
+	{"ECDHE-ECDSA-AES128-SHA256", tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, "ECDHE", "ECDSA", "AES128", "SHA256"},
+	{"ECDHE-RSA-AES128-SHA256", tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256, "ECDHE", "RSA", "AES128", "SHA256"},
+	{"ECDHE-ECDSA-AES256-SHA", tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, "ECDHE", "ECDSA", "AES256", "SHA1"},
+	{"ECDHE-RSA-AES256-SHA", tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, "ECDHE", "RSA", "AES256", "SHA1"},
+	{"ECDHE-ECDSA-AES128-SHA", tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, "ECDHE", "ECDSA", "AES128", "SHA1"},
+	{"ECDHE-RSA-AES128-SHA", tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, "ECDHE", "RSA", "AES128", "SHA1"},
+	{"AES256-GCM-SHA384", tls.TLS_RSA_WITH_AES_256_GCM_SHA384, "RSA", "RSA", "AES256GCM", "AEAD"},
+	{"AES128-GCM-SHA256", tls.TLS_RSA_WITH_AES_128_GCM_SHA256, "RSA", "RSA", "AES128GCM", "AEAD"},
+	{"AES128-SHA256", tls.TLS_RSA_WITH_AES_128_CBC_SHA256, "RSA", "RSA", "AES128", "SHA256"},
+	{"AES256-SHA", tls.TLS_RSA_WITH_AES_256_CBC_SHA, "RSA", "RSA", "AES256", "SHA1"},
+	{"AES128-SHA", tls.TLS_RSA_WITH_AES_128_CBC_SHA, "RSA", "RSA", "AES128", "SHA1"},
+}
+
+// cipherGroup returns the suites an OpenSSL cipher-string word selects. A word OpenSSL knows
+// that names only suites crypto/tls lacks selects none; a word it doesn't know at all
+// reports false.
+func cipherGroup(word string) ([]suiteInfo, bool) {
+	match := func(keep func(c suiteInfo) bool) []suiteInfo {
+		var out []suiteInfo
+		for _, c := range openSSLCiphers {
+			if keep(c) {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	aes := func(c suiteInfo) bool { return strings.HasPrefix(c.enc, "AES") }
+	switch word {
+	case "ALL", "DEFAULT", "HIGH", "COMPLEMENTOFALL":
+		return match(func(suiteInfo) bool { return true }), true
+	case "COMPLEMENTOFDEFAULT", "MEDIUM", "LOW", "EXPORT", "NULL", "eNULL", "aNULL", "3DES", "DES",
+		"RC4", "MD5", "IDEA", "SEED", "CAMELLIA", "CAMELLIA128", "CAMELLIA256", "ARIA", "ARIA128",
+		"ARIA256", "ARIAGCM", "PSK", "kPSK", "aPSK", "SRP", "kSRP", "aSRP", "DSS", "aDSS", "DH",
+		"kDH", "kDHE", "kEDH", "EDH", "DHE", "ADH", "AECDH", "aGOST", "kGOST", "GOST", "CCM",
+		"CCM8", "AESCCM", "AESCCM8", "SSLv3", "TLSv1.0":
+		return nil, true
+	case "ECDHE", "EECDH", "kECDHE", "kEECDH", "ECDH":
+		return match(func(c suiteInfo) bool { return c.kx == "ECDHE" }), true
+	case "kRSA":
+		return match(func(c suiteInfo) bool { return c.kx == "RSA" }), true
+	case "RSA":
+		return match(func(c suiteInfo) bool { return c.kx == "RSA" || c.auth == "RSA" }), true
+	case "aRSA":
+		return match(func(c suiteInfo) bool { return c.auth == "RSA" }), true
+	case "aECDSA", "ECDSA":
+		return match(func(c suiteInfo) bool { return c.auth == "ECDSA" }), true
+	case "AES":
+		return match(aes), true
+	case "AES128":
+		return match(func(c suiteInfo) bool { return strings.HasPrefix(c.enc, "AES128") }), true
+	case "AES256":
+		return match(func(c suiteInfo) bool { return strings.HasPrefix(c.enc, "AES256") }), true
+	case "AESGCM":
+		return match(func(c suiteInfo) bool { return strings.HasSuffix(c.enc, "GCM") }), true
+	case "CHACHA20":
+		return match(func(c suiteInfo) bool { return c.enc == "CHACHA20" }), true
+	case "AEAD":
+		return match(func(c suiteInfo) bool { return c.mac == "AEAD" }), true
+	case "SHA1", "SHA", "TLSv1", "SSLv3.0":
+		return match(func(c suiteInfo) bool { return c.mac == "SHA1" }), true
+	case "SHA256":
+		return match(func(c suiteInfo) bool { return c.mac == "SHA256" || c.enc == "AES128GCM" || c.enc == "CHACHA20" }), true
+	case "SHA384":
+		return match(func(c suiteInfo) bool { return c.enc == "AES256GCM" }), true
+	case "TLSv1.2":
+		return match(func(c suiteInfo) bool { return c.mac != "SHA1" }), true
+	}
+	for _, c := range openSSLCiphers {
+		if c.name == word {
+			return []suiteInfo{c}, true
+		}
+	}
+	return nil, false
 }
 
 var errNoCipherMatch = errors.New("ERR_SSL_NO_CIPHER_MATCH: error:0A0000B9:SSL routines::no cipher match")
 
-// ApplyCiphers applies Node's ciphers option. The OpenSSL names choose the TLS 1.2 ciphers;
-// when there are none, only TLS 1.3 is allowed. Names starting with TLS_ are TLS 1.3 suites,
-// which crypto/tls does not let a configuration choose, so they are accepted and have no
-// effect.
+// ApplyCiphers applies Node's ciphers option. The OpenSSL part chooses the TLS 1.2 suites,
+// read as OpenSSL reads it: words are added in order, "-" removes and "!" removes for good,
+// and "+" joins words that must all hold. With no TLS 1.2 suites, only TLS 1.3 is allowed.
+// Names starting with TLS_ are TLS 1.3 suites, which crypto/tls does not let a configuration
+// choose, so they are accepted and have no effect.
 func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 	if ciphers == "" {
 		return nil
 	}
-	var tls13, tls12 []string
-	for _, name := range strings.Split(ciphers, ":") {
-		if name == "" {
+	var tls13 []string
+	var chosen []suiteInfo
+	banned := map[uint16]bool{}
+	// OpenSSL also knows suites crypto/tls lacks, such as DHE ones, so a list whose suites
+	// were all removed again may still have some there. Only a list that never selected
+	// anything is refused.
+	selectedAny := false
+	for _, token := range strings.FieldsFunc(ciphers, func(r rune) bool { return r == ':' || r == ',' || r == ' ' }) {
+		if strings.HasPrefix(token, "TLS_") {
+			tls13 = append(tls13, token)
 			continue
 		}
-		if strings.HasPrefix(name, "TLS_") {
-			tls13 = append(tls13, name)
-		} else {
-			tls12 = append(tls12, name)
+		op := byte(0)
+		switch token[0] {
+		case '!', '-', '+':
+			op = token[0]
+			token = token[1:]
+		case '@':
+			continue
 		}
-	}
-
-	var suites []uint16
-	if len(tls12) > 0 {
-		keyword := false
-		var named, excluded []uint16
-		for _, token := range tls12 {
-			exclude := false
-			switch token[0] {
-			case '!', '-':
-				exclude = true
-				token = token[1:]
-			case '+', '@':
+		var selected []suiteInfo
+		known := true
+		for i, word := range strings.Split(token, "+") {
+			group, ok := cipherGroup(word)
+			if !ok {
+				known = false
+				break
+			}
+			if i == 0 {
+				selected = group
 				continue
 			}
-			// OpenSSL joins conditions with '+', as in ECDHE+AESGCM.
-			if !exclude && strings.Contains(token, "+") {
-				keyword = true
-				continue
-			}
-			if id, ok := openSSLCiphers[token]; ok {
-				if exclude {
-					excluded = append(excluded, id)
-				} else {
-					named = append(named, id)
-				}
-				continue
-			}
-			if !exclude && openSSLKeywords[token] {
-				keyword = true
-			}
-		}
-		switch {
-		case len(named) > 0:
-			suites = without(named, excluded)
-		case keyword:
-			for _, suite := range tls.CipherSuites() {
-				if !strings.Contains(suite.Name, "_RSA_WITH_") || strings.Contains(suite.Name, "ECDHE") {
-					suites = append(suites, suite.ID)
+			var both []suiteInfo
+			for _, c := range selected {
+				for _, g := range group {
+					if c.id == g.id {
+						both = append(both, c)
+					}
 				}
 			}
-			suites = without(suites, excluded)
+			selected = both
 		}
-		if len(suites) == 0 {
-			if len(tls13) == 0 {
-				return errNoCipherMatch
+		if !known {
+			continue
+		}
+		switch op {
+		case '!':
+			for _, c := range selected {
+				banned[c.id] = true
+			}
+			chosen = removeCiphers(chosen, selected)
+		case '-':
+			chosen = removeCiphers(chosen, selected)
+		case '+':
+			// Moving suites to the end changes only preference, which crypto/tls decides.
+		default:
+			if len(selected) > 0 {
+				selectedAny = true
+			}
+			for _, c := range selected {
+				if !banned[c.id] && !containsCipher(chosen, c) {
+					chosen = append(chosen, c)
+				}
 			}
 		}
 	}
+	if !selectedAny && len(tls13) == 0 {
+		return errNoCipherMatch
+	}
 
+	// A non-nil, empty list leaves crypto/tls with no TLS 1.2 suites at all.
+	suites := make([]uint16, 0, len(chosen))
+	for _, c := range chosen {
+		suites = append(suites, c.id)
+	}
 	cfg.CipherSuites = suites
-	// A list with no TLS 1.2 ciphers leaves only TLS 1.3, which always has its own.
 	if len(suites) == 0 && cfg.MinVersion < tls.VersionTLS13 &&
 		(cfg.MaxVersion == 0 || cfg.MaxVersion > tls.VersionTLS12) {
 		cfg.MinVersion = tls.VersionTLS13
@@ -117,17 +195,20 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 	return nil
 }
 
-func without(ids, excluded []uint16) []uint16 {
-	var out []uint16
-	for _, id := range ids {
-		keep := true
-		for _, x := range excluded {
-			if id == x {
-				keep = false
-			}
+func containsCipher(list []suiteInfo, c suiteInfo) bool {
+	for _, x := range list {
+		if x.id == c.id {
+			return true
 		}
-		if keep {
-			out = append(out, id)
+	}
+	return false
+}
+
+func removeCiphers(list, remove []suiteInfo) []suiteInfo {
+	var out []suiteInfo
+	for _, c := range list {
+		if !containsCipher(remove, c) {
+			out = append(out, c)
 		}
 	}
 	return out

@@ -1610,3 +1610,59 @@ const client = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () 
 		})
 	}
 }
+
+// A session buffer holding a server's session state, which crypto/tls can parse but a client
+// can't resume from, is ignored rather than reaching the handshake.
+func TestTLSConnect_ServerSessionStateIsIgnored(t *testing.T) {
+	ca := newTestCA(t)
+	captured := make(chan []byte, 4)
+	cfg := &tls.Config{Certificates: []tls.Certificate{ca.issue(t, "localhost")}}
+	cfg.WrapSession = func(cs tls.ConnectionState, ss *tls.SessionState) ([]byte, error) {
+		if b, err := ss.Bytes(); err == nil {
+			select {
+			case captured <- b:
+			default:
+			}
+		}
+		return cfg.EncryptTicket(cs, ss)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn)
+			}()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+	connect := fmt.Sprintf(`tls.connect({ host: 'localhost', port: %d, ca: %q, session }, () => { c.write('x'); })`, port, ca.pem)
+	first := runJS(t, &runtime.Config{}, `
+const tls = require('tls');
+const session = undefined;
+const c = `+connect+`;
+c.on('session', () => { c.destroy(); done({ ok: true }); });`)
+	wantJSON(t, first, map[string]any{"ok": true})
+	var state []byte
+	select {
+	case state = <-captured:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never issued a session")
+	}
+	// Version, a zero-length ticket, then the server's state.
+	encoded := append([]byte{1, 0, 0, 0, 0}, state...)
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const tls = require('tls');
+const session = Buffer.from(%q, 'hex');
+const c = `+connect+`;
+c.on('secureConnect', () => { done({ reused: c.isSessionReused(), authorized: c.authorized }); c.destroy(); });`, hex.EncodeToString(encoded)))
+	wantJSON(t, got, map[string]any{"reused": false, "authorized": true})
+}
