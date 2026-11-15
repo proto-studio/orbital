@@ -4,6 +4,7 @@ package dgram
 import (
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -70,6 +71,7 @@ func (d *Dgram) Register(rt *runtime.Runtime) error {
 		"setBroadcast":    d.setBroadcastFunc,
 		"setMulticastTTL": d.setMulticastTTLFunc,
 		"setOption":       d.setOptionFunc,
+		"bufferSize":      d.bufferSizeFunc,
 		"addMembership":   d.addMembershipFunc,
 		"dropMembership":  d.dropMembershipFunc,
 		"resolve":         d.resolveFunc,
@@ -524,6 +526,43 @@ func (d *Dgram) setOptionFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	s, _ := ctx.NewString(netdial.Describe(err, "setsockopt", "", 0).Code)
 	return s
+}
+
+// bufferSize(id, name) returns the receive ("recvBuffer") or send ("sendBuffer") buffer size the
+// operating system reports for the socket, an error code string, or undefined when the socket
+// can't report it.
+func (d *Dgram) bufferSizeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.Undefined()
+	}
+	d.mu.Lock()
+	socket, ok := d.sockets[int64(args[0].Integer())]
+	d.mu.Unlock()
+	if !ok {
+		s, _ := ctx.NewString("EBADF")
+		return s
+	}
+	sizes, ok := socket.(runtime.UDPSocketBufferSizes)
+	if !ok {
+		return ctx.Undefined()
+	}
+	var size int
+	var err error
+	if args[1].String() == "sendBuffer" {
+		size, err = sizes.WriteBufferSize()
+	} else {
+		size, err = sizes.ReadBufferSize()
+	}
+	if errors.Is(err, errors.ErrUnsupported) {
+		return ctx.Undefined()
+	}
+	if err != nil {
+		s, _ := ctx.NewString(netdial.Describe(err, "getsockopt", "", 0).Code)
+		return s
+	}
+	return ctx.NewNumber(float64(size))
 }
 
 // resolve(host, family, callback) resolves a destination with the injected resolver.

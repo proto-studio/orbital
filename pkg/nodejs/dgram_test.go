@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"syscall"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -173,4 +174,57 @@ socket.send('hello', 4000, '127.0.0.1', (err) => { socket.close(); done({ error:
 	if info, _ := result["error"].(map[string]any); info == nil || info["code"] != "EACCES" {
 		t.Fatalf("result = %v", result)
 	}
+}
+
+// osBufferSizes returns SO_RCVBUF and SO_SNDBUF for a new UDP socket, after setting both to
+// size when size is not zero.
+func osBufferSizes(t *testing.T, size int) [2]int {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if size != 0 {
+		if err := conn.SetReadBuffer(size); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.SetWriteBuffer(size); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sizes [2]int
+	var errs [2]error
+	raw.Control(func(fd uintptr) {
+		sizes[0], errs[0] = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+		sizes[1], errs[1] = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF)
+	})
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatal(errs)
+	}
+	return sizes
+}
+
+// Node reports the buffer sizes the OS gives the socket, not the size last set.
+func TestUDPBufferSizesComeFromTheOS(t *testing.T) {
+	initial := osBufferSizes(t, 0)
+	set := osBufferSizes(t, 100000)
+	result := runJS(t, &runtime.Config{}, `
+const s = require('dgram').createSocket('udp4');
+s.bind(0, '127.0.0.1', () => {
+  const out = { initial: [s.getRecvBufferSize(), s.getSendBufferSize()] };
+  s.setRecvBufferSize(100000);
+  s.setSendBufferSize(100000);
+  out.set = [s.getRecvBufferSize(), s.getSendBufferSize()];
+  s.close();
+  done(out);
+});`)
+	wantJSON(t, result, map[string]any{
+		"initial": []any{float64(initial[0]), float64(initial[1])},
+		"set":     []any{float64(set[0]), float64(set[1])},
+	})
 }
