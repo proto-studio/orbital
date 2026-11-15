@@ -1077,22 +1077,8 @@
       return new StatFs(v(s.type), v(s.bsize), v(s.blocks), v(s.bfree), v(s.bavail), v(s.files), v(s.ffree));
     });
 
-  // readv and writev read into, or write from, each buffer in turn, stopping at the end of
-  // the file. A numeric position moves along with them; any other means the file's offset.
-  function vectored(op) {
-    return (fd, buffers, position) => {
-      // A negative position, like none, means the file's offset.
-      let pos = typeof position === 'number' && position >= 0 ? position : null;
-      let total = 0;
-      for (const buffer of buffers) {
-        const n = op(fd, buffer, 0, buffer.byteLength, pos);
-        total += n;
-        if (pos !== null) pos += n;
-        if (n < buffer.byteLength) break;
-      }
-      return total;
-    };
-  }
+  // readv and writev take a descriptor, the buffers, and a position; a negative or missing
+  // position means the file's offset.
   const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), position];
   // readv reads once, as readv(2) does, as much as is there up to the buffers' total, and
   // splits it across them, so a pipe holding less doesn't keep it waiting.
@@ -1109,7 +1095,12 @@
     }
     return n;
   }, (n, args) => [n, args[1]]);
-  defineCall('writev', vectorArgs, vectored((...a) => fs.writeSync(...a)), (n, args) => [n, args[1]]);
+  // writev writes the buffers together in one write, so, as with writev(2), another writer
+  // to a pipe can't come between them.
+  defineCall('writev', vectorArgs, (fd, buffers, position) => {
+    const all = Buffer.concat(buffers.map((b) => viewBytes(b)));
+    return all.length === 0 ? 0 : fs.writeSync(fd, all, 0, all.length, typeof position === 'number' && position >= 0 ? position : null);
+  }, (n, args) => [n, args[1]]);
 
   // fs.Dir, from opendir: the directory's entries, read when it is opened.
   function dirClosed() {
