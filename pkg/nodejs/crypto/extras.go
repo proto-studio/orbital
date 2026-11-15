@@ -152,6 +152,24 @@ func generatePrime(bits int, safe bool, add, rem *big.Int) (*big.Int, error) {
 		}
 		return !safe || half.Rsh(p, 1).ProbablyPrime(20)
 	}
+	if add == nil || add.Sign() == 0 {
+		// Unconstrained: always satisfiable, so search until found.
+		// rand.Prime sets the top two bits, so 2q+1 has exactly bits bits.
+		for {
+			if !safe {
+				return rand.Prime(rand.Reader, bits)
+			}
+			q, err := rand.Prime(rand.Reader, bits-1)
+			if err != nil {
+				return nil, err
+			}
+			p := new(big.Int).Lsh(q, 1)
+			p.Add(p, one)
+			if p.BitLen() == bits && p.ProbablyPrime(20) {
+				return p, nil
+			}
+		}
+	}
 	// Give up rather than loop for ever on a combination with no prime.
 	for attempt := 0; attempt < 1<<16; attempt++ {
 		r, err := rand.Int(rand.Reader, span)
@@ -160,12 +178,6 @@ func generatePrime(bits int, safe bool, add, rem *big.Int) (*big.Int, error) {
 		}
 		p := r.Add(r, lo)
 		p.SetBit(p, 0, 1)
-		if add == nil || add.Sign() == 0 {
-			if isWanted(p) {
-				return p, nil
-			}
-			continue
-		}
 		// As OpenSSL's probable_prime_dh: round down to rem mod add, step up
 		// once if that lost the top bit, then try successive values of the
 		// progression. The result can be longer than bits.
@@ -205,6 +217,10 @@ func (c *Crypto) generatePrimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	if s := args[3].String(); s != "" {
 		rem = hexInt(s)
+	}
+	// extras.js passes unsigned values; check again for direct calls.
+	if (add != nil && add.Sign() < 0) || (rem != nil && rem.Sign() < 0) {
+		return ctx.Throw("generatePrime: add and rem must not be negative")
 	}
 	return c.offThread(ctx, optionalCallback(args, 4), func() (string, error) {
 		p, err := generatePrime(bits, safe, add, rem)
