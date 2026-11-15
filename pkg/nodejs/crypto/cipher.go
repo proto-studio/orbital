@@ -261,7 +261,10 @@ func (c *cipherCtx) update(data []byte) ([]byte, error) {
 	if c.done {
 		return nil, errUnsupported
 	}
-	c.updated = true
+	// Empty updates don't end the AAD phase, as in OpenSSL.
+	if len(data) > 0 {
+		c.updated = true
+	}
 	if c.stream != nil {
 		out := make([]byte, len(data))
 		c.stream.XORKeyStream(out, data)

@@ -108,6 +108,20 @@ gcm.stringAAD = outcome(() => {
   c.final();
   return c.getAuthTag();
 });
+gcm.encodedTagAndAAD = outcome(() => {
+  const iv = bytes(12, 9);
+  const c = crypto.createCipheriv('aes-256-gcm', gk, iv);
+  c.update('');
+  c.update(Buffer.alloc(0));
+  c.setAAD('ff00', { encoding: 'hex' });
+  const ct = Buffer.concat([c.update('payload'), c.final()]);
+  const tag = c.getAuthTag();
+  const d = crypto.createDecipheriv('aes-256-gcm', gk, iv);
+  d.update(Buffer.alloc(0));
+  d.setAAD(Buffer.from([0xff, 0]));
+  d.setAuthTag(tag.toString('hex'), 'hex');
+  return [tag.toString('hex'), Buffer.concat([d.update(ct), d.final()]).toString()];
+});
 results.gcm = gcm;
 
 // State errors.
@@ -182,6 +196,8 @@ results.encodings = (() => {
   const ct = ctr(false).update('héllo wörld');
   const d = ctr(true);
   r.push([d.update(ct.subarray(0, 2), undefined, 'utf8'), d.update(ct.subarray(2), undefined, 'utf8'), d.final('utf8')]);
+  const d2 = ctr(true);
+  r.push([d2.update(ct.subarray(0, 2), undefined, 'utf-8'), d2.update(ct.subarray(2), undefined, 'utf-8'), d2.final('utf-8')]);
   return r;
 })();
 

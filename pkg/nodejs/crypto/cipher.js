@@ -13,6 +13,7 @@
   const kDecoder = Symbol('kDecoder');
   const kAuthTagLength = Symbol('kAuthTagLength');
   const kDone = Symbol('kDone');
+  const kDecoderEncoding = Symbol('kDecoderEncoding');
   const kTag = Symbol('kTag');
 
   // A context is freed at final, or when its object is collected if it never
@@ -112,8 +113,8 @@
     throw invalidArgType('key', 'of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey', key);
   }
 
-  function bufferSource(value, name) {
-    if (typeof value === 'string') return Buffer.from(value, 'utf8');
+  function bufferSource(value, name, encoding) {
+    if (typeof value === 'string') return Buffer.from(value, Buffer.isEncoding(encoding) ? encoding : 'utf8');
     if (ArrayBuffer.isView(value)) return viewBytes(value);
     if (isAnyArrayBuffer(value)) return Buffer.from(new Uint8Array(value));
     throw invalidArgType(name, 'of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView', value);
@@ -176,7 +177,10 @@
 
   function output(self, buf, outputEncoding) {
     if (outputEncoding && outputEncoding !== 'buffer') {
-      if (!self[kDecoder] || self[kDecoder].encoding !== outputEncoding) {
+      // Compare the encoding as asked for: decoders normalize aliases
+      // such as 'utf-8', and a new decoder would drop a partial character.
+      if (!self[kDecoder] || self[kDecoderEncoding] !== outputEncoding) {
+        self[kDecoderEncoding] = outputEncoding;
         if (outputEncoding === 'base64' || outputEncoding === 'base64url') {
           self[kDecoder] = new Base64Decoder(outputEncoding);
         } else {
@@ -250,7 +254,7 @@
     },
 
     setAAD(aadbuf, options) {
-      const bytes = bufferSource(aadbuf, 'buffer');
+      const bytes = bufferSource(aadbuf, 'buffer', options && options.encoding);
       if (options !== undefined && options !== null && options.plaintextLength !== undefined) {
         const n = options.plaintextLength;
         if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 2147483647) {
@@ -299,8 +303,8 @@
   });
 
   Object.defineProperty(Decipheriv.prototype, 'setAuthTag', {
-    value: function setAuthTag(tagbuf) {
-      const tag = bufferSource(tagbuf, 'buffer');
+    value: function setAuthTag(tagbuf, encoding) {
+      const tag = bufferSource(tagbuf, 'buffer', encoding);
       if (this[kDone]) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'Invalid state for operation setAuthTag');
       const want = this[kAuthTagLength];
       if (want !== -1 && tag.length !== want) {
