@@ -20,6 +20,22 @@
     };
   }
 
+  // The error a failed import throws, shaped like Node's: its code shows in the
+  // stack's first line ("Error [ERR_MODULE_NOT_FOUND]: ...") and as `code`, and
+  // a missing module's file: URL as `url`. Go builds it through this helper.
+  globalThis.__esmModuleError = function (message, code, url) {
+    var err = new Error(message);
+    if (code) {
+      var stack = err.stack;
+      if (typeof stack === 'string' && stack.indexOf('Error: ') === 0) {
+        err.stack = 'Error [' + code + ']: ' + stack.slice(7);
+      }
+      err.code = code;
+    }
+    if (url) err.url = url;
+    return err;
+  };
+
   globalThis.__esmFinishDynamicImport = function (evalPromise, ns) {
     return Promise.resolve(evalPromise).then(function () {
       return ns;

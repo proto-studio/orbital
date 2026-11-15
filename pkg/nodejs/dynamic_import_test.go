@@ -14,11 +14,28 @@ import (
 func runLogModule(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
+	writeFiles(t, dir, files)
+	return runLogModuleIn(t, dir)
+}
+
+// writeFiles writes files, named by slash-separated paths relative to dir.
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
 	for name, src := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+// runLogModuleIn runs dir/entry.mjs as an ES module and returns what it recorded in
+// globalThis.log.
+func runLogModuleIn(t *testing.T, dir string) string {
+	t.Helper()
 	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)

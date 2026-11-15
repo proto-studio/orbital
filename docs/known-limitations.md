@@ -31,9 +31,10 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   for a JSON import with no attribute and `ERR_IMPORT_ASSERTION_TYPE_FAILED` for `type: 'json'`
   on a JavaScript module; Orbital loads both. The older `assert { … }` form, which Node 20
   accepts, is a `SyntaxError`. (#108)
-- **[approx] One JS helper remains in the loader.** `esm-loader.js` still hosts
+- **[approx] A few JS helpers remain in the loader.** `esm-loader.js` still hosts
   `__esmFinishDynamicImport` (chains a module's evaluation promise to its
-  namespace for `await import()`); everything else is Go.
+  namespace for `await import()`) and `__esmModuleError` (builds the Node-shaped
+  error a failed import throws); everything else is Go.
 - **[gap] Most `NODE_OPTIONS` flags have no effect.** `NODE_OPTIONS` is split and checked as
   Node 20.18.1 does it (`cmd/orbital/node_options.go`): an option Node doesn't allow there, a
   bad negation or a missing value stops the program with exit code 9 and Node's message.
@@ -42,8 +43,9 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   Node allows there (`--enable-source-maps`, `--max-old-space-size`, `--conditions`,
   `--unhandled-rejections`, …) are accepted and ignored, and option values (ports, sizes) are
   not validated. (#109)
-- **[gap] `import()` of a missing module has no `code`.** Node rejects with
-  `code: 'ERR_MODULE_NOT_FOUND'`; Orbital rejects with a plain `Error`. (#110)
+- **[gap] A package's `"exports"` map is not enforced.** A subpath it doesn't list loads
+  the file anyway; Node throws `ERR_PACKAGE_PATH_NOT_EXPORTED`. A missing module or package
+  does fail with Node's `ERR_MODULE_NOT_FOUND`.
 - **[approx] When an `import()`ed module runs relative to timers is not pinned down.** It runs
   after the importer's code, microtasks and `nextTick` callbacks, as in Node, but before a
   `setImmediate` or `setTimeout(…, 0)` the importer queued first. Node usually runs those

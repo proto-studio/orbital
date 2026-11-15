@@ -7,6 +7,7 @@ package v8
 import "C"
 
 import (
+	"errors"
 	"sync"
 	"unsafe"
 )
@@ -14,7 +15,16 @@ import (
 // ModuleResolveCallback is called when V8 needs to resolve an import.
 // It takes the specifier (import path) and referrer (importing module path),
 // and returns the resolved module source code, resolved path, and any error.
+// An error that implements ExceptionError is thrown (or rejects import()) as its
+// own JavaScript value; any other error becomes a plain Error.
 type ModuleResolveCallback func(specifier, referrer string) (source string, resolvedPath string, err error)
+
+// ExceptionError is an error carrying the JavaScript value to throw for it, such
+// as a Node error object with a code.
+type ExceptionError interface {
+	error
+	Exception() *Value
+}
 
 // FunctionCallback is the signature for Go functions callable from JavaScript.
 type FunctionCallback func(info *FunctionCallbackInfo) *Value
@@ -290,7 +300,7 @@ func goCallbackHandler(ctxPtr unsafe.Pointer, callbackID C.int, infoPtr unsafe.P
 }
 
 //export goModuleResolve
-func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, nameOut **C.char) C.int {
+func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, nameOut **C.char, errorOut *unsafe.Pointer) C.int {
 	resolver := getModuleResolver(int(resolverID))
 	if resolver == nil {
 		return C.int(-1)
@@ -301,6 +311,12 @@ func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, n
 
 	source, resolvedPath, err := resolver(specifierStr, referrerStr)
 	if err != nil {
+		var exc ExceptionError
+		if errors.As(err, &exc) {
+			if v := exc.Exception(); v != nil && v.ptr != nil {
+				*errorOut = v.ptr
+			}
+		}
 		return C.int(-1)
 	}
 

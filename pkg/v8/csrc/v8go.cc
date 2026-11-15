@@ -1569,6 +1569,19 @@ void* v8go_promise_result(void* context_ptr, void* promise_ptr) {
     return wrapper;
 }
 
+// The exception for a failed module resolution: the error the Go resolver
+// supplied (such as Node's ERR_MODULE_NOT_FOUND, with its code and url), or a
+// plain Error with the fallback message when it supplied none.
+static Local<Value> resolveFailure(Isolate* isolate, void* error_value,
+                                   const std::string& fallback) {
+    if (error_value) {
+        ValueWrapper* w = static_cast<ValueWrapper*>(error_value);
+        if (!w->value.IsEmpty()) return w->value.Get(isolate);
+    }
+    return Exception::Error(
+        String::NewFromUtf8(isolate, fallback.c_str()).ToLocalChecked());
+}
+
 // ES Module resolver callback - called by V8 when it encounters an import
 static MaybeLocal<Module> moduleResolveCallback(
     Local<Context> context,
@@ -1606,19 +1619,18 @@ static MaybeLocal<Module> moduleResolveCallback(
     // Call Go to resolve and load the module
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
+    void* resolve_error = nullptr;
     int result = goModuleResolve(cw->module_resolver_id, 
         const_cast<char*>(specifier_str), 
         const_cast<char*>(referrer_name.c_str()), 
-        &resolved_source, &resolved_name);
+        &resolved_source, &resolved_name, &resolve_error);
     
     if (result != 0 || !resolved_source || !resolved_name) {
-        isolate->ThrowException(Exception::Error(
-            String::NewFromUtf8(isolate, 
-                (std::string("Cannot resolve module: ") + specifier_str).c_str()
-            ).ToLocalChecked()
-        ));
         if (resolved_source) free(resolved_source);
         if (resolved_name) free(resolved_name);
+        if (isolate->IsExecutionTerminating()) return MaybeLocal<Module>();
+        isolate->ThrowException(resolveFailure(isolate, resolve_error,
+            std::string("Cannot resolve module: ") + specifier_str));
         return MaybeLocal<Module>();
     }
     
@@ -1758,19 +1770,17 @@ static bool runDynamicImport(ContextWrapper* cw, Isolate* isolate,
     // Resolve + load the specifier's source via the Go loader.
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
+    void* resolve_error = nullptr;
     int r = goModuleResolve(cw->dynamic_resolver_id,
                             const_cast<char*>(spec.c_str()),
                             const_cast<char*>(referrer.c_str()),
-                            &resolved_source, &resolved_name);
+                            &resolved_source, &resolved_name, &resolve_error);
     if (r != 0 || !resolved_source || !resolved_name) {
         if (resolved_source) free(resolved_source);
         if (resolved_name) free(resolved_name);
         if (isolate->IsExecutionTerminating()) return false;
-        Local<Value> err = Exception::Error(
-            String::NewFromUtf8(isolate,
-                (std::string("Cannot find module '") + spec + "'").c_str())
-                .ToLocalChecked());
-        resolver->Reject(context, err).Check();
+        resolver->Reject(context, resolveFailure(isolate, resolve_error,
+            std::string("Cannot find module '") + spec + "'")).Check();
         return true;
     }
 

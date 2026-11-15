@@ -117,12 +117,21 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 		obj, _ := c.NewObject()
 		url, rerr := e.resolveToURL(specifier, parentURL)
 		if rerr != nil {
-			// Report the attempted path so the JS side can attach it to the
-			// Node ERR_MODULE_NOT_FOUND error's `url`, letting resolve hooks
-			// rewrite the extension and retry (ts-blank-space .js -> .ts).
-			av, _ := c.NewString(e.attemptedPath(specifier, parentURL))
-			obj.Set("url", av)
+			// Report Node's error (message, code and the missing module's url)
+			// for the JS side to throw, so resolve hooks can catch it and retry
+			// another candidate (ts-blank-space .js -> .ts).
 			obj.Set("found", c.False())
+			mv, _ := c.NewString(rerr.Error())
+			obj.Set("message", mv)
+			var me *moduleError
+			if errors.As(rerr, &me) {
+				cv, _ := c.NewString(me.code)
+				obj.Set("code", cv)
+				if me.url != "" {
+					uv, _ := c.NewString(me.url)
+					obj.Set("url", uv)
+				}
+			}
 			return obj
 		}
 		uv, _ := c.NewString(url)

@@ -17,8 +17,10 @@ extern "C" {
 #endif
 
 extern void* goCallbackHandler(void* ctx, int callbackID, void* info);
+// On failure goModuleResolve returns nonzero and may set *errorOut to a
+// ValueWrapper* holding the exception to throw (the resolver's own error object).
 extern int goModuleResolve(int resolverID, char* specifier, char* referrer,
-                           char** sourceOut, char** nameOut);
+                           char** sourceOut, char** nameOut, void** errorOut);
 // Near-heap-limit: return the new heap limit in bytes. Typically bump slightly
 // so TerminateExecution can unwind without FatalProcessOutOfMemory.
 extern size_t goNearHeapLimitCallback(int callbackID, size_t currentHeapLimit,
