@@ -403,6 +403,7 @@ func (f *FS) closeOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *
 		}
 		f.queueMu.Lock()
 		delete(f.queues, fd)
+		delete(f.queues, fd+readLaneOffset)
 		f.queueMu.Unlock()
 		return failed(file.Close(), "close", "")
 	}, fd, nil
@@ -455,7 +456,7 @@ func (f *FS) readOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 			v, _ := ctx.NewString(contents)
 			return v
 		}}
-	}, fd, nil
+	}, f.readLane(fd), nil
 }
 
 func (f *FS) fstatOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
@@ -582,5 +583,24 @@ func (f *FS) readvOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *
 			}
 			return arr
 		}}
-	}, fd, nil
+	}, f.readLane(fd), nil
+}
+
+// readLaneOffset keys the queue of reads on a pipe, socket or device apart from its other
+// calls.
+const readLaneOffset = 1 << 30
+
+// readLane is the queue a read on fd joins. On a regular file, reads and writes share one,
+// so positioned calls don't move each other's offset. On a pipe, socket or device, a read
+// may wait for data a later write supplies, so reads queue on their own and a write isn't
+// held up behind them.
+func (f *FS) readLane(fd int) int {
+	file, ok := f.fileForFD(fd)
+	if !ok {
+		return fd
+	}
+	if info, err := file.Stat(); err == nil && !info.Mode.IsRegular() && !info.IsDir {
+		return fd + readLaneOffset
+	}
+	return fd
 }
