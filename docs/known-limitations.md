@@ -59,10 +59,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
   back with) an error for those instead (`generateRSAKey`). `crypto.subtle.generateKey`
   shares the generator, so the same exponents give an `OperationError` there.
-- **[gap] No node:crypto `diffieHellman` with KeyObject.** The KeyObject surface
-  covers generate / import / export / equals, signing and RSA encryption, but not
-  key agreement. jose's default suite
-  uses the WebCrypto path, so this was not needed there. (#141)
 - **[approx] `KeyObject.equals` for asymmetric keys compares canonical JWK JSON**
   rather than DER (`keyEqualsFunc`). Functionally correct for equal keys; not the
   byte-for-byte SPKI comparison Node does.
@@ -231,11 +227,11 @@ traceability.
 - **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
   `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
   so a GCM context holds it in memory.
-- **[gap] `node:crypto` key agreement.** The module exposes
-  hash / hmac / random, ciphers, signatures + the KeyObject API, but **not**:
-  `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
-  `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
-  passes, but native `node:crypto` consumers of them will not work. (#141)
+- **[gap] `createECDH` and `diffieHellman` support P-256, P-384, P-521 and X25519.**
+  Go's standard library has no other curves, so `secp256k1`, Brainpool and the rest
+  are `ERR_CRYPTO_INVALID_CURVE`, and X448 and finite-field `dh` KeyObjects can't
+  agree keys. `DiffieHellman#verifyError` checks primality, safety, size and the
+  generator's range, not every condition OpenSSL's `DH_check` covers.
 - **[gap] No unpadded RSA private-key operations.** `privateDecrypt` and
   `privateEncrypt` with `RSA_NO_PADDING` throw `ERR_CRYPTO_UNSUPPORTED_OPERATION`: Go's
   RSA has no raw private-key operation, and doing it with `math/big` wouldn't be

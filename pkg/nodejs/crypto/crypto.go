@@ -94,6 +94,15 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		// Public-key encryption (pke.go).
 		"_rsaCrypt": c.rsaCryptFunc,
 
+		// Diffie-Hellman (dh.go).
+		"_dhGeneratePrime": c.dhGeneratePrimeFunc,
+		"_dhGroup":         c.dhGroupFunc,
+		"_dhCheck":         c.dhCheckFunc,
+		"_dhKeys":          c.dhKeysFunc,
+		"_dhSecret":        c.dhSecretFunc,
+		"_ecdh":            c.ecdhFunc,
+		"_keyAgreement":    c.keyAgreementFunc,
+
 		// Key derivation (kdf.go).
 		"_digestSize":  c.digestSizeFunc,
 		"_pbkdf2":      c.pbkdf2Func,
@@ -389,6 +398,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// publicEncrypt and friends over _rsaCrypt.
 	if _, err = rt.RunScript(pkeJS, "crypto_pke.js"); err != nil {
+		return err
+	}
+
+	// Diffie-Hellman, ECDH and symmetric generateKey.
+	if _, err = rt.RunScript(dhJS, "crypto_dh.js"); err != nil {
 		return err
 	}
 
