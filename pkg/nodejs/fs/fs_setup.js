@@ -1462,7 +1462,9 @@
     }
     return bigint ? toBigIntStats(s) : s;
   }
+  // BigInt stats are compared to the nanosecond, since their *Ms fields are whole.
   function sameStats(a, b) {
+    if (typeof a.mtimeNs === 'bigint' && (a.mtimeNs !== b.mtimeNs || a.ctimeNs !== b.ctimeNs)) return false;
     return a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.size === b.size && a.mode === b.mode &&
       a.ino === b.ino && a.dev === b.dev && a.uid === b.uid && a.gid === b.gid;
   }
