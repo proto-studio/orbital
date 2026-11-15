@@ -332,3 +332,26 @@ JSON.stringify(out);
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// Relative resolution keeps whether the base has an authority (and its user info), a
+// file: URL's path is always rooted, and url.resolve() removes only literal dot segments.
+// Expected values are Node 20.18.1's.
+func TestURL_RelativeAuthorityAndLegacyResolve(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const out = [new URL('b', 'foo:/a').href, new URL('/b', 'foo:/a').href, new URL('?q=1', 'foo:/a').href, new URL('#h', 'foo:/a').href,
+  new URL('b', 'foo://h/a').href, new URL('/b', 'file:///a').href, new URL('b', 'http://u:p@h/a').href,
+  new URL('file:notes.txt').href, new URL('file:notes.txt').pathname, new URL('file:./a/../b').href,
+  __url_module.resolve('http://h/a/', '%2e%2e/b'), __url_module.resolve('http://h/a/', '../b'), __url_module.resolve('http://h/a/b', './c/../d'), __url_module.resolve('http://example.com/', '/one'), __url_module.resolve('http://h/a/', '.%2e/b')];
+JSON.stringify(out);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `["foo:/b","foo:/b","foo:/a?q=1","foo:/a#h","foo://h/b","file:///b","http://u:p@h/b","file:///notes.txt","/notes.txt","file:///b","http://h/a/%2e%2e/b","http://h/b","http://h/a/d","http://example.com/one","http://h/a/.%2e/b"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}

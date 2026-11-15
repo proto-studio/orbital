@@ -112,16 +112,28 @@
 	}
 
 	// URL class
-	// Set while url.parse() reads a URL through this class: the legacy parser keeps dot
-	// segments.
-	let keepDotSegments = false;
+	// How the URL class treats dot segments while the legacy API reads a URL through it:
+	// 'keep' for url.parse(), 'literal' for url.resolve() (only "." and ".." themselves,
+	// not their %2e spellings), and 'standard' otherwise.
+	let dotSegmentMode = 'standard';
 
-	// The WHATWG URL parser's single- and double-dot path segments, %2e included.
-	function isSingleDot(segment) {
-		return segment === '.' || segment.toLowerCase() === '%2e';
+	function withDotSegmentMode(mode, fn) {
+		const previous = dotSegmentMode;
+		dotSegmentMode = mode;
+		try {
+			return fn();
+		} finally {
+			dotSegmentMode = previous;
+		}
 	}
 
-	function isDoubleDot(segment) {
+	// The WHATWG URL parser's single- and double-dot path segments, %2e included.
+	function isSingleDot(segment, literal) {
+		return segment === '.' || (!literal && segment.toLowerCase() === '%2e');
+	}
+
+	function isDoubleDot(segment, literal) {
+		if (literal) return segment === '..';
 		const s = segment.toLowerCase();
 		return s === '..' || s === '.%2e' || s === '%2e.' || s === '%2e%2e';
 	}
@@ -130,7 +142,7 @@
 	// "." is dropped, ".." drops the segment before it, and either one at the end leaves the
 	// path ending in "/". In a file: URL a leading Windows drive letter is written "C:" and
 	// ".." never removes it.
-	function removeDotSegments(path, isFile) {
+	function removeDotSegments(path, isFile, literal) {
 		const segments = path.split('/');
 		const out = [];
 		const isDrive = (segment) => /^[A-Za-z]:$/.test(segment);
@@ -140,10 +152,10 @@
 			if (isFile && out.length === 0 && /^[A-Za-z]\|$/.test(segment)) {
 				segment = segment[0] + ':';
 			}
-			if (isDoubleDot(segment)) {
+			if (isDoubleDot(segment, literal)) {
 				if (!(isFile && out.length === 1 && isDrive(out[0]))) out.pop();
 				if (last) out.push('');
-			} else if (isSingleDot(segment)) {
+			} else if (isSingleDot(segment, literal)) {
 				if (last) out.push('');
 			} else {
 				out.push(segment);
@@ -265,9 +277,12 @@
 
 			// A path made of segments loses its "." and ".." segments, as the WHATWG URL
 			// parser removes them. An opaque path, such as mailto:'s, is kept as is.
-			// url.parse() keeps the path as written, as Node's legacy parser does.
-			if (pathname.startsWith('/') && !keepDotSegments) {
-				pathname = removeDotSegments(pathname, protocol === 'file:');
+			// A file: URL's path is always rooted: file:notes.txt is /notes.txt.
+			if (protocol === 'file:' && !pathname.startsWith('/')) pathname = '/' + pathname;
+			// url.parse() keeps the path as written, and url.resolve() only removes literal
+			// dot segments, as Node's legacy API does.
+			if (pathname.startsWith('/') && dotSegmentMode !== 'keep') {
+				pathname = removeDotSegments(pathname, protocol === 'file:', dotSegmentMode === 'literal');
 			}
 
 			return { protocol, username, password, hostname, port, pathname, search, hash, slashes };
@@ -282,16 +297,20 @@
 				return base.protocol + relative;
 			}
 
+			// The base's scheme and, only if it has one, its authority with any user info:
+			// a base like foo:/a has none, and must not gain an empty one.
+			const prefix = base._authorityPrefix();
+
 			if (relative.startsWith('/')) {
-				return base.origin + relative;
+				return prefix + relative;
 			}
 
 			if (relative.startsWith('?')) {
-				return base.origin + base.pathname + relative;
+				return prefix + base.pathname + relative;
 			}
 
 			if (relative.startsWith('#')) {
-				return base.origin + base.pathname + base.search + relative;
+				return prefix + base.pathname + base.search + relative;
 			}
 
 			// Relative path. A file: URL whose path is only a drive letter keeps it, as
@@ -299,8 +318,27 @@
 			const basePath = base.protocol === 'file:' && /^\/[A-Za-z]:$/.test(base.pathname)
 				? base.pathname + '/'
 				: base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1);
-			return base.origin + basePath + relative;
+			return prefix + basePath + relative;
 		}
+
+		// _hasAuthority reports whether the URL serializes with "//": a file: URL always
+		// does, and so does any URL that had a host or was written with "//".
+		_hasAuthority() {
+			return !!(this._hostname || this._slashes || this._protocol === 'file:');
+		}
+
+		_authorityPrefix() {
+			let out = this._protocol;
+			if (!this._hasAuthority()) return out;
+			out += '//';
+			if (this._username) {
+				out += encodeURIComponent(this._username);
+				if (this._password) out += ':' + encodeURIComponent(this._password);
+				out += '@';
+			}
+			return out + this.host;
+		}
+
 
 		get protocol() { return this._protocol; }
 		set protocol(value) {
@@ -377,7 +415,7 @@
 			let url = this._protocol;
 			// A file: URL always has a host, if only an empty one, and so does any URL
 			// written with "//": both serialize with "//".
-			const hasAuthority = !!(this._hostname || this._slashes || this._protocol === 'file:');
+			const hasAuthority = this._hasAuthority();
 			if (hasAuthority) {
 				url += '//';
 				if (this._username) {
@@ -443,13 +481,7 @@
 
 		try {
 			// Try to parse as full URL
-			let url;
-			keepDotSegments = true;
-			try {
-				url = new URL(urlString);
-			} finally {
-				keepDotSegments = false;
-			}
+			const url = withDotSegmentMode('keep', () => new URL(urlString));
 			result.protocol = url.protocol;
 			result.slashes = url._slashes || null;
 			// When an authority ("//") was present the host is a string even if
@@ -654,7 +686,7 @@
 
 	// url.resolve function
 	function resolve(from, to) {
-		return new URL(to, from).href;
+		return withDotSegmentMode('literal', () => new URL(to, from).href);
 	}
 
 	// domainToASCII and domainToUnicode (simplified - no actual punycode)
