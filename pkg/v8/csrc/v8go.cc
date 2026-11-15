@@ -1842,16 +1842,22 @@ static std::vector<std::string> importAttributes(Isolate* isolate,
         if (!key->IsValue() || !value->IsValue()) continue;
         String::Utf8Value k(isolate, key.As<Value>());
         String::Utf8Value v(isolate, value.As<Value>());
-        out.emplace_back(*k ? *k : "");
-        out.emplace_back(*v ? *v : "");
+        // Keep the lengths: a key or value may contain a NUL.
+        out.emplace_back(*k ? std::string(*k, k.length()) : std::string());
+        out.emplace_back(*v ? std::string(*v, v.length()) : std::string());
     }
     return out;
 }
 
-// cStrings exposes strings to Go as a char* array (valid while strs lives).
-static std::vector<char*> cStrings(std::vector<std::string>& strs) {
+// cStrings exposes strings to Go as a char* array and their lengths (valid while
+// strs lives).
+static std::vector<char*> cStrings(std::vector<std::string>& strs,
+                                   std::vector<int>* lens) {
     std::vector<char*> out;
-    for (auto& s : strs) out.push_back(const_cast<char*>(s.c_str()));
+    for (auto& s : strs) {
+        out.push_back(const_cast<char*>(s.data()));
+        lens->push_back(static_cast<int>(s.size()));
+    }
     return out;
 }
 
@@ -1895,11 +1901,12 @@ static MaybeLocal<Module> moduleResolveCallback(
     void* resolve_error = nullptr;
     std::vector<std::string> attrs =
         importAttributes(isolate, context, import_attributes, 3);
-    std::vector<char*> attr_ptrs = cStrings(attrs);
+    std::vector<int> attr_lens;
+    std::vector<char*> attr_ptrs = cStrings(attrs, &attr_lens);
     int result = goModuleResolve(cw->module_resolver_id, 
         const_cast<char*>(specifier_str), 
         const_cast<char*>(referrer_name.c_str()), 
-        attr_ptrs.data(), static_cast<int>(attr_ptrs.size()),
+        attr_ptrs.data(), attr_lens.data(), static_cast<int>(attr_ptrs.size()),
         &resolved_source, &resolved_name, &resolve_error);
     
     if (result != 0 || !resolved_source || !resolved_name) {
@@ -2054,11 +2061,12 @@ static bool runDynamicImport(ContextWrapper* cw, Isolate* isolate,
     char* resolved_source = nullptr;
     char* resolved_name = nullptr;
     void* resolve_error = nullptr;
-    std::vector<char*> attr_ptrs = cStrings(attrs);
+    std::vector<int> attr_lens;
+    std::vector<char*> attr_ptrs = cStrings(attrs, &attr_lens);
     int r = goModuleResolve(cw->dynamic_resolver_id,
                             const_cast<char*>(spec.c_str()),
                             const_cast<char*>(referrer.c_str()),
-                            attr_ptrs.data(), static_cast<int>(attr_ptrs.size()),
+                            attr_ptrs.data(), attr_lens.data(), static_cast<int>(attr_ptrs.size()),
                             &resolved_source, &resolved_name, &resolve_error);
     if (r != 0 || !resolved_source || !resolved_name) {
         if (resolved_source) free(resolved_source);
@@ -2149,7 +2157,8 @@ static void dynamicImportJob(const FunctionCallbackInfo<Value>& info) {
             Local<Value> item;
             if (!list->Get(context, i).ToLocal(&item)) return;
             String::Utf8Value item_utf8(isolate, item);
-            attrs.emplace_back(*item_utf8 ? *item_utf8 : "");
+            attrs.emplace_back(*item_utf8
+                ? std::string(*item_utf8, item_utf8.length()) : std::string());
         }
     }
     // Run it at most once, however often the scheduler calls it.
@@ -2205,8 +2214,9 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
             .ToLocal(&scheduler) && scheduler->IsFunction()) {
         std::vector<Local<Value>> attr_values;
         for (auto& a : attrs) {
-            attr_values.push_back(String::NewFromUtf8(isolate, a.c_str())
-                                      .ToLocalChecked());
+            attr_values.push_back(String::NewFromUtf8(isolate, a.data(),
+                    NewStringType::kNormal, static_cast<int>(a.size()))
+                .ToLocalChecked());
         }
         Local<Value> items[4] = {
             resolver, specifier, referrer_value,

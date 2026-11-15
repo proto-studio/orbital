@@ -126,3 +126,32 @@ await r('./dep.mjs', { with: { type: 'json' } });`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A NUL inside an attribute key or value is kept, so it can't pass for `type` or
+// `json`. With or without a loader hook, each (module, type) pair keeps its first
+// outcome. Expected from Node 20.18.1.
+func TestImportAttributes_NULAndCacheWithHooks(t *testing.T) {
+	for _, hooked := range []bool{false, true} {
+		dir := t.TempDir()
+		register := ""
+		if hooked {
+			register = "import { register } from 'node:module';\nregister('./hooks.mjs', import.meta.url);\n"
+		}
+		writeFiles(t, dir, map[string]string{
+			"data.json": `{"a":1}`,
+			"hooks.mjs": `export async function resolve(s, c, n) { return n(s, c); }`,
+			"entry.mjs": register + `const r = async (o) => { try { await import('./data.json', o); log.push('ok'); } catch (e) { log.push(e.code); } };
+await r({ with: { type: 'json\0css' } });
+await r({ with: { 'type\0x': 'json' } });
+await r();
+await r({ with: { type: 'json' } });
+await r({ with: { type: 'json', foo: 'x' } });
+await r({ with: { type: 'javascript' } });`,
+		})
+		got := runLogModuleIn(t, dir)
+		want := `["ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","ok","ok","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED"]`
+		if got != want {
+			t.Fatalf("hooked=%v: got  %s\nwant %s", hooked, got, want)
+		}
+	}
+}

@@ -94,20 +94,30 @@ func moduleURL(url string) string {
 // (url, type) pair's module job, failed or not, and later imports of that pair
 // reuse it without checking again.
 func (e *ESM) checkAttributesOnce(url, format string, attrs []v8.ImportAttribute) error {
-	typ, ok := attrType(attrs)
-	if !ok {
-		typ = implicitType
-	}
-	key := url + "\x00" + typ
+	key := attrCheckKey(url, attrs)
 	if err, seen := e.attrChecks[key]; seen {
 		return err
 	}
 	err := checkImportAttributes(url, format, attrs)
+	e.recordAttrCheck(key, err)
+	return err
+}
+
+// attrCheckKey identifies the module job Node would reuse: the url and the
+// import's type (javascript when it names none).
+func attrCheckKey(url string, attrs []v8.ImportAttribute) string {
+	typ, ok := attrType(attrs)
+	if !ok {
+		typ = implicitType
+	}
+	return url + "\x00" + typ
+}
+
+func (e *ESM) recordAttrCheck(key string, err error) {
 	if e.attrChecks == nil {
 		e.attrChecks = map[string]error{}
 	}
 	e.attrChecks[key] = err
-	return err
 }
 
 // attrsJSON encodes attributes as the object a hook sees as importAttributes.
