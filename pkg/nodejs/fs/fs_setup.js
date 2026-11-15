@@ -1450,6 +1450,16 @@
       entries.set(path.basename(String(target)), stat);
       return entries;
     }
+    // Each directory is entered once, so links that lead back into the tree don't loop.
+    const visited = new Set();
+    const enter = (s) => {
+      if (!s.ino) return true;
+      const key = s.dev + ':' + s.ino;
+      if (visited.has(key)) return false;
+      visited.add(key);
+      return true;
+    };
+    enter(stat);
     const walk = (dir, prefix) => {
       let names;
       try {
@@ -1466,7 +1476,7 @@
           continue;
         }
         entries.set(rel, s);
-        if (recursive && s.isDirectory()) walk(path.join(dir, name), rel);
+        if (recursive && s.isDirectory() && enter(s)) walk(path.join(dir, name), rel);
       }
     };
     walk(target, '');

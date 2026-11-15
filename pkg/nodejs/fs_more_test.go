@@ -77,3 +77,22 @@ fs.cp(dir + '/src', dir + '/alias/out', { recursive: true }, (e) => done({
 	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "deeper": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "made": false})
 }
 
+
+// A recursive watch enters each directory once, so links back into the tree don't make it
+// walk every path through them.
+func TestFS_RecursiveWatchSkipsLinkCycles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		if err := os.Symlink(".", filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const start = Date.now();
+const w = fs.watch(%q, { recursive: true });
+w.close();
+done({ quick: Date.now() - start < 2000 });
+`, dir))
+	wantJSON(t, got, map[string]any{"quick": true})
+}
