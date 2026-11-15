@@ -56,10 +56,10 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
   back with) an error for those instead (`generateRSAKey`). `crypto.subtle.generateKey`
   shares the generator, so the same exponents give an `OperationError` there.
-- **[gap] No node:crypto one-shot sign/verify/encrypt with KeyObject.** The
-  KeyObject surface covers generate / import / export / equals only. `crypto.sign`,
-  `crypto.verify`, `privateEncrypt`, `publicDecrypt`, `createSign/createVerify`,
-  and `diffieHellman` for KeyObjects are not implemented. jose's default suite
+- **[gap] No node:crypto public-key encryption with KeyObject.** The
+  KeyObject surface covers generate / import / export / equals and signing.
+  `privateEncrypt`, `publicDecrypt` and `diffieHellman` for KeyObjects are not
+  implemented. jose's default suite
   uses the WebCrypto path, so this was not needed there. (#141)
 - **[approx] `KeyObject.equals` for asymmetric keys compares canonical JWK JSON**
   rather than DER (`keyEqualsFunc`). Functionally correct for equal keys; not the
@@ -225,11 +225,14 @@ traceability.
 - **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
   `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
   so a GCM context holds it in memory.
-- **[gap] `node:crypto` signature operations.** The module exposes
-  hash / hmac / random, ciphers + the KeyObject API, but **not**: `createSign` / `createVerify` and one-shot `sign` /
-  `verify`, `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
+- **[gap] `node:crypto` key agreement.** The module exposes
+  hash / hmac / random, ciphers, signatures + the KeyObject API, but **not**:
+  `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
   passes, but native `node:crypto` consumers of them will not work. (#141)
+- **[approx] Signatures cover RSA (PKCS#1 v1.5 and PSS), ECDSA and Ed25519.** DSA,
+  Ed448 and RSA with `RSA_X931_PADDING` aren't supported, and a `Sign` or `Verify`
+  keeps the data written to it until `sign()` or `verify()`.
 - **[gap] The `sm3` digest is unknown.** `pbkdf2` and `hkdf` take Node's other digests
   (MD5, SHA-1, SHA-2, SHA-3, SHAKE, RIPEMD-160, BLAKE2b-512, BLAKE2s-256 and MD5-SHA1)
   under Node's names and aliases, matched without regard to case (`digests.go`). Neither

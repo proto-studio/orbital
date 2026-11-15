@@ -204,6 +204,11 @@
     });
   };
 
+  // The registry handle behind a KeyObject, for sign.js.
+  crypto._keyHandle = function (key) {
+    return key[kHandle];
+  };
+
   crypto.KeyObject = KeyObject;
   crypto.createSecretKey = createSecretKey;
   crypto.createPrivateKey = createPrivateKey;

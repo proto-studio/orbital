@@ -87,6 +87,10 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_generateKeyPairAsync": c.generateKeyPairAsyncFunc,
 		"_randomBytesAsync":     c.randomBytesAsyncFunc,
 
+		// Signatures (sign.go).
+		"_sign":   c.signFunc,
+		"_verify": c.verifyFunc,
+
 		// Key derivation (kdf.go).
 		"_digestSize":  c.digestSizeFunc,
 		"_pbkdf2":      c.pbkdf2Func,
@@ -372,6 +376,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// X509Certificate over _x509Parse and _x509Check.
 	if _, err = rt.RunScript(x509JS, "crypto_x509.js"); err != nil {
+		return err
+	}
+
+	// createSign, createVerify, sign and verify over _sign and _verify.
+	if _, err = rt.RunScript(signJS, "crypto_sign.js"); err != nil {
 		return err
 	}
 
