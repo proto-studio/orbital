@@ -288,3 +288,59 @@ log.push((await import('./virt.js', { with: { type: 'a' } })).default, (await im
 		t.Fatalf("parentURLs %q, want %q", got, want)
 	}
 }
+
+// Attribute values a resolve hook supplies that aren't strings get Node's errors:
+// ERR_INVALID_ARG_TYPE for `type`, and the value as Node prints it for any other key.
+// A type holding a NUL keeps its own module. Expected from Node 20.18.1, each case in
+// a fresh runtime.
+func TestImportAttributes_NonStringHookValues(t *testing.T) {
+	hooks := `const table = { t42: { type: 42 }, tbig: { type: 10n }, tobj: { type: {} }, tnull: { type: null }, f42: { foo: 42 }, fobj: { foo: {} }, fbig: { foo: 10n } };
+export async function resolve(s, c, n) {
+  const m = s.match(/^\.\/(json|js)-(\w+)$/);
+  if (m) return { ...(await n(m[1] === 'json' ? './data.json' : './dep.mjs', c)), importAttributes: table[m[2]] };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('virt.js')) return { format: 'module', source: 'export default ' + JSON.stringify(c.importAttributes.type) + ';', shortCircuit: true };
+  return n(u, c);
+}`
+	argType := `The \"type\" argument must be of type string. Received `
+	cases := map[string]string{
+		"t42":   `["TypeError","ERR_INVALID_ARG_TYPE","` + argType + `type number (42)"]`,
+		"tbig":  `["TypeError","ERR_INVALID_ARG_TYPE","` + argType + `type bigint (10n)"]`,
+		"tobj":  `["TypeError","ERR_INVALID_ARG_TYPE","` + argType + `an instance of Object"]`,
+		"tnull": `["TypeError","ERR_INVALID_ARG_TYPE","` + argType + `null"]`,
+		"f42":   `["TypeError","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","Import attribute \"foo\" with value \"42\" is not supported"]`,
+		"fobj":  `["TypeError","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","Import attribute \"foo\" with value \"{}\" is not supported"]`,
+		"fbig":  `["TypeError","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","Import attribute \"foo\" with value \"10n\" is not supported"]`,
+	}
+	for name, want := range cases {
+		for _, f := range []string{"json", "js"} {
+			dir := t.TempDir()
+			writeFiles(t, dir, map[string]string{
+				"data.json": `{"a":1}`,
+				"dep.mjs":   `export default 1;`,
+				"hooks.mjs": hooks,
+				"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('./` + f + `-` + name + `'); log.push('ok'); } catch (e) { log.push([e.name, e.code, e.message]); }`,
+			})
+			if got := runLogModuleIn(t, dir); got != "["+want+"]" {
+				t.Errorf("%s %s: got %s, want [%s]", f, name, got, want)
+			}
+		}
+	}
+
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"virt.js":   ``,
+		"hooks.mjs": hooks,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('./virt.js', { with: { type: 'a\0x' } }), b = await import('./virt.js', { with: { type: 'a' } });
+log.push(a.default, b.default, a === b);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["a\u0000x","a",false]`; got != want {
+		t.Fatalf("NUL type: got %s, want %s", got, want)
+	}
+}

@@ -217,7 +217,8 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			if checkFormat == "" {
 				checkFormat = format
 			}
-			if cerr := checkImportAttributes(e.displayURL(url), checkFormat, parseAttrsJSON(argString(info, 2))); cerr != nil {
+			attrs, typeReceived := parseAttrsJSON(argString(info, 2))
+			if cerr := checkHookAttributes(e.displayURL(url), checkFormat, attrs, typeReceived); cerr != nil {
 				me := cerr.(*moduleError)
 				mv, _ := c.NewString(me.msg)
 				cv, _ := c.NewString(me.code)
@@ -310,7 +311,8 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	// its outcome, without loading again.
 	check, key := "", ""
 	if attrs != nil {
-		key = attrCheckKey(url, parseAttrsJSON(resolvedAttrs))
+		resolvedList, _ := parseAttrsJSON(resolvedAttrs)
+		key = attrCheckKey(url, resolvedList)
 		if prior, seen := e.attrChecks[key]; seen {
 			if prior != nil {
 				return "", "", prior
@@ -349,7 +351,8 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	if attrs == nil {
 		return final, url, nil
 	}
-	return final, e.typedKey(url, format, parseAttrsJSON(resolvedAttrs)), nil
+	resolvedList, _ := parseAttrsJSON(resolvedAttrs)
+	return final, e.typedKey(url, format, resolvedList), nil
 }
 
 // callLoaderRealm invokes a global function in the loader realm with string args
