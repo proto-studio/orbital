@@ -1,6 +1,8 @@
 // Order of process.nextTick callbacks, promise reactions, queueMicrotask and timers. Node
 // runs the tick queue, then the microtask queue, until both are empty, whenever the
-// outermost callback into JavaScript returns. Each case runs on its own, well after the last.
+// outermost callback into JavaScript returns. Each case runs on its own, after the last has
+// finished: a case that takes a done argument calls it from its last callback, and any other
+// is done once its ticks and microtasks have run.
 'use strict';
 const { EventEmitter } = require('events');
 const { Readable, Writable, PassThrough } = require('stream');
@@ -69,33 +71,38 @@ const cases = {
     process.nextTick(() => log('main tick'));
     Promise.resolve().then(() => log('main promise'));
   },
-  'timers'() {
+  'timers'(done) {
     for (const name of ['timeout1', 'timeout2']) {
       setTimeout(() => {
         log(name);
         Promise.resolve().then(() => log('promise in ' + name));
         process.nextTick(() => log('tick in ' + name));
+        if (name === 'timeout2') setTimeout(done, 0);
       }, 0);
     }
   },
-  'interval'() {
+  'interval'(done) {
     let i = 0;
     const h = setInterval(() => {
       const n = ++i;
       log('interval ' + n);
       Promise.resolve().then(() => log('promise ' + n));
       process.nextTick(() => log('tick ' + n));
-      if (n === 3) clearInterval(h);
+      if (n === 3) {
+        clearInterval(h);
+        setTimeout(done, 0);
+      }
     }, 1);
   },
-  'immediate'() {
+  'immediate'(done) {
     setImmediate(() => {
       log('immediate');
       Promise.resolve().then(() => log('promise in immediate'));
       process.nextTick(() => log('tick in immediate'));
+      setTimeout(done, 0);
     });
   },
-  'I/O callbacks'() {
+  'I/O callbacks'(done) {
     fs.readdir('.', () => {
       log('readdir');
       Promise.resolve().then(() => log('promise in readdir'));
@@ -104,6 +111,7 @@ const cases = {
         log('promises.stat');
         process.nextTick(() => log('tick in promises.stat'));
         Promise.resolve().then(() => log('promise in promises.stat'));
+        setTimeout(done, 0);
       });
     });
   },
@@ -151,7 +159,7 @@ const cases = {
     const t = () => { if (++count < 1000) process.nextTick(t); };
     process.nextTick(t);
   },
-  'exceptions'() {
+  'exceptions'(done) {
     process.on('uncaughtException', function handler(e) {
       log('uncaught ' + e.message);
       process.nextTick(() => log('tick from handler'));
@@ -162,6 +170,7 @@ const cases = {
       process.nextTick(() => log('t after'));
       queueMicrotask(() => { throw new Error('in queueMicrotask'); });
       queueMicrotask(() => log('after queueMicrotask'));
+      setTimeout(done, 0);
     }, 1);
   },
   'unhandled rejections'() {
@@ -186,7 +195,10 @@ const names = Object.keys(cases);
 const run = (i) => {
   if (i === names.length) return;
   log('== ' + names[i]);
-  cases[names[i]]();
-  setTimeout(() => run(i + 1), 40);
+  const next = () => run(i + 1);
+  const test = cases[names[i]];
+  test(next);
+  // Ticks and microtasks all run before the first timer.
+  if (test.length === 0) setTimeout(next, 0);
 };
 run(0);
