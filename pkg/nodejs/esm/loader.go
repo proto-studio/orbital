@@ -1290,7 +1290,7 @@ func (e *ESM) resolveAndLoadDefault(specifier, referrer string, attrs []v8.Impor
 	if err != nil {
 		return "", "", err
 	}
-	return final, url, nil
+	return final, e.typedKey(url, format, attrs), nil
 }
 
 func min(a, b int) int {

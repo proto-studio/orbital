@@ -155,3 +155,46 @@ await r({ with: { type: 'javascript' } });`,
 		}
 	}
 }
+
+// Through hooks: an attribute a resolve hook sets to undefined is still checked, a
+// module a load hook generates per type is a separate instance for each type (but a
+// JSON module keeps its first value, and import.meta.url leaves the type out), and a
+// query stays in the url an attribute error names. Expected from Node 20.18.1.
+func TestImportAttributes_HookEdgeCases(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"data.json": `{"a":1}`,
+		"virt.json": `{}`,
+		"virt.js":   ``,
+		"dep.mjs":   `export default import.meta.url.split('/').pop();`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s.endsWith('undef.mjs')) return { ...(await n('./dep.mjs', c)), importAttributes: { foo: undefined } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('virt.json')) return { format: 'json', source: JSON.stringify({ t: c.importAttributes.type }), shortCircuit: true };
+  if (u.endsWith('virt.js')) return { format: 'module', source: 'export default ' + JSON.stringify(c.importAttributes.type) + '; export const u = import.meta.url;', shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const r = async (s, o) => { try { const ns = await import(s, o); log.push(JSON.stringify(ns.default)); } catch (e) { log.push(e.code + ' ' + e.message.replace(/file:\/\/\S*\//, '')); } };
+await r('./undef.mjs');
+await r('./virt.json', { with: { type: 'json' } });
+await r('./virt.json', { with: { type: 'xml' } });
+await r('./data.json?x');
+await r('./dep.mjs?q', {});
+const a = await import('./virt.js', { with: { type: 'a' } });
+const b = await import('./virt.js', { with: { type: 'b' } });
+const c = await import('./virt.js', { with: { type: 'a' } });
+log.push([a.default, b.default, c.default, a === c, a.u.split('/').pop()]);`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED Import attribute \"foo\" with value \"undefined\" is not supported",` +
+		`"{\"t\":\"json\"}","{\"t\":\"json\"}",` +
+		`"ERR_IMPORT_ASSERTION_TYPE_MISSING Module \"data.json?x\" needs an import attribute of type \"json\"",` +
+		`"\"dep.mjs?q\"",["a","b","a",true,"virt.js"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

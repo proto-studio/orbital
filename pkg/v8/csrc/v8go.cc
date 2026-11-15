@@ -445,7 +445,9 @@ static void hostInitializeImportMeta(Local<Context> context,
             }
         }
     }
-    std::string href = url;
+    // A module imported with a type is cached under "<url>\x01<type>"; the
+    // type isn't part of its url.
+    std::string href = url.substr(0, url.find('\x01'));
     if (!href.empty() && href.rfind("node:", 0) != 0 &&
         href.rfind("file://", 0) != 0 && href[0] == '/') {
         href = "file://" + href;

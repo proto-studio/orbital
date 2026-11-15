@@ -27,6 +27,7 @@ var formatTypes = map[string]string{
 
 // checkImportAttributes validates an import's attributes against the format of
 // the module it loads. url is the module's resolved url.
+// url is the module url as Node reports it (displayURL).
 func checkImportAttributes(url, format string, attrs []v8.ImportAttribute) error {
 	for _, a := range attrs {
 		if a.Key != "type" {
@@ -49,7 +50,7 @@ func checkImportAttributes(url, format string, attrs []v8.ImportAttribute) error
 		return nil
 	case !hasType:
 		return attrTypeError("ERR_IMPORT_ASSERTION_TYPE_MISSING",
-			`Module "`+moduleURL(url)+`" needs an import attribute of type "`+want+`"`)
+			`Module "`+url+`" needs an import attribute of type "`+want+`"`)
 	default:
 		return invalidAttrType(url, typ)
 	}
@@ -60,7 +61,7 @@ func checkImportAttributes(url, format string, attrs []v8.ImportAttribute) error
 func invalidAttrType(url, typ string) error {
 	if typ == "json" {
 		return attrTypeError("ERR_IMPORT_ASSERTION_TYPE_FAILED",
-			`Module "`+moduleURL(url)+`" is not of type "`+typ+`"`)
+			`Module "`+url+`" is not of type "`+typ+`"`)
 	}
 	return attrTypeError("ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED",
 		`Import attribute type "`+typ+`" is unsupported`)
@@ -80,13 +81,39 @@ func attrType(attrs []v8.ImportAttribute) (string, bool) {
 	return "", false
 }
 
-// moduleURL is a module's url as Node reports it: file: URLs for files, builtins
-// as node:<name>.
-func moduleURL(url string) string {
-	if strings.HasPrefix(url, "node:") || strings.HasPrefix(url, "native:") || strings.HasPrefix(url, "file:") {
+// displayURL is a module's url as Node reports it: a file: URL (with any query
+// or fragment) for a file, node:<name> for a builtin.
+func (e *ESM) displayURL(key string) string {
+	if i := strings.IndexByte(key, typeKeySep); i >= 0 {
+		key = key[:i]
+	}
+	if strings.HasPrefix(key, "node:") || strings.HasPrefix(key, "native:") || strings.HasPrefix(key, "file:") {
+		return key
+	}
+	if p, ok := e.keyPaths[key]; ok && strings.HasPrefix(key, p) {
+		return fileURL(p) + key[len(p):]
+	}
+	return fileURL(key)
+}
+
+// typeKeySep separates a module url from the import type in its cache key.
+const typeKeySep = '\x01'
+
+// typedKey is the module cache key for url imported with a type: like Node,
+// which keys modules by url and type, so a hook can load a url differently per
+// type. import.meta.url leaves the type out. JSON is the exception: Node keeps
+// a JSON module's value per file, so every import of it shares the first.
+func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
+	typ, ok := attrType(attrs)
+	if !ok || format == "json" {
 		return url
 	}
-	return fileURL(url)
+	key := url + string(typeKeySep) + typ
+	if e.keyPaths == nil {
+		e.keyPaths = map[string]string{}
+	}
+	e.keyPaths[key] = e.pathOf(url)
+	return key
 }
 
 // checkAttributesOnce validates an import's attributes the first time a module
@@ -98,7 +125,7 @@ func (e *ESM) checkAttributesOnce(url, format string, attrs []v8.ImportAttribute
 	if err, seen := e.attrChecks[key]; seen {
 		return err
 	}
-	err := checkImportAttributes(url, format, attrs)
+	err := checkImportAttributes(e.displayURL(url), format, attrs)
 	e.recordAttrCheck(key, err)
 	return err
 }
@@ -136,27 +163,30 @@ func attrsJSON(attrs []v8.ImportAttribute) string {
 	return b.String()
 }
 
-// parseAttrsJSON decodes an importAttributes object a hook returned, keeping its
-// key order. Non-string values are kept as their JSON text.
+// parseAttrsJSON decodes the attributes the loader realm passes back: a JSON
+// array of [key, value] pairs (see encodeAttrs in loader-hooks.js), keeping
+// their order. A value that isn't a string becomes its string form, as Node
+// prints it.
 func parseAttrsJSON(s string) []v8.ImportAttribute {
-	dec := json.NewDecoder(strings.NewReader(s))
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+	var pairs [][2]json.RawMessage
+	if json.Unmarshal([]byte(s), &pairs) != nil {
 		return nil
 	}
-	var attrs []v8.ImportAttribute
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return attrs
+	attrs := make([]v8.ImportAttribute, 0, len(pairs))
+	for _, p := range pairs {
+		var key, val string
+		if json.Unmarshal(p[0], &key) != nil {
+			continue
 		}
-		key, _ := tok.(string)
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			return attrs
+		var marker struct {
+			Undefined bool `json:"undefined"`
 		}
-		var val string
-		if json.Unmarshal(raw, &val) != nil {
-			val = string(raw)
+		switch {
+		case json.Unmarshal(p[1], &val) == nil:
+		case json.Unmarshal(p[1], &marker) == nil && marker.Undefined:
+			val = "undefined"
+		default:
+			val = string(p[1])
 		}
 		attrs = append(attrs, v8.ImportAttribute{Key: key, Value: val})
 	}
