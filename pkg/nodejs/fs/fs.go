@@ -631,7 +631,7 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 		if t.IsZero() {
 			t = stat.ModTime
 		}
-		return float64(t.UnixNano()) / 1e6
+		return millis(t)
 	}
 
 	// These must be numbers even when unknown: the `etag` module's isStats() guard requires
@@ -656,6 +656,12 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	num("ctimeMs", ms(stat.ChangeTime))
 	num("birthtimeMs", ms(stat.BirthTime))
 	return obj
+}
+
+// millis gives t in milliseconds since 1970, with a fraction, as fs.Stats does. It works from
+// seconds and nanoseconds, since nanoseconds since 1970 overflow an int64 past 2262.
+func millis(t time.Time) float64 {
+	return float64(t.Unix())*1000 + float64(t.Nanosecond())/1e6
 }
 
 // POSIX file type and mode bits, as st_mode carries them and Node's fs.Stats reports them.

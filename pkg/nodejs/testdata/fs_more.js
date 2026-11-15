@@ -236,6 +236,21 @@ async function testOpendir() {
     d.closeSync();
     return { names: names.sort(), path: local(d.path), dir: d instanceof fs.Dir };
   });
+  attempt('opendir_recursive', () => {
+    fs.mkdirSync(file('od/b/c'));
+    fs.writeFileSync(file('od/b/c/deep'), 'd');
+    const d = fs.opendirSync(file('od'), { recursive: true });
+    const names = [];
+    let e;
+    while ((e = d.readSync()) !== null) names.push(e.name + ' ' + local(e.parentPath));
+    d.closeSync();
+    return names.sort();
+  });
+  await attemptAsync('opendir_recursive_promise', async () => {
+    const names = [];
+    for await (const e of await fsp.opendir(file('od'), { recursive: true })) names.push(e.name);
+    return names.sort();
+  });
   attempt('opendir_missing', () => fs.opendirSync(file('missing')));
   attempt('opendir_file', () => fs.opendirSync(file('od/a')));
   attempt('opendir_closed', () => { const d = fs.opendirSync(file('od')); d.closeSync(); return d.readSync(); });
@@ -287,6 +302,20 @@ async function testCp() {
   attempt('cp_force', () => { fs.cpSync(file('cp_file'), file('cp_dst/a')); return read('cp_dst/a'); });
   attempt('cp_filter', () => { fs.cpSync(file('cp_src'), file('cp_filtered'), { recursive: true, filter: (src) => !src.endsWith('b') }); return tree('cp_filtered'); });
   attempt('cp_filter_promise', () => fs.cpSync(file('cp_src'), file('cp_x'), { recursive: true, filter: () => Promise.resolve(true) }));
+  attempt('cp_read_only_dir', () => {
+    fs.mkdirSync(file('cp_ro/sub'), { recursive: true });
+    fs.writeFileSync(file('cp_ro/sub/f'), 'ro');
+    fs.chmodSync(file('cp_ro/sub'), 0o555);
+    fs.chmodSync(file('cp_ro'), 0o555);
+    try {
+      fs.cpSync(file('cp_ro'), file('cp_ro_copy'), { recursive: true });
+      return [read('cp_ro_copy/sub/f'), mode('cp_ro_copy'), mode('cp_ro_copy/sub')];
+    } finally {
+      for (const name of ['cp_ro', 'cp_ro/sub', 'cp_ro_copy', 'cp_ro_copy/sub']) {
+        try { fs.chmodSync(file(name), 0o755); } catch (e) {}
+      }
+    }
+  });
   attempt('cp_timestamps', () => {
     fs.utimesSync(file('cp_file'), 100, 200);
     fs.cpSync(file('cp_file'), file('cp_times'), { preserveTimestamps: true });
@@ -358,6 +387,16 @@ async function testWatch() {
     for (let i = 0; i < 100 && !seen.length; i++) await tick(20);
     fs.unwatchFile(file('w/polled'), listener);
     return [seen[0], typeof watcher.ref, typeof watcher.unref];
+  });
+  await attemptAsync('unwatchFile_other_spelling', async () => {
+    fs.writeFileSync(file('w/spelled'), 'a');
+    let calls = 0;
+    fs.watchFile(dir + '/w/./spelled', { interval: 20 }, () => { calls++; });
+    await tick(60);
+    fs.unwatchFile(dir + '/w/../w/spelled');
+    fs.writeFileSync(file('w/spelled'), 'abcdef');
+    await tick(150);
+    return calls;
   });
   attempt('watchFile_no_listener', () => fs.watchFile(file('w/polled')));
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -52,3 +53,27 @@ fs.cp('/f', '/f', (e) => done({ sync: code, async: e && e.code, contents: fs.rea
 `)
 	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "contents": "keep"})
 }
+
+// cp refuses to copy a directory into itself through a link to it, as Node does, rather than
+// copying it into itself again and again.
+func TestFS_CpIntoSelfThroughLink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("src", filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+const code = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.code; } };
+const sync = code(() => fs.cpSync(dir + '/src', dir + '/alias/out', { recursive: true }));
+const deeper = code(() => fs.cpSync(dir + '/src', dir + '/alias/sub/out', { recursive: true }));
+fs.cp(dir + '/src', dir + '/alias/out', { recursive: true }, (e) => done({
+  sync, deeper, async: e && e.code, made: fs.existsSync(dir + '/src/out'),
+}));
+`, dir))
+	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "deeper": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "made": false})
+}
+
