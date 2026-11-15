@@ -172,3 +172,31 @@ try { process.setUncaughtExceptionCaptureCallback(() => {}); } catch (e) { note(
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
+
+// With no domain listening, process 'uncaughtException' listeners run with no domain
+// entered, and removing a domain's 'error' listeners lets exceptions through to them.
+// Expected values are Node 20.18.1's.
+func TestDomain_ProcessHandlerRunsOutsideDomain(t *testing.T) {
+	notes, err := runUncaught(t, `
+const domain = require('domain');
+const d = domain.create();
+process.once('uncaughtException', (e) => {
+  note('process handler', e.message, process.domain === d, domain._stack.length);
+  setTimeout(() => {
+    note('later', domain._stack.length, String(domain.active));
+    const d2 = domain.create();
+    d2.on('error', () => note('domain got it'));
+    process.once('uncaughtException', (e2) => note('process handler', e2.message));
+    d2.run(() => { d2.removeAllListeners('error'); throw new Error('removed'); });
+  }, 5);
+});
+d.run(() => { throw new Error('boom'); });
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	want := []string{"process handler boom false 0", "later 0 null", "process handler removed"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}

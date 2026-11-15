@@ -51,26 +51,15 @@
     }
   }
 
-  function stackListens() {
-    return stack.some((domain) => domain.listenerCount('error') > 0);
-  }
-
   // Bind fn to the domain active when it was scheduled, so it runs with that domain
-  // entered. If it throws and a domain on the stack listens for 'error', the domain stays
-  // entered for its handler, which then empties the stack; otherwise it is exited first,
-  // so process 'uncaughtException' listeners run outside it, as in Node.
+  // entered. An exception leaves the domain entered, for the domain's handler to find; the
+  // stack is cleared once the exception has been handled, either way.
   function bindToActive(fn) {
     const domain = exports.active;
     if (!domain || typeof fn !== 'function') return fn;
     return function domainBound(...args) {
       domain.enter();
-      let ret;
-      try {
-        ret = apply(fn, this, args);
-      } catch (err) {
-        if (!stackListens()) domain.exit();
-        throw err;
-      }
+      const ret = apply(fn, this, args);
       domain.exit();
       return ret;
     };
@@ -121,6 +110,16 @@
       };
     }
     if (p) p.domain = null;
+
+    // An exception no domain took ends the current tick, so process 'uncaughtException'
+    // listeners run with no domain entered, as in Node.
+    if (p && typeof p.emit === 'function') {
+      const processEmit = p.emit;
+      p.emit = function emit(type, ...args) {
+        if (type === 'uncaughtException' && stack.length > 0) domainUncaughtExceptionClear();
+        return apply(processEmit, this, [type, ...args]);
+      };
+    }
 
     wrapScheduler(global, 'setTimeout', 0);
     wrapScheduler(global, 'setInterval', 0);
@@ -207,6 +206,14 @@
       }
       Object.defineProperty(ee, 'domain', { configurable: true, enumerable: false, value: this, writable: true });
       this.members.push(ee);
+    }
+
+    // This EventEmitter does not report each listener removeAllListeners() drops, so the
+    // capture callback is looked at again here.
+    removeAllListeners(...args) {
+      const ret = super.removeAllListeners(...args);
+      updateExceptionCapture();
+      return ret;
     }
 
     remove(ee) {
