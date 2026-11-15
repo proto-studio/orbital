@@ -259,8 +259,9 @@
       if (isIP(host)) {
         // As in Node, an address connects on the next tick, so listeners added after
         // connect() see 'connectionAttempt'.
+        const id = this._id;
         process.nextTick(() => {
-          if (!this.connecting) return;
+          if (!this.connecting || this._id !== id) return;
           this._connectAttempts([{
             address: host,
             family: isIP(host),
@@ -270,9 +271,10 @@
         return this;
       }
 
+      const lookupId = this._id;
       internal.lookupAll(this._id, host, family, (encoded) => {
         const result = JSON.parse(encoded);
-        if (!this.connecting) return;
+        if (!this.connecting || this._id !== lookupId) return;
         if (result.error) {
           const err = nodeError(result.error);
           this.emit('lookup', err, undefined, undefined, host);
@@ -312,8 +314,9 @@
         this.connecting = false;
         this.destroy(err);
       };
+      const lookupId = this._id;
       options.lookup(host, dnsOptions, (err, address, addressType) => {
-        if (!this.connecting) return;
+        if (!this.connecting || this._id !== lookupId) return;
         if (err) {
           this.emit('lookup', err, address, addressType, host);
           fail(err);
@@ -351,6 +354,10 @@
     // Tries addresses one at a time, alternating families from the first address's, and
     // gives each but the last attemptTimeout ms before moving on, as Node does.
     _connectAttempts(addresses, port, attemptTimeout) {
+      // Callbacks belong to this connection: a destroyed or reconnected socket ignores them.
+      this._clearAttemptTimer();
+      const id = this._id;
+      const isCurrent = () => this.connecting && this._id === id;
       const groups = [[], []];
       let order = null;
       for (const entry of addresses) {
@@ -370,7 +377,7 @@
       let current = 0;
 
       const next = () => {
-        if (!this.connecting) return;
+        if (!isCurrent()) return;
         if (current === toAttempt.length) {
           const err = new AggregateError(errors);
           err.code = errors[0] && errors[0].code;
@@ -381,16 +388,16 @@
         const last = current === toAttempt.length;
         if (multiple) this.autoSelectFamilyAttemptedAddresses.push(`${entry.address}:${port}`);
         this.emit('connectionAttempt', entry.address, port, entry.family);
-        if (!this.connecting) return;
+        if (!isCurrent()) return;
 
         let settled = false;
         let timer = null;
         if (multiple && !last) {
-          timer = setTimeout(() => {
-            if (settled) return;
+          timer = this._attemptTimer = setTimeout(() => {
+            this._attemptTimer = null;
+            if (settled || !isCurrent()) return;
             settled = true;
-            internal.abortAttempt(this._id);
-            if (!this.connecting) return;
+            internal.abortAttempt(id);
             this.emit('connectionAttemptTimeout', entry.address, port, entry.family);
             errors.push(nodeError(JSON.parse(internal.timeoutError(entry.address, port))));
             next();
@@ -399,8 +406,11 @@
         entry.dial((encoded) => {
           if (settled) return;
           settled = true;
-          if (timer) clearTimeout(timer);
-          if (!this.connecting) return;
+          if (timer) {
+            clearTimeout(timer);
+            if (this._attemptTimer === timer) this._attemptTimer = null;
+          }
+          if (!isCurrent()) return;
           const result = JSON.parse(encoded);
           if (result.error) {
             const err = nodeError(result.error);
@@ -565,9 +575,17 @@
       });
     }
 
+    _clearAttemptTimer() {
+      if (this._attemptTimer) {
+        clearTimeout(this._attemptTimer);
+        this._attemptTimer = null;
+      }
+    }
+
     _destroy(exception, cb) {
       this.connecting = false;
       this._clearTimeoutTimer();
+      this._clearAttemptTimer();
       // http marks this too, to report a connection's failure only once.
       if (exception) this._hadError = true;
       this._closeTransport();

@@ -145,6 +145,34 @@ func TestNet_HappyEyeballs(t *testing.T) {
 		})
 	})
 
+	t.Run("a destroyed attempt's timer doesn't reach the next connection", func(t *testing.T) {
+		got := runJS(t, &runtime.Config{DNSResolver: resolver, SocketFactory: newFactory()}, `
+const net = require('net');
+const s = net.connect({ host: 'dual.test', port: 443 });
+s.on('error', () => {});
+setTimeout(() => {
+  s.destroy();
+  s.once('close', () => {
+    const log = [];
+    const t0 = Date.now();
+    s.connect({ host: 'dual.test', port: 443 });
+    for (const ev of ['connectionAttempt', 'connectionAttemptTimeout']) {
+      s.on(ev, (ip) => log.push(ev + ' ' + ip));
+    }
+    s.on('connect', () => { log.push('connect'); const ms = Date.now() - t0; s.destroy(); done({ log, late: ms >= 240 }); });
+  });
+}, 100);`)
+		wantJSON(t, got, map[string]any{
+			"log": []any{
+				"connectionAttempt 2001:db8::1",
+				"connectionAttemptTimeout 2001:db8::1",
+				"connectionAttempt 192.0.2.10",
+				"connect",
+			},
+			"late": true,
+		})
+	})
+
 	t.Run("each address is still subject to the policy", func(t *testing.T) {
 		factory := newFactory()
 		filtered := runtime.NewFilteredSocketFactory(factory, &denyIP{ip: "192.0.2.10"})
