@@ -63,8 +63,10 @@
       path,
 
       // read(buffer[, offset[, length[, position]]]), read(buffer, options) or read(options).
+      // The read is queued on the descriptor before this returns, so a close made after it
+      // waits for it.
       read(buffer, offset, length, position) {
-        return attempt(() => {
+        return new Promise((resolve, reject) => {
           if (!ArrayBuffer.isView(buffer)) {
             ({ buffer = Buffer.alloc(16384), offset, length, position } = buffer || {});
           } else if (offset !== null && typeof offset === 'object') {
@@ -72,10 +74,9 @@
           }
           const start = offset === undefined || offset === null ? 0 : offset;
           const count = length === undefined || length === null ? buffer.byteLength - start : length;
-          return { buffer, start, count, position: position === undefined ? null : position };
-        }).then(({ buffer, start, count, position }) => new Promise((resolve, reject) => {
-          fs.read(fd, buffer, start, count, position, (err, bytesRead) => (err ? reject(err) : resolve({ bytesRead, buffer })));
-        }));
+          fs.read(fd, buffer, start, count, position === undefined ? null : position,
+            (err, bytesRead) => (err ? reject(err) : resolve({ bytesRead, buffer })));
+        });
       },
 
       write(data, ...args) {

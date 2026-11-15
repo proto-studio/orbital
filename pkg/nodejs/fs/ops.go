@@ -191,6 +191,8 @@ func (f *FS) registerOps(regFn func(string, v8.FunctionCallback) error) error {
 		"futimes":    f.futimesOp,
 		"statfs":     f.statfsOp,
 		"access":     f.accessOp,
+		"readv":      f.readvOp,
+		"writev":     f.writevOp,
 	}
 	for name, op := range ops {
 		if err := regFn(name+"Sync", f.syncCall(op)); err != nil {
@@ -477,4 +479,94 @@ func (f *FS) rmTargetOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int
 		}
 		return opResult{value: func(ctx *v8.Context) *v8.Value { return f.createStatObject(ctx, stat) }}
 	}, -1, nil
+}
+
+// vectorAt reads an array argument as its items.
+func vectorAt(args []*v8.Value, i int) []*v8.Value {
+	v := argAt(args, i)
+	if v == nil || !v.IsArray() {
+		return nil
+	}
+	items := make([]*v8.Value, v.ArrayLength())
+	for j := range items {
+		items[j], _ = v.GetIndex(j)
+	}
+	return items
+}
+
+// writevOp backs writev(fd, [base64Data...], position) and gives the bytes written. The
+// buffers are written in one call on the descriptor, so a close made after it waits for all
+// of them. A position of -1 means the file's offset.
+func (f *FS) writevOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
+	fd := fdAt(args)
+	var chunks [][]byte
+	for _, item := range vectorAt(args, 1) {
+		data, err := decodeData(item)
+		if err != nil {
+			return nil, -1, ctx.Throw(err.Error())
+		}
+		chunks = append(chunks, data)
+	}
+	position := intAt(args, 2)
+	return func() opResult {
+		file, ok := f.fileForFD(fd)
+		if !ok {
+			return failed(syscall.EBADF, "write", "")
+		}
+		total := 0
+		for _, data := range chunks {
+			n, err := atPosition(file, position, func() (int, error) { return file.Write(data) })
+			if err != nil {
+				return failed(err, "write", "")
+			}
+			total += n
+			if position >= 0 {
+				position += int64(n)
+			}
+			if n < len(data) {
+				break
+			}
+		}
+		return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(int64(total)) }}
+	}, fd, nil
+}
+
+// readvOp backs readv(fd, [length...], position) and gives the bytes read into each buffer,
+// as base64, stopping at the end of the file. A position of -1 means the file's offset.
+func (f *FS) readvOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
+	fd := fdAt(args)
+	var lengths []int64
+	for _, item := range vectorAt(args, 1) {
+		lengths = append(lengths, item.Integer())
+	}
+	position := intAt(args, 2)
+	return func() opResult {
+		file, ok := f.fileForFD(fd)
+		if !ok {
+			return failed(syscall.EBADF, "read", "")
+		}
+		var parts []string
+		for _, length := range lengths {
+			buf := make([]byte, length)
+			n, err := atPosition(file, position, func() (int, error) { return io.ReadFull(file, buf) })
+			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+				return failed(err, "read", "")
+			}
+			parts = append(parts, fileContents(buf[:n], false))
+			if position >= 0 {
+				position += int64(n)
+			}
+			if int64(n) < length {
+				break
+			}
+		}
+		return opResult{value: func(ctx *v8.Context) *v8.Value {
+			arr, _ := ctx.NewArray(len(parts))
+			for i, part := range parts {
+				v, _ := ctx.NewString(part)
+				arr.SetIndex(i, v)
+			}
+			return arr
+		}}
+	}, fd, nil
 }

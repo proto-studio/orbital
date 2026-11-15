@@ -1148,60 +1148,42 @@
   // the file. A numeric position moves along with them; any other means the file's offset.
   // They call back with (err, bytes, buffers).
   // A negative position, like none, means the file's offset.
-  const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), typeof position === 'number' && position >= 0 ? position : null];
+  const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), typeof position === 'number' && position >= 0 ? position : -1];
+  // Each vector goes to the native layer whole, as one call on the descriptor.
+  const nativeVector = {};
+  for (const name of ['readv', 'writev']) {
+    nativeVector[name] = fs[name + 'Sync'];
+    delete fs[name + 'Sync'];
+  }
+  const writevArgs = (fd, buffers, position) => [fd, buffers.map((b) => base64Of(viewBytes(b))), position];
+  const readvArgs = (fd, buffers, position) => [fd, buffers.map((b) => b.byteLength), position];
+  // Copies what readv read into its buffers, and gives the bytes read.
+  function readvInto(buffers, parts) {
+    let total = 0;
+    parts.forEach((part, i) => {
+      total += readInto({ buffer: buffers[i], offset: 0 }, part);
+    });
+    return total;
+  }
   fs.readvSync = function () {
     const [fd, buffers, position] = vectorArgs.apply(null, arguments);
-    let pos = position;
-    let total = 0;
-    for (const buffer of buffers) {
-      const n = fs.readSync(fd, buffer, 0, buffer.byteLength, pos);
-      total += n;
-      if (pos !== null) pos += n;
-      if (n < buffer.byteLength) break;
-    }
-    return total;
+    return readvInto(buffers, check(nativeVector.readv.apply(fs, readvArgs(fd, buffers, position))));
   };
   fs.writevSync = function () {
     const [fd, buffers, position] = vectorArgs.apply(null, arguments);
-    let pos = position;
-    let total = 0;
-    for (const buffer of buffers) {
-      const n = fs.writeSync(fd, buffer, 0, buffer.byteLength, pos);
-      total += n;
-      if (pos !== null) pos += n;
-      if (n < buffer.byteLength) break;
-    }
-    return total;
+    return check(nativeVector.writev.apply(fs, writevArgs(fd, buffers, position)));
   };
-  // Runs step on each buffer in turn off the thread; step calls back with the bytes it moved.
-  function vectored(args, step) {
-    const [fd, buffers, position] = vectorArgs.apply(null, args[0]);
-    const callback = args[1];
-    let pos = position;
-    let total = 0;
-    const next = (i) => {
-      if (i === buffers.length) return callback(null, total, buffers);
-      step(fd, buffers[i], pos, (err, n) => {
-        if (err) return callback(err);
-        total += n;
-        if (pos !== null) pos += n;
-        if (n < buffers[i].byteLength) return callback(null, total, buffers);
-        next(i + 1);
-      });
-    };
-    next(0);
-  }
+  // readv and writev call back with (err, bytes, buffers).
   fs.readv = function () {
-    vectored(withCallback(arguments), (fd, buffer, pos, cb) => {
-      const read = readArgs(5, fd, buffer, 0, buffer.byteLength, pos);
-      if (!read) return cb(null, 0);
-      runAsync('read', read.args, cb, (contents) => readInto(read, contents));
-    });
+    const [args, cb] = withCallback(arguments);
+    const [fd, buffers, position] = vectorArgs.apply(null, args);
+    runAsync('readv', readvArgs(fd, buffers, position), (err, n) => (err ? cb(err) : cb(null, n, buffers)),
+      (parts) => readvInto(buffers, parts));
   };
   fs.writev = function () {
-    vectored(withCallback(arguments), (fd, buffer, pos, cb) => {
-      runAsync('write', writeArgs(fd, buffer, 0, buffer.byteLength, pos), cb);
-    });
+    const [args, cb] = withCallback(arguments);
+    const [fd, buffers, position] = vectorArgs.apply(null, args);
+    runAsync('writev', writevArgs(fd, buffers, position), (err, n) => (err ? cb(err) : cb(null, n, buffers)));
   };
 
   // fs.Dir, from opendir: the directory's entries, read when it is opened.
