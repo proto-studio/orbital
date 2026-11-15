@@ -286,6 +286,26 @@
     return jwk;
   }
 
+  // The RSA publicExponent as a number, checked as Node checks it: a
+  // Uint8Array, big-endian, that fits in 32 bits.
+  function rsaPublicExponent(value) {
+    if (value === undefined) {
+      throw new TypeError("Failed to normalize algorithm: passed algorithm can not be converted to 'RsaHashedKeyGenParams' because 'publicExponent' is required in 'RsaHashedKeyGenParams'.");
+    }
+    if (!(value instanceof Uint8Array)) {
+      throw new TypeError("Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.");
+    }
+    let i = 0;
+    while (i < value.length && value[i] === 0) i++;
+    if (value.length - i > 4) {
+      throw new DOMException('The publicExponent must be equivalent to an unsigned 32-bit value', 'OperationError');
+    }
+    let e = 0;
+    for (; i < value.length; i++) e = e * 256 + value[i];
+    // 0 tells the native "none", so send an exponent it refuses instead.
+    return e === 0 ? 1 : e;
+  }
+
   class SubtleCrypto {
     async digest(algorithm, data) {
       const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
@@ -303,7 +323,18 @@
         hash: hashName(algo.hash) || '',
         namedCurve: algo.namedCurve || '',
       };
-      const resultJSON = native.generateKey(JSON.stringify(params));
+      const isRSA = algo.name === 'RSASSA-PKCS1-v1_5' || algo.name === 'RSA-PSS' || algo.name === 'RSA-OAEP';
+      if (isRSA) {
+        // The key's algorithm reports the exponent object it was given, as in Node.
+        params.publicExponent = rsaPublicExponent(algo.publicExponent);
+      }
+      let resultJSON;
+      try {
+        resultJSON = native.generateKey(JSON.stringify(params));
+      } catch (e) {
+        if (isRSA) throw new DOMException('The operation failed for an operation-specific reason', 'OperationError');
+        throw e;
+      }
       const result = JSON.parse(resultJSON);
 
       if (result.secret) {

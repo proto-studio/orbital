@@ -53,7 +53,8 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[gap] RSA `publicExponent` above 2^31-1 is refused.** Node accepts any odd
   uint32 exponent of 3 or more; Go's `crypto/rsa` can't use or export a key whose
   exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
-  back with) an error for those instead (`generateRSAKey`).
+  back with) an error for those instead (`generateRSAKey`). `crypto.subtle.generateKey`
+  shares the generator, so the same exponents give an `OperationError` there.
 - **[gap] No node:crypto one-shot sign/verify/encrypt with KeyObject.** The
   KeyObject surface covers generate / import / export / equals only. `crypto.sign`,
   `crypto.verify`, `privateEncrypt`, `publicDecrypt`, `createSign/createVerify`,

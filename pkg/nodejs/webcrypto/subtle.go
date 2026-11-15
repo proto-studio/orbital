@@ -21,6 +21,7 @@ import (
 	"hash"
 	"math/big"
 
+	nodecrypto "proto.zip/studio/orbital/pkg/nodejs/crypto"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -65,7 +66,7 @@ type algoParams struct {
 	Length     int    `json:"length,omitempty"`
 	// RSA generation
 	ModulusLength  int `json:"modulusLength,omitempty"`
-	PublicExponent int `json:"publicExponent,omitempty"`
+	PublicExponent int64 `json:"publicExponent,omitempty"`
 	// RSA-PSS
 	SaltLength int `json:"saltLength,omitempty"`
 	// AES-GCM / AES-CBC
@@ -244,7 +245,11 @@ func nativeGenerateKey(info *v8.FunctionCallbackInfo) *v8.Value {
 		if bits == 0 {
 			bits = 2048
 		}
-		priv, err := rsa.GenerateKey(rand.Reader, bits)
+		e := p.PublicExponent
+		if e == 0 {
+			e = 65537
+		}
+		priv, err := nodecrypto.GenerateRSAKey(bits, e)
 		if err != nil {
 			return throwf(ctx, "generateKey RSA: %v", err)
 		}
