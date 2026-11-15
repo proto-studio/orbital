@@ -336,17 +336,80 @@ func (p *Path) relativeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return val
 	}
 
-	from := args[0].String()
-	to := args[1].String()
+	val, _ := ctx.NewString(relativePosix(args[0].String(), args[1].String()))
+	return val
+}
 
-	rel, err := filepath.Rel(from, to)
-	if err != nil {
-		val, _ := ctx.NewString(to)
-		return val
+// relativePosix is Node's path.posix.relative: both paths are resolved against the working
+// directory, as path.resolve does, and the same path gives "".
+func relativePosix(from, to string) string {
+	if from == to {
+		return ""
+	}
+	from, to = resolveOne(from), resolveOne(to)
+	if from == to {
+		return ""
 	}
 
-	val, _ := ctx.NewString(rel)
-	return val
+	// Both are absolute and clean, so each starts with its root '/'.
+	const fromStart, toStart = 1, 1
+	fromEnd := len(from)
+	fromLen := fromEnd - fromStart
+	toLen := len(to) - toStart
+	length := min(fromLen, toLen)
+
+	lastCommonSep := -1
+	i := 0
+	for ; i < length; i++ {
+		c := from[fromStart+i]
+		if c != to[toStart+i] {
+			break
+		}
+		if c == '/' {
+			lastCommonSep = i
+		}
+	}
+	if i == length {
+		if toLen > length {
+			if to[toStart+i] == '/' {
+				// from is a prefix of to: "/foo/bar" to "/foo/bar/baz".
+				return to[toStart+i+1:]
+			}
+			if i == 0 {
+				// from is the root: "/" to "/foo".
+				return to[toStart+i:]
+			}
+		} else if fromLen > length {
+			if from[fromStart+i] == '/' {
+				// to is a prefix of from: "/foo/bar/baz" to "/foo/bar".
+				lastCommonSep = i
+			} else if i == 0 {
+				// to is the root: "/foo" to "/".
+				lastCommonSep = 0
+			}
+		}
+	}
+
+	out := ""
+	for i = fromStart + lastCommonSep + 1; i <= fromEnd; i++ {
+		if i == fromEnd || from[i] == '/' {
+			if out == "" {
+				out += ".."
+			} else {
+				out += "/.."
+			}
+		}
+	}
+	return out + to[toStart+lastCommonSep:]
+}
+
+// resolveOne is path.resolve with one argument: an absolute, clean path.
+func resolveOne(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
 }
 
 func (p *Path) parseFunc(info *v8.FunctionCallbackInfo) *v8.Value {

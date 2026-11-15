@@ -202,6 +202,27 @@ func TestPath_Relative(t *testing.T) {
 	}
 }
 
+// The same path gives "" and both sides are resolved first, as in Node. Expected values
+// are what Node 20.18.1 returns; none depend on the working directory.
+func TestPath_RelativeMatchesNode(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`JSON.stringify([
+		['/a','/a'],['/a/b','/a/b/'],['/a/b/','/a/b'],['/','/'],['/data/orandea/test/aaa','/data/orandea/impl/bbb'],
+		['/a','/a/b/c'],['/a/b/c','/a'],['/a/b','/a/bc'],['/a/bc','/a/b'],['/','/a'],['/a','/'],
+		['/foo/bar/baz-quux','/foo/bar/baz'],['/foo/bar/baz','/foo/bar/baz-quux'],['/baz-quux','/baz'],['/baz','/baz-quux'],
+		['/page1/page2/foo','/'],['//a//b','/a/b/'],['/a/./b/../c','/a/c'],['',''],['.','.'],['a','a'],['a/b','a'],['a/b','a/c/d'],
+	].map(([from, to]) => __path_module.relative(from, to)))`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `["","","","","../../impl/bbb","b/c","../..","../bc","../b","a","..","../baz","../baz-quux","../baz","../baz-quux","../../..","","","","","","..","../c/d"]`
+	if result.String() != want {
+		t.Errorf("path.relative:\ngot  %s\nwant %s", result.String(), want)
+	}
+}
+
 func TestPath_Name(t *testing.T) {
 	p := New()
 	if p.Name() != "path" {
