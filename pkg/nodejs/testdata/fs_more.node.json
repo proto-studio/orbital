@@ -305,6 +305,18 @@
       "name": "TypeError"
     }
   },
+  "cp_filter_skips_directory": {
+    "value": [
+      [
+        "a",
+        "cp_src",
+        "sub"
+      ],
+      [
+        "a"
+      ]
+    ]
+  },
   "cp_force": {
     "value": "f"
   },
@@ -334,6 +346,16 @@
       "path": "\u003cdir\u003e/missing",
       "syscall": "lstat"
     }
+  },
+  "cp_missing_parent": {
+    "value": [
+      "f",
+      [
+        "a",
+        "sub",
+        "sub/b"
+      ]
+    ]
   },
   "cp_promise_filter": {
     "value": [
@@ -628,7 +650,14 @@
   "readv_callback": {
     "value": [
       3,
-      "12Y"
+      "12c"
+    ]
+  },
+  "readv_current_offset": {
+    "value": [
+      4,
+      "ef",
+      "gh"
     ]
   },
   "statfs": {
@@ -960,7 +989,7 @@
     "value": [
       2,
       1,
-      "12Ydef"
+      "12cdefghij"
     ]
   },
   "writev_position": {

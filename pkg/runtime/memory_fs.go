@@ -483,10 +483,11 @@ func (m *MemoryFilesystem) Truncate(path string, size int64) error {
 	return m.change("truncate", path, func(mf *memFile) error { return mf.resize("truncate", path, size) })
 }
 
-// Chmod sets the permission bits of a file.
+// Chmod sets the permission bits of a file, and its setuid, setgid and sticky bits.
 func (m *MemoryFilesystem) Chmod(path string, mode fs.FileMode) error {
 	return m.change("chmod", path, func(mf *memFile) error {
-		mf.mode = mf.mode&^fs.ModePerm | mode&fs.ModePerm
+		const settable = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
+		mf.mode = mf.mode&^settable | mode&settable
 		return nil
 	})
 }

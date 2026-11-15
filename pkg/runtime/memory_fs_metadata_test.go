@@ -81,6 +81,18 @@ func TestMemoryFilesystem_Metadata(t *testing.T) {
 	if info, _ := m.Stat("/f"); info.Size != 1 || info.Mode.Perm() != 0o600 {
 		t.Errorf("after handle changes: %+v", info)
 	}
+	if err := m.Chmod("/f", 0o777|fs.ModeSticky|fs.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := m.Stat("/f"); info.Mode&(fs.ModeSticky|fs.ModeSetuid) != fs.ModeSticky|fs.ModeSetuid {
+		t.Errorf("after chmod with special bits: %v", info.Mode)
+	}
+	if err := m.Chmod("/f", 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := m.Stat("/f"); info.Mode&(fs.ModeSticky|fs.ModeSetuid) != 0 {
+		t.Errorf("after chmod clearing special bits: %v", info.Mode)
+	}
 	r, _ := m.OpenFile("/f", os.O_RDONLY, 0)
 	if err := r.(MetadataFile).Truncate(0); !errors.Is(err, syscall.EINVAL) {
 		t.Errorf("Truncate through a read-only handle = %v, want EINVAL", err)
