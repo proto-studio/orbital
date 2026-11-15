@@ -392,19 +392,34 @@
         const hash = upperHashName(algo.hash);
         return hash === 'SHA-384' || hash === 'SHA-512' ? 1024 : 512;
       }
-      if (algo.length === 0) throw new DOMException('Invalid key length', 'OperationError');
-      return algo.length;
+      const length = enforceRange(algo.length, 'HmacImportParams', 4294967295);
+      if (length === 0) throw new DOMException('Invalid key length', 'OperationError');
+      return length;
     }
     if (name.startsWith('AES-')) {
       if (algo.length === undefined) {
         throw new TypeError("Failed to normalize algorithm: passed algorithm can not be converted to 'AesDerivedKeyParams' because 'length' is required in 'AesDerivedKeyParams'.");
       }
-      if (algo.length !== 128 && algo.length !== 192 && algo.length !== 256) {
+      const length = enforceRange(algo.length, 'AesDerivedKeyParams', 65535);
+      if (length !== 128 && length !== 192 && length !== 256) {
         throw new DOMException('Invalid key length', 'OperationError');
       }
-      return algo.length;
+      return length;
     }
     return algo.length || 256;
+  }
+
+  // WebIDL's [EnforceRange] conversion of a dictionary's length member.
+  function enforceRange(value, dictionary, max) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      throw new TypeError("Failed to normalize algorithm: 'length' of '" + dictionary + "' (passed algorithm) is not a finite number.");
+    }
+    const t = Math.trunc(n);
+    if (t < 0 || t > max) {
+      throw new TypeError("Failed to normalize algorithm: 'length' of '" + dictionary + "' (passed algorithm) is outside the expected range of 0 to " + max + '.');
+    }
+    return t;
   }
 
   function upperHashName(h) {
@@ -610,9 +625,11 @@
     }
 
     async deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
-      const length = derivedKeyLength(normalizeAlgorithm(derivedKeyAlgorithm));
+      const target = normalizeAlgorithm(derivedKeyAlgorithm);
+      const length = derivedKeyLength(target);
       const bits = await this._deriveBits(algorithm, baseKey, length, 'deriveKey');
-      return this.importKey('raw', bits, derivedKeyAlgorithm, extractable, keyUsages);
+      if (target.length !== undefined) target.length = length;
+      return this.importKey('raw', bits, target, extractable, keyUsages);
     }
 
     async wrapKey(format, key, wrappingKey, wrapAlgorithm) {
