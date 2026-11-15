@@ -93,6 +93,8 @@
   // microtasks by itself once the stack empties, which is why the ticks run before that.
 
   const tickQueue = [];
+  const splice = Array.prototype.splice;
+  const kCompactAfter = 1024;
   let tickHead = 0;
   // depth counts the callbacks into JavaScript on the stack; only the outermost one runs
   // the queues, as in Node's InternalCallbackScope.
@@ -139,6 +141,12 @@
         while (tickHead < tickQueue.length && !dead) {
           const tick = tickQueue[tickHead];
           tickQueue[tickHead++] = undefined;
+          // A tick that queues the next one keeps the queue growing at its end while it
+          // drains from the front, so drop the used half once it is large.
+          if (tickHead >= kCompactAfter && tickHead * 2 >= tickQueue.length) {
+            apply(splice, tickQueue, [0, tickHead]);
+            tickHead = 0;
+          }
           try {
             apply(tick.callback, undefined, tick.args);
           } catch (err) {
@@ -174,7 +182,16 @@
 
   // queueMicrotask queues a V8 microtask, as Node's does, so it runs in order with promise
   // reactions. An exception goes to 'uncaughtException' rather than rejecting anything.
-  const resolved = Promise.resolve();
+  // Awaiting a value that is not a promise queues exactly one microtask through V8's own
+  // promise, so nothing a script does to Promise, its species or then can get in the way.
+  async function runMicrotask(callback) {
+    await undefined;
+    try {
+      apply(callback, undefined, []);
+    } catch (err) {
+      trigger(err, false);
+    }
+  }
   function queueMicrotask(callback) {
     if (typeof callback !== 'function') {
       const err = new TypeError('The "callback" argument must be of type function. Received ' +
@@ -182,13 +199,7 @@
       err.code = 'ERR_INVALID_ARG_TYPE';
       throw err;
     }
-    apply(then, resolved, [function () {
-      try {
-        apply(callback, undefined, []);
-      } catch (err) {
-        trigger(err, false);
-      }
-    }]);
+    runMicrotask(callback);
   }
 
   // callback enters JavaScript from the event loop. Go only sees an exception's text, so
