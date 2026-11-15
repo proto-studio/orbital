@@ -292,7 +292,15 @@
 		}
 
 		static _resolveRelative(base, relative) {
-			if (relative.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:/)) {
+			const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*:)/.exec(relative);
+			if (scheme) {
+				// A special scheme that is the base's own, without "//", is relative to the
+				// base: http:../c against http://h/a/b is http://h/c.
+				const proto = scheme[1].toLowerCase();
+				const rest = relative.slice(proto.length);
+				if (proto === base.protocol && /^(https?|wss?|ftp|file):$/.test(proto) && !rest.startsWith('//')) {
+					return URL._resolveRelative(base, rest);
+				}
 				return relative; // Already absolute
 			}
 
@@ -699,11 +707,14 @@
 
 	// url.resolve function
 	// Node's legacy resolve takes the base as written. An empty, query-only or
-	// protocol-relative reference keeps the path as written too; any other reference has
-	// its literal dot segments removed from the merged path.
+	// protocol-relative reference, or one with a different scheme, keeps its path as
+	// written too; any other reference has its literal dot segments removed from the
+	// merged path.
 	function resolve(from, to) {
 		const base = withDotSegmentMode('keep', () => new URL(from));
-		const keep = to === '' || to.startsWith('?') || to.startsWith('//');
+		const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(to);
+		const otherScheme = scheme !== null && scheme[1].toLowerCase() + ':' !== base.protocol;
+		const keep = to === '' || to.startsWith('?') || to.startsWith('//') || otherScheme;
 		return withDotSegmentMode(keep ? 'keep' : 'literal', () => new URL(to, base).href);
 	}
 

@@ -396,3 +396,22 @@ JSON.stringify([cases.map(([a, b]) => __url_module.resolve(a, b)), new URL('', '
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// url.resolve() keeps the path of a reference with another scheme as written, and a
+// special scheme that is the base's own without "//" is relative to the base. Expected
+// values are Node 20.18.1's.
+func TestURL_ResolveSchemes(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+JSON.stringify([__url_module.resolve('http://h/a/', 'https://other/a/../b'), __url_module.resolve('http://h/a/', 'HTTP://o/a/../b'), __url_module.resolve('http://h/a/', 'http://o/a/../b'), __url_module.resolve('http://h/a/', 'file:///a/../b'), __url_module.resolve('file:///x/', 'file:///a/../b'), __url_module.resolve('http://h/a/', 'ftp://o/a/./b'), __url_module.resolve('http://h/a/b', 'http:../c')]);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `["https://other/a/../b","http://o/b","http://o/b","file:///a/../b","file:///b","ftp://o/a/./b","http://h/c"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
