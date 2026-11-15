@@ -208,7 +208,7 @@
       throw codedError(RangeError, 'ERR_CRYPTO_INVALID_SCRYPT_PARAMS',
         'Invalid scrypt params' + (reason ? ': ' + reason : ''));
     }
-    return [password, salt, N, r, p, keylen];
+    return [password, salt, N, r, p, maxmem, keylen];
   }
 
   crypto.scryptSync = function scryptSync(password, salt, keylen, options) {

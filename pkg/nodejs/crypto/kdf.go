@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"hash"
+	"math"
 
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -94,16 +95,17 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("pbkdf2: missing arguments")
 	}
 	password, salt := argBytes(args, 0), argBytes(args, 1)
-	iter, keyLen := int(args[2].Integer()), int(args[3].Integer())
+	iter, keyLen := args[2].Integer(), args[3].Integer()
 	h := nodeDigest(args[4].String())
-	if h == nil || iter < 1 || keyLen < 0 {
+	// kdf.js checks these, but scripts can reach the native directly.
+	if h == nil || iter < 1 || iter > math.MaxInt32 || keyLen < 0 || keyLen > math.MaxInt32 {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
 		if keyLen == 0 {
 			return []byte{}, nil
 		}
-		return pbkdf2.Key(h, string(password), salt, iter, keyLen)
+		return pbkdf2.Key(h, string(password), salt, int(iter), int(keyLen))
 	})
 }
 
@@ -124,21 +126,23 @@ func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return v
 }
 
-// scryptFunc backs _scrypt(passwordB64, saltB64, N, r, p, keylen[, callback]).
-// kdf.js has run the parameters through _scryptCheck.
+// scryptFunc backs _scrypt(passwordB64, saltB64, N, r, p, maxmem, keylen[,
+// callback]). The parameters are checked again here against maxmem.
 func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 6 {
+	if len(args) < 7 {
 		return ctx.Throw("scrypt: missing arguments")
 	}
 	password, salt := argBytes(args, 0), argBytes(args, 1)
-	n, r, p, keyLen := args[2].Number(), args[3].Number(), args[4].Number(), int(args[5].Integer())
-	if scryptCheck(uint64(n), uint64(r), uint64(p), 1<<62) != nil || keyLen < 0 {
+	n, r, p, maxmem := args[2].Number(), args[3].Number(), args[4].Number(), args[5].Number()
+	keyLen := args[6].Integer()
+	if n < 0 || r < 0 || p < 0 || maxmem < 1 || maxmem > 1<<53 ||
+		scryptCheck(uint64(n), uint64(r), uint64(p), uint64(maxmem)) != nil || keyLen < 0 || keyLen > math.MaxInt32 {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
-	return c.deriveKey(ctx, argCallback(args, 6), func() ([]byte, error) {
-		return scryptKey(password, salt, int(n), int(r), int(p), keyLen)
+	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
+		return scryptKey(password, salt, int(n), int(r), int(p), int(keyLen))
 	})
 }
 
