@@ -84,6 +84,7 @@ async function testTruncate() {
   await attemptAsync('truncate_callback_missing', () => callback((cb) => fs.truncate(file('missing/x'), cb)));
   attempt('truncate_callback_bad_len', () => fs.truncate(file('trunc'), 'x', () => {}));
   const fd = fs.openSync(file('trunc'), 'r+');
+  attempt('truncate_fraction_fd', () => fs.truncateSync(1.5, 0));
   attempt('ftruncate', () => { fs.ftruncateSync(fd, 1); return read('trunc'); });
   attempt('truncate_fd', () => { fs.truncateSync(fd, 0); return read('trunc'); });
   attempt('fsync', () => fs.fsyncSync(fd));
@@ -349,6 +350,9 @@ async function testCp() {
   await attemptAsync('cp_filter_falsy_rejection', () => fsp.cp(file('cp_src'), file('cp_falsy'), { recursive: true, filter: () => Promise.reject(null) })
     .then(() => 'copied', (e) => 'rejected with ' + e));
   await attemptAsync('cp_callback_filter_falsy_rejection', () => callback((cb) => fs.cp(file('cp_src'), file('cp_falsy2'), { recursive: true, filter: () => Promise.reject(null) }, cb)));
+  await attemptAsync('cp_callback_filter_throws_falsy', () => callback((cb) => fs.cp(file('cp_src'), file('cp_throw'), { recursive: true, filter: () => { throw null; } }, cb)));
+  await attemptAsync('cp_promise_filter_throws_falsy', () => fsp.cp(file('cp_src'), file('cp_throw2'), { recursive: true, filter: () => { throw 0; } })
+    .then(() => 'copied', (e) => 'rejected with ' + e));
   await attemptAsync('cp_promise_filter', async () => {
     await fsp.cp(file('cp_src'), file('cp_async'), { recursive: true, filter: async (src) => !src.endsWith('sub') });
     return tree('cp_async');

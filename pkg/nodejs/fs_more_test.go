@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -76,7 +77,6 @@ fs.cp(dir + '/src', dir + '/alias/out', { recursive: true }, (e) => done({
 `, dir))
 	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "deeper": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "made": false})
 }
-
 
 // A recursive watch enters each directory once, so links back into the tree don't make it
 // walk every path through them.
@@ -161,6 +161,53 @@ fs.writeFileSync('/f', 'x');
 let code = null;
 try { fs.cpSync('/', '/out', { recursive: true }); } catch (e) { code = e.code; }
 done({ code, made: fs.existsSync('/out') });
+`)
+	wantJSON(t, got, map[string]any{"code": "ERR_FS_CP_EINVAL", "made": false})
+}
+
+// { bigint: true } gives the exact nanosecond times, readv returns what a pipe holds, and
+// cp sees a destination through a link under the root as inside the source.
+func TestFS_ExactTimesPipesAndRootedCp(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "f")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Unix(1700000000, 123456789)
+	if err := os.Chtimes(file, when, when); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(file); !info.ModTime().Equal(when) {
+		t.Skip("the filesystem doesn't keep nanoseconds")
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const s = fs.statSync(%q, { bigint: true });
+const fd = fs.openSync(%q, 'r+');
+fs.writeSync(fd, 'abcd');
+const a = Buffer.alloc(4), b = Buffer.alloc(4);
+const n = fs.readvSync(fd, [a, b]);
+fs.closeSync(fd);
+done({ mtimeNs: String(s.mtimeNs), n, a: a.toString() });
+`, file, fifo))
+	wantJSON(t, got, map[string]any{"mtimeNs": "1700000000123456789", "n": 4.0, "a": "abcd"})
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(filepath.Join(root, "src", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("src", filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	got = runJS(t, &runtime.Config{Filesystem: runtime.NewLocalFilesystem(root)}, `
+const fs = require('fs');
+let code = null;
+try { fs.cpSync('src', 'alias/out', { recursive: true }); } catch (e) { code = e.code; }
+done({ code, made: fs.existsSync('/src/out') });
 `)
 	wantJSON(t, got, map[string]any{"code": "ERR_FS_CP_EINVAL", "made": false})
 }

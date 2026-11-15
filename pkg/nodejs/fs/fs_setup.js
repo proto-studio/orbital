@@ -78,6 +78,9 @@
   class BigIntStats {}
   Object.assign(BigIntStats.prototype, Stats.prototype);
   const NS_PER_MS = 1000000n;
+  // The exact times in nanoseconds, as decimal strings, which the native layer gives beside
+  // the millisecond numbers, since a Number can't hold them.
+  const kNs = Symbol('ns');
   function toBigIntStats(s) {
     const b = new BigIntStats();
     for (const key of ['dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size', 'blocks']) {
@@ -86,10 +89,11 @@
     for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
       b[key + 'Ms'] = BigInt(Math.floor(s[key + 'Ms']));
     }
-    for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
+    ['atime', 'mtime', 'ctime', 'birthtime'].forEach((key, i) => {
       const ms = s[key + 'Ms'];
-      b[key + 'Ns'] = BigInt(Math.floor(ms)) * NS_PER_MS + BigInt(Math.round((ms - Math.floor(ms)) * 1e6));
-    }
+      b[key + 'Ns'] = s[kNs] ? BigInt(s[kNs][i])
+        : BigInt(Math.floor(ms)) * NS_PER_MS + BigInt(Math.round((ms - Math.floor(ms)) * 1e6));
+    });
     for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) b[key] = s[key];
     return b;
   }
@@ -100,8 +104,10 @@
   // or already a Stats.
   function addStatsMethods(s) {
     if (!s || typeof s !== 'object' || s.__fsError || s instanceof Stats) return s;
-    return new Stats(s.dev, s.mode, s.nlink, s.uid, s.gid, s.rdev, s.blksize, s.ino, s.size,
+    const stats = new Stats(s.dev, s.mode, s.nlink, s.uid, s.gid, s.rdev, s.blksize, s.ino, s.size,
       s.blocks, s.atimeMs, s.mtimeMs, s.ctimeMs, s.birthtimeMs);
+    if (Array.isArray(s.timesNs)) Object.defineProperty(stats, kNs, { value: s.timesNs });
+    return stats;
   }
   // Exposed so the promise and callback layers return the same class.
   fs.__addStatsMethods = addStatsMethods;
@@ -1015,7 +1021,7 @@
   const call = (name) => function () { return check(native[name].apply(fs, arguments)); };
 
   // truncate also takes a descriptor, as Node's still does.
-  defineCall('truncate', (path, len) => [path, lenArg(len)],
+  defineCall('truncate', (path, len) => [typeof path === 'number' ? fdArg(path) : path, lenArg(len)],
     (path, len) => (typeof path === 'number' ? call('ftruncateSync')(path, len) : call('truncateSync')(path, len)));
   defineCall('ftruncate', (fd, len) => [fdArg(fd), lenArg(len)], call('ftruncateSync'));
   defineCall('fsync', (fd) => [fdArg(fd)], call('fsyncSync'));
@@ -1086,7 +1092,21 @@
     };
   }
   const vectorArgs = (fd, buffers, position) => [fdArg(fd), checkBuffers(buffers), position];
-  defineCall('readv', vectorArgs, vectored((...a) => fs.readSync(...a)), (n, args) => [n, args[1]]);
+  // readv reads once, as readv(2) does, as much as is there up to the buffers' total, and
+  // splits it across them, so a pipe holding less doesn't keep it waiting.
+  defineCall('readv', vectorArgs, (fd, buffers, position) => {
+    const total = buffers.reduce((sum, b) => sum + b.byteLength, 0);
+    const all = Buffer.alloc(total);
+    const n = total === 0 ? 0 : fs.readSync(fd, all, 0, total, typeof position === 'number' && position >= 0 ? position : null);
+    let offset = 0;
+    for (const b of buffers) {
+      if (offset >= n) break;
+      const take = Math.min(b.byteLength, n - offset);
+      new Uint8Array(b.buffer, b.byteOffset, b.byteLength).set(all.subarray(offset, offset + take));
+      offset += take;
+    }
+    return n;
+  }, (n, args) => [n, args[1]]);
   defineCall('writev', vectorArgs, vectored((...a) => fs.writeSync(...a)), (n, args) => [n, args[1]]);
 
   // fs.Dir, from opendir: the directory's entries, read when it is opened.
@@ -1212,6 +1232,12 @@
   // cp's steps, written once as a generator that yields each filesystem call it needs as
   // [name, ...args] and each question for the filter as ['filter', src, dest]. cpSync answers
   // them at once; cp awaits a filter that returns a promise.
+  // A path made absolute as the filesystem takes it: from the working directory where
+  // relative paths start there, and otherwise from the root.
+  function fsResolve(p) {
+    const path = pathModule();
+    return cwdRelative || path.isAbsolute(p) ? path.resolve(p) : path.resolve(path.sep, p);
+  }
   function* cpSteps(src, dest, opts) {
     const path = pathModule();
     const stat = opts.dereference ? 'stat' : 'lstat';
@@ -1219,8 +1245,8 @@
     const destStat = yield [stat + 'OrNothing', dest];
     checkPair(srcStat, destStat, src, dest);
     if (srcStat.isDirectory()) {
-      const from = path.resolve(src);
-      const to = path.resolve(dest);
+      const from = fsResolve(src);
+      const to = fsResolve(dest);
       // The separator is added only where from doesn't already end with one, as the root does.
       if (to === from || to.startsWith(from.endsWith(path.sep) ? from : from + path.sep)) {
         throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22,
@@ -1382,7 +1408,7 @@
           }
           value = cpCalls[name](...args);
         } catch (e) {
-          err = e;
+          err = e || falsyRejection(e);
         }
       }
     };
@@ -1587,17 +1613,22 @@
     }, 100);
     if (!opts.persistent && timer.unref) timer.unref();
     let closed = false;
+    let onAbort = null;
     watcher.close = function () {
       if (closed) return;
       closed = true;
       clearInterval(timer);
+      if (onAbort) opts.signal.removeEventListener('abort', onAbort);
       process.nextTick(() => watcher.emit('close'));
     };
     watcher.ref = function () { if (timer.ref) timer.ref(); return watcher; };
     watcher.unref = function () { if (timer.unref) timer.unref(); return watcher; };
     if (opts.signal) {
       if (opts.signal.aborted) process.nextTick(() => watcher.close());
-      else opts.signal.addEventListener('abort', () => watcher.close(), { once: true });
+      else {
+        onAbort = () => watcher.close();
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      }
     }
     return watcher;
   };
