@@ -54,20 +54,18 @@ func cipherGroup(word string) ([]suiteInfo, bool) {
 	}
 	aes := func(c suiteInfo) bool { return strings.HasPrefix(c.enc, "AES") }
 	switch word {
-	case "ALL", "DEFAULT", "HIGH", "COMPLEMENTOFALL":
+	case "ALL", "DEFAULT", "HIGH":
 		return match(func(suiteInfo) bool { return true }), true
-	case "COMPLEMENTOFDEFAULT", "MEDIUM", "LOW", "EXPORT", "NULL", "eNULL", "aNULL", "3DES", "DES",
+	case "COMPLEMENTOFDEFAULT", "COMPLEMENTOFALL", "MEDIUM", "LOW", "EXPORT", "NULL", "eNULL", "aNULL", "3DES", "DES",
 		"RC4", "MD5", "IDEA", "SEED", "CAMELLIA", "CAMELLIA128", "CAMELLIA256", "ARIA", "ARIA128",
 		"ARIA256", "ARIAGCM", "PSK", "kPSK", "aPSK", "SRP", "kSRP", "aSRP", "DSS", "aDSS", "DH",
 		"kDH", "kDHE", "kEDH", "EDH", "DHE", "ADH", "AECDH", "aGOST", "kGOST", "GOST", "CCM",
-		"CCM8", "AESCCM", "AESCCM8", "SSLv3", "TLSv1.0":
+		"CCM8", "AESCCM", "AESCCM8":
 		return nil, true
 	case "ECDHE", "EECDH", "kECDHE", "kEECDH", "ECDH":
 		return match(func(c suiteInfo) bool { return c.kx == "ECDHE" }), true
-	case "kRSA":
+	case "kRSA", "RSA": // RSA is an alias of kRSA
 		return match(func(c suiteInfo) bool { return c.kx == "RSA" }), true
-	case "RSA":
-		return match(func(c suiteInfo) bool { return c.kx == "RSA" || c.auth == "RSA" }), true
 	case "aRSA":
 		return match(func(c suiteInfo) bool { return c.auth == "RSA" }), true
 	case "aECDSA", "ECDSA":
@@ -84,7 +82,9 @@ func cipherGroup(word string) ([]suiteInfo, bool) {
 		return match(func(c suiteInfo) bool { return c.enc == "CHACHA20" }), true
 	case "AEAD":
 		return match(func(c suiteInfo) bool { return c.mac == "AEAD" }), true
-	case "SHA1", "SHA", "TLSv1", "SSLv3.0":
+	// The protocol groups hold the suites defined for that version, which for crypto/tls's
+	// suites are the CBC ones with a SHA-1 MAC.
+	case "SHA1", "SHA", "TLSv1", "TLSv1.0", "SSLv3":
 		return match(func(c suiteInfo) bool { return c.mac == "SHA1" }), true
 	// The digest groups go by the record MAC, so AEAD suites are in none of them, and
 	// crypto/tls has no suite with a SHA-384 MAC.

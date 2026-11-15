@@ -2,8 +2,9 @@
 // Node v20.18.1. Regenerate it with
 //   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestTLSOptions_MatchesNode'
 //
-// The fixtures in tls_options/ are one P-256 key and its self-signed certificate for
-// localhost, in the forms Node accepts: plain and encrypted PEM keys, and PKCS#12 files.
+// The fixtures in tls_options/ are a P-256 key and its self-signed certificate for
+// localhost, in the forms Node accepts: plain and encrypted PEM keys, and PKCS#12 files,
+// and an RSA pair for the cipher groups that need one.
 const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +14,8 @@ const dir = globalThis.FIXTURES || path.join(__dirname, 'tls_options');
 const f = (name) => fs.readFileSync(path.join(dir, name));
 const cert = f('cert.pem');
 const key = f('key.pem');
+const rsaCert = f('rsa-cert.pem');
+const rsaKey = f('rsa-key.pem');
 const results = {};
 
 function describe(e) {
@@ -111,6 +114,13 @@ async function connections() {
     keywordAndName: [{ cert, key, ciphers: 'DEFAULT:ECDHE-RSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, {}, true],
     tls13OnlyAtMostTLS12: [{ cert, key }, { ciphers: 'TLS_AES_128_GCM_SHA256', maxVersion: 'TLSv1.2' }],
     digestGroupLeavesOutAEAD: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'SHA256' }],
+    rsaGroupIsKeyExchange: [{ cert: rsaCert, key: rsaKey, ciphers: 'ECDHE-RSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' },
+      { ciphers: 'RSA', ca: rsaCert }],
+    rsaExclusionKeepsECDHE: [{ cert: rsaCert, key: rsaKey, ciphers: 'ECDHE-RSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' },
+      { ciphers: 'HIGH:!RSA', ca: rsaCert }],
+    complementOfAll: [{ cert, key, maxVersion: 'TLSv1.2' }, { ciphers: 'COMPLEMENTOFALL:ECDHE-ECDSA-AES128-SHA' }],
+    excludeComplementOfAll: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!COMPLEMENTOFALL' }],
+    excludeTLSv10: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-SHA', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!TLSv1.0' }],
     digestExclusionKeepsAEAD: [{ cert, key, ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, { ciphers: 'HIGH:!SHA256' }],
   };
   const out = {};

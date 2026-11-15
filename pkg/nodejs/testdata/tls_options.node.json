@@ -10,6 +10,11 @@
       "cipher": null,
       "protocol": "TLSv1.3"
     },
+    "complementOfAll": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-AES128-SHA",
+      "protocol": "TLSv1.2"
+    },
     "curve": {
       "authorized": true,
       "cipher": null,
@@ -23,10 +28,18 @@
     "digestGroupLeavesOutAEAD": {
       "error": true
     },
+    "excludeComplementOfAll": {
+      "authorized": true,
+      "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256",
+      "protocol": "TLSv1.2"
+    },
     "excludeGroup": {
       "authorized": true,
       "cipher": "some non-GCM cipher",
       "protocol": "TLSv1.2"
+    },
+    "excludeTLSv10": {
+      "error": true
     },
     "keywordAndName": {
       "authorized": true,
@@ -53,6 +66,14 @@
       "authorized": true,
       "cipher": null,
       "protocol": "TLSv1.3"
+    },
+    "rsaExclusionKeepsECDHE": {
+      "authorized": true,
+      "cipher": "ECDHE-RSA-AES128-GCM-SHA256",
+      "protocol": "TLSv1.2"
+    },
+    "rsaGroupIsKeyExchange": {
+      "error": true
     },
     "serverCipherTLS12": {
       "authorized": true,
