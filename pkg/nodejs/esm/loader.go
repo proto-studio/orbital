@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -68,10 +69,12 @@ func stripFileURL(u string) string {
 }
 
 // urlPath reads a relative, absolute or file: specifier the way Node does, as a
-// URL (relative ones against dir): the percent-decoded path, the path still
-// encoded (Node's error for an encoded separator names it), and the query and
-// fragment, which make a distinct module but aren't part of the file's path.
-func urlPath(spec, dir string) (path, encoded, suffix string) {
+// URL (relative ones against the directory dir, a file path): the
+// percent-decoded file path, the URL's path still encoded (Node's error for an
+// encoded separator names it), whether the specifier encodes a separator, and
+// the query and fragment, which make a distinct module but aren't part of the
+// file's path.
+func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 	rest := spec
 	if strings.HasPrefix(rest, "file:") {
 		// file:///p, file://localhost/p and file:/p all name /p.
@@ -86,15 +89,21 @@ func urlPath(spec, dir string) (path, encoded, suffix string) {
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest, suffix = rest[:i], rest[i:]
 	}
-	encoded = filepath.Clean(rest)
-	if !strings.HasPrefix(rest, "/") {
-		encoded = filepath.Join(dir, rest)
+	encodedSep = hasEncodedSeparator(rest)
+	// Only the specifier is URL-encoded; dir is already a file path.
+	decoded := rest
+	if d, err := url.PathUnescape(rest); err == nil {
+		decoded = d
 	}
-	path = encoded
-	if decoded, err := url.PathUnescape(encoded); err == nil {
-		path = decoded
+	if strings.HasPrefix(rest, "/") {
+		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep
 	}
-	return path, encoded, suffix
+	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep
+}
+
+// escapePath is a file path as it appears in a file: URL.
+func escapePath(p string) string {
+	return (&url.URL{Path: filepath.ToSlash(p)}).EscapedPath()
 }
 
 // hasEncodedSeparator reports an escaped "/" or "\" in a URL path, which Node
@@ -106,11 +115,14 @@ func hasEncodedSeparator(p string) bool {
 
 // moduleKey is the stable module url for the file at path imported with a
 // query or fragment: like Node, each distinct URL is its own module instance.
+// A key is the plain path when that is unambiguous; with a suffix, or a path
+// holding "?", "#" or "%", it is the URL-encoded path plus the suffix, so a
+// query never looks like part of a file name.
 func (e *ESM) moduleKey(path, suffix string) string {
-	if suffix == "" {
+	if suffix == "" && !strings.ContainsAny(path, "?#%") {
 		return path
 	}
-	key := path + suffix
+	key := escapePath(path) + suffix
 	if e.keyPaths == nil {
 		e.keyPaths = map[string]string{}
 	}
@@ -133,7 +145,7 @@ func (e *ESM) hookURLKey(u string) string {
 	if !strings.HasPrefix(u, "file:") {
 		return u
 	}
-	path, _, suffix := urlPath(u, "/")
+	path, _, suffix, _ := urlPath(u, "/")
 	return e.moduleKey(path, suffix)
 }
 
@@ -238,8 +250,9 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	switch {
 	case strings.HasPrefix(spec, "file:") || strings.HasPrefix(spec, "./") ||
 		strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/"):
-		attempted, encoded, suffix = urlPath(spec, dir)
-		if hasEncodedSeparator(encoded) {
+		var encodedSep bool
+		attempted, encoded, suffix, encodedSep = urlPath(spec, dir)
+		if encodedSep {
 			return "", &moduleError{
 				msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
 					e.importerPath(referrer),
@@ -250,7 +263,11 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	case winAbs(spec):
 		attempted = spec
 	default:
-		return e.resolveBare(spec, dir, referrer)
+		abs, err := e.resolveBare(spec, dir, referrer)
+		if err != nil {
+			return "", err
+		}
+		return e.moduleKey(abs, ""), nil
 	}
 	abs := e.resolveFile(attempted)
 	if abs == "" && e.fsIsDir(attempted) {

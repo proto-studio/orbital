@@ -246,3 +246,21 @@ func TestStaticImport_NotFoundIsUncaught(t *testing.T) {
 		t.Fatalf("listener saw %s", got)
 	}
 }
+
+// Only the specifier is URL-decoded, not the importer's directory (here one whose
+// name holds a literal "%20"), and a query never collides with a file whose name
+// holds "?". Expected from Node 20.18.1.
+func TestDynamicImport_LiteralURLCharactersInPaths(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "p%20lit")
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs":           `export default 'dep';`,
+		"m.mjs":             `export default 'm:' + import.meta.url.split('/').pop();`,
+		"m.mjs?variant.mjs": `export default 'q-file:' + import.meta.url.split('/').pop();`,
+		"entry.mjs": `log.push((await import('./dep.mjs')).default);
+log.push((await import('./m.mjs?variant.mjs')).default);
+log.push((await import('./m.mjs%3Fvariant.mjs')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["dep","m:m.mjs?variant.mjs","q-file:m.mjs%3Fvariant.mjs"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
