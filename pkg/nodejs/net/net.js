@@ -399,6 +399,7 @@
             settled = true;
             internal.abortAttempt(id);
             this.emit('connectionAttemptTimeout', entry.address, port, entry.family);
+            if (!isCurrent()) return;
             errors.push(nodeError(JSON.parse(internal.timeoutError(entry.address, port))));
             next();
           }, attemptTimeout);
@@ -415,6 +416,8 @@
           if (result.error) {
             const err = nodeError(result.error);
             this.emit('connectionAttemptFailed', entry.address, port, entry.family, err);
+            // A listener may have destroyed the socket, or started another connection.
+            if (!isCurrent()) return;
             if (multiple) {
               errors.push(err);
               next();
