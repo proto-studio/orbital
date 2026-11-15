@@ -278,7 +278,13 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	lrt := e.loader.rt
 
 	// resolve chain -> { url, format, importAttributes }
-	resP, err := e.callLoaderRealm("__runResolve", specifier, referrer, attrsJSON(attrs))
+	// Hooks see the importer as Node shows it: its file: URL (with any query),
+	// without the type a typed import adds to its cache key.
+	parentURL := referrer
+	if referrer != "" {
+		parentURL = e.displayURL(referrer)
+	}
+	resP, err := e.callLoaderRealm("__runResolve", specifier, parentURL, attrsJSON(attrs))
 	if err != nil {
 		return "", "", err
 	}
