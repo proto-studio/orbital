@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ var documentRoot string
 var sandboxMode bool
 var processTitle string
 var silenceWarnings bool
+var unhandledRejections string // --unhandled-rejections=<mode>
 var requireModules []string
 var importModules []string // --import <module> (ESM-preloaded before the entry)
 var inputType string       // "module" or "commonjs"
@@ -150,6 +152,18 @@ func main() {
 			}
 		case "--no-warnings":
 			silenceWarnings = true
+		case "--unhandled-rejections":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "orbital: --unhandled-rejections requires an argument")
+				os.Exit(9)
+			}
+			i++
+			unhandledRejections = args[i]
+			if !slices.Contains(runtime.UnhandledRejectionModes, unhandledRejections) {
+				// Node's wording and exit code for a bad option value.
+				fmt.Fprintln(os.Stderr, "orbital: invalid value for --unhandled-rejections")
+				os.Exit(9)
+			}
 		case "-N", "--allow-net":
 			// Deno-style: --allow-net or --allow-net=host:port,host2
 			// Check if there's a value (either next arg or already split by =)
@@ -387,6 +401,9 @@ Sandbox Options:
   --timeout <duration>    Execution timeout (e.g., 30s, 5m)
   --title <title>         Set runtime.title
   --no-warnings           Silence warnings
+  --unhandled-rejections=<mode>
+                          What an unhandled rejection does: throw (default),
+                          strict, warn, none or warn-with-error-code
 
 Network Permissions (Deno-style):
   -N, --allow-net         Allow all network access
@@ -451,6 +468,8 @@ func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
 	// process.kill() signals any process, as in Node. The library default refuses it.
 	cfg.ProcessSignaler = runtime.NewRealProcessSignaler()
+	cfg.UnhandledRejections = unhandledRejections
+	cfg.NoWarnings = silenceWarnings
 
 	// Set up filesystem with optional sandboxing
 	if documentRoot != "" {

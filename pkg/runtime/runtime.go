@@ -14,6 +14,9 @@ import (
 
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
+	unhandledRejections string // Config.UnhandledRejections
+	noWarnings          bool   // Config.NoWarnings
+
 	isolate           *v8.Isolate
 	context           *v8.Context
 	eventLoop         *EventLoop
@@ -101,6 +104,13 @@ type Config struct {
 	// IsolateOptions are create-time V8 isolate options (heap limits, etc.).
 	// Heap limits cannot be changed after the isolate is created.
 	IsolateOptions v8.IsolateOptions
+	// UnhandledRejections is what an unhandled promise rejection does, as with Node's
+	// --unhandled-rejections: "throw" (the default when empty), "strict", "warn", "none" or
+	// "warn-with-error-code". See UnhandledRejectionModes.
+	UnhandledRejections string
+	// NoWarnings stops process warnings from being printed, as Node's --no-warnings does.
+	// The 'warning' event is still emitted.
+	NoWarnings bool
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -123,6 +133,9 @@ func DefaultConfig() *Config {
 func New(cfg *Config) (*Runtime, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
+	}
+	if !validUnhandledRejections(cfg.UnhandledRejections) {
+		return nil, fmt.Errorf("invalid value for UnhandledRejections: %q", cfg.UnhandledRejections)
 	}
 
 	iso, err := v8.NewIsolateWithOptions(cfg.IsolateOptions)
@@ -218,6 +231,9 @@ func New(cfg *Config) (*Runtime, error) {
 		documentRoot:    cfg.DocumentRoot,
 		resourceTracker: resourceTracker,
 		execController:  execController,
+
+		unhandledRejections: cfg.UnhandledRejections,
+		noWarnings:          cfg.NoWarnings,
 	}
 
 	// Set up kill callback to stop the event loop, cancel tasks, and terminate
@@ -237,6 +253,11 @@ func New(cfg *Config) (*Runtime, error) {
 	}
 
 	return rt, nil
+}
+
+// NoWarnings reports whether process warnings are kept off stderr (Config.NoWarnings).
+func (rt *Runtime) NoWarnings() bool {
+	return rt.noWarnings
 }
 
 // Filesystem returns the filesystem implementation for this runtime.

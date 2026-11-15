@@ -519,6 +519,14 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	if err != nil {
 		return err
 	}
+	if rt.NoWarnings() {
+		if err := processObj.Set("noProcessWarnings", ctx.NewBoolean(true)); err != nil {
+			return err
+		}
+	}
+	if _, err := rt.RunScript(processWarningJS, "node:internal/process/warning"); err != nil {
+		return err
+	}
 	return p.defineTitle(rt)
 }
 
@@ -546,6 +554,115 @@ func (p *Process) defineTitle(rt *goruntime.Runtime) error {
 	})(`+string(quoted)+`);`, "process_title.js")
 	return err
 }
+
+// processWarningJS is process.emitWarning and the listener that prints warnings, following
+// lib/internal/process/warning.js.
+const processWarningJS = `(function () {
+	'use strict';
+	if (!process || typeof process.emit !== 'function' || typeof process.on !== 'function') return;
+
+	function describe(value) {
+		if (value === null || value === undefined) return String(value);
+		if (typeof value === 'function') return 'function ' + (value.name || '<anonymous>');
+		if (typeof value === 'object') {
+			var ctor = value.constructor;
+			return ctor && ctor.name ? 'an instance of ' + ctor.name : 'an instance of Object';
+		}
+		var shown = typeof value === 'string' ? "'" + value + "'" : String(value);
+		if (shown.length > 28) shown = shown.slice(0, 25) + '...';
+		return 'type ' + typeof value + ' (' + shown + ')';
+	}
+
+	function invalidArg(name, expected, value) {
+		var err = new TypeError('The "' + name + '" argument must be ' + expected + '. Received ' + describe(value));
+		err.code = 'ERR_INVALID_ARG_TYPE';
+		return err;
+	}
+
+	function createWarningObject(message, type, code, ctor, detail) {
+		var limit = Error.stackTraceLimit;
+		Error.stackTraceLimit = 0;
+		var warning = new Error(message);
+		Error.stackTraceLimit = limit;
+		warning.name = String(type || 'Warning');
+		if (code !== undefined) warning.code = code;
+		if (detail !== undefined) warning.detail = detail;
+		if (typeof Error.captureStackTrace === 'function') {
+			Error.captureStackTrace(warning, ctor || process.emitWarning);
+		}
+		return warning;
+	}
+
+	function doEmitWarning(warning) {
+		process.emit('warning', warning);
+	}
+
+	process.emitWarning = function emitWarning(warning, type, code, ctor) {
+		var detail;
+		if (type !== null && typeof type === 'object' && !Array.isArray(type)) {
+			ctor = type.ctor;
+			code = type.code;
+			if (typeof type.detail === 'string') detail = type.detail;
+			type = type.type || 'Warning';
+		} else if (typeof type === 'function') {
+			ctor = type;
+			code = undefined;
+			type = 'Warning';
+		}
+		if (type !== undefined && typeof type !== 'string') throw invalidArg('type', 'of type string', type);
+		if (typeof code === 'function') {
+			ctor = code;
+			code = undefined;
+		} else if (code !== undefined && typeof code !== 'string') {
+			throw invalidArg('code', 'of type string', code);
+		}
+		if (typeof warning === 'string') {
+			warning = createWarningObject(warning, type, code, ctor, detail);
+		} else if (!(warning instanceof Error)) {
+			throw invalidArg('warning', 'of type string or an instance of Error', warning);
+		}
+		if (warning.name === 'DeprecationWarning') {
+			if (process.noDeprecation) return;
+			if (process.throwDeprecation) throw warning;
+		}
+		process.nextTick(doEmitWarning, warning);
+	};
+
+	var traceHintShown = false;
+
+	function write(message) {
+		if (process.stderr && typeof process.stderr.write === 'function') {
+			process.stderr.write(message + '\n');
+		} else if (typeof console !== 'undefined' && typeof console.error === 'function') {
+			console.error(message);
+		}
+	}
+
+	function onWarning(warning) {
+		if (!(warning instanceof Error)) return;
+		var isDeprecation = warning.name === 'DeprecationWarning';
+		if (isDeprecation && process.noDeprecation) return;
+		var trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
+		var release = process.release && process.release.name ? process.release.name : 'node';
+		var message = '(' + release + ':' + process.pid + ') ';
+		if (warning.code) message += '[' + warning.code + '] ';
+		if (trace && warning.stack) {
+			message += warning.stack;
+		} else {
+			message += typeof warning.toString === 'function' ? '' + warning.toString() : Error.prototype.toString.call(warning);
+		}
+		if (typeof warning.detail === 'string') message += '\n' + warning.detail;
+		if (!trace && !traceHintShown) {
+			var flag = isDeprecation ? '--trace-deprecation' : '--trace-warnings';
+			var argv0 = String(process.argv0 || 'node').split(/[\\/]/).pop().replace(/\.exe$/, '');
+			message += '\n(Use ` + "`" + `' + argv0 + ' ' + flag + ' ...` + "`" + ` to show where the warning was created)';
+			traceHintShown = true;
+		}
+		write(message);
+	}
+
+	if (!process.noProcessWarnings) process.on('warning', onWarning);
+})();`
 
 // buildWriteStream builds a minimal writable stream object bound to an OS file.
 // The stream is enriched with EventEmitter + writable helpers in the bootstrap

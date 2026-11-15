@@ -35,6 +35,22 @@ func (e *UncaughtError) Error() string {
 	return e.Message
 }
 
+// UnhandledRejectionModes are the values Config.UnhandledRejections accepts, as Node's
+// --unhandled-rejections does. "" means "throw", Node's default.
+var UnhandledRejectionModes = []string{"throw", "strict", "warn", "none", "warn-with-error-code"}
+
+func validUnhandledRejections(mode string) bool {
+	if mode == "" {
+		return true
+	}
+	for _, m := range UnhandledRejectionModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
 // ExitError is what ended a runtime when JavaScript called process.exit(). Node would run
 // the 'exit' listeners and then exit with Code. A library has no business ending its host,
 // so the runtime runs the listeners, stops, and hands the code to the embedder.
@@ -78,6 +94,13 @@ func (rt *Runtime) installUncaught() error {
 		return err
 	}
 	if err := rt.setNative(native, "fatal", rt.fatalFunc); err != nil {
+		return err
+	}
+	mode, err := rt.context.NewString(rt.unhandledRejections)
+	if err != nil {
+		return err
+	}
+	if err := native.Set("unhandledRejections", mode); err != nil {
 		return err
 	}
 	if err := rt.setNative(native, "rejectionsPending", func(*v8.FunctionCallbackInfo) *v8.Value {

@@ -22,6 +22,8 @@ type nodeOptions struct {
 	inputType string
 	// noWarnings is the final --[no-]warnings state, if either was given.
 	noWarnings *bool
+	// unhandledRejections is the last --unhandled-rejections value.
+	unhandledRejections string
 }
 
 // args returns the options as argv tokens for Orbital's flag parser, which
@@ -36,6 +38,9 @@ func (o *nodeOptions) args() []string {
 	}
 	if o.noWarnings != nil && *o.noWarnings {
 		out = append(out, "--no-warnings")
+	}
+	if o.unhandledRejections != "" {
+		out = append(out, "--unhandled-rejections", o.unhandledRejections)
 	}
 	return out
 }
@@ -163,6 +168,8 @@ func parseNodeOptions(s string) (*nodeOptions, error) {
 		case "--warnings":
 			off := negated
 			opts.noWarnings = &off
+		case "--unhandled-rejections":
+			opts.unhandledRejections = value
 		}
 	}
 	// Like Node, the value that counts is the last one.
