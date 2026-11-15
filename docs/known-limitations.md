@@ -57,9 +57,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[approx] `KeyObject.equals` for asymmetric keys compares canonical JWK JSON**
   rather than DER (`keyEqualsFunc`). Functionally correct for equal keys; not the
   byte-for-byte SPKI comparison Node does.
-- **[perf] `crypto.randomInt` has modulo bias.** `randomIntFunc` uses
-  `n % rangeSize` (`crypto.go`); Node uses rejection sampling for a uniform
-  distribution. Pre-existing, noted here for completeness. (#114)
 
 ## WebCrypto — SubtleCrypto (`pkg/nodejs/webcrypto/webcrypto.js`)
 
