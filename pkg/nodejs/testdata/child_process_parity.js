@@ -286,6 +286,9 @@ const execResult = (start) => new Promise((resolve) => {
   // together, and 0 turns it off.
   out.execFileHexMaxBuffer = await execResult((cb) => cp.execFile('printf', ['abc'], { encoding: 'hex', maxBuffer: 4 }, cb));
   out.execFileBase64Chunks = await execResult((cb) => cp.execFile('/bin/sh', ['-c', 'printf a; sleep 0.1; printf b'], { encoding: 'base64' }, cb));
+  out.execFileBase64Url = await execResult((cb) => cp.execFile('printf', ['abc\\373'], { encoding: 'base64url' }, cb));
+  out.execFileUtf8Recovery = await execResult((cb) => cp.execFile('printf', ['\\342A\\360\\237\\230\\200'], cb));
+  out.execFileUtf16OddByte = await execResult((cb) => cp.execFile('printf', ['a\\000b'], { encoding: 'utf16le' }, cb));
   out.spawnSyncMaxBufferZero = syncResult(cp.spawnSync('printf', ['ok'], { maxBuffer: 0 }));
   // How much output arrives before the kill is a race, so only the error is compared.
   out.spawnSyncMaxBufferCombined = (cp.spawnSync('/bin/sh', ['-c', 'printf %040d 0; printf %040d 0 >&2'], { maxBuffer: 60 }).error || {}).code;
