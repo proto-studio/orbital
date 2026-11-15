@@ -265,8 +265,8 @@
 
   // cut names value in brackets, as util.inspect prints it past the depth limit, or answers null
   // when Node prints it in full anyway: when it's empty, a RegExp, which leaves its properties
-  // out, a Date without properties or a Buffer. Errors are left to the caller. A value that throws when looked at, like a proxy
-  // with a throwing trap, is [Object].
+  // out, a Date without properties or a Buffer. Errors are left to the caller. A value that
+  // throws when looked at, like a proxy with a throwing trap, is [Object].
   function cut(value) {
     try {
       return cutName(value);
@@ -282,15 +282,17 @@
     const bin = binary(value, 0);
     if (bin !== null) return `[${bin.name}]`;
     if (Array.isArray(value)) return value.length === 0 ? null : '[Array]';
+    // Before counting keys: a typed array's keys are its elements, so counting them would walk
+    // every byte of a value that only gets a name.
+    if (ArrayBuffer.isView(value)) {
+      const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
+      return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
+    }
     const bare = Object.keys(value).length === 0;
     if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : '[Map]';
     if (isSet(value)) return setSize.call(value) === 0 && bare ? null : '[Set]';
     if (isRegExp(value)) return null;
     if (isDate(value)) return bare ? null : '[Date]';
-    if (ArrayBuffer.isView(value)) {
-      const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
-      return buffer || value.length === 0 ? null : `[${value.constructor.name}]`;
-    }
     if (bare) return null;
     if (proto === null) return '[Object: null prototype]';
     const name = proto.constructor && proto.constructor.name;

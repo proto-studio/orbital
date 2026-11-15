@@ -1,6 +1,7 @@
 package util
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -438,5 +439,35 @@ func TestUtil_InspectProxyPastDepth(t *testing.T) {
 	}
 	if got, want := result.String(), "{ x: [Object] }"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// A typed array past the depth limit is only named, so inspecting it mustn't walk its elements.
+// Walking 20 million keys takes about half a second; naming it takes under a millisecond.
+func TestUtil_InspectLargeTypedArrayPastDepth(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const bytes = new Uint8Array(20000000);
+		const start = Date.now();
+		const text = __util_module.inspect({ a: { b: { bytes } } });
+		JSON.stringify({ text, ms: Date.now() - start });
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	var got struct {
+		Text string
+		Ms   int
+	}
+	if err := json.Unmarshal([]byte(result.String()), &got); err != nil {
+		t.Fatalf("decoding %q: %v", result.String(), err)
+	}
+	if want := "{ a: { b: { bytes: [Uint8Array] } } }"; got.Text != want {
+		t.Errorf("got %q, want %q", got.Text, want)
+	}
+	if got.Ms > 100 {
+		t.Errorf("inspecting took %d ms; the elements were probably walked", got.Ms)
 	}
 }
