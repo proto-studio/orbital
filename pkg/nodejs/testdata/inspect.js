@@ -165,3 +165,19 @@ for (const args of [numbers, conversions, objects]) {
   console.log(u.format(...args));
   console.log(u.formatWithOptions({}, ...args));
 }
+// Own enumerable symbol keys print after the other keys, in brackets with their descriptions
+// escaped; ones that aren't enumerable are left out. An object holding only symbols isn't empty.
+const sym = Symbol('k');
+const symErr = new Error('sym');
+symErr.stack = 'Error: sym\n    at h (file.js:3:3)';
+symErr[sym] = 1;
+show({ x: 2, [Symbol('k')]: 1 }, { [Symbol()]: 1, [Symbol.iterator]: 2, [Symbol.for('f')]: 3 },
+  { [Symbol('a\nb\'\\\x85')]: Symbol('v') }, Object.defineProperty({ a: 1 }, Symbol('hidden'), { value: 1 }),
+  Object.assign([1, 2], { [sym]: 3 }), Object.assign(new Map([[1, 2]]), { [sym]: 1 }),
+  Object.assign(new Set(), { [sym]: 1 }), Object.assign(new Date(0), { [sym]: 1 }), Object.assign(/x/, { [sym]: 1 }),
+  Object.assign(new ArrayBuffer(1), { [sym]: 1 }), symErr, { get [sym]() { return 1; } },
+  { a: { b: { c: { [sym]: 1 }, d: Object.assign(new Set(), { [sym]: 1 }), e: Object.assign(new Date(0), { [sym]: 1 }) } } },
+  ['\x85\x7f\x9f']);
+console.log(u.inspect({ b: 1, [Symbol('z')]: 1, a: 2, a0: 3, A: 1, [Symbol('a')]: 2 }, { sorted: true }));
+console.log(u.inspect(Object.assign([3, 1], { [Symbol('b')]: 1, [Symbol('a')]: 2 }), { sorted: true }));
+console.log(u.inspect(new Map([[2, 1], [1, 2]]), { sorted: true }), u.inspect(new Set([2, 1]), { sorted: true }));

@@ -36,6 +36,8 @@
     integer: (value) => inspectShared.numeric('i', value),
     float: (value) => inspectShared.numeric('f', value),
     field: inspectShared.field,
+    keys: inspectShared.keys,
+    symbols: inspectShared.symbols,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
     // other error JSON.stringify throws leaves it answering nothing.
     json: (value) => {
