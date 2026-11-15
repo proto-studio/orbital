@@ -49,9 +49,10 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## crypto — KeyObject API (`pkg/nodejs/crypto/keyobject.go`, `keyobject.js`)
 
-- **[gap] RSA `publicExponent` option is ignored.** `generateKeyPair('rsa', …)`
-  always uses Go's fixed exponent 65537; a requested non-65537 exponent is
-  silently ignored (`doGenerateKeyPair`). jose only ever asks for 65537. (#112)
+- **[gap] RSA `publicExponent` above 2^31-1 is refused.** Node accepts any odd
+  uint32 exponent of 3 or more; Go's `crypto/rsa` can't use or export a key whose
+  exponent is above 2147483647, so `generateKeyPair('rsa', …)` throws (or calls
+  back with) an error for those instead (`generateRSAKey`).
 - **[perf] Key generation is synchronous.** The async `generateKeyPair(…, cb)`
   and `promisify` forms run the actual keygen inside a microtask on the main
   thread (`keyobject.js`), so RSA-2048/4096 generation blocks the event loop.

@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"math"
 	"math/big"
 	"strings"
 
@@ -130,8 +132,9 @@ func (c *Crypto) generateKeyPairFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 func (c *Crypto) doGenerateKeyPair(kind, optsJSON string) (pubID, privID int64, err error) {
 	var opts struct {
-		ModulusLength int    `json:"modulusLength"`
-		NamedCurve    string `json:"namedCurve"`
+		ModulusLength  int    `json:"modulusLength"`
+		NamedCurve     string `json:"namedCurve"`
+		PublicExponent *int64 `json:"publicExponent"`
 	}
 	if optsJSON != "" {
 		_ = json.Unmarshal([]byte(optsJSON), &opts)
@@ -143,7 +146,11 @@ func (c *Crypto) doGenerateKeyPair(kind, optsJSON string) (pubID, privID int64, 
 		if bits == 0 {
 			bits = 2048
 		}
-		key, e := rsa.GenerateKey(rand.Reader, bits)
+		exp := int64(65537)
+		if opts.PublicExponent != nil {
+			exp = *opts.PublicExponent
+		}
+		key, e := generateRSAKey(bits, exp)
 		if e != nil {
 			return 0, 0, e
 		}
@@ -184,6 +191,76 @@ func (c *Crypto) doGenerateKeyPair(kind, optsJSON string) (pubID, privID int64, 
 
 	default:
 		return 0, 0, errors.New("unsupported key type: " + kind)
+	}
+}
+
+// generateRSAKey makes a two-prime RSA key with public exponent e. Go's
+// rsa.GenerateKey only uses 65537, so other exponents get their own primes
+// here. e is a uint32, as Node validates; OpenSSL refuses e that is even or
+// below 3, and so does this. Go's crypto/rsa can't use or export a key with e
+// above 2^31-1, so those exponents are refused rather than giving a key that
+// fails later.
+func generateRSAKey(bits int, e int64) (*rsa.PrivateKey, error) {
+	if e == 65537 {
+		return rsa.GenerateKey(rand.Reader, bits)
+	}
+	if e < 3 || e%2 == 0 || e > math.MaxUint32 {
+		return nil, errors.New("error:020000B2:rsa routines::pub exponent out of range")
+	}
+	if e > math.MaxInt32 {
+		return nil, errors.New("publicExponent above 2147483647 is not supported")
+	}
+	if bits < 1024 {
+		// Same limit rsa.GenerateKey applies to 65537.
+		return nil, fmt.Errorf("crypto/rsa: %d-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)", bits)
+	}
+	bigE := big.NewInt(e)
+	one := big.NewInt(1)
+	pBits := (bits + 1) / 2
+	qBits := bits - pBits
+	// coprime picks a prime of n bits whose p-1 shares no factor with e.
+	coprime := func(n int) (*big.Int, *big.Int, error) {
+		for {
+			p, err := rand.Prime(rand.Reader, n)
+			if err != nil {
+				return nil, nil, err
+			}
+			pm1 := new(big.Int).Sub(p, one)
+			if new(big.Int).GCD(nil, nil, bigE, pm1).Cmp(one) == 0 {
+				return p, pm1, nil
+			}
+		}
+	}
+	for {
+		p, pm1, err := coprime(pBits)
+		if err != nil {
+			return nil, err
+		}
+		q, qm1, err := coprime(qBits)
+		if err != nil {
+			return nil, err
+		}
+		if p.Cmp(q) == 0 {
+			continue
+		}
+		n := new(big.Int).Mul(p, q)
+		if n.BitLen() != bits {
+			continue
+		}
+		// d = e^-1 mod lcm(p-1, q-1), as OpenSSL computes it.
+		g := new(big.Int).GCD(nil, nil, pm1, qm1)
+		lambda := new(big.Int).Div(new(big.Int).Mul(pm1, qm1), g)
+		d := new(big.Int).ModInverse(bigE, lambda)
+		if d == nil {
+			continue
+		}
+		key := &rsa.PrivateKey{
+			PublicKey: rsa.PublicKey{N: n, E: int(e)},
+			D:         d,
+			Primes:    []*big.Int{p, q},
+		}
+		key.Precompute()
+		return key, nil
 	}
 }
 
