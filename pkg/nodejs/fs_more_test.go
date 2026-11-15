@@ -229,3 +229,23 @@ setTimeout(() => {
 `)
 	wantJSON(t, got, map[string]any{"calls": 0.0})
 }
+
+// BigInt milliseconds come from the exact nanoseconds, not a Number that rounds up.
+func TestFS_BigIntMillisecondsFromNanoseconds(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Unix(1794779860, 999999999)
+	if err := os.Chtimes(file, when, when); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(file); !info.ModTime().Equal(when) {
+		t.Skip("the filesystem doesn't keep nanoseconds")
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const s = require('fs').statSync(%q, { bigint: true });
+done({ ms: String(s.mtimeMs), ns: String(s.mtimeNs) });
+`, file))
+	wantJSON(t, got, map[string]any{"ms": "1794779860999", "ns": "1794779860999999999"})
+}
