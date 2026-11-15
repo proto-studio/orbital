@@ -2,7 +2,7 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, primitive, more, view, binary, collection, scalar, isDate, field,
+// { context, quote, string, key, primitive, numeric, more, view, binary, collection, scalar, isDate, field,
 // cut, entry, reduce }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
@@ -88,6 +88,15 @@
   // A primitive other than a string, as util.inspect prints one: a BigInt keeps its n suffix,
   // and negative zero prints as -0.
   const primitive = (v) => (typeof v === 'bigint' ? v + 'n' : Object.is(v, -0) ? '-0' : String(v));
+
+  // numeric is how util.format prints value for %d, %i or %f (spec): Number(value), parseInt or
+  // parseFloat of it, printed as primitive prints a number. %d and %i print a BigInt as it is,
+  // and all three print a symbol, which none of those take, as NaN.
+  function numeric(spec, value) {
+    if (typeof value === 'symbol') return 'NaN';
+    if (typeof value === 'bigint' && spec !== 'f') return primitive(value);
+    return primitive(spec === 'd' ? Number(value) : spec === 'i' ? parseInt(value) : parseFloat(value));
+  }
 
   // more is the entry that stands for the items an array or collection leaves out.
   const more = (n) => `... ${n} more item${n > 1 ? 's' : ''}`;
@@ -476,5 +485,5 @@
     return `${open}${ln}${output.map(indent).join(',\n  ')} ${close}`;
   }
 
-  return { context, quote, string, key, primitive, more, view, binary, collection, scalar, isDate, field, cut, entry, reduce };
+  return { context, quote, string, key, primitive, numeric, more, view, binary, collection, scalar, isDate, field, cut, entry, reduce };
 })()

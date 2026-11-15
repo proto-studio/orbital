@@ -48,8 +48,8 @@
 			switch (type) {
 				case 's': return formatStringSpecifier(arg);
 				case 'd': 
-				case 'i': return parseInt(arg, 10).toString();
-				case 'f': return parseFloat(arg).toString();
+				case 'i':
+				case 'f': return inspectShared.numeric(type, arg);
 				case 'j': return JSON.stringify(arg);
 				case 'o':
 				case 'O': return inspect(arg);
@@ -83,8 +83,8 @@
 			switch (type) {
 				case 's': return formatStringSpecifier(arg, inspectOptions);
 				case 'd':
-				case 'i': return parseInt(arg, 10).toString();
-				case 'f': return parseFloat(arg).toString();
+				case 'i':
+				case 'f': return inspectShared.numeric(type, arg);
 				case 'j': return JSON.stringify(arg);
 				case 'o':
 				case 'O': return inspect(arg, inspectOptions);

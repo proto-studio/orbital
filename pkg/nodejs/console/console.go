@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -583,21 +582,19 @@ func (c *Console) specString(v *v8.Value) string {
 	return v.String()
 }
 
-// specInt renders a value for %d, which prints a number as it is, or %i, which truncates it
-// toward zero. A BigInt keeps its n for both.
+// specInt renders a value for %d, which prints Number(value), or %i, which prints parseInt of
+// it. A BigInt keeps its n for both. A number under %d prints here; anything else is converted
+// by inspect's numeric, as parseInt reads a number's text (2 ** 70 is 1.1805916207174113e+21).
 func (c *Console) specInt(v *v8.Value, spec byte) string {
-	if v != nil && v.IsNumber() {
-		if spec == 'd' {
-			return number(v)
-		}
-		// Like parseInt, %i keeps the sign of a negative number that truncates to zero.
-		if n := v.Number(); n < 0 && n > -1 {
-			return "-0"
-		}
-		return strconv.FormatInt(int64(v.Number()), 10)
+	if spec == 'd' && v != nil && v.IsNumber() {
+		return number(v)
 	}
-	if c.isBigInt(v) {
-		return c.primitive(v)
+	name := "decimal"
+	if spec == 'i' {
+		name = "integer"
+	}
+	if s, ok := c.inspectCall(name, v); ok {
+		return s
 	}
 	return "NaN"
 }
@@ -611,21 +608,10 @@ func (c *Console) specFloat(v *v8.Value) string {
 		}
 		return v.String()
 	}
-	if c.isBigInt(v) {
-		if s, ok := c.inspectCall("float", v); ok {
-			return s
-		}
+	if s, ok := c.inspectCall("float", v); ok {
+		return s
 	}
 	return "NaN"
-}
-
-// isBigInt reports whether v is a BigInt.
-func (c *Console) isBigInt(v *v8.Value) bool {
-	if v == nil || v.IsUndefined() || v.IsNull() || v.IsBoolean() || v.IsNumber() || v.IsString() || v.IsObject() {
-		return false
-	}
-	t, _ := c.inspectCall("type", v)
-	return t == "bigint"
 }
 
 // formatValue formats a v8.Value with type-based coloring.
