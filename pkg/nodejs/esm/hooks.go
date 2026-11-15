@@ -305,6 +305,12 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	}
 	preFormat := objString(resolved, "format")
 	resolvedAttrs := objString(resolved, "importAttributes")
+	// Like Node's module map, a type that isn't a string is refused before any
+	// load hook runs.
+	if _, typeReceived := parseAttrsJSON(resolvedAttrs); typeReceived != "" {
+		return "", "", attrTypeError("ERR_INVALID_ARG_TYPE",
+			`The "type" argument must be of type string. Received `+typeReceived)
+	}
 
 	// The default load checks the attributes, except for an entry point and a
 	// (url, type) pair already checked: Node reuses that first module job, and

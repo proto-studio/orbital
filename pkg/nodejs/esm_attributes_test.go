@@ -369,3 +369,38 @@ log.push((await import('./virt.js')).default, (await import('./a%01b.mjs')).defa
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A non-string type from a resolve hook is refused before any load hook runs, and a
+// module a hook placed at a custom URL is its children's parentURL as is. Expected
+// from Node 20.18.1.
+func TestImportAttributes_HookTypeCheckedEarlyAndCustomParent(t *testing.T) {
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "seen.txt")
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 1;`,
+		"hooks.mjs": `import { appendFileSync } from 'node:fs';
+export async function resolve(s, c, n) {
+  if (s === './t42') return { ...(await n('./dep.mjs', c)), importAttributes: { type: 42 } };
+  if (s === 'mem:parent') return { url: 'mem:parent', shortCircuit: true };
+  if (s === 'child') { appendFileSync(` + strconv.Quote(seen) + `, c.parentURL + '\n'); return { url: 'mem:child', shortCircuit: true }; }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u === 'mem:parent') return { format: 'module', source: "import c from 'child'; export default c;", shortCircuit: true };
+  if (u === 'mem:child') return { format: 'module', source: 'export default "child";', shortCircuit: true };
+  return { format: 'module', source: 'export default "short"', shortCircuit: true };
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { log.push((await import('./t42')).default); } catch (e) { log.push(e.code, e.message); }
+log.push((await import('mem:parent')).default);`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["ERR_INVALID_ARG_TYPE","The \"type\" argument must be of type string. Received type number (42)","child"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	if b, _ := os.ReadFile(seen); string(b) != "mem:parent\n" {
+		t.Fatalf("child's parentURL %q, want mem:parent", b)
+	}
+}

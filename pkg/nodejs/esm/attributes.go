@@ -8,6 +8,7 @@ package esm
 import (
 	"encoding/json"
 	neturl "net/url"
+	"regexp"
 	"strings"
 
 	"proto.zip/studio/orbital/pkg/v8"
@@ -98,7 +99,8 @@ func (e *ESM) displayURL(key string) string {
 	if i := strings.IndexByte(key, typeKeySep); i >= 0 {
 		key = key[:i]
 	}
-	if strings.HasPrefix(key, "node:") || strings.HasPrefix(key, "native:") || strings.HasPrefix(key, "file:") {
+	// Any absolute URL (node:, file:, or a scheme a hook made up) is kept.
+	if urlSchemeRe.MatchString(key) {
 		return key
 	}
 	if p, ok := e.keyPaths[key]; ok && p != key {
@@ -107,6 +109,9 @@ func (e *ESM) displayURL(key string) string {
 	}
 	return fileURL(key)
 }
+
+// urlSchemeRe matches a string that starts with a URL scheme.
+var urlSchemeRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 // typeKeySep separates a module url from the import type in its cache key.
 const typeKeySep = '\x01'
