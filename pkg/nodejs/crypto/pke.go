@@ -11,8 +11,9 @@ import (
 )
 
 // publicEncrypt, privateDecrypt, privateEncrypt and publicDecrypt with RSA
-// keys, over Go's crypto/rsa and, for the unpadded and private-encrypt
-// forms OpenSSL has and Go doesn't, the RSA operation itself. Errors cross
+// keys, over Go's crypto/rsa and, for the unpadded public-key forms and
+// publicDecrypt that Go doesn't offer, the public RSA operation itself.
+// Private-key operations always go through crypto/rsa. Errors cross
 // as "CODE|message" with OpenSSL's reasons.
 
 //go:embed pke.js
@@ -36,10 +37,14 @@ var (
 	errInvalidOAEPDigest  = rsaErr("ERR_OSSL_EVP_INVALID_DIGEST", "Invalid digest used")
 	errNotForKeyType      = rsaErr("ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE", "error:03000096:digital envelope routines::operation not supported for this keytype")
 	errUnknownPadding     = rsaErr("", "error:00000000:lib(0)::reason(0)")
+	// Unpadded private-key operations would need the RSA step done with
+	// math/big, which isn't constant time, so they aren't offered.
+	errNoPaddingPrivate = rsaErr("ERR_CRYPTO_UNSUPPORTED_OPERATION", "Unsupported crypto operation")
 )
 
-// rawRSA computes in^exp mod n for an input of at most k bytes, as OpenSSL's
-// unpadded operations do, returning exactly k bytes.
+// rawRSA computes in^e mod n for an input of at most k bytes, as OpenSSL's
+// unpadded operations do, returning exactly k bytes. Only for public
+// exponents: math/big is not constant time.
 func rawRSA(in []byte, exp, n *big.Int, k int) ([]byte, error) {
 	if len(in) > k {
 		return nil, errGreaterThanModLen
@@ -141,7 +146,7 @@ func rsaCrypt(op string, e *keyEntry, data []byte, padding int, oaepHash string,
 			}
 			return out, nil
 		case rsaNoPadding:
-			return rawRSA(data, priv.D, priv.N, k)
+			return nil, errNoPaddingPrivate
 		}
 	case "privateEncrypt":
 		switch padding {
@@ -152,13 +157,7 @@ func rsaCrypt(op string, e *keyEntry, data []byte, padding int, oaepHash string,
 			}
 			return out, nil
 		case rsaNoPadding:
-			if len(data) > k {
-				return nil, errTooLargeForKey
-			}
-			if len(data) < k {
-				return nil, errTooSmallForKey
-			}
-			return rawRSA(data, priv.D, priv.N, k)
+			return nil, errNoPaddingPrivate
 		}
 	case "publicDecrypt":
 		switch padding {

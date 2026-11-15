@@ -234,6 +234,10 @@ traceability.
   `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
   passes, but native `node:crypto` consumers of them will not work. (#141)
+- **[gap] No unpadded RSA private-key operations.** `privateDecrypt` and
+  `privateEncrypt` with `RSA_NO_PADDING` throw `ERR_CRYPTO_UNSUPPORTED_OPERATION`: Go's
+  RSA has no raw private-key operation, and doing it with `math/big` wouldn't be
+  constant time. The public-key forms work.
 - **[approx] Signatures cover RSA (PKCS#1 v1.5 and PSS), ECDSA and Ed25519.** DSA,
   Ed448 and RSA with `RSA_X931_PADDING` aren't supported, and a `Sign` or `Verify`
   keeps the data written to it until `sign()` or `verify()`. Signing RSA-PSS with

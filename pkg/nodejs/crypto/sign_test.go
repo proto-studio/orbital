@@ -87,3 +87,18 @@ func TestSign_CryptoKeyConvertedOnce(t *testing.T) {
 		t.Error("CryptoKey converted more than once")
 	}
 }
+
+// Unpadded private-key RSA operations are refused rather than done in
+// variable time.
+func TestPKE_NoPaddingPrivateRefused(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &keyEntry{kind: "private", asymType: "rsa", rsaPriv: key}
+	for _, op := range []string{"privateDecrypt", "privateEncrypt"} {
+		if _, err := rsaCrypt(op, e, make([]byte, 256), rsaNoPadding, "sha1", nil); err != errNoPaddingPrivate {
+			t.Errorf("%s: got %v, want %v", op, err, errNoPaddingPrivate)
+		}
+	}
+}
