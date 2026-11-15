@@ -301,14 +301,21 @@
   function noSideEffectsToString(value) {
     if (typeof value === 'symbol') return apply(Symbol.prototype.toString, value, []);
     if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return String(value);
-    if (Array.isArray(value)) return '[object Array]';
-    for (let o = value; o !== null; o = Object.getPrototypeOf(o)) {
-      const desc = Object.getOwnPropertyDescriptor(o, 'constructor');
-      if (desc && typeof desc.value === 'function') {
-        const name = Object.getOwnPropertyDescriptor(desc.value, 'name');
-        if (name && typeof name.value === 'string' && name.value !== '') return '#<' + name.value + '>';
-        break;
+    try {
+      if (Array.isArray(value)) return '[object Array]';
+      // A proxy can make its prototype chain endless, so the walk is bounded.
+      let o = value;
+      for (let depth = 0; o !== null && depth < 64; depth++) {
+        const desc = Object.getOwnPropertyDescriptor(o, 'constructor');
+        if (desc && typeof desc.value === 'function') {
+          const name = Object.getOwnPropertyDescriptor(desc.value, 'name');
+          if (name && typeof name.value === 'string' && name.value !== '') return '#<' + name.value + '>';
+          break;
+        }
+        o = Object.getPrototypeOf(o);
       }
+    } catch (_) {
+      // A proxy's trap threw: fall back to the plain name.
     }
     return '[object Object]';
   }
@@ -318,16 +325,24 @@
   }
 
   // Node's emitUnhandledRejectionWarning: the reason, then what to do about it.
+  // Node's isErrorStackTraceLimitWritable: a program can freeze Error or the property.
+  function stackTraceLimitWritable() {
+    const desc = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit');
+    if (desc === undefined) return Object.isExtensible(Error);
+    return apply(hasOwn, desc, ['writable']) ? desc.writable : desc.set !== undefined;
+  }
+
   function warnUnhandled(p, uid, reason) {
     const limit = Error.stackTraceLimit;
-    Error.stackTraceLimit = 0;
+    const writable = stackTraceLimitWritable();
+    if (writable) Error.stackTraceLimit = 0;
     const warning = new Error(
       'Unhandled promise rejection. This error originated either by throwing inside of an ' +
       'async function without a catch block, or by rejecting a promise which was not handled ' +
       'with .catch(). To terminate the node process on unhandled promise rejection, use the ' +
       'CLI flag `--unhandled-rejections=strict` (see ' +
       'https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode). (rejection id: ' + uid + ')');
-    Error.stackTraceLimit = limit;
+    if (writable) Error.stackTraceLimit = limit;
     Object.defineProperty(warning, 'name', {
       value: 'UnhandledPromiseRejectionWarning', enumerable: false, writable: true, configurable: true,
     });

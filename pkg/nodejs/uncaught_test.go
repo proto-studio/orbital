@@ -908,3 +908,33 @@ note('sync done', process.listenerCount('warning'));
 		t.Errorf("notes = %q\nwant %q", notes, want)
 	}
 }
+
+// Warnings survive a read-only Error.stackTraceLimit, a rejection with a proxy whose
+// prototype chain never ends, and process.throwDeprecation, which throws a tick later as
+// in Node. Expected values are Node 20.18.1's.
+func TestWarningsWithHostileValues(t *testing.T) {
+	supportsRejections(t)
+	notes, err := runUncaughtWith(t, &runtime.Config{UnhandledRejections: "warn", NoWarnings: true}, `
+process.on('warning', (w) => note('warning', w.name, w.message.split('\n')[0].slice(0, 30)));
+process.on('uncaughtException', (e) => note('uncaught', e.name, e.message));
+Object.defineProperty(Error, 'stackTraceLimit', { value: 10, writable: false, configurable: true });
+process.emitWarning('frozen limit');
+const p2 = new Proxy(Object.create(null), { getPrototypeOf() { return p2; } });
+Promise.reject(p2);
+process.throwDeprecation = true;
+try { process.emitWarning('old', 'DeprecationWarning'); note('sync after deprecation'); } catch (e) { note('caught sync', e.name); }
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	want := []string{
+		"sync after deprecation",
+		"warning Warning frozen limit",
+		"uncaught DeprecationWarning old",
+		"warning UnhandledPromiseRejectionWarning [object Object]",
+		"warning UnhandledPromiseRejectionWarning Unhandled promise rejection. T",
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q\nwant %q", notes, want)
+	}
+}
