@@ -16,6 +16,9 @@ type PipeSocket struct {
 	mu      sync.Mutex
 	cond    *sync.Cond
 	chunks  [][]byte
+	queued  int
+	full    bool
+	onDrain func()
 	ended   bool
 	closed  bool
 	onWrite func(data []byte, seq uint64)
@@ -57,18 +60,35 @@ func (n *Net) NewPipe(onWrite func(data []byte, seq uint64), onEnd func(seq uint
 	return id, pipe
 }
 
-// Push makes data available to Read.
-func (p *PipeSocket) Push(data []byte) {
+// pipeHighWater is how much unread data a pipe queues before asking its stream to pause.
+const pipeHighWater = 64 * 1024
+
+// SetOnDrain sets what to call when a queue that was full has been read down, so the
+// stream can be resumed.
+func (p *PipeSocket) SetOnDrain(onDrain func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onDrain = onDrain
+}
+
+// Push makes data available to Read. It reports false once the queue is full: the stream
+// should pause until the drain callback runs.
+func (p *PipeSocket) Push(data []byte) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed || p.ended || len(data) == 0 {
-		return
+		return true
 	}
 	p.chunks = append(p.chunks, append([]byte(nil), data...))
+	p.queued += len(data)
 	if p.readers > 0 {
 		p.holdLocked(true)
 	}
 	p.cond.Broadcast()
+	if p.queued >= pipeHighWater {
+		p.full = true
+	}
+	return !p.full
 }
 
 func (p *PipeSocket) holdLocked(hold bool) {
@@ -103,11 +123,15 @@ func (p *PipeSocket) release() {
 	p.holdLocked(false)
 }
 
-// End makes Read report the end of the stream once the data pushed so far is read.
+// End makes Read report the end of the stream once the data pushed so far is read. A read
+// waiting for data holds the loop again, so the end is delivered.
 func (p *PipeSocket) End() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.ended = true
+	if p.readers > 0 {
+		p.holdLocked(true)
+	}
 	p.cond.Broadcast()
 }
 
@@ -131,6 +155,13 @@ func (p *PipeSocket) Read(buf []byte) (int, error) {
 		p.chunks = p.chunks[1:]
 	} else {
 		p.chunks[0] = p.chunks[0][n:]
+	}
+	p.queued -= n
+	if p.full && p.queued < pipeHighWater/2 {
+		p.full = false
+		if p.onDrain != nil {
+			p.onDrain()
+		}
 	}
 	return n, nil
 }

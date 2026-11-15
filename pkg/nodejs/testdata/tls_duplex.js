@@ -93,6 +93,24 @@ async function halfOpenThenClosed() {
   return events;
 }
 
+async function pausedReader() {
+  // While the TLS socket is paused, the stream under it is paused too, rather than its data
+  // piling up below the TLS socket.
+  const [a, b] = pair();
+  const serverSocket = new tls.TLSSocket(b, { isServer: true, secureContext: tls.createSecureContext({ cert, key }) });
+  serverSocket.on('secure', () => { for (let i = 0; i < 64; i++) serverSocket.write(Buffer.alloc(16384, i)); });
+  let received = 0;
+  const socket = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => socket.pause());
+  socket.on('data', (d) => { received += d.length; });
+  await new Promise((r) => setTimeout(r, 300));
+  const whilePaused = { streamPaused: a.isPaused(), streamBuffered: a.readableLength > 0 };
+  socket.resume();
+  await new Promise((r) => { const check = () => (received === 64 * 16384 ? r() : setTimeout(check, 10)); check(); });
+  socket.destroy();
+  serverSocket.destroy();
+  return { ...whilePaused, received };
+}
+
 async function overNetSocket() {
   const server = tls.createServer({ cert, key }, (s) => s.end('hello'));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -127,7 +145,7 @@ async function badCert() {
   });
 }
 (async () => {
-  const out = { inMemory: await inMemory(), slowStream: await slowStream(), halfOpenThenClosed: await halfOpenThenClosed(), overNetSocket: await overNetSocket(), badCert: await badCert() };
+  const out = { inMemory: await inMemory(), slowStream: await slowStream(), halfOpenThenClosed: await halfOpenThenClosed(), pausedReader: await pausedReader(), overNetSocket: await overNetSocket(), badCert: await badCert() };
   if (globalThis.done) done(out);
   else process.stdout.write(JSON.stringify(out));
 })();
