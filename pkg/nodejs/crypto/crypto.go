@@ -3,14 +3,9 @@ package crypto
 
 import (
 	"crypto/hmac"
-	"crypto/md5"
 	"crypto/rand"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"hash"
 	"sync"
 
 	"github.com/google/uuid"
@@ -61,6 +56,10 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"createHash":       c.createHashFunc,
 		"createHmac":       c.createHmacFunc,
 		"getHashes":        c.getHashesFunc,
+		"getCurves":        c.getCurvesFunc,
+		"getCiphers":       c.getCiphersFunc,
+		"_x509Parse":       c.x509ParseFunc,
+		"_x509Check":       c.x509CheckFunc,
 		"_timingSafeEqual": c.timingSafeEqualFunc,
 		// KeyObject API (native Go; see keyobject.go). These low-level helpers
 		// take/return strings + integer handles and are wrapped by the JS
@@ -157,9 +156,42 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		return encoding && Buffer.isEncoding(encoding) ? digest.toString(encoding) : digest;
 	}
 
+	// Node's description of a rejected value, as in its ERR_INVALID_ARG_TYPE.
+	function describeReceived(value) {
+		if (value === null || value === undefined) return 'Received ' + value;
+		if (typeof value === 'function') return 'Received function ' + (value.name || '<anonymous>');
+		if (typeof value === 'object') {
+			if (value.constructor && value.constructor.name) {
+				return 'Received an instance of ' + value.constructor.name;
+			}
+			return 'Received ' + String(value);
+		}
+		let shown;
+		if (typeof value === 'string') {
+			shown = "'" + (value.length > 28 ? value.slice(0, 25) + '...' : value) + "'";
+		} else if (typeof value === 'bigint') {
+			shown = String(value) + 'n';
+		} else {
+			shown = Object.is(value, -0) ? '-0' : String(value);
+		}
+		return 'Received type ' + typeof value + ' (' + shown + ')';
+	}
+
+	function checkDigestName(value, name) {
+		if (typeof value !== 'string') {
+			const err = new TypeError('The "' + name + '" argument must be of type string. ' + describeReceived(value));
+			err.code = 'ERR_INVALID_ARG_TYPE';
+			throw err;
+		}
+		return crypto._digestSize(value) > 0;
+	}
+
 	// Hash class
 	class Hash {
 		constructor(algorithm) {
+			if (!checkDigestName(algorithm, 'algorithm')) {
+				throw new Error('Digest method not supported');
+			}
 			this._algorithm = algorithm;
 			this._data = [];
 		}
@@ -184,6 +216,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	// Hmac class
 	class Hmac {
 		constructor(algorithm, key) {
+			if (!checkDigestName(algorithm, 'hmac')) {
+				const err = new TypeError('Invalid digest: ' + algorithm);
+				err.code = 'ERR_CRYPTO_INVALID_DIGEST';
+				throw err;
+			}
 			this._algorithm = algorithm;
 			this._key = keyBytes(key);
 			this._data = [];
@@ -274,6 +311,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// X509Certificate over _x509Parse and _x509Check.
+	if _, err = rt.RunScript(x509JS, "crypto_x509.js"); err != nil {
+		return err
+	}
+
 	// pbkdf2, scrypt and hkdf over the natives above.
 	if _, err = rt.RunScript(kdfJS, "crypto_kdf.js"); err != nil {
 		return err
@@ -345,15 +387,7 @@ func (c *Crypto) createHmacFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 }
 
 func (c *Crypto) getHashesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	hashes := []string{"md5", "sha1", "sha256", "sha384", "sha512"}
-
-	arr, _ := ctx.NewArray(len(hashes))
-	for i, h := range hashes {
-		val, _ := ctx.NewString(h)
-		arr.SetIndex(i, val)
-	}
-	return arr
+	return stringArray(info.Context(), supportedHashes())
 }
 
 func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -370,21 +404,11 @@ func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("crypto: invalid digest input: " + err.Error())
 	}
 
-	var h hash.Hash
-	switch algorithm {
-	case "md5":
-		h = md5.New()
-	case "sha1":
-		h = sha1.New()
-	case "sha256":
-		h = sha256.New()
-	case "sha384":
-		h = sha512.New384()
-	case "sha512":
-		h = sha512.New()
-	default:
-		return nil
+	newHash := nodeDigest(algorithm)
+	if newHash == nil {
+		return ctx.Throw("crypto: unsupported digest " + algorithm)
 	}
+	h := newHash()
 
 	h.Write(data)
 	result := hex.EncodeToString(h.Sum(nil))
@@ -411,20 +435,9 @@ func (c *Crypto) hmacDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("crypto: invalid digest input: " + err.Error())
 	}
 
-	var h func() hash.Hash
-	switch algorithm {
-	case "md5":
-		h = md5.New
-	case "sha1":
-		h = sha1.New
-	case "sha256":
-		h = sha256.New
-	case "sha384":
-		h = sha512.New384
-	case "sha512":
-		h = sha512.New
-	default:
-		return nil
+	h := nodeDigest(algorithm)
+	if h == nil {
+		return ctx.Throw("crypto: unsupported digest " + algorithm)
 	}
 
 	mac := hmac.New(h, key)

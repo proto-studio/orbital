@@ -218,9 +218,15 @@ traceability.
 - **[approx] scrypt parameter errors don't carry over an earlier OpenSSL error.** Once
   one scrypt call fails the memory limit, Node adds that message to later
   `Invalid scrypt params` errors too; Orbital gives each error its own reason.
-- **[gap] `node:crypto` introspection is partial.** `getHashes()` returns only
-  `md5, sha1, sha256, sha384, sha512` (`crypto.go`); Node lists far more. There
-  is no `getCiphers()` / `getCurves()` / `X509Certificate`. (#143)
+- **[approx] `getHashes()`, `getCurves()` and `getCiphers()` list only what Orbital
+  implements** (`lists.go`): the digests in `digests.go`, the P-256/384/521 curves, and no
+  ciphers until `createCipheriv` exists. Node lists every name OpenSSL knows.
+- **[approx] `X509Certificate` reads certificates with Go's `crypto/x509`.** Fields are
+  printed as Node prints them from OpenSSL, but Go refuses some malformed certificates
+  OpenSSL reads, and a certificate that fails to parse gives
+  `ERR_OSSL_ASN1_WRONG_TAG` whatever OpenSSL's reason would be. `checkIssued` compares
+  names, key identifiers and key usage but not the authority key identifier's issuer
+  and serial.
 - **[gap] Other `node:crypto` exports are missing.** `randomFill` / `randomFillSync`,
   `getRandomValues`, `webcrypto`, `subtle`, `checkPrime` / `generatePrime`, `getFips` and
   `Certificate` are `undefined`. `globalThis.crypto` has the WebCrypto object. (#144)
