@@ -396,7 +396,8 @@ func (f *localFile) Chtimes(atime, mtime time.Time) error {
 // timeval gives t as seconds and microseconds, without going through nanoseconds since
 // 1970, which overflow an int64 past 2262.
 func timeval(t time.Time) syscall.Timeval {
-	tv := syscall.NsecToTimeval(int64(t.Nanosecond()))
+	// The fraction is cut to whole microseconds, so it never rounds up into the next second.
+	tv := syscall.NsecToTimeval(int64(t.Nanosecond() / 1000 * 1000))
 	tv.Sec = t.Unix()
 	return tv
 }

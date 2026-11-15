@@ -211,6 +211,13 @@
       "syscall": "cp"
     }
   },
+  "cp_callback_filter_falsy_rejection": {
+    "error": {
+      "code": "ERR_FALSY_VALUE_REJECTION",
+      "message": "Promise was rejected with falsy value",
+      "name": "Error"
+    }
+  },
   "cp_dir": {
     "value": [
       [
@@ -297,6 +304,9 @@
     "value": [
       "a"
     ]
+  },
+  "cp_filter_falsy_rejection": {
+    "value": "rejected with null"
   },
   "cp_filter_promise": {
     "error": {

@@ -346,6 +346,9 @@ async function testCp() {
     } });
     return [asked.sort(), tree('cp_skip')];
   });
+  await attemptAsync('cp_filter_falsy_rejection', () => fsp.cp(file('cp_src'), file('cp_falsy'), { recursive: true, filter: () => Promise.reject(null) })
+    .then(() => 'copied', (e) => 'rejected with ' + e));
+  await attemptAsync('cp_callback_filter_falsy_rejection', () => callback((cb) => fs.cp(file('cp_src'), file('cp_falsy2'), { recursive: true, filter: () => Promise.reject(null) }, cb)));
   await attemptAsync('cp_promise_filter', async () => {
     await fsp.cp(file('cp_src'), file('cp_async'), { recursive: true, filter: async (src) => !src.endsWith('sub') });
     return tree('cp_async');

@@ -14,4 +14,8 @@ func TestTimevalAndTimespecFarFuture(t *testing.T) {
 	if ts := timespec(future); ts.Sec != 10413792000 || ts.Nsec != 500000000 {
 		t.Errorf("timespec = %+v", ts)
 	}
+	almost := time.Unix(1000, 999999999)
+	if tv := timeval(almost); tv.Sec != 1000 || tv.Usec != 999999 {
+		t.Errorf("timeval(1000.999999999) = %+v", tv)
+	}
 }

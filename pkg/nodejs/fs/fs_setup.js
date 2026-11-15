@@ -1317,6 +1317,12 @@
       step = steps.next(value);
     }
   };
+  // A filter's promise rejected with a falsy reason fails the copy too, as in Node.
+  function falsyRejection(reason) {
+    const e = codedError(Error, 'ERR_FALSY_VALUE_REJECTION', 'Promise was rejected with falsy value');
+    e.reason = reason;
+    return e;
+  }
   fs.cp = function (src, dest, options, callback) {
     src = pathString(src);
     dest = pathString(dest);
@@ -1345,7 +1351,7 @@
         err = null;
         try {
           if (name === 'filter') {
-            Promise.resolve(opts.filter(...args)).then((keep) => advance(null, keep), (e) => advance(e));
+            Promise.resolve(opts.filter(...args)).then((keep) => advance(null, keep), (e) => advance(e || falsyRejection(e)));
             return;
           }
           value = cpCalls[name](...args);
