@@ -306,6 +306,85 @@
     return e === 0 ? 1 : e;
   }
 
+  // ---- HKDF -------------------------------------------------------------------
+  // Parameter checks and errors follow Node 20's WebCrypto.
+  const HASH_BITS = { 'SHA-1': 160, 'SHA-256': 256, 'SHA-384': 384, 'SHA-512': 512 };
+
+  function normalizeHashName(h) {
+    const name = typeof h === 'string' ? h : (h && typeof h === 'object' ? h.name : undefined);
+    const upper = typeof name === 'string' ? name.toUpperCase() : '';
+    if (!HASH_BITS[upper]) {
+      throw new DOMException('Unrecognized algorithm name', 'NotSupportedError');
+    }
+    return upper;
+  }
+
+  function isBufferSource(v) {
+    return v instanceof ArrayBuffer || ArrayBuffer.isView(v);
+  }
+
+  function hkdfParams(algo) {
+    for (const member of ['hash', 'info', 'salt']) {
+      if (algo[member] === undefined) {
+        throw new TypeError("Failed to normalize algorithm: passed algorithm can not be converted to 'HkdfParams' because '" +
+          member + "' is required in 'HkdfParams'.");
+      }
+    }
+    for (const member of ['info', 'salt']) {
+      if (!isBufferSource(algo[member])) {
+        throw new TypeError("Failed to normalize algorithm: '" + member + "' of 'HkdfParams' (passed algorithm) is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.");
+      }
+    }
+    return { hash: normalizeHashName(algo.hash), info: u8(algo.info), salt: u8(algo.salt) };
+  }
+
+  function hkdfDeriveBits(algo, baseKey, length, usage) {
+    const params = hkdfParams(algo);
+    if (!baseKey._usages.includes(usage)) {
+      throw new DOMException('baseKey does not have ' + usage + ' usage', 'InvalidAccessError');
+    }
+    if (baseKey.algorithm.name !== 'HKDF') {
+      throw new DOMException('Key algorithm mismatch', 'InvalidAccessError');
+    }
+    if (length === null || length === undefined) {
+      throw new DOMException('length cannot be null', 'OperationError');
+    }
+    if (length === 0) {
+      throw new DOMException('length cannot be zero', 'OperationError');
+    }
+    if (length % 8) {
+      throw new DOMException('length must be a multiple of 8', 'OperationError');
+    }
+    // RFC 5869 caps the output at 255 blocks of the hash.
+    if (length > 255 * HASH_BITS[params.hash]) {
+      throw new DOMException('The operation failed for an operation-specific reason', 'OperationError');
+    }
+    const outB64 = native.hkdf(JSON.stringify({
+      keyB64: bytesToB64(b64urlToBytes(baseKey._jwk.k)),
+      saltB64: bytesToB64(params.salt),
+      infoB64: bytesToB64(params.info),
+      hash: params.hash,
+      length: length,
+    }));
+    return b64ToBytes(outB64).buffer;
+  }
+
+  // HKDF keys import only from raw bytes, are never extractable, and only
+  // derive.
+  function checkHKDFImport(format, extractable, keyUsages) {
+    if (format !== 'raw') {
+      throw new DOMException('Unable to import HKDF key with format ' + format, 'NotSupportedError');
+    }
+    for (const u of keyUsages || []) {
+      if (u !== 'deriveBits' && u !== 'deriveKey') {
+        throw new DOMException('Unsupported key usage for a HKDF key', 'SyntaxError');
+      }
+    }
+    if (extractable) {
+      throw new DOMException('HKDF keys are not extractable', 'SyntaxError');
+    }
+  }
+
   class SubtleCrypto {
     async digest(algorithm, data) {
       const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
@@ -355,6 +434,10 @@
 
     async importKey(format, keyData, algorithm, extractable, keyUsages) {
       const algo = normalizeAlgorithm(algorithm);
+      if (typeof algo.name === 'string' && algo.name.toUpperCase() === 'HKDF') {
+        algo.name = 'HKDF';
+        checkHKDFImport(format, extractable, keyUsages);
+      }
       assertSupportedAlg(algo.name);
       let jwk;
       if (format === 'raw') {
@@ -451,7 +534,16 @@
     }
 
     async deriveBits(algorithm, baseKey, length) {
+      return this._deriveBits(algorithm, baseKey, length, 'deriveBits');
+    }
+
+    // usage is the operation the caller asked for: deriveBits, or deriveKey
+    // when deriveKey derives the bits.
+    async _deriveBits(algorithm, baseKey, length, usage) {
       const algo = normalizeAlgorithm(algorithm);
+      if (typeof algo.name === 'string' && algo.name.toUpperCase() === 'HKDF') {
+        return hkdfDeriveBits(algo, baseKey, length, usage);
+      }
       if (algo.name === 'PBKDF2') {
         const params = {
           passwordB64: bytesToB64(b64urlToBytes(baseKey._jwk.k)),
@@ -475,7 +567,7 @@
     }
 
     async deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
-      const bits = await this.deriveBits(algorithm, baseKey, derivedKeyAlgorithm.length || 256);
+      const bits = await this._deriveBits(algorithm, baseKey, derivedKeyAlgorithm.length || 256, 'deriveKey');
       return this.importKey('raw', bits, derivedKeyAlgorithm, extractable, keyUsages);
     }
 

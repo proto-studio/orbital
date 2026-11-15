@@ -67,15 +67,14 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## WebCrypto — SubtleCrypto (`pkg/nodejs/webcrypto/webcrypto.js`)
 
-- **[gap] `deriveBits`/`deriveKey` support PBKDF2, ECDH, X25519 only.** `HKDF`
-  is accepted by `importKey` (it's in the import allowlist) but `deriveBits`
-  throws `NotSupportedError` for it — an inconsistency to resolve when HKDF
-  derivation is implemented natively. (#115)
 - **[approx] `importKey` doesn't check key usages against the key type.** JWK members
   are checked as Node does (`kty`, `crv`, `alg`, `use`, `key_ops`, `ext`, coordinate
   lengths, on-curve points, private keys matching public ones), but usages are not:
   Node rejects, for example, a secret key imported with no usages, or a public key
   with `sign`, with a `SyntaxError`.
+- **[approx] Only HKDF checks key usages in `deriveBits`/`deriveKey`.** HKDF rejects a
+  base key without the `deriveBits` or `deriveKey` usage, or for another algorithm, with
+  Node's `InvalidAccessError`; PBKDF2, ECDH and X25519 don't check yet.
 - **[gap] ML-DSA and other non-allowlisted algorithms are rejected by design.**
   `SUPPORTED_IMPORT_ALGS` gates `importKey`; anything outside it throws
   `NotSupportedError` (matches Node). Expanding real algorithm support means

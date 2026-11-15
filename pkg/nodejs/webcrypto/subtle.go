@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
@@ -117,6 +118,7 @@ func registerNative(rt *runtime.Runtime) error {
 		"deriveBits":  nativeDeriveBits,
 		"pbkdf2":      nativePbkdf2,
 		"checkJWK":    nativeCheckJWK,
+		"hkdf":        nativeHkdf,
 		"aesKwWrap":   nativeAesKwWrap,
 		"aesKwUnwrap": nativeAesKwUnwrap,
 	}
@@ -697,6 +699,43 @@ func nativePbkdf2(info *v8.FunctionCallbackInfo) *v8.Value {
 		return throwf(ctx, "pbkdf2: %v", err)
 	}
 	return bytesResult(ctx, dk)
+}
+
+// nativeHkdf implements HKDF deriveBits (RFC 5869). webcrypto.js has checked
+// the parameters. Params JSON: {keyB64, saltB64, infoB64, hash, length(bits)}.
+func nativeHkdf(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	var p struct {
+		Key    string `json:"keyB64"`
+		Salt   string `json:"saltB64"`
+		Info   string `json:"infoB64"`
+		Hash   string `json:"hash"`
+		Length int    `json:"length"`
+	}
+	if err := json.Unmarshal([]byte(argStr(info, 0)), &p); err != nil {
+		return throwf(ctx, "hkdf: invalid params: %v", err)
+	}
+	_, nh, ok := hashByName(p.Hash)
+	if !ok {
+		return throwf(ctx, "hkdf: unsupported hash %q", p.Hash)
+	}
+	secret, err := b64sDec(p.Key)
+	if err != nil {
+		return throwf(ctx, "hkdf: bad key: %v", err)
+	}
+	salt, err := b64sDec(p.Salt)
+	if err != nil {
+		return throwf(ctx, "hkdf: bad salt: %v", err)
+	}
+	infoBytes, err := b64sDec(p.Info)
+	if err != nil {
+		return throwf(ctx, "hkdf: bad info: %v", err)
+	}
+	out, err := hkdf.Key(nh, secret, salt, string(infoBytes), p.Length/8)
+	if err != nil {
+		return throwf(ctx, "hkdf: %v", err)
+	}
+	return bytesResult(ctx, out)
 }
 
 // ---------------------------------------------------------------------------
