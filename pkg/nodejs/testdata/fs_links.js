@@ -82,6 +82,17 @@ async function main() {
     return [fs.lstatSync(file('cpdst/rel')).isSymbolicLink(), fs.readlinkSync(file('cpdst/rel')), fs.readFileSync(file('cpdst/rel'), 'utf8')];
   });
 
+  attempt('cp_dereference_onto_source', () => {
+    fs.mkdirSync(file('dsrc/a'), { recursive: true });
+    fs.writeFileSync(file('dsrc/a/f'), 'keep');
+    fs.mkdirSync(file('ddst'));
+    fs.symlinkSync(file('dsrc/a'), file('ddst/a'));
+    try {
+      fs.cpSync(file('dsrc'), file('ddst'), { recursive: true, dereference: true });
+    } finally {
+      results.cp_dereference_kept = { value: fs.readFileSync(file('dsrc/a/f'), 'utf8') };
+    }
+  });
   await attemptAsync('symlink_callback', async () => { await callback((cb) => fs.symlink('f', file('lc'), cb)); return fs.readlinkSync(file('lc')); });
   await attemptAsync('readlink_callback', async () => (await callback((cb) => fs.readlink(file('lc'), cb)))[0]);
   await attemptAsync('lstat_callback', async () => kind((await callback((cb) => fs.lstat(file('lc'), cb)))[0]));
