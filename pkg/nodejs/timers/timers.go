@@ -109,17 +109,9 @@ func (t *Timers) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
-	// queueMicrotask (WHATWG global; used by React's SSR renderer and many
-	// modern libraries to defer work onto the microtask queue).
-	queueMicrotaskFn, err := iso.NewFunctionTemplate(t.queueMicrotaskFunc)
-	if err != nil {
-		return err
-	}
-	queueMicrotaskVal, err := queueMicrotaskFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := rt.SetGlobal("queueMicrotask", queueMicrotaskVal); err != nil {
+	// queueMicrotask (WHATWG global): the runtime's, which queues a V8 microtask so the
+	// callback runs in order with promise reactions, as in Node.
+	if err := rt.SetGlobal("queueMicrotask", rt.QueueMicrotaskFunction()); err != nil {
 		return err
 	}
 
@@ -273,23 +265,6 @@ func (t *Timers) setIntervalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	t.timers.Store(id, handle)
 
 	return ctx.NewNumber(float64(id))
-}
-
-// queueMicrotaskFunc implements the global queueMicrotask(callback): it defers
-// callback onto the event loop's microtask queue so it runs after the current
-// operation completes but before the next macrotask/I/O.
-func (t *Timers) queueMicrotaskFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-	if len(args) < 1 || !args[0].IsFunction() {
-		return ctx.Throw("The \"callback\" argument must be of type function.")
-	}
-
-	callback := args[0]
-	t.rt.EventLoop().EnqueueTick(func() {
-		t.rt.MakeCallback(callback, nil)
-	})
-	return nil
 }
 
 // setImmediateFunc implements setImmediate.

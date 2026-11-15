@@ -56,6 +56,10 @@ type uncaughtHandlers struct {
 	markHandled       *v8.Value
 	watchModule       *v8.Value
 	runMain           *v8.Value
+	runScheduledTicks *v8.Value
+	queueMicrotask    *v8.Value
+	// mainBody is the native function runMain calls to run the main script.
+	mainBody *v8.Value
 }
 
 // installUncaught sets up exception handling for a new runtime.
@@ -78,6 +82,18 @@ func (rt *Runtime) installUncaught() error {
 	}); err != nil {
 		return err
 	}
+	if err := rt.setNative(native, "runMicrotasks", func(*v8.FunctionCallbackInfo) *v8.Value {
+		rt.context.PerformMicrotaskCheckpoint()
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "scheduleTicks", func(*v8.FunctionCallbackInfo) *v8.Value {
+		rt.eventLoop.EnqueueTick(rt.runScheduledTicks)
+		return nil
+	}); err != nil {
+		return err
+	}
 
 	api, err := factory.Call(nil, native)
 	if err != nil {
@@ -91,6 +107,9 @@ func (rt *Runtime) installUncaught() error {
 		"bindProcess":       &rt.uncaught.bindProcess,
 		"markHandled":       &rt.uncaught.markHandled,
 		"watchModule":       &rt.uncaught.watchModule,
+		"runMain":           &rt.uncaught.runMain,
+		"runScheduledTicks": &rt.uncaught.runScheduledTicks,
+		"queueMicrotask":    &rt.uncaught.queueMicrotask,
 	} {
 		if *dst, err = api.Get(name); err != nil {
 			return err
@@ -103,7 +122,7 @@ func (rt *Runtime) installUncaught() error {
 	}
 	rt.tracksRejections = rt.context.SetPromiseRejectHandler(promiseReject)
 
-	runMain, err := rt.isolate.NewFunctionTemplate(func(*v8.FunctionCallbackInfo) *v8.Value {
+	mainBody, err := rt.isolate.NewFunctionTemplate(func(*v8.FunctionCallbackInfo) *v8.Value {
 		body := rt.mainBody
 		rt.mainBody = nil
 		if body != nil {
@@ -114,7 +133,7 @@ func (rt *Runtime) installUncaught() error {
 	if err != nil {
 		return err
 	}
-	if rt.uncaught.runMain, err = runMain.GetFunction(rt.context); err != nil {
+	if rt.uncaught.mainBody, err = mainBody.GetFunction(rt.context); err != nil {
 		return err
 	}
 
@@ -233,6 +252,25 @@ func (rt *Runtime) handleUncaught(thrown *v8.Value) bool {
 	return true
 }
 
+// runScheduledTicks runs process.nextTick callbacks queued while no callback into
+// JavaScript was on the stack to run them when it returned.
+func (rt *Runtime) runScheduledTicks() {
+	if rt.ended() {
+		return
+	}
+	_, _ = rt.uncaught.runScheduledTicks.Call(nil)
+	if rt.ended() {
+		rt.keepTerminating()
+	}
+}
+
+// QueueMicrotaskFunction returns the global queueMicrotask: its callback runs as a V8
+// microtask, in order with promise reactions, and an exception it throws goes to
+// 'uncaughtException'.
+func (rt *Runtime) QueueMicrotaskFunction() *v8.Value {
+	return rt.uncaught.queueMicrotask
+}
+
 // WatchModuleEvaluation gives a rejection of a module's evaluation promise to the handlers
 // as soon as it happens, however long the module's open handles keep the event loop running.
 func (rt *Runtime) WatchModuleEvaluation(promise *v8.Value) {
@@ -330,7 +368,7 @@ func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
 			scriptErr = rt.reportScriptError(err)
 		}
 	}
-	if _, err := rt.uncaught.runMain.Call(nil); err != nil && scriptErr == nil && !rt.ended() {
+	if _, err := rt.uncaught.runMain.Call(nil, rt.uncaught.mainBody); err != nil && scriptErr == nil && !rt.ended() {
 		scriptErr = err
 	}
 	return result, scriptErr

@@ -197,10 +197,11 @@ func (el *EventLoop) EnqueueMicrotask(fn func()) {
 }
 
 // EnqueueTick adds a callback that runs before any queued microtask, even one queued
-// earlier. Use it for process.nextTick and queueMicrotask. Native operations finish on their
-// own goroutines, so their completions can already be queued by the time the script that
-// started them schedules a callback, and Node promises that callback runs first. Scripts
-// rely on this to add a listener for an event that their operation will emit.
+// earlier. The runtime uses it for process.nextTick callbacks that no callback into
+// JavaScript ran on returning. Native operations finish on their own goroutines, so their
+// completions can already be queued by the time the script that started them schedules a
+// tick, and Node promises the tick runs first. Scripts rely on this to add a listener for
+// an event that their operation will emit.
 func (el *EventLoop) EnqueueTick(fn func()) {
 	el.mu.Lock()
 	defer el.mu.Unlock()
