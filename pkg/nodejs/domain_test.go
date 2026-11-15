@@ -228,3 +228,51 @@ d.run(() => {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
+
+// A domain follows promise reactions registered while it is active, and a rejection made
+// while it is active goes to its 'error' listeners rather than 'unhandledRejection'; with
+// no listener it becomes an uncaught exception. Expected values are Node 20.18.1's.
+func TestDomain_FollowsPromises(t *testing.T) {
+	for name, tc := range map[string]struct {
+		script string
+		want   []string
+	}{
+		"then throws": {`
+const d = require('domain').create();
+d.on('error', (e) => note('caught', e.message, process.domain === d, e.domain === d));
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
+d.run(() => Promise.resolve().then(() => { note('active in then', process.domain === d); throw new Error('in then'); }));
+`, []string{"active in then true", "caught in then false false"}},
+		"rejected in run": {`
+const d = require('domain').create();
+d.on('error', (e) => note('caught', String(e)));
+d.run(() => { Promise.reject(new Error('direct')); });
+`, []string{"caught Error: direct"}},
+		"catch runs inside": {`
+const d = require('domain').create();
+d.on('error', (e) => note('domain', e.message));
+d.run(() => Promise.reject(new Error('c')).catch((e) => note('catch active', process.domain === d, e.message)));
+`, []string{"catch active true c"}},
+		"no error listener": {`
+const d = require('domain').create();
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
+process.on('uncaughtException', (e, o) => note('uncaught', e.message, o));
+d.run(() => Promise.reject(new Error('nolistener')));
+`, []string{"uncaught nolistener uncaughtException"}},
+		"outside any domain": {`
+require('domain').create();
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));
+Promise.reject(new Error('plain'));
+`, []string{"unhandledRejection plain function"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			notes, err := runUncaught(t, tc.script)
+			if err != nil {
+				t.Fatalf("Run returned %v", err)
+			}
+			if !reflect.DeepEqual(notes, tc.want) {
+				t.Errorf("notes = %q, want %q", notes, tc.want)
+			}
+		})
+	}
+}

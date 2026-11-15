@@ -262,9 +262,22 @@
   const pendingRejections = [];
   const handledLate = [];
 
+  // activeDomain is the domain module's process.domain, if a domain is active: Node
+  // reports an unhandled rejection to the domain that was active when the promise was
+  // rejected.
+  function activeDomain() {
+    try {
+      const p = getProcess();
+      const d = p ? p.domain : null;
+      return d && typeof d === 'object' && typeof d.emit === 'function' ? d : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function promiseReject(type, promise, reason) {
     if (type === kPromiseRejectWithNoHandler) {
-      const info = { reason, reported: false, handled: false };
+      const info = { reason, reported: false, handled: false, domain: activeDomain() };
       tracked.set(promise, info);
       pendingRejections[pendingRejections.length] = { promise, info };
       native.rejectionsPending();
@@ -298,7 +311,11 @@
       if (info.handled) continue;
       info.reported = true;
       try {
-        if (!p || !p.emit('unhandledRejection', info.reason, promise)) {
+        if (info.domain !== null) {
+          // As in Node, the domain's 'error' takes the place of 'unhandledRejection'; with
+          // no listener there, emit throws and the reason becomes an uncaught exception.
+          info.domain.emit('error', info.reason);
+        } else if (!p || !p.emit('unhandledRejection', info.reason, promise)) {
           trigger(isErrorLike(info.reason) ? info.reason : unhandledRejectionError(info.reason), true);
         }
       } catch (err) {
