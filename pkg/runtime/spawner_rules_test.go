@@ -114,8 +114,13 @@ func TestSandboxedSpawnerResolvesEntries(t *testing.T) {
 }
 
 // The process sees the name it was given as argv[0], though the resolved path is what runs.
+// The entry is sh as PATH finds it, which may be a link to a shell of another name.
 func TestSandboxedSpawnerKeepsArgv0(t *testing.T) {
-	s := NewAllowListProcessSpawner(hostPath(t, "sh"))
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip(err)
+	}
+	s := NewAllowListProcessSpawner(sh)
 	out, err := runOutput(s, "sh", []string{"-c", "echo $0"}, nil)
 	if err != nil || out != "sh" {
 		t.Fatalf("out = %q, err = %v", out, err)
