@@ -22,31 +22,41 @@
 		return bytes;
 	}
 
-	// Decodes UTF-8, replacing invalid sequences with U+FFFD.
+	// Decodes UTF-8 as the Encoding Standard does: each maximal invalid
+	// subsequence becomes one U+FFFD.
 	function utf8Decode(bytes) {
 		let out = '';
-		for (let i = 0; i < bytes.length;) {
+		let cp = 0, needed = 0, seen = 0, lower = 0x80, upper = 0xbf;
+		for (let i = 0; i < bytes.length; i++) {
 			const b = bytes[i];
-			let need = 0, cp = 0, min = 0;
-			if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
-			else if (b >= 0xc2 && b <= 0xdf) { need = 1; cp = b & 31; min = 0x80; }
-			else if (b >= 0xe0 && b <= 0xef) { need = 2; cp = b & 15; min = 0x800; }
-			else if (b >= 0xf0 && b <= 0xf4) { need = 3; cp = b & 7; min = 0x10000; }
-			else { out += '�'; i++; continue; }
-			let j = 1;
-			for (; j <= need; j++) {
-				const n = bytes[i + j];
-				if (n === undefined || (n & 0xc0) !== 0x80) break;
-				cp = (cp << 6) | (n & 63);
-			}
-			if (j <= need || cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
-				out += '�';
-				i += Math.max(1, j);
+			if (needed === 0) {
+				if (b < 0x80) { out += String.fromCharCode(b); continue; }
+				if (b >= 0xc2 && b <= 0xdf) { needed = 1; cp = b & 0x1f; }
+				else if (b >= 0xe0 && b <= 0xef) {
+					if (b === 0xe0) lower = 0xa0;
+					if (b === 0xed) upper = 0x9f;
+					needed = 2; cp = b & 0xf;
+				} else if (b >= 0xf0 && b <= 0xf4) {
+					if (b === 0xf0) lower = 0x90;
+					if (b === 0xf4) upper = 0x8f;
+					needed = 3; cp = b & 0x7;
+				} else { out += '\ufffd'; }
 				continue;
 			}
-			out += String.fromCodePoint(cp);
-			i += need + 1;
+			if (b < lower || b > upper) {
+				cp = needed = seen = 0; lower = 0x80; upper = 0xbf;
+				out += '\ufffd';
+				i--; // Process this byte again as the start of a sequence.
+				continue;
+			}
+			lower = 0x80; upper = 0xbf;
+			cp = (cp << 6) | (b & 0x3f);
+			if (++seen === needed) {
+				out += String.fromCodePoint(cp);
+				cp = needed = seen = 0;
+			}
 		}
+		if (needed !== 0) out += '\ufffd';
 		return out;
 	}
 
@@ -133,7 +143,7 @@
 				Object.keys(init).forEach(key => {
 					this._params.push([key, String(init[key])]);
 				});
-			} else if (init !== undefined) {
+			} else if (init !== undefined && init !== null) {
 				init = String(init);
 				if (init.startsWith('?')) {
 					init = init.slice(1);
@@ -316,7 +326,8 @@
 			this._query = parsed.search ? encodeQuery(parsed.search.slice(1), URL._isSpecial(this._protocol)) : null;
 			this._hash = parsed.hash || '';
 			this._slashes = !!parsed.slashes;
-			this._searchParams = new URLSearchParams(this._query || '');
+			this._searchParams = new URLSearchParams();
+			this._searchParams._params = formParse(this._query || '');
 			this._searchParams._url = this;
 		}
 
@@ -660,9 +671,11 @@
 			result.port = url.port || null;
 			result.host = url._slashes ? url.host : (url.host || null);
 			result.pathname = url.pathname || null;
-			result.search = url.search || null;
+			// The legacy parser keeps the query unescaped, unlike URL.
+			const rawSearch = URL._parse(urlString).search;
+			result.search = rawSearch || null;
 			result.hash = url.hash || null;
-			result.path = (url.pathname || '') + (url.search || '');
+			result.path = (url.pathname || '') + (rawSearch || '');
 
 			if (url.username || url.password) {
 				result.auth = url.username + (url.password ? ':' + url.password : '');
@@ -842,7 +855,10 @@
 			if (typeof urlObject.query === 'string') {
 				result += '?' + urlObject.query;
 			} else {
-				result += '?' + new URLSearchParams(urlObject.query).toString();
+				// Node formats a query object with querystring.stringify.
+				const qs = globalThis.__querystring_module;
+				result += '?' + (qs ? qs.stringify(urlObject.query) : Object.keys(urlObject.query)
+					.map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(urlObject.query[k])).join('&'));
 			}
 		}
 

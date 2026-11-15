@@ -52,4 +52,17 @@ pairs.delete('a', '3');
 out.deleteValue = pairs.toString();
 out.emptyParts = new URLSearchParams('?&&a&=b&%ZZ=%E2%82').toString();
 out.badUTF8 = [...new URLSearchParams('%E2%82=1')];
+out.leadingQuestionMark = (() => {
+  const u = new URL('http://h/??a=1');
+  const before = [...u.searchParams];
+  u.searchParams.append('b', '2');
+  return [before, u.href];
+})();
+out.nullInit = [new URLSearchParams(null).toString(), new URLSearchParams(undefined).toString()];
+out.invalidUTF8 = [...new URLSearchParams('%ED%A0%80=%F0%80%80%80&%F4%90%80%80&%C0%AF&%E2%28%A1&%E2%82&%F0%9F%98%80%E2%82%AC')];
+
+// The legacy API keeps its own query handling.
+const legacy = require('url');
+out.legacyFormat = legacy.format({ protocol: 'http:', host: 'h', pathname: '/', query: { a: 'b c', d: "~!*()'", e: ['1', '2'] } });
+out.legacyParse = [legacy.parse('http://h/?q=é').search, legacy.parse('http://h/?q=é').path, legacy.parse('http://h/?q=é&a=b+c', true).query];
 finish(out);

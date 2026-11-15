@@ -47,6 +47,32 @@
     "v",
     "k=v"
   ],
+  "invalidUTF8": [
+    [
+      "���",
+      "����"
+    ],
+    [
+      "����",
+      ""
+    ],
+    [
+      "��",
+      ""
+    ],
+    [
+      "�(�",
+      ""
+    ],
+    [
+      "�",
+      ""
+    ],
+    [
+      "😀€",
+      ""
+    ]
+  ],
   "kept": [
     "http://h/?q\u0026a=%41b+c",
     "?q\u0026a=%41b+c",
@@ -62,6 +88,24 @@
     ],
     "q=\u0026a=Ab+c"
   ],
+  "leadingQuestionMark": [
+    [
+      [
+        "?a",
+        "1"
+      ]
+    ],
+    "http://h/?%3Fa=1\u0026b=2"
+  ],
+  "legacyFormat": "http://h/?a=b%20c\u0026d=~!*()'\u0026e=1\u0026e=2",
+  "legacyParse": [
+    "?q=é",
+    "/?q=é",
+    {
+      "a": "b c",
+      "q": "é"
+    }
+  ],
   "loneSurrogate": "a=1\u0026b=%EF%BF%BD",
   "malformed": [
     "http://h/?z=%zz",
@@ -71,6 +115,10 @@
         "%zz"
       ]
     ]
+  ],
+  "nullInit": [
+    "",
+    ""
   ],
   "record": "x=%C3%A9%7E",
   "searchCleared": [
