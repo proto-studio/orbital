@@ -20,11 +20,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 ## ESM loader & hooks (`pkg/nodejs/esm/`)
 
-- **[approx] Async loader-hook drive is bounded, not truly scheduled.**
-  `awaitPromiseRT` pumps the isolated loader realm's microtask + event loop up to
-  `maxHookTicks` (200000) iterations, then gives up with "hook promise did not
-  settle" (`hooks.go`). This is a guard against a runaway hook, not a real
-  cooperative scheduler; a legitimately long-running async hook could be cut off. (#107)
+- **[approx] The application waits while an async loader hook runs.** `awaitPromiseRT`
+  runs the isolated loader realm's event loop until a hook's promise settles, waiting on its
+  timers and I/O as long as they take, as Node waits on its hooks thread. Node's main thread
+  keeps running meanwhile (its timers fire while an `import()` waits on a hook); Orbital's
+  waits. A hook promise that nothing in the loader realm can settle any more fails the import,
+  where Node leaves it pending (and exits 13 if top-level `await` was waiting on it). (#107)
 - **[gap] Import attributes are not checked.** `with { type: 'json' }` is parsed but ignored,
   and a module's type comes from its extension. Node throws `ERR_IMPORT_ASSERTION_TYPE_MISSING`
   for a JSON import with no attribute and `ERR_IMPORT_ASSERTION_TYPE_FAILED` for `type: 'json'`

@@ -243,6 +243,17 @@ func (el *EventLoop) DonePendingWork() {
 
 // Run starts the event loop and blocks until there's no more work.
 func (el *EventLoop) Run() {
+	el.run(nil)
+}
+
+// RunUntil runs the event loop until done reports true, checked after each callback,
+// or until there's no more work. It waits for timers and asynchronous I/O the way Run
+// does, without spinning. It reports whether done became true.
+func (el *EventLoop) RunUntil(done func() bool) bool {
+	return el.run(done)
+}
+
+func (el *EventLoop) run(done func() bool) bool {
 	el.mu.Lock()
 	el.running = true
 	el.shouldStop = false
@@ -262,7 +273,7 @@ func (el *EventLoop) Run() {
 			el.mu.Lock()
 			el.running = false
 			el.mu.Unlock()
-			return
+			return false
 		default:
 		}
 
@@ -278,7 +289,7 @@ func (el *EventLoop) Run() {
 				el.mu.Lock()
 				el.running = false
 				el.mu.Unlock()
-				return
+				return false
 			default:
 			}
 			fn()
@@ -291,11 +302,22 @@ func (el *EventLoop) Run() {
 			continue
 		}
 
+		if done != nil {
+			el.mu.Unlock()
+			finished := done()
+			el.mu.Lock()
+			if finished {
+				el.running = false
+				el.mu.Unlock()
+				return true
+			}
+		}
+
 		// Check if we should stop
 		if el.shouldStop {
 			el.running = false
 			el.mu.Unlock()
-			return
+			return false
 		}
 
 		// Cancelled timers are not work: they must not keep the loop alive until
@@ -312,7 +334,7 @@ func (el *EventLoop) Run() {
 		if !el.hasReferencedTimerLocked() && !hasPending {
 			el.running = false
 			el.mu.Unlock()
-			return
+			return false
 		}
 
 		// Get the next timer
@@ -333,7 +355,7 @@ func (el *EventLoop) Run() {
 						el.mu.Lock()
 						el.running = false
 						el.mu.Unlock()
-						return
+						return false
 					default:
 					}
 
