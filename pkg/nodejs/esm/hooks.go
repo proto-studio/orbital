@@ -11,11 +11,11 @@ package esm
 // Go resolver marshals only strings (specifier/referrer in, url/source/format
 // out) to and from that realm — never live objects.
 //
-// Async hooks are driven to completion synchronously from Go by pumping the
-// loader realm's microtask queue + event loop (awaitPromiseRT). That is our
-// analog of Node awaiting the loader thread; because we own the loop, no real
-// OS thread is required. The drive is bounded (maxHookTicks) so a runaway hook
-// cannot hang resolution. The loader realm resolves its OWN graph (ts-blank-
+// Async hooks are driven to completion synchronously from Go by running the
+// loader realm's microtasks and event loop (awaitPromiseRT), waiting on its
+// timers and I/O for as long as they take. That is our analog of Node awaiting
+// the loader thread; because we own the loop, no real OS thread is required. A
+// hook promise that nothing left in the loader realm can settle fails the import. The loader realm resolves its OWN graph (ts-blank-
 // space, typescript, ...) with the plain default loader — hooks are never
 // applied to the hooks' own dependencies, which structurally rules out the
 // hook-loads-itself infinite loop.
@@ -30,10 +30,6 @@ import (
 
 //go:embed loader-hooks.js
 var loaderHooksJS string
-
-// maxHookTicks bounds how long Go will pump the loader realm waiting for a hook
-// promise to settle before giving up (guards against a runaway loader hook).
-const maxHookTicks = 200000
 
 // loaderRealm is the isolated second runtime that hosts registered hooks.
 type loaderRealm struct {
@@ -209,7 +205,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 	if err != nil {
 		return "", "", err
 	}
-	resolved, err := awaitPromiseRT(lrt, resP, maxHookTicks)
+	resolved, err := awaitPromiseRT(lrt, resP)
 	if err != nil {
 		return "", "", err
 	}
@@ -227,7 +223,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 	if err != nil {
 		return "", "", err
 	}
-	loaded, err := awaitPromiseRT(lrt, loadP, maxHookTicks)
+	loaded, err := awaitPromiseRT(lrt, loadP)
 	if err != nil {
 		return "", "", err
 	}

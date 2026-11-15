@@ -296,11 +296,12 @@ func (e *ESM) resolveAndLoad(specifier, referrer string) (source, url string, er
 	return e.resolveAndLoadDefault(specifier, referrer)
 }
 
-// awaitPromiseRT drives rt's microtask queue (and event loop, for hooks that do
-// real async work) until the given promise settles, then returns its value or a
-// JS error for a rejection. maxTicks bounds the spin so a never-settling promise
-// can't hang resolution — this is the guard against a runaway loader hook.
-func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, maxTicks int) (*v8.Value, error) {
+// awaitPromiseRT waits for a promise from the loader realm rt (a hook's result)
+// and returns its value, or a JS error for a rejection. It runs rt's microtasks
+// and event loop until the promise settles, waiting on timers and I/O as long
+// as they take, as Node waits on its hooks thread. It gives up only when rt
+// has nothing left that could settle the promise.
+func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value) (*v8.Value, error) {
 	if p == nil {
 		return nil, errors.New("esm: nil promise")
 	}
@@ -311,22 +312,26 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, maxTicks int) (*v8.Value, 
 	// The caller gets a rejection as an error, so it is not an unhandled one.
 	rt.MarkPromiseHandled(p)
 	ctx := rt.Context()
-	for i := 0; i < maxTicks; i++ {
-		switch p.PromiseState() {
-		case v8.PromiseFulfilled:
-			return p.PromiseResult(), nil
-		case v8.PromiseRejected:
-			reason := p.PromiseResult()
-			msg := "promise rejected"
-			if reason != nil {
-				msg = reason.String()
-			}
-			return nil, &v8.JSError{Message: msg}
-		}
+	settled := func() bool {
 		ctx.PerformMicrotaskCheckpoint()
-		if p.PromiseState() == v8.PromisePending {
-			rt.EventLoop().RunOnce()
-		}
+		return p.PromiseState() != v8.PromisePending
 	}
-	return nil, errors.New("esm: hook promise did not settle")
+	if !settled() {
+		rt.EventLoop().RunUntil(settled)
+	}
+	switch p.PromiseState() {
+	case v8.PromiseFulfilled:
+		return p.PromiseResult(), nil
+	case v8.PromiseRejected:
+		reason := p.PromiseResult()
+		msg := "promise rejected"
+		if reason != nil {
+			msg = reason.String()
+		}
+		return nil, &v8.JSError{Message: msg}
+	}
+	if ended := rt.Ended(); ended != nil {
+		return nil, ended
+	}
+	return nil, errors.New("esm: hook promise never settled: the loader hooks have no pending work left")
 }
