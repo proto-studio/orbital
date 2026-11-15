@@ -1,6 +1,9 @@
 package nodejs
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -251,5 +254,37 @@ try { await import('./dep2.mjs', { with: { ['__proto__']: 'x' } }); log.push('lo
 	want := `[true,"ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","Import attribute \"__proto__\" with value \"x\" is not supported"]`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// A resolve hook's context.parentURL is the importer's file: URL as Node gives it,
+// with its query but without the type a typed import adds to the cache key.
+func TestImportAttributes_HookParentURL(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"child.mjs": `export default 'child';`,
+		"virt.js":   ``,
+		"hooks.mjs": `import { appendFileSync } from 'node:fs';
+export async function resolve(s, c, n) {
+  if (s === './child.mjs') appendFileSync(` + strconv.Quote(filepath.Join(dir, "seen.txt")) + `, c.parentURL.replace(/.*\//, '') + ' ' + c.parentURL.startsWith('file:///') + '\n');
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('virt.js')) return { format: 'module', source: "import d from './child.mjs'; export default d;", shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+log.push((await import('./virt.js', { with: { type: 'a' } })).default, (await import('./virt.js?x')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["child","child"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+	seen, err := os.ReadFile(filepath.Join(dir, "seen.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(seen), "virt.js true\nvirt.js?x true\n"; got != want {
+		t.Fatalf("parentURLs %q, want %q", got, want)
 	}
 }
