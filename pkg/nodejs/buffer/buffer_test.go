@@ -181,6 +181,24 @@ func TestBuffer_ByteLength(t *testing.T) {
 	}
 }
 
+// Node drops up to two trailing '=' for both base64 and base64url, so a
+// padded base64url string reports its decoded length.
+func TestBuffer_ByteLength_Base64Padding(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`JSON.stringify(['aGk=','aGk','aGVsbG8','aGVsbG8=','aGVsbA==','aGVsbA','','=','==','a','ab','abc','abcd','-_-_','-_8=','a==='].flatMap(s => ['base64','base64url'].map(e => Buffer.byteLength(s, e))))`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+
+	// Captured from Node 20.18.1.
+	want := "[2,2,2,2,5,5,5,5,4,4,4,4,0,0,0,0,0,0,0,0,1,1,2,2,3,3,3,3,2,2,1,1]"
+	if result.String() != want {
+		t.Errorf("Expected %s, got %s", want, result.String())
+	}
+}
+
 func TestBuffer_Compare(t *testing.T) {
 	rt := setupRuntime(t)
 	defer rt.Dispose()
