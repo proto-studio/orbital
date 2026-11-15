@@ -44,6 +44,12 @@ function contexts() {
     ciphersTLS13Only: { ciphers: 'TLS_AES_128_GCM_SHA256' },
     ciphersSomeKnown: { ciphers: 'nope:ECDHE-RSA-AES128-GCM-SHA256' },
     ciphersKeywords: { ciphers: 'HIGH:!aNULL:!MD5' },
+    ciphersExcludeGroup: { ciphers: 'HIGH:!AESGCM' },
+    ciphersKeywordAndName: { ciphers: 'DEFAULT:ECDHE-RSA-AES128-GCM-SHA256' },
+    ciphersJoined: { ciphers: 'ECDHE+AESGCM' },
+    ciphersMedium: { ciphers: 'MEDIUM' },
+    ciphersNothingLeft: { ciphers: '!ALL' },
+    ciphersAllExcluded: { ciphers: 'AESGCM:!ECDHE:!kRSA' },
   };
   const out = {};
   for (const [name, options] of Object.entries(cases)) {
@@ -71,12 +77,14 @@ function listen(options) {
   });
 }
 
-function connect(port, options) {
+function connect(port, options, familyOnly) {
   return new Promise((resolve) => {
     const c = tls.connect({ port, host: '127.0.0.1', servername: 'localhost', ca: cert, ...options }, () => {
       const protocol = c.getProtocol();
-      // crypto/tls picks its own TLS 1.3 suite, so only TLS 1.2 ciphers are compared.
-      const cipher = protocol === 'TLSv1.2' ? c.getCipher().name : null;
+      // crypto/tls picks its own TLS 1.3 suite, so only TLS 1.2 ciphers are compared. Where
+      // the list leaves a choice, which of them is picked is up to the TLS library too.
+      let cipher = protocol === 'TLSv1.2' ? c.getCipher().name : null;
+      if (cipher && familyOnly) cipher = /GCM/.test(cipher) ? 'some GCM cipher' : 'some non-GCM cipher';
       resolve({ protocol, cipher, authorized: c.authorized });
       c.destroy();
     });
@@ -98,11 +106,14 @@ async function connections() {
       { ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256' }],
     curve: [{ cert, key, ecdhCurve: 'P-384' }, { ecdhCurve: 'P-384:P-256' }],
     noCommonCurve: [{ cert, key, ecdhCurve: 'P-384', maxVersion: 'TLSv1.2' }, { ecdhCurve: 'P-256' }],
+    excludeGroup: [{ cert, key, ciphers: 'HIGH:!AESGCM', maxVersion: 'TLSv1.2' }, {}, true],
+    keywordAndName: [{ cert, key, ciphers: 'DEFAULT:ECDHE-RSA-AES128-GCM-SHA256', maxVersion: 'TLSv1.2' }, {}, true],
+    tls13OnlyAtMostTLS12: [{ cert, key }, { ciphers: 'TLS_AES_128_GCM_SHA256', maxVersion: 'TLSv1.2' }],
   };
   const out = {};
-  for (const [name, [serverOptions, clientOptions]] of Object.entries(cases)) {
+  for (const [name, [serverOptions, clientOptions, familyOnly]] of Object.entries(cases)) {
     const server = await listen(serverOptions);
-    out[name] = await connect(server.address().port, clientOptions);
+    out[name] = await connect(server.address().port, clientOptions, familyOnly);
     server.close();
   }
   return out;
@@ -150,6 +161,12 @@ function ticketKeys() {
   server.setTicketKeys(keys);
   out.set = server.getTicketKeys().equals(keys);
   out.option = tls.createServer({ cert, key, ticketKeys: keys }).getTicketKeys().equals(keys);
+  const view = new DataView(keys.buffer, keys.byteOffset, keys.byteLength);
+  out.dataView = tls.createServer({ cert, key, ticketKeys: view }).getTicketKeys().equals(keys);
+  const wide = new Float64Array(6);
+  new Uint8Array(wide.buffer).set(keys);
+  server.setTicketKeys(wide);
+  out.wideArray = server.getTicketKeys().equals(keys);
   return out;
 }
 

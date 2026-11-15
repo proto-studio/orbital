@@ -36,7 +36,14 @@ func decodeSession(data []byte) (*tls.ClientSessionState, error) {
 		return nil, errBadSession
 	}
 	ticket := data[5 : 5+n]
-	state, err := tls.ParseSessionState(data[5+n:])
+	encoded := data[5+n:]
+	// Only a client's session is usable here. crypto/tls reads a server's too, and resuming
+	// from one would fail inside the handshake, so its type byte is checked first.
+	const clientSession = 2
+	if len(encoded) < 3 || encoded[2] != clientSession {
+		return nil, errBadSession
+	}
+	state, err := tls.ParseSessionState(encoded)
 	if err != nil {
 		return nil, errBadSession
 	}

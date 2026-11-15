@@ -15,6 +15,16 @@
       "cipher": null,
       "protocol": "TLSv1.3"
     },
+    "excludeGroup": {
+      "authorized": true,
+      "cipher": "some non-GCM cipher",
+      "protocol": "TLSv1.2"
+    },
+    "keywordAndName": {
+      "authorized": true,
+      "cipher": "some GCM cipher",
+      "protocol": "TLSv1.2"
+    },
     "legacyPem": {
       "authorized": true,
       "cipher": null,
@@ -48,10 +58,29 @@
     },
     "tls13OnlyAgainstTLS12": {
       "error": true
+    },
+    "tls13OnlyAtMostTLS12": {
+      "error": true
     }
   },
   "contexts": {
+    "ciphersAllExcluded": "ok",
+    "ciphersExcludeGroup": "ok",
+    "ciphersJoined": "ok",
+    "ciphersKeywordAndName": "ok",
     "ciphersKeywords": "ok",
+    "ciphersMedium": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersNothingLeft": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
     "ciphersSomeKnown": "ok",
     "ciphersTLS13Only": "ok",
     "ciphersUnknown": {
@@ -176,10 +205,12 @@
     }
   },
   "ticketKeys": {
+    "dataView": true,
     "length": 48,
     "option": true,
     "random": true,
     "set": true,
-    "short": "ERR_INTERNAL_ASSERTION"
+    "short": "ERR_INTERNAL_ASSERTION",
+    "wideArray": true
   }
 }
