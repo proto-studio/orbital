@@ -224,7 +224,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string) (source, url stri
 	}
 	// Hooks may return a file:// URL; normalize to a plain path so it matches the
 	// default loader's keys (consistent V8 module cache + referrer dirs).
-	url = stripFileURL(url)
+	url = e.hookURLKey(url)
 	preFormat := objString(resolved, "format")
 
 	// load chain -> { source, format }

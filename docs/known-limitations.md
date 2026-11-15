@@ -33,8 +33,9 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   accepts, is a `SyntaxError`. (#108)
 - **[approx] A few JS helpers remain in the loader.** `esm-loader.js` still hosts
   `__esmFinishDynamicImport` (chains a module's evaluation promise to its
-  namespace for `await import()`) and `__esmModuleError` (builds the Node-shaped
-  error a failed import throws); everything else is Go.
+  namespace for `await import()`), `__esmModuleError` (builds the Node-shaped
+  error a failed import throws) and `__esmRejected` (reports a link error as an
+  uncaught exception); everything else is Go.
 - **[gap] Most `NODE_OPTIONS` flags have no effect.** `NODE_OPTIONS` is split and checked as
   Node 20.18.1 does it (`cmd/orbital/node_options.go`): an option Node doesn't allow there, a
   bad negation or a missing value stops the program with exit code 9 and Node's message.

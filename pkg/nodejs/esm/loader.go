@@ -67,6 +67,76 @@ func stripFileURL(u string) string {
 	return u[len("file://"):]
 }
 
+// urlPath reads a relative, absolute or file: specifier the way Node does, as a
+// URL (relative ones against dir): the percent-decoded path, the path still
+// encoded (Node's error for an encoded separator names it), and the query and
+// fragment, which make a distinct module but aren't part of the file's path.
+func urlPath(spec, dir string) (path, encoded, suffix string) {
+	rest := spec
+	if strings.HasPrefix(rest, "file:") {
+		// file:///p, file://localhost/p and file:/p all name /p.
+		rest = rest[len("file:"):]
+		if strings.HasPrefix(rest, "//") {
+			rest = rest[2:]
+			if strings.HasPrefix(rest, "localhost/") {
+				rest = rest[len("localhost"):]
+			}
+		}
+	}
+	if i := strings.IndexAny(rest, "?#"); i >= 0 {
+		rest, suffix = rest[:i], rest[i:]
+	}
+	encoded = filepath.Clean(rest)
+	if !strings.HasPrefix(rest, "/") {
+		encoded = filepath.Join(dir, rest)
+	}
+	path = encoded
+	if decoded, err := url.PathUnescape(encoded); err == nil {
+		path = decoded
+	}
+	return path, encoded, suffix
+}
+
+// hasEncodedSeparator reports an escaped "/" or "\" in a URL path, which Node
+// refuses to turn into a file path.
+func hasEncodedSeparator(p string) bool {
+	l := strings.ToLower(p)
+	return strings.Contains(l, "%2f") || strings.Contains(l, "%5c")
+}
+
+// moduleKey is the stable module url for the file at path imported with a
+// query or fragment: like Node, each distinct URL is its own module instance.
+func (e *ESM) moduleKey(path, suffix string) string {
+	if suffix == "" {
+		return path
+	}
+	key := path + suffix
+	if e.keyPaths == nil {
+		e.keyPaths = map[string]string{}
+	}
+	e.keyPaths[key] = path
+	return key
+}
+
+// pathOf is the file path behind a module url (dropping a query or fragment
+// moduleKey added; decoding a file: URL).
+func (e *ESM) pathOf(key string) string {
+	if p, ok := e.keyPaths[key]; ok {
+		return p
+	}
+	return stripFileURL(key)
+}
+
+// hookURLKey is the module url for a url a resolve hook returned: a file: URL
+// becomes its path (keeping a query or fragment as a distinct module).
+func (e *ESM) hookURLKey(u string) string {
+	if !strings.HasPrefix(u, "file:") {
+		return u
+	}
+	path, _, suffix := urlPath(u, "/")
+	return e.moduleKey(path, suffix)
+}
+
 func looksLikeESM(src string) bool {
 	return esmSynRe.MatchString(blockCmt.ReplaceAllString(src, ""))
 }
@@ -103,7 +173,7 @@ func (e *ESM) referrerDir(referrer string) string {
 	if referrer == "" || strings.HasPrefix(referrer, "node:") || strings.HasPrefix(referrer, "native:") {
 		return e.cwd()
 	}
-	r := stripFileURL(referrer)
+	r := e.pathOf(referrer)
 	if strings.HasPrefix(r, "/") || winAbs(r) {
 		return filepath.Dir(r)
 	}
@@ -147,7 +217,7 @@ func (e *ESM) resolveIndex(dir string) string {
 // resolveToURL implements Node's default resolution and returns a stable module
 // url (an absolute path, or "node:<name>" for builtins).
 func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
-	spec := stripFileURL(specifier)
+	spec := specifier
 
 	// Builtins (with or without node: prefix).
 	if bare, ok := e.builtinBare(spec); ok {
@@ -164,23 +234,34 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 
 	dir := e.referrerDir(referrer)
-	var abs, attempted string
+	var attempted, encoded, suffix string
 	switch {
-	case strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../"):
-		attempted = filepath.Join(dir, spec)
-	case strings.HasPrefix(spec, "/") || winAbs(spec):
+	case strings.HasPrefix(spec, "file:") || strings.HasPrefix(spec, "./") ||
+		strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/"):
+		attempted, encoded, suffix = urlPath(spec, dir)
+		if hasEncodedSeparator(encoded) {
+			return "", &moduleError{
+				msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
+					e.importerPath(referrer),
+				code:      "ERR_INVALID_MODULE_SPECIFIER",
+				typeError: true,
+			}
+		}
+	case winAbs(spec):
 		attempted = spec
 	default:
 		return e.resolveBare(spec, dir, referrer)
 	}
-	abs = e.resolveFile(attempted)
+	abs := e.resolveFile(attempted)
 	if abs == "" && e.fsIsDir(attempted) {
 		abs = e.resolveIndex(attempted)
 	}
 	if abs == "" {
-		return "", moduleNotFound(attempted, referrer, e.cwd())
+		err := e.moduleNotFound(attempted, referrer)
+		err.url += suffix
+		return "", err
 	}
-	return abs, nil
+	return e.moduleKey(abs, suffix), nil
 }
 
 // moduleError is a module-loading failure with a Node error code, thrown into
@@ -189,6 +270,8 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 type moduleError struct {
 	msg  string
 	code string
+	// typeError makes it a TypeError, as some of Node's are.
+	typeError bool
 	// url is the file: URL of the missing module, empty when Node reports none
 	// (a missing package).
 	url string
@@ -197,9 +280,9 @@ type moduleError struct {
 func (m *moduleError) Error() string { return m.msg }
 
 // moduleNotFound is Node's error for a module file that does not exist.
-func moduleNotFound(path, referrer, cwd string) *moduleError {
+func (e *ESM) moduleNotFound(path, referrer string) *moduleError {
 	return &moduleError{
-		msg:  "Cannot find module '" + path + "' imported from " + importerPath(referrer, cwd),
+		msg:  "Cannot find module '" + path + "' imported from " + e.importerPath(referrer),
 		code: "ERR_MODULE_NOT_FOUND",
 		url:  fileURL(path),
 	}
@@ -207,9 +290,9 @@ func moduleNotFound(path, referrer, cwd string) *moduleError {
 
 // packageNotFound is Node's error for a package that is not installed, or one
 // whose main entry does not exist (Node then names that entry's path).
-func packageNotFound(name, referrer, cwd string) *moduleError {
+func (e *ESM) packageNotFound(name, referrer string) *moduleError {
 	return &moduleError{
-		msg:  "Cannot find package '" + name + "' imported from " + importerPath(referrer, cwd),
+		msg:  "Cannot find package '" + name + "' imported from " + e.importerPath(referrer),
 		code: "ERR_MODULE_NOT_FOUND",
 	}
 }
@@ -217,11 +300,11 @@ func packageNotFound(name, referrer, cwd string) *moduleError {
 // importerPath is how Node names the importer in a resolution error: its path,
 // or the working directory (with a trailing separator) for an entry point or an
 // --import preload.
-func importerPath(referrer, cwd string) string {
+func (e *ESM) importerPath(referrer string) string {
 	if referrer == "" {
-		return strings.TrimSuffix(cwd, string(filepath.Separator)) + string(filepath.Separator)
+		return strings.TrimSuffix(e.cwd(), string(filepath.Separator)) + string(filepath.Separator)
 	}
-	return stripFileURL(referrer)
+	return e.pathOf(referrer)
 }
 
 // fileURL is the file: URL for an absolute path, as Node's pathToFileURL gives it.
@@ -272,7 +355,7 @@ func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, error) {
 		}
 		dir = parent
 	}
-	return "", packageNotFound(pkg, referrer, e.cwd())
+	return "", e.packageNotFound(pkg, referrer)
 }
 
 func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
@@ -295,7 +378,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
 									return r, nil
 								}
 							}
-							return "", moduleNotFound(abs, referrer, e.cwd())
+							return "", e.moduleNotFound(abs, referrer)
 						}
 					}
 				}
@@ -332,13 +415,13 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, error) {
 		}
 	}
 	if sub != "." {
-		return "", moduleNotFound(target, referrer, e.cwd())
+		return "", e.moduleNotFound(target, referrer)
 	}
 	// Node names the package's main entry, or its index.js when it has none.
 	if main == "" {
 		main = "index.js"
 	}
-	return "", packageNotFound(filepath.Join(pkgDir, main), referrer, e.cwd())
+	return "", e.packageNotFound(filepath.Join(pkgDir, main), referrer)
 }
 
 func jsonString(raw json.RawMessage) string {
@@ -421,6 +504,7 @@ func (e *ESM) loadURL(url string) (source, format string, err error) {
 	if strings.HasPrefix(url, "node:") || strings.HasPrefix(url, "native:") {
 		return "", "builtin", nil
 	}
+	url = e.pathOf(url)
 	switch {
 	case strings.HasSuffix(url, ".json"):
 		src, err := e.fsRead(url)
@@ -464,7 +548,9 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 		bare = strings.TrimPrefix(bare, "native:")
 		return e.cjsWrapper(bare)
 	case "commonjs":
-		return e.cjsModuleWrapper(url, source), nil
+		// A query or fragment makes another wrapper around the same CommonJS
+		// module, as in Node.
+		return e.cjsModuleWrapper(e.pathOf(url), source), nil
 	case "json":
 		return "export default " + source + ";\n", nil
 	default: // "module"

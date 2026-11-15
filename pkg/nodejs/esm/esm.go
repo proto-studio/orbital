@@ -35,6 +35,11 @@ type ESM struct {
 	// makeError is esm-loader.js's __esmModuleError, captured when the loader is
 	// installed so code replacing the global cannot change the errors imports throw.
 	makeError *v8.Value
+	// keyPaths maps a module url carrying a query or fragment to its file.
+	keyPaths map[string]string
+	// linkErr is the last error object a failed resolution threw, which is what
+	// a failed Instantiate threw.
+	linkErr *v8.Value
 }
 
 // New creates an ESM module runtime without a loader realm provider, so
@@ -153,8 +158,9 @@ func (e *ESM) runModule(source, filename string, entry bool) (*v8.Value, error) 
 		return nil, err
 	}
 
+	e.linkErr = nil
 	if err := mod.Instantiate(e.resolveModule); err != nil {
-		return nil, e.endedOr(err)
+		return nil, e.linkFailed(err)
 	}
 
 	result, err := mod.Evaluate()
@@ -206,6 +212,41 @@ func (e *ESM) endedOr(err error) error {
 	return err
 }
 
+// linkFailed reports a module graph that failed to link because an import could
+// not be resolved the way Node does: as an uncaught exception, printed with the
+// error's stack, code and url (and seen by 'uncaughtException' listeners).
+// Other link failures (and a program that already ended) return as they are.
+func (e *ESM) linkFailed(err error) error {
+	if ended := e.rt.Ended(); ended != nil {
+		return ended
+	}
+	exc := e.linkErr
+	e.linkErr = nil
+	if exc == nil {
+		return err
+	}
+	global, gerr := e.rt.Context().Global()
+	if gerr != nil {
+		return err
+	}
+	rejected, _ := global.Get("__esmRejected")
+	if rejected == nil || !rejected.IsFunction() {
+		return err
+	}
+	p, perr := rejected.Call(nil, exc)
+	if perr != nil || p == nil {
+		return err
+	}
+	e.rt.WatchModuleEvaluation(p)
+	e.rt.Context().PerformMicrotaskCheckpoint()
+	e.rt.EventLoop().Run()
+	if ended := e.rt.Ended(); ended != nil {
+		return ended
+	}
+	// An 'uncaughtException' listener handled it; Node carries on too.
+	return nil
+}
+
 // rejectionError converts a rejected module/promise reason (usually an Error
 // object) into a Go error, preferring the JS stack trace so the CLI prints the
 // same detail Node does for an uncaught module error.
@@ -237,7 +278,12 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 		return nil, err
 	}
 
-	source, url, err := e.resolveAndLoad(absPath, "")
+	// As a file: URL, so the path's characters aren't read as URL syntax.
+	entry := absPath
+	if !winAbs(absPath) {
+		entry = fileURL(absPath)
+	}
+	source, url, err := e.resolveAndLoad(entry, "")
 	if err != nil {
 		return nil, e.endedOr(err)
 	}
@@ -332,7 +378,7 @@ func (e *ESM) throwable(err error) error {
 		return err
 	}
 	ctx := e.rt.Context()
-	args := make([]*v8.Value, 3)
+	args := make([]*v8.Value, 3, 4)
 	for i, s := range []string{me.msg, me.code, me.url} {
 		v, serr := ctx.NewString(s)
 		if serr != nil {
@@ -340,10 +386,12 @@ func (e *ESM) throwable(err error) error {
 		}
 		args[i] = v
 	}
+	args = append(args, ctx.NewBoolean(me.typeError))
 	exc, cerr := mk.Call(nil, args...)
 	if cerr != nil || exc == nil {
 		return err
 	}
+	e.linkErr = exc
 	return &thrownError{err: err, exc: exc}
 }
 
@@ -426,5 +474,10 @@ func codedError(reason *v8.Value) *moduleError {
 	if code == "" {
 		return nil
 	}
-	return &moduleError{msg: objString(reason, "message"), code: code, url: objString(reason, "url")}
+	return &moduleError{
+		msg:       objString(reason, "message"),
+		code:      code,
+		url:       objString(reason, "url"),
+		typeError: objString(reason, "name") == "TypeError",
+	}
 }
