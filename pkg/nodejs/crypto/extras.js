@@ -188,14 +188,17 @@
   };
 
   // ---- webcrypto ------------------------------------------------------------
+  // webcrypto.js installs its object as __webcrypto_module (and as
+  // globalThis.crypto, which scripts may replace or delete).
+  const webcrypto = () => globalThis.__webcrypto_module;
   crypto.getRandomValues = function getRandomValues(array) {
-    return globalThis.crypto.getRandomValues(array);
+    return webcrypto().getRandomValues(array);
   };
   Object.defineProperty(crypto, 'webcrypto', {
-    configurable: false, enumerable: true, get() { return globalThis.crypto; },
+    configurable: false, enumerable: true, get() { return webcrypto(); },
   });
   Object.defineProperty(crypto, 'subtle', {
-    configurable: false, enumerable: true, get() { return globalThis.crypto.subtle; },
+    configurable: false, enumerable: true, get() { return webcrypto().subtle; },
   });
 
   // ---- primes ---------------------------------------------------------------
@@ -329,7 +332,7 @@
     const input = spkacBase64(spkac, encoding);
     if (input === null) return '';
     const out = crypto._spkac('challenge', input);
-    return out === '' ? '' : Buffer.from(out, 'base64');
+    return out === '!' ? '' : Buffer.from(out, 'base64');
   }
 
   function exportPublicKey(spkac, encoding) {
