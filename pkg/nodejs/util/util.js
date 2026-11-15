@@ -194,9 +194,11 @@
 
 			// Described after the custom inspector has had its chance, which may make
 			// describing it unnecessary.
-			const bin = inspectShared.binary(value, layout.maxArrayLength);
-			const coll = bin === null ? inspectShared.collection(value, layout.maxArrayLength) : null;
-			const scalar = coll === null ? inspectShared.scalar(value) : null;
+			// How many more levels value may print, which bounds how its prototype is described.
+			const budget = layout.depth - currentDepth;
+			const bin = inspectShared.binary(value, layout.maxArrayLength, budget);
+			const coll = bin === null ? inspectShared.collection(value, layout.maxArrayLength, budget) : null;
+			const scalar = coll === null ? inspectShared.scalar(value, budget) : null;
 			if (Array.isArray(value)) return formatArray(value, currentDepth);
 			if (scalar !== null) return formatScalar(value, scalar, currentDepth);
 			if (coll !== null) return formatCollection(value, coll, currentDepth);
@@ -215,7 +217,7 @@
 		}
 
 		function formatArray(arr, depth) {
-			const prefix = inspectShared.arrayPrefix(arr, opts.depth === null ? Infinity : opts.depth - depth);
+			const prefix = inspectShared.arrayPrefix(arr, layout.depth - depth);
 			if (arr.length === 0) return prefix + '[]';
 			layout.currentDepth = depth;
 
@@ -251,7 +253,7 @@
 
 		function formatObject(obj, depth) {
 			const keys = inspectShared.keys(obj);
-			const prefix = inspectShared.objectPrefix(obj, opts.depth === null ? Infinity : opts.depth - depth);
+			const prefix = inspectShared.objectPrefix(obj, layout.depth - depth);
 			if (keys.length === 0) return prefix + '{}';
 
 			layout.currentDepth = depth;

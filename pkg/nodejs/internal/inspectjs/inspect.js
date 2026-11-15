@@ -62,10 +62,13 @@
 
   // context makes a layout context from util.inspect options. A null maxArrayLength or
   // maxStringLength means no limit.
-  function context({ breakLength = 80, compact = 3, maxArrayLength = 100, maxStringLength = 10000 } = {}) {
+  function context({ breakLength = 80, compact = 3, depth = 2, maxArrayLength = 100, maxStringLength = 10000 } = {}) {
     return {
       breakLength,
       compact,
+      // How many levels of objects print in full, which also bounds how far prototype chains
+      // without a constructor are described (see constructorName).
+      depth: depth === null ? Infinity : depth,
       maxArrayLength: maxArrayLength === null ? Infinity : maxArrayLength,
       maxStringLength: maxStringLength === null ? Infinity : maxStringLength,
       currentDepth: 0
@@ -140,7 +143,7 @@
     }
     // Read through %TypedArray%.prototype, which a typed array without a prototype lacks.
     const length = typedArrayLength.call(value);
-    const name = prefix(value, typedArrayTag.call(value), `(${length})`);
+    const name = prefix(value, typedArrayTag.call(value), `(${length})`, ctx.depth - level);
     if (length === 0) return `${name} []`;
     ctx.currentDepth = level;
     const shown = Math.min(Math.max(0, ctx.maxArrayLength), length);
@@ -258,9 +261,9 @@
 
   // The name util.inspect puts before the brace of value, a kind of object named fallback: its
   // constructor's name and size, the kind in brackets when its toStringTag differs, or
-  // [fallback: null prototype] without a constructor.
-  function prefix(value, fallback, size = '') {
-    return label(constructorName(value), tagOf(value), fallback, size);
+  // [fallback: null prototype] without a constructor. budget is as for constructorName.
+  function prefix(value, fallback, size = '', budget = Infinity) {
+    return label(constructorName(value, budget), tagOf(value), fallback, size);
   }
 
   // objectFallback is the kind Node names an object without a constructor after: V8's name for
@@ -311,12 +314,12 @@
   // value past the depth limit), entries come first between the braces, and keys are properties
   // to print next, before the value's own keys. An ArrayBuffer's entries show at most
   // maxArrayLength bytes, or all of them when it's null. It answers null for anything else.
-  function binary(value, maxArrayLength = 100) {
+  function binary(value, maxArrayLength = 100, budget = Infinity) {
     if (value === null || typeof value !== 'object') return null;
     if (maxArrayLength === null) maxArrayLength = Infinity;
     if (isDataView(value)) {
       // .buffer goes last, as it's the one that isn't a number.
-      return { name: prefix(value, 'DataView'), entries: [], keys: ['byteLength', 'byteOffset', 'buffer'] };
+      return { name: prefix(value, 'DataView', '', budget), entries: [], keys: ['byteLength', 'byteOffset', 'buffer'] };
     }
     if (!mayBeBuffer(value)) return null;
     const shared = !isArrayBuffer(value);
@@ -336,7 +339,7 @@
       contents = '[Uint8Contents]: <' + hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') + '>';
     }
     return {
-      name: prefix(value, shared ? 'SharedArrayBuffer' : 'ArrayBuffer'),
+      name: prefix(value, shared ? 'SharedArrayBuffer' : 'ArrayBuffer', '', budget),
       entries: [contents],
       keys: ['byteLength']
     };
@@ -364,7 +367,7 @@
   // more }: name goes before the brace, entries are what to format, at most maxArrayLength of
   // them (all of them when it's null), keys and values taking turns for a Map, and more is how
   // many were left out. It answers null for anything else.
-  function collection(value, maxArrayLength = 100) {
+  function collection(value, maxArrayLength = 100, budget = Infinity) {
     if (value === null || typeof value !== 'object') return null;
     const map = isMap(value);
     if (!map && !isSet(value)) return null;
@@ -380,12 +383,12 @@
       if (map) entries.push(next.value[0], next.value[1]);
       else entries.push(next.value);
     }
-    return { name: prefix(value, map ? 'Map' : 'Set', `(${size})`), map, entries, more: size - shown };
+    return { name: prefix(value, map ? 'Map' : 'Set', `(${size})`, budget), map, entries, more: size - shown };
   }
 
   // scalar is how util.inspect prints a Date or RegExp, before any properties of its own: an
   // invalid Date as Invalid Date, and a subclass's name first. It answers null for anything else.
-  function scalar(value) {
+  function scalar(value, budget = Infinity) {
     if (value === null || typeof value !== 'object') return null;
     let text;
     let fallback;
@@ -402,7 +405,7 @@
     } else {
       return null;
     }
-    const name = prefix(value, fallback);
+    const name = prefix(value, fallback, '', budget);
     return name === fallback ? text : `${name} ${text}`;
   }
 
@@ -422,7 +425,7 @@
     // Read first, so a proxy whose getPrototypeOf trap throws is [Object] even when empty.
     const proto = Object.getPrototypeOf(value);
     // Only the name is needed, so no bytes are read.
-    const bin = binary(value, 0);
+    const bin = binary(value, 0, -1);
     if (bin !== null) return `[${bin.name}]`;
     if (Array.isArray(value)) return value.length === 0 ? null : cutLabel(value, 'Array');
     // Before counting keys: a typed array's keys are its elements, so counting them would walk

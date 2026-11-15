@@ -22,8 +22,8 @@
   const suspended = [];
   // objectPrefix and arrayPrefix are inspect's for a plain object or array at level, which the
   // console prints at util.inspect's default depth of 2.
-  const objectPrefix = (value, level) => inspectShared.objectPrefix(value, 2 - level);
-  const arrayPrefix = (value, level) => inspectShared.arrayPrefix(value, 2 - level);
+  const objectPrefix = (value, level) => inspectShared.objectPrefix(value, ctx.depth - level);
+  const arrayPrefix = (value, level) => inspectShared.arrayPrefix(value, ctx.depth - level);
   return {
     quote: inspectShared.quote,
     string: (str, level) => inspectShared.string(ctx, str, level),
@@ -31,11 +31,12 @@
     // shown is how many of length items to print.
     shown: (length) => Math.min(length, ctx.maxArrayLength),
     view: (value, level) => inspectShared.view(value, ctx, level),
-    binary: (value) => inspectShared.binary(value, ctx.maxArrayLength),
-    collection: (value) => inspectShared.collection(value, ctx.maxArrayLength),
+    // binary, collection and scalar describe a value at level.
+    binary: (value, level) => inspectShared.binary(value, ctx.maxArrayLength, ctx.depth - level),
+    collection: (value, level) => inspectShared.collection(value, ctx.maxArrayLength, ctx.depth - level),
     // scalar answers { text, date } for a Date or RegExp, date telling them apart for coloring.
-    scalar: (value) => {
-      const text = inspectShared.scalar(value);
+    scalar: (value, level) => {
+      const text = inspectShared.scalar(value, ctx.depth - level);
       return text === null ? null : { text, date: inspectShared.isDate(value) };
     },
     primitive: inspectShared.primitive,
