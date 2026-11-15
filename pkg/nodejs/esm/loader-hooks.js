@@ -327,9 +327,21 @@
   // { source, format } with the raw (un-finalized) source; the application realm
   // performs CJS/JSON finalization after the hook chain.
   function defaultLoad(url, context) {
-    const r = globalThis.__goLoad(url);
+    const attrs = context && context.importAttributes;
+    const r = globalThis.__goLoad(url, (context && context.format) || '',
+      attrs == null ? '{}' : JSON.stringify(attrs), checkAttributes ? '1' : '');
+    if (r.code) {
+      // An import attribute the module's format doesn't allow (Node's
+      // validateAttributes in its default load).
+      const err = new TypeError(r.message);
+      err.code = r.code;
+      throw err;
+    }
     return { source: r.source, format: r.format, shortCircuit: true };
   }
+
+  // Whether the load in progress checks import attributes (not for an entry point).
+  let checkAttributes = false;
 
   function buildChain(kind, terminal) {
     let next = terminal;
@@ -344,24 +356,32 @@
     return next;
   }
 
-  globalThis.__runResolve = async function (specifier, parentURL) {
+  globalThis.__runResolve = async function (specifier, parentURL, attrsJSON) {
     const chain = buildChain('resolve', defaultResolve);
+    const importAttributes = JSON.parse(attrsJSON || '{}');
     const ctx = {
       parentURL: parentURL || undefined,
       conditions: ['node', 'import', 'module', 'default'],
-      importAttributes: {},
+      importAttributes,
     };
     const res = await chain(specifier, ctx);
-    return { url: res.url, format: res.format == null ? '' : res.format };
+    // A resolve hook may replace the attributes the module is loaded with.
+    const resolvedAttributes = res.importAttributes != null ? res.importAttributes : importAttributes;
+    return {
+      url: res.url,
+      format: res.format == null ? '' : res.format,
+      importAttributes: JSON.stringify(resolvedAttributes),
+    };
   };
 
-  globalThis.__runLoad = async function (url, format) {
+  globalThis.__runLoad = async function (url, format, attrsJSON, check) {
     const chain = buildChain('load', defaultLoad);
     const ctx = {
       format: format || undefined,
       conditions: ['node', 'import', 'module', 'default'],
-      importAttributes: {},
+      importAttributes: JSON.parse(attrsJSON || '{}'),
     };
+    checkAttributes = !!check;
     const res = await chain(url, ctx);
     let source = res.source;
     // Hooks may return a string, a TypedArray/Buffer, or an ArrayBuffer.

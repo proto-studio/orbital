@@ -26,11 +26,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   keeps running meanwhile (its timers fire while an `import()` waits on a hook); Orbital's
   waits. A hook promise that nothing in the loader realm can settle any more fails the import,
   where Node leaves it pending (and exits 13 if top-level `await` was waiting on it). (#107)
-- **[gap] Import attributes are not checked.** `with { type: 'json' }` is parsed but ignored,
-  and a module's type comes from its extension. Node throws `ERR_IMPORT_ASSERTION_TYPE_MISSING`
-  for a JSON import with no attribute and `ERR_IMPORT_ASSERTION_TYPE_FAILED` for `type: 'json'`
-  on a JavaScript module; Orbital loads both. The older `assert { … }` form, which Node 20
-  accepts, is a `SyntaxError`. (#108)
+- **[gap] The older `assert { … }` import syntax is not accepted.** Node 20 still parses
+  `import d from './d.json' assert { type: 'json' }` (with a warning) and reads an `assert`
+  key in `import()`'s options. V8 15 removed both, with no flag to restore them, so the
+  statement is a `SyntaxError` and the option is ignored; use `with { … }`. Import attributes
+  are otherwise checked as Node does. Hooks see `context.importAttributes` but not the
+  deprecated `context.importAssertions` alias. (#108)
 - **[approx] A few JS helpers remain in the loader.** `esm-loader.js` still hosts
   `__esmFinishDynamicImport` (chains a module's evaluation promise to its
   namespace for `await import()`), `__esmModuleError` (builds the Node-shaped

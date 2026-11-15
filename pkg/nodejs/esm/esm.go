@@ -45,6 +45,8 @@ type ESM struct {
 	// linkErr is the last error object a failed resolution threw, which is what
 	// a failed Instantiate threw.
 	linkErr *v8.Value
+	// attrChecks remembers the outcome of checking each (url, type) import.
+	attrChecks map[string]error
 }
 
 // New creates an ESM module runtime without a loader realm provider, so
@@ -100,9 +102,7 @@ func (e *ESM) ensureLoader() error {
 	e.rejected, _ = global.Get("__esmRejected")
 	e.hookError, _ = global.Get("__esmHookError")
 	// Wire dynamic import() through the same JS resolver as static imports.
-	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
-		return e.resolveModule(specifier, referrer)
-	})
+	ctx.SetDynamicImportResolver(e.resolveModule)
 	if err := e.installRegisterBridge(); err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 	if !winAbs(absPath) {
 		entry = fileURL(absPath)
 	}
-	source, url, err := e.resolveAndLoad(entry, "")
+	source, url, err := e.resolveAndLoad(entry, "", nil)
 	if err != nil {
 		if ended := e.rt.Ended(); ended != nil {
 			return nil, ended
@@ -398,11 +398,14 @@ func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 // Go loader (default resolution + load + finalize, wrapped by any registered
 // hooks) and returns the module source + its stable url (V8 caches modules by
 // this url, so diamond imports share one instance).
-func (e *ESM) resolveModule(specifier, referrer string) (string, string, error) {
+func (e *ESM) resolveModule(specifier, referrer string, attrs []v8.ImportAttribute) (string, string, error) {
 	if err := e.ensureLoader(); err != nil {
 		return "", "", err
 	}
-	source, url, err := e.resolveAndLoad(specifier, referrer)
+	if attrs == nil {
+		attrs = []v8.ImportAttribute{}
+	}
+	source, url, err := e.resolveAndLoad(specifier, referrer, attrs)
 	if err != nil {
 		return "", "", e.throwable(err)
 	}
@@ -497,11 +500,12 @@ func (e *ESM) throwable(err error) error {
 // specifier. When loader hooks are registered it runs them (in the isolated
 // loader realm) around the Go defaults; otherwise it takes the pure-Go default
 // path directly. See hooks.go.
-func (e *ESM) resolveAndLoad(specifier, referrer string) (source, url string, err error) {
+// attrs are the import's attributes, nil for an entry point (nothing to check).
+func (e *ESM) resolveAndLoad(specifier, referrer string, attrs []v8.ImportAttribute) (source, url string, err error) {
 	if e.hooksActive() {
-		return e.resolveAndLoadHooked(specifier, referrer)
+		return e.resolveAndLoadHooked(specifier, referrer, attrs)
 	}
-	return e.resolveAndLoadDefault(specifier, referrer)
+	return e.resolveAndLoadDefault(specifier, referrer, attrs)
 }
 
 // awaitPromiseRT waits for a promise from the loader realm rt (a hook's result)

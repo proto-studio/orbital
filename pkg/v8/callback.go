@@ -17,7 +17,13 @@ import (
 // and returns the resolved module source code, resolved path, and any error.
 // An error that implements ExceptionError is thrown (or rejects import()) as its
 // own JavaScript value; any other error becomes a plain Error.
-type ModuleResolveCallback func(specifier, referrer string) (source string, resolvedPath string, err error)
+type ModuleResolveCallback func(specifier, referrer string, attrs []ImportAttribute) (source string, resolvedPath string, err error)
+
+// ImportAttribute is one entry of an import's attributes (`with { type: 'json' }`),
+// in source order.
+type ImportAttribute struct {
+	Key, Value string
+}
 
 // ExceptionError is an error carrying the JavaScript value to throw for it, such
 // as a Node error object with a code.
@@ -312,7 +318,7 @@ func runCallback(cb FunctionCallback, ctx *Context, infoPtr unsafe.Pointer) *Val
 }
 
 //export goModuleResolve
-func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, nameOut **C.char, errorOut *unsafe.Pointer) C.int {
+func goModuleResolve(resolverID C.int, specifier, referrer *C.char, attrs **C.char, attrCount C.int, sourceOut, nameOut **C.char, errorOut *unsafe.Pointer) C.int {
 	resolver := getModuleResolver(int(resolverID))
 	if resolver == nil {
 		return C.int(-1)
@@ -321,7 +327,15 @@ func goModuleResolve(resolverID C.int, specifier, referrer *C.char, sourceOut, n
 	specifierStr := C.GoString(specifier)
 	referrerStr := C.GoString(referrer)
 
-	source, resolvedPath, err := resolver(specifierStr, referrerStr)
+	var attributes []ImportAttribute
+	if attrCount > 1 && attrs != nil {
+		raw := unsafe.Slice(attrs, int(attrCount))
+		for i := 0; i+1 < len(raw); i += 2 {
+			attributes = append(attributes, ImportAttribute{Key: C.GoString(raw[i]), Value: C.GoString(raw[i+1])})
+		}
+	}
+
+	source, resolvedPath, err := resolver(specifierStr, referrerStr, attributes)
 	if err != nil {
 		var exc ExceptionError
 		if errors.As(err, &exc) {
