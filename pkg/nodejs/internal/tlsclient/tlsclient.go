@@ -157,6 +157,11 @@ func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) 
 		opts.Intermediates.AddCert(cert)
 	}
 	chains, err := leaf.Verify(opts)
+	if err == nil && v.nodeIdentity {
+		// OpenSSL also holds a Common Name to the chain's name constraints, which Go's
+		// verifier does not.
+		err = checkCommonNameConstraints(leaf, chains)
+	}
 	if err == nil && !v.scriptChecksIdentity {
 		if v.nodeIdentity {
 			err = CheckServerIdentity(name, leaf)
@@ -216,9 +221,12 @@ func Describe(err error, host string, port int) (string, string) {
 		errno   syscall.Errno
 	)
 	var identityErr *IdentityError
+	var constraintErr *ConstraintError
 	switch {
 	case errors.As(err, &identityErr):
 		return identityErr.Error(), "ERR_TLS_CERT_ALTNAME_INVALID"
+	case errors.As(err, &constraintErr):
+		return constraintErr.Message, constraintErr.Code
 	case errors.As(err, &hostErr):
 		return altnameMessage(hostErr), "ERR_TLS_CERT_ALTNAME_INVALID"
 	case errors.As(err, &certErr):

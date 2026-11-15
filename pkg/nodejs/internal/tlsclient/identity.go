@@ -5,6 +5,7 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strings"
 )
 
@@ -35,16 +36,37 @@ const (
 var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
 var oidCommonName = asn1.ObjectIdentifier{2, 5, 4, 3}
 
+// parsedAltNames lists the names crypto/x509 read, grouped by kind.
+func parsedAltNames(cert *x509.Certificate) []altName {
+	var names []altName
+	for _, name := range cert.DNSNames {
+		names = append(names, altName{kind: sanDNS, value: []byte(name)})
+	}
+	for _, ip := range cert.IPAddresses {
+		if v4 := ip.To4(); v4 != nil && len(ip) == 4 {
+			ip = v4
+		}
+		names = append(names, altName{kind: sanIP, value: ip})
+	}
+	for _, uri := range cert.URIs {
+		names = append(names, altName{kind: sanURI, value: []byte(uri.String())})
+	}
+	for _, email := range cert.EmailAddresses {
+		names = append(names, altName{kind: sanEmail, value: []byte(email)})
+	}
+	return names
+}
+
 // subjectAltNames returns the names of the kinds Node prints, in the order the certificate
-// lists them.
-func subjectAltNames(cert *x509.Certificate) []altName {
+// lists them. It reports false if the extension can't be read.
+func subjectAltNames(cert *x509.Certificate) ([]altName, bool) {
 	for _, ext := range cert.Extensions {
 		if !ext.Id.Equal(oidSubjectAltName) {
 			continue
 		}
 		var raw []asn1.RawValue
-		if rest, err := asn1.Unmarshal(ext.Value, &raw); err != nil || len(rest) > 0 {
-			return nil
+		if _, err := asn1.Unmarshal(ext.Value, &raw); err != nil {
+			return nil, false
 		}
 		var names []altName
 		for _, value := range raw {
@@ -56,15 +78,18 @@ func subjectAltNames(cert *x509.Certificate) []altName {
 				names = append(names, altName{kind: value.Tag, value: value.Bytes})
 			}
 		}
-		return names
+		return names, true
 	}
-	return nil
+	return nil, true
 }
 
 // FormatAltNames returns a certificate's subjectaltname as Node prints it. A name with a
 // character that would make the list ambiguous is written as a JSON string after its prefix.
 func FormatAltNames(cert *x509.Certificate) string {
-	names := subjectAltNames(cert)
+	names, ok := subjectAltNames(cert)
+	if !ok {
+		names = parsedAltNames(cert)
+	}
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
 		switch name.kind {
@@ -146,16 +171,12 @@ func commonNames(cert *x509.Certificate) []string {
 // CheckServerIdentity applies Node's tls.checkServerIdentity rules to cert for hostname,
 // and returns an *IdentityError if they do not accept it.
 func CheckServerIdentity(hostname string, cert *x509.Certificate) error {
-	var dnsNames []string
+	// The names come from crypto/x509's parse, which the chain was verified with.
+	dnsNames := cert.DNSNames
 	var ips []netip.Addr
-	for _, name := range subjectAltNames(cert) {
-		switch name.kind {
-		case sanDNS:
-			dnsNames = append(dnsNames, string(name.value))
-		case sanIP:
-			if addr, ok := netip.AddrFromSlice(name.value); ok {
-				ips = append(ips, addr)
-			}
+	for _, ip := range cert.IPAddresses {
+		if addr, ok := netip.AddrFromSlice(ip); ok {
+			ips = append(ips, addr)
 		}
 	}
 
@@ -207,8 +228,20 @@ func parseHostIP(hostname string) (netip.Addr, bool) {
 	return addr.WithZone(""), true
 }
 
+// splitHost lowercases only ASCII letters, so that no other character can turn into one.
+// Labels with anything but printable ASCII never match.
 func splitHost(host string) []string {
-	return strings.Split(strings.ToLower(strings.TrimSuffix(host, ".")), ".")
+	return strings.Split(asciiLower(strings.TrimSuffix(host, ".")), ".")
+}
+
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // matchHost reports whether a hostname, split into labels, matches a certificate name. A
@@ -252,4 +285,59 @@ func matchHost(hostParts []string, pattern string) bool {
 		return false
 	}
 	return strings.HasPrefix(hostSubdomain, prefix) && strings.HasSuffix(hostSubdomain, suffix)
+}
+
+// ConstraintError is a chain whose name constraints exclude the leaf's Common Name. Node has
+// no code of its own for this OpenSSL error and reports UNSPECIFIED.
+type ConstraintError struct {
+	Code    string
+	Message string
+}
+
+func (e *ConstraintError) Error() string { return e.Message }
+
+var dnsLikeName = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+\.?$`)
+
+// checkCommonNameConstraints applies the CAs' DNS name constraints to a leaf's Common Name
+// when the leaf has no DNS names, as OpenSSL does. crypto/x509 only applies them to SANs.
+func checkCommonNameConstraints(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	if len(leaf.DNSNames) > 0 {
+		return nil
+	}
+	for _, cn := range commonNames(leaf) {
+		if !dnsLikeName.MatchString(cn) {
+			continue
+		}
+		name := asciiLower(strings.TrimSuffix(cn, "."))
+		for _, chain := range chains {
+			for _, ca := range chain[1:] {
+				if len(ca.PermittedDNSDomains) > 0 && !anyDomainMatches(name, ca.PermittedDNSDomains) {
+					return &ConstraintError{Code: "UNSPECIFIED", Message: "permitted subtree violation"}
+				}
+				if anyDomainMatches(name, ca.ExcludedDNSDomains) {
+					return &ConstraintError{Code: "UNSPECIFIED", Message: "excluded subtree violation"}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// anyDomainMatches reports whether name is within one of the dNSName constraints: the
+// domain itself or a subdomain, or only subdomains for a constraint with a leading dot.
+func anyDomainMatches(name string, constraints []string) bool {
+	for _, c := range constraints {
+		c = asciiLower(c)
+		switch {
+		case c == "":
+			return true
+		case strings.HasPrefix(c, "."):
+			if strings.HasSuffix(name, c) {
+				return true
+			}
+		case name == c || strings.HasSuffix(name, "."+c):
+			return true
+		}
+	}
+	return false
 }
