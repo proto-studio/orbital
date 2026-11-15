@@ -640,17 +640,34 @@ func (c *Console) formatValue(v *v8.Value) string {
 		return c.formatter.FormatValue("[Function]", runtime.TypeFunction)
 	}
 	if v.IsArray() {
-		return c.formatArray(v)
+		return c.fresh(func() string { return c.formatArray(v) })
 	}
 	if v.IsObject() {
-		return c.formatObject(v)
+		return c.fresh(func() string { return c.formatObject(v) })
 	}
 	return c.formatOther(v)
 }
 
 // formatValueQuoted formats a value with quotes for strings (used in arrays/objects).
 func (c *Console) formatValueQuoted(v *v8.Value) string {
-	return c.formatValueQuotedWithDepth(v, 2)
+	return c.fresh(func() string { return c.formatValueQuotedWithDepth(v, 2) })
+}
+
+// fresh runs format, which prints a value from the top, with a tracker of its own when another
+// console call is printing already, like one a getter makes, so that the objects the outer call
+// is printing aren't taken for cycles.
+func (c *Console) fresh(format func() string) string {
+	if c.tracked == 0 {
+		return format()
+	}
+	saved := c.tracked
+	c.inspectValue("suspend")
+	c.tracked = 0
+	defer func() {
+		c.inspectValue("resume")
+		c.tracked = saved
+	}()
+	return format()
 }
 
 // formatValueQuotedWithDepth formats a value held by an object at depth: strings are quoted,

@@ -15,8 +15,11 @@
   }
   // The console prints with util.inspect's default options.
   const ctx = inspectShared.context();
-  // track follows the objects being printed, to find the ones that hold themselves.
-  const track = inspectShared.tracker();
+  // track follows the objects being printed, to find the ones that hold themselves. A console
+  // call made while another is printing, by a getter say, gets a tracker of its own; suspended
+  // holds the outer calls' trackers meanwhile.
+  let track = inspectShared.tracker();
+  const suspended = [];
   return {
     quote: inspectShared.quote,
     string: (str, level) => inspectShared.string(ctx, str, level),
@@ -55,9 +58,17 @@
       ctx.currentDepth = level;
     },
     // visit and leave are the tracker's: visit answers [Circular *N] for a value being printed
-    // already, and leave answers the <ref *N> to pass to reduce as ref.
-    visit: track.visit,
-    leave: track.leave,
+    // already, and leave answers the <ref *N> to pass to reduce as ref. suspend sets the
+    // current tracker aside for a fresh one, and resume brings it back.
+    visit: (value) => track.visit(value),
+    leave: () => track.leave(),
+    suspend: () => {
+      suspended.push(track);
+      track = inspectShared.tracker();
+    },
+    resume: () => {
+      track = suspended.pop();
+    },
     reduce: (output, open, close, level, base, ref) => inspectShared.reduce(ctx, output, open, close, level, { base, ref }),
     reduceArray: (output, level, numbers, ref) =>
       inspectShared.reduce(ctx, output, '[', ']', level, { array: true, numbers, ref })

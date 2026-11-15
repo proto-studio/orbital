@@ -204,4 +204,9 @@ console.log(u.inspect(new Map([[2, 1], [1, 2]]), { sorted: true }), u.inspect(ne
   console.log(u.inspect(o, { depth: 0 }));
   const top = { a: { b: {} } }; top.a.b.c = top; top.a.b.d = [top.a];
   show(top);
+  // A custom inspector's replacement that holds the value formats it afresh, and one that answers
+  // the value itself leaves it to be formatted as usual.
+  const wrapper = { [u.inspect.custom]() { return { wrapped: this }; } };
+  const itself = { a: 1, [u.inspect.custom]() { return this; } };
+  console.log(u.inspect(wrapper), u.inspect(itself));
 }
