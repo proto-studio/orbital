@@ -189,12 +189,12 @@ func hasEncodedSeparator(p string) bool {
 
 // moduleKey is the stable module url for the file at path imported with a
 // query or fragment: like Node, each distinct URL is its own module instance.
-// A key is the plain path when that is unambiguous; with a suffix, or a path
-// holding "?", "#" or "%", it is the URL-encoded path plus the suffix, so a
-// query never looks like part of a file name.
+// The key is the URL path (percent-encoded where a file: URL encodes, such as
+// spaces, "?", "#", "%" and controls like the \x01 module keys reserve) plus
+// the suffix, so a query never looks like part of a file name and
+// import.meta.url is the URL Node gives. A path a URL writes as is stays as is.
 func (e *ESM) moduleKey(path, suffix string) string {
-	// \x01 is reserved as a separator inside module keys.
-	if suffix == "" && !strings.ContainsAny(path, "?#%\x01") {
+	if suffix == "" && escapePath(path) == path {
 		return path
 	}
 	key := escapePath(path) + suffix
@@ -329,7 +329,8 @@ func (e *ESM) resolveIndex(dir string) string {
 // resolveToURL implements Node's default resolution and returns a stable module
 // url (an absolute path, or "node:<name>" for builtins).
 func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
-	spec := specifier
+	// Node reads a specifier as a URL, which drops tabs and newlines anywhere.
+	spec := urlWhitespace.Replace(specifier)
 
 	// Builtins (with or without node: prefix).
 	if bare, ok := e.builtinBare(spec); ok {
@@ -497,16 +498,20 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 					var exp interface{}
 					if json.Unmarshal(raw, &exp) == nil {
 						if target := resolveExports(exp, sub); target != "" {
-							abs := filepath.Join(pkgDir, target)
+							// The target is a URL relative to the package: its
+							// path is decoded and a query or fragment kept.
+							abs, _, suffix, _ := urlPath(target, pkgDir)
 							if r := e.resolveFile(abs); r != "" {
-								return r, "", nil
+								return r, suffix, nil
 							}
 							if e.fsIsDir(abs) {
 								if r := e.resolveIndex(abs); r != "" {
-									return r, "", nil
+									return r, suffix, nil
 								}
 							}
-							return "", "", e.moduleNotFound(abs, referrer)
+							err := e.moduleNotFound(abs, referrer)
+							err.url += suffix
+							return "", "", err
 						}
 					}
 				}
@@ -532,12 +537,18 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 	}
 	target, suffix := pkgDir, ""
 	if sub != "." {
-		// As a URL path: tabs and newlines dropped, the suffix kept apart.
-		path := urlWhitespace.Replace(sub)
-		if i := strings.IndexAny(path, "?#"); i >= 0 {
-			path, suffix = path[:i], normalizeSuffix(path[i:])
+		// As a URL path relative to the package: decoded, with the suffix kept
+		// apart, and refused if it encodes a separator.
+		path, encoded, sfx, encodedSep := urlPath(sub, pkgDir)
+		if encodedSep {
+			return "", "", &moduleError{
+				msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
+					e.importerPath(referrer),
+				code:      "ERR_INVALID_MODULE_SPECIFIER",
+				typeError: true,
+			}
 		}
-		target = filepath.Join(pkgDir, path)
+		target, suffix = path, sfx
 	}
 	if r := e.resolveFile(target); r != "" {
 		return r, suffix, nil
