@@ -46,6 +46,12 @@ async function main() {
   attempt('symlink_bad_type', () => fs.symlinkSync('f', file('l3'), 'bogus'));
   attempt('readlink', () => fs.readlinkSync(file('l')));
   attempt('readlink_buffer', () => Array.from(fs.readlinkSync(file('l'), 'buffer')));
+  attempt('url_paths', () => {
+    const { pathToFileURL } = require('url');
+    fs.symlinkSync('f', pathToFileURL(file('lu')));
+    fs.linkSync(pathToFileURL(file('f')), pathToFileURL(file('hu')));
+    return [fs.readlinkSync(pathToFileURL(file('lu'))), fs.readFileSync(file('hu'), 'utf8'), local(fs.realpathSync(pathToFileURL(file('lu'))))];
+  });
   attempt('readlink_file', () => fs.readlinkSync(file('f')));
   attempt('readlink_missing', () => fs.readlinkSync(file('nope')));
   attempt('lstat_link', () => kind(fs.lstatSync(file('l'))));

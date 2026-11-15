@@ -34,6 +34,12 @@
         false
       ],
       [
+        "hu",
+        false,
+        true,
+        false
+      ],
+      [
         "l",
         true,
         false,
@@ -44,13 +50,19 @@
         true,
         false,
         false
+      ],
+      [
+        "lu",
+        true,
+        false,
+        false
       ]
     ]
   },
   "link": {
     "value": [
       "hi",
-      2
+      3
     ]
   },
   "link_callback": {
@@ -328,5 +340,12 @@
   ],
   "unlink_link": {
     "value": false
+  },
+  "url_paths": {
+    "value": [
+      "f",
+      "hi",
+      "\u003cdir\u003e/f"
+    ]
   }
 }
