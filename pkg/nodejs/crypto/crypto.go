@@ -81,6 +81,13 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		// Callback forms whose work runs off the JS thread (async.go).
 		"_generateKeyPairAsync": c.generateKeyPairAsyncFunc,
 		"_randomBytesAsync":     c.randomBytesAsyncFunc,
+
+		// Key derivation (kdf.go).
+		"_digestSize":  c.digestSizeFunc,
+		"_pbkdf2":      c.pbkdf2Func,
+		"_scryptCheck": c.scryptCheckFunc,
+		"_scrypt":      c.scryptFunc,
+		"_hkdf":        c.hkdfFunc,
 	}
 
 	for name, fn := range funcs {
@@ -264,6 +271,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// crypto.randomInt over the native _randomInt.
 	if _, err = rt.RunScript(randomIntJS, "crypto_randomint.js"); err != nil {
+		return err
+	}
+
+	// pbkdf2, scrypt and hkdf over the natives above.
+	if _, err = rt.RunScript(kdfJS, "crypto_kdf.js"); err != nil {
 		return err
 	}
 
