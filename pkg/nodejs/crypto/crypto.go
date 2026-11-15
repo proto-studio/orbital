@@ -77,6 +77,10 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_keyExportDER":        c.keyExportDERFunc,
 		"_keyExportSecret":     c.keyExportSecretFunc,
 		"_keyEquals":           c.keyEqualsFunc,
+
+		// Callback forms whose work runs off the JS thread (async.go).
+		"_generateKeyPairAsync": c.generateKeyPairAsyncFunc,
+		"_randomBytesAsync":     c.randomBytesAsyncFunc,
 	}
 
 	for name, fn := range funcs {
@@ -253,6 +257,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// randomBytes argument checks and its off-thread callback form.
+	if _, err = rt.RunScript(randomBytesJS, "crypto_randombytes.js"); err != nil {
+		return err
+	}
+
 	// Add internal functions for Hash/Hmac digest
 	hashDigestFn, err := iso.NewFunctionTemplate(c.hashDigestFunc)
 	if err != nil {
@@ -278,7 +287,6 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 }
 
 func (c *Crypto) randomBytesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
 	args := info.Args()
 
 	if len(args) < 1 {
@@ -295,21 +303,7 @@ func (c *Crypto) randomBytesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	// Check for callback (async mode)
-	if len(args) >= 2 && args[1].IsFunction() {
-		callback := args[1]
-		// For simplicity, execute synchronously but call callback
-		c.rt.EventLoop().EnqueueMicrotask(func() {
-			// Create Buffer from bytes
-			hexStr := hex.EncodeToString(bytes)
-			code := `Buffer.from('` + hexStr + `', 'hex')`
-			bufVal, _ := c.rt.RunScript(code, "crypto_buffer")
-			c.rt.MakeCallback(callback, nil, ctx.Null(), bufVal)
-		})
-		return ctx.Undefined()
-	}
-
-	// Sync mode - return Buffer
+	// The callback form is randomBytesAsyncFunc (async.go).
 	hexStr := hex.EncodeToString(bytes)
 	code := `Buffer.from('` + hexStr + `', 'hex')`
 	bufVal, _ := c.rt.RunScript(code, "crypto_buffer")
