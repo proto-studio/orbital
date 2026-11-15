@@ -251,10 +251,6 @@ type SocketFactory interface {
 type RealSocketFactory struct {
 	// inheritedListeners are the file descriptors scripts may listen on. None by default.
 	inheritedListeners []int
-	mu                 sync.Mutex
-	// inheritedFiles keeps each descriptor's os.File alive, since a collected one would
-	// close the descriptor.
-	inheritedFiles map[int]*os.File
 }
 
 // InheritedListenerFactory is an optional extension of SocketFactory for listening sockets
@@ -287,25 +283,21 @@ func (f *RealSocketFactory) ListenInherited(fd int) (TCPServer, error) {
 	if !allowed {
 		return nil, ErrNotInherited
 	}
-	f.mu.Lock()
-	file := f.inheritedFiles[fd]
-	if file == nil {
-		file = os.NewFile(uintptr(fd), "inherited")
-		if file == nil {
-			f.mu.Unlock()
-			return nil, ErrNotInherited
-		}
-		if f.inheritedFiles == nil {
-			f.inheritedFiles = map[int]*os.File{}
-		}
-		f.inheritedFiles[fd] = file
+	// The descriptor stays the embedder's: only a copy is wrapped and closed here.
+	dup, err := syscall.Dup(fd)
+	if err != nil {
+		return nil, ErrNotInherited
 	}
-	f.mu.Unlock()
-	// FileListener works on a copy of the descriptor, so the original stays open for a
-	// later listen, as in Node.
+	syscall.CloseOnExec(dup)
+	file := os.NewFile(uintptr(dup), "inherited")
+	defer file.Close()
+	// A connected socket would pass as a TCP listener and then fail every accept.
+	if !isListening(dup) {
+		return nil, ErrNotInherited
+	}
 	listener, err := net.FileListener(file)
 	if err != nil {
-		return nil, err
+		return nil, ErrNotInherited
 	}
 	// Only TCP: a Unix socket's path is checked differently, by the Unix socket factory.
 	if _, ok := listener.Addr().(*net.TCPAddr); !ok {
@@ -1346,4 +1338,18 @@ func (s *RealUDPSocket) sockoptInt(option int) (int, error) {
 		return 0, err
 	}
 	return value, sockErr
+}
+
+// isListening reports whether fd is a listening socket. Where SO_ACCEPTCONN can't be read,
+// as on macOS, a socket with a peer is refused and listen is called, which fails for a
+// connected socket and leaves a listening one listening.
+func isListening(fd int) bool {
+	listening, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ACCEPTCONN)
+	if err == nil {
+		return listening != 0
+	}
+	if _, err := syscall.Getpeername(fd); err == nil {
+		return false
+	}
+	return syscall.Listen(fd, syscall.SOMAXCONN) == nil
 }

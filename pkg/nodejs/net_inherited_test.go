@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	goruntime "runtime"
+	"syscall"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -104,4 +106,62 @@ func TestRealSocketFactory_ListenInheritedOnlyTCP(t *testing.T) {
 	if _, err := factory.ListenInherited(int(w.Fd()) + 100); !errors.Is(err, runtime.ErrNotInherited) {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+// A connected socket's descriptor is refused even if allowed, and listening leaves the
+// embedder's descriptor open: only a copy is used.
+func TestRealSocketFactory_ListenInheritedChecksAndKeepsTheDescriptor(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	connected, err := client.(*net.TCPConn).File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connected.Close()
+
+	fd, _ := inheritedListener(t)
+	func() {
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowInheritedListeners(int(connected.Fd()), fd)
+		if _, err := factory.ListenInherited(int(connected.Fd())); !errors.Is(err, runtime.ErrNotInherited) {
+			t.Fatalf("connected socket: err = %v", err)
+		}
+		for i := 0; i < 2; i++ {
+			server, err := factory.ListenInherited(fd)
+			if err != nil {
+				t.Fatalf("listen %d: %v", i, err)
+			}
+			server.Close()
+		}
+	}()
+	// Nothing the factory made may close the embedder's descriptor once it is collected.
+	goruntime.GC()
+	goruntime.GC()
+	if _, err := syscall.Getsockname(fd); err != nil {
+		t.Fatalf("the original descriptor was closed: %v", err)
+	}
+}
+
+// An invalid descriptor throws before the server is changed, so it can listen afterwards
+// and the rejected call's callback never runs.
+func TestNet_ListenWithBadDescriptorLeavesServerAlone(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const net = require('net');
+const server = net.createServer();
+const calls = [];
+let error;
+try { server.listen({ fd: -1 }, () => calls.push('rejected')); } catch (e) { error = e.code; }
+server.listen(0, '127.0.0.1', () => {
+  calls.push('listening');
+  server.close(() => setImmediate(() => done({ error, calls })));
+});`)
+	wantJSON(t, got, map[string]any{"error": "ERR_INVALID_ARG_VALUE", "calls": []any{"listening"}})
 }
