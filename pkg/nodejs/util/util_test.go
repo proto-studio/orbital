@@ -595,3 +595,30 @@ func TestUtil_InspectArrayLongPrototypeChain(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// Maps, typed arrays and ArrayBuffers with a long constructorless prototype chain are named
+// within the depth limit too, as are values past it.
+func TestUtil_InspectLongPrototypeChainKinds(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		let chain = null;
+		for (let i = 0; i < 1000; i++) chain = Object.create(chain);
+		const ab = Object.setPrototypeOf(new ArrayBuffer(1), chain);
+		[
+			__util_module.inspect(Object.setPrototypeOf(new Map([[1, 2]]), chain), { depth: 0 }),
+			__util_module.inspect(Object.setPrototypeOf(new Uint8Array(1), chain), { depth: 0 }),
+			__util_module.inspect({ a: { b: { c: ab } } })
+		].join('\n');
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := "Object <Object <Complex prototype>>(1) { 1 => 2 }\n" +
+		"Object <Object <Complex prototype>>(1) [ 0 ]\n" +
+		"{ a: { b: { c: [Object <Complex prototype>] } } }"
+	if got := result.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

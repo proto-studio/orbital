@@ -827,7 +827,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if s, ok := c.formatCollection(v, depth); ok {
 		return s
 	}
-	if scalar := c.inspectValue("scalar", v); scalar != nil && scalar.IsObject() {
+	if scalar := c.inspectValue("scalar", v, c.integer(level(depth))); scalar != nil && scalar.IsObject() {
 		return c.formatScalar(v, scalar, depth)
 	}
 
@@ -882,7 +882,7 @@ func (c *Console) formatScalar(v, scalar *v8.Value, depth int) string {
 // formatCollection prints a Map or Set: the entries inspect's collection gives for it, then its
 // own properties. It reports false for anything else.
 func (c *Console) formatCollection(v *v8.Value, depth int) (string, bool) {
-	coll := c.inspectValue("collection", v)
+	coll := c.inspectValue("collection", v, c.integer(level(depth)))
 	if coll == nil || !coll.IsObject() {
 		return "", false
 	}
@@ -970,7 +970,7 @@ func (c *Console) formatProperties(v *v8.Value, names []*v8.Value, depth int) []
 // formatBinary prints an ArrayBuffer or DataView: the entries and keys inspect's binary
 // describes for it, then its own keys. It reports false for anything else.
 func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
-	bin := c.inspectValue("binary", v)
+	bin := c.inspectValue("binary", v, c.integer(level(depth)))
 	if bin == nil || !bin.IsObject() {
 		return "", false
 	}
