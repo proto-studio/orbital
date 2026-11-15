@@ -1097,7 +1097,14 @@
       throw codedError(Error, 'ERR_FS_INVALID_SYMLINK_TYPE',
         'Symlink type must be one of "dir", "file", or "junction". Received ' + JSON.stringify(type));
     }
-    return [pathString(target), pathString(path)];
+    return [checkedPath(target, 'target'), checkedPath(path, 'path')];
+  }
+  // pathString, refusing a path with a NUL, which a file: URL can hold as %00, as the other
+  // calls refuse it.
+  function checkedPath(p, name) {
+    const text = pathString(p);
+    checkPath(text, name);
+    return text;
   }
   function pathString(p) {
     if (typeof p === 'string') return p;
@@ -1117,8 +1124,8 @@
   }
   defineCall('symlink', symlinkArgs, 'symlink');
   // file: URLs and Buffers become paths before they reach the native layer.
-  defineCall('readlink', (path, options) => [pathString(path), options], 'readlink', (target, [, options]) => namedIn(target, options));
-  defineCall('link', (existingPath, newPath) => [pathString(existingPath), pathString(newPath)], 'link');
+  defineCall('readlink', (path, options) => [checkedPath(path, 'path'), options], 'readlink', (target, [, options]) => namedIn(target, options));
+  defineCall('link', (existingPath, newPath) => [checkedPath(existingPath, 'existingPath'), checkedPath(newPath, 'newPath')], 'link');
   // mkdtemp(prefix[, options]) makes prefix followed by six random characters, mode 0o700.
   function prefixArg(prefix) {
     if (typeof prefix !== 'string' && !ArrayBuffer.isView(prefix) && !(prefix && typeof prefix.href === 'string')) {
@@ -1132,7 +1139,7 @@
   // realpath.native names realpath in its errors, as the C call does. Plain realpath, like
   // Node's JavaScript one, reports a missing path from lstat, or a link to one from stat, by
   // its absolute path.
-  defineCall('realpath', (path, options) => [pathString(path), options], 'realpath', (real, [, options]) => namedIn(real, options));
+  defineCall('realpath', (path, options) => [checkedPath(path, 'path'), options], 'realpath', (real, [, options]) => namedIn(real, options));
   const realpathNativeSync = fs.realpathSync;
   const realpathNative = fs.realpath;
   function asJsRealpathError(e, path) {
