@@ -200,6 +200,11 @@ func (c *Crypto) doGenerateKeyPair(kind, optsJSON string) (pubID, privID int64, 
 // below 3, and so does this. Go's crypto/rsa can't use or export a key with e
 // above 2^31-1, so those exponents are refused rather than giving a key that
 // fails later.
+// GenerateRSAKey is generateRSAKey for the webcrypto package.
+func GenerateRSAKey(bits int, e int64) (*rsa.PrivateKey, error) {
+	return generateRSAKey(bits, e)
+}
+
 func generateRSAKey(bits int, e int64) (*rsa.PrivateKey, error) {
 	if e == 65537 {
 		return rsa.GenerateKey(rand.Reader, bits)

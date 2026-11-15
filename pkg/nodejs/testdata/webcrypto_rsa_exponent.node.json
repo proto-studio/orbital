@@ -1,0 +1,297 @@
+{
+  "array RSA-OAEP": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "array RSA-PSS": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "array RSASSA-PKCS1-v1_5": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "arrayBuffer RSA-OAEP": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "arrayBuffer RSA-PSS": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "arrayBuffer RSASSA-PKCS1-v1_5": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "buffer RSA-OAEP": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Buffer",
+    false
+  ],
+  "buffer RSA-PSS": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Buffer",
+    false
+  ],
+  "buffer RSASSA-PKCS1-v1_5": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Buffer",
+    false
+  ],
+  "empty RSA-OAEP": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "empty RSA-PSS": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "empty RSASSA-PKCS1-v1_5": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "f4 RSA-OAEP": [
+    "AQAB",
+    "AQAB",
+    [
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "f4 RSA-PSS": [
+    "AQAB",
+    "AQAB",
+    [
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "f4 RSASSA-PKCS1-v1_5": [
+    "AQAB",
+    "AQAB",
+    [
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "fiveBytes RSA-OAEP": {
+    "message": "The publicExponent must be equivalent to an unsigned 32-bit value",
+    "name": "OperationError"
+  },
+  "fiveBytes RSA-PSS": {
+    "message": "The publicExponent must be equivalent to an unsigned 32-bit value",
+    "name": "OperationError"
+  },
+  "fiveBytes RSASSA-PKCS1-v1_5": {
+    "message": "The publicExponent must be equivalent to an unsigned 32-bit value",
+    "name": "OperationError"
+  },
+  "int32Max RSA-OAEP": [
+    "f____w",
+    "f____w",
+    [
+      127,
+      255,
+      255,
+      255
+    ],
+    "Uint8Array",
+    false
+  ],
+  "int32Max RSA-PSS": [
+    "f____w",
+    "f____w",
+    [
+      127,
+      255,
+      255,
+      255
+    ],
+    "Uint8Array",
+    false
+  ],
+  "int32Max RSASSA-PKCS1-v1_5": [
+    "f____w",
+    "f____w",
+    [
+      127,
+      255,
+      255,
+      255
+    ],
+    "Uint8Array",
+    false
+  ],
+  "leadingZero RSA-OAEP": [
+    "AQAB",
+    "AQAB",
+    [
+      0,
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "leadingZero RSA-PSS": [
+    "AQAB",
+    "AQAB",
+    [
+      0,
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "leadingZero RSASSA-PKCS1-v1_5": [
+    "AQAB",
+    "AQAB",
+    [
+      0,
+      1,
+      0,
+      1
+    ],
+    "Uint8Array",
+    false
+  ],
+  "missing RSA-OAEP": {
+    "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'RsaHashedKeyGenParams' because 'publicExponent' is required in 'RsaHashedKeyGenParams'.",
+    "name": "TypeError"
+  },
+  "missing RSA-PSS": {
+    "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'RsaHashedKeyGenParams' because 'publicExponent' is required in 'RsaHashedKeyGenParams'.",
+    "name": "TypeError"
+  },
+  "missing RSASSA-PKCS1-v1_5": {
+    "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'RsaHashedKeyGenParams' because 'publicExponent' is required in 'RsaHashedKeyGenParams'.",
+    "name": "TypeError"
+  },
+  "one RSA-OAEP": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "one RSA-PSS": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "one RSASSA-PKCS1-v1_5": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "seventeen RSA-OAEP": [
+    "EQ",
+    "EQ",
+    [
+      17
+    ],
+    "Uint8Array",
+    false
+  ],
+  "seventeen RSA-PSS": [
+    "EQ",
+    "EQ",
+    [
+      17
+    ],
+    "Uint8Array",
+    false
+  ],
+  "seventeen RSASSA-PKCS1-v1_5": [
+    "EQ",
+    "EQ",
+    [
+      17
+    ],
+    "Uint8Array",
+    false
+  ],
+  "signVerify": true,
+  "three RSA-OAEP": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Uint8Array",
+    false
+  ],
+  "three RSA-PSS": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Uint8Array",
+    false
+  ],
+  "three RSASSA-PKCS1-v1_5": [
+    "Aw",
+    "Aw",
+    [
+      3
+    ],
+    "Uint8Array",
+    false
+  ],
+  "two RSA-OAEP": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "two RSA-PSS": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "two RSASSA-PKCS1-v1_5": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "uint16 RSA-OAEP": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "uint16 RSA-PSS": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "uint16 RSASSA-PKCS1-v1_5": {
+    "message": "Failed to normalize algorithm: 'publicExponent' of 'RsaHashedKeyGenParams' (passed algorithm) is not an Uint8Array object.",
+    "name": "TypeError"
+  },
+  "zero RSA-OAEP": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "zero RSA-PSS": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  },
+  "zero RSASSA-PKCS1-v1_5": {
+    "message": "The operation failed for an operation-specific reason",
+    "name": "OperationError"
+  }
+}
