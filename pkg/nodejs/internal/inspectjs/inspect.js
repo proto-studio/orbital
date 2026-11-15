@@ -187,14 +187,19 @@
 
   // constructorName is the name util.inspect gives value's constructor: that of the first
   // named constructor on its prototype chain that value is an instance of, or null when there's
-  // none.
+  // none. A proxy whose traps throw while it's looked at is named Object, as Node, which
+  // inspects a proxy's target, would name a plain one.
   function constructorName(value) {
-    for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
-      const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
-      if (desc !== undefined && typeof desc.value === 'function' && desc.value.name !== '' &&
-          isInstance(value, desc.value)) {
-        return String(desc.value.name);
+    try {
+      for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
+        const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
+        if (desc !== undefined && typeof desc.value === 'function' && desc.value.name !== '' &&
+            isInstance(value, desc.value)) {
+          return String(desc.value.name);
+        }
       }
+    } catch (e) {
+      return 'Object';
     }
     return null;
   }
@@ -216,7 +221,11 @@
     } catch (e) {
       return '';
     }
-    if (typeof tag !== 'string' || (tag !== '' && Object.prototype.propertyIsEnumerable.call(value, Symbol.toStringTag))) {
+    try {
+      if (typeof tag !== 'string' || (tag !== '' && Object.prototype.propertyIsEnumerable.call(value, Symbol.toStringTag))) {
+        return '';
+      }
+    } catch (e) {
       return '';
     }
     return tag;
@@ -243,7 +252,12 @@
   // its constructor, which for an object made without one is its own toStringTag when that's a
   // string data property, and otherwise Object. When it matches the tag shown, it's Object.
   function objectFallback(value, tag) {
-    const desc = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+    let desc;
+    try {
+      desc = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+    } catch (e) {
+      return 'Object';
+    }
     const own = desc !== undefined && typeof desc.value === 'string' ? desc.value : '';
     return own === '' || own === tag ? 'Object' : own;
   }

@@ -553,3 +553,26 @@ func TestUtil_InspectManyObjectsTime(t *testing.T) {
 		t.Errorf("inspecting took %d ms", got.Ms)
 	}
 }
+
+// A proxy whose traps throw while it's being named still prints, as Node, which inspects a
+// proxy's target, prints it.
+func TestUtil_InspectProxyThrowingWhileNamed(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const trap = (name) => new Proxy({ a: 1 }, {
+			getOwnPropertyDescriptor(target, key) {
+				if (key === name) throw new Error('trap');
+				return Reflect.getOwnPropertyDescriptor(target, key);
+			}
+		});
+		__util_module.inspect(trap('constructor')) + ' ' + __util_module.inspect(trap(Symbol.toStringTag));
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "{ a: 1 } { a: 1 }"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
