@@ -114,7 +114,8 @@
 	// URL class
 	// How the URL class reads a URL for the legacy API: 'parse' for url.parse(), which keeps
 	// the URL as written (dot segments, slashless file: paths, special schemes without
-	// "//"); 'keep' and 'literal' for url.resolve(), which keeps dot segments or removes only
+	// "//"); 'keep', 'keep-authority' and 'literal' for url.resolve(), which keeps dot
+	// segments (taking a host for a reference in another special scheme), or removes only
 	// "." and ".." themselves (not their %2e spellings); and 'standard' otherwise.
 	let dotSegmentMode = 'standard';
 
@@ -213,9 +214,11 @@
 			const special = /^(https?|wss?|ftp|file):$/.test(protocol);
 			const authorityEnd = special ? /[/\\?#]/ : /[/?#]/;
 			// A special scheme other than file: always has an authority, whatever slashes
-			// come before it (http:example.com is http://example.com/). url.parse() keeps
-			// the URL as written.
-			if (special && protocol !== 'file:' && !rest.startsWith('//') && dotSegmentMode !== 'parse') {
+			// come before it (http:example.com is http://example.com/). The legacy API
+			// keeps the URL as written, except that url.resolve() takes the host of a
+			// reference in another scheme this way too.
+			if (special && protocol !== 'file:' && !rest.startsWith('//') &&
+					(dotSegmentMode === 'standard' || dotSegmentMode === 'keep-authority')) {
 				rest = '//' + rest.replace(/^[/\\]+/, '');
 			}
 			const slashes = rest.startsWith('//');
@@ -291,7 +294,8 @@
 			}
 			// url.parse() keeps the path as written, and url.resolve() only removes literal
 			// dot segments, as Node's legacy API does.
-			if (pathname.startsWith('/') && dotSegmentMode !== 'keep' && dotSegmentMode !== 'parse') {
+			if (pathname.startsWith('/') && dotSegmentMode !== 'keep' && dotSegmentMode !== 'keep-authority' &&
+					dotSegmentMode !== 'parse') {
 				pathname = removeDotSegments(pathname, protocol === 'file:', dotSegmentMode === 'literal');
 			}
 
@@ -727,8 +731,9 @@
 		const base = withDotSegmentMode('parse', () => new URL(from));
 		const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(to);
 		const otherScheme = scheme !== null && scheme[1].toLowerCase() + ':' !== base.protocol;
-		const keep = to === '' || to.startsWith('?') || to.startsWith('//') || otherScheme;
-		return withDotSegmentMode(keep ? 'keep' : 'literal', () => new URL(to, base).href);
+		const keep = to === '' || to.startsWith('?') || to.startsWith('//');
+		const mode = otherScheme ? 'keep-authority' : keep ? 'keep' : 'literal';
+		return withDotSegmentMode(mode, () => new URL(to, base).href);
 	}
 
 	// domainToASCII and domainToUnicode (simplified - no actual punycode)
