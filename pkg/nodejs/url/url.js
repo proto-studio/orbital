@@ -112,6 +112,37 @@
 	}
 
 	// URL class
+	// The WHATWG URL parser's single- and double-dot path segments, %2e included.
+	function isSingleDot(segment) {
+		return segment === '.' || segment.toLowerCase() === '%2e';
+	}
+
+	function isDoubleDot(segment) {
+		const s = segment.toLowerCase();
+		return s === '..' || s === '.%2e' || s === '%2e.' || s === '%2e%2e';
+	}
+
+	// removeDotSegments applies the URL parser's path state to a path that starts with "/":
+	// "." is dropped, ".." drops the segment before it, and either one at the end leaves the
+	// path ending in "/".
+	function removeDotSegments(path) {
+		const segments = path.split('/');
+		const out = [];
+		for (let i = 1; i < segments.length; i++) {
+			const segment = segments[i];
+			const last = i === segments.length - 1;
+			if (isDoubleDot(segment)) {
+				out.pop();
+				if (last) out.push('');
+			} else if (isSingleDot(segment)) {
+				if (last) out.push('');
+			} else {
+				out.push(segment);
+			}
+		}
+		return '/' + out.join('/');
+	}
+
 	class URL {
 		constructor(url, base) {
 			if (base !== undefined) {
@@ -223,6 +254,10 @@
 				pathname = rest || '/';
 			}
 
+			// A path made of segments loses its "." and ".." segments, as the WHATWG URL
+			// parser removes them. An opaque path, such as mailto:'s, is kept as is.
+			if (pathname.startsWith('/')) pathname = removeDotSegments(pathname);
+
 			return { protocol, username, password, hostname, port, pathname, search, hash, slashes };
 		}
 
@@ -325,7 +360,9 @@
 
 		get href() {
 			let url = this._protocol;
-			if (this._hostname) {
+			// A file: URL always has a host, if only an empty one, and so does any URL
+			// written with "//": both serialize with "//".
+			if (this._hostname || this._slashes || this._protocol === 'file:') {
 				url += '//';
 				if (this._username) {
 					url += encodeURIComponent(this._username);
