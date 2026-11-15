@@ -361,11 +361,22 @@ const cases = [
   'throw { a: 1 };',
   'throw { f() {} };',
   'let x = ;',
+  'throw new Uint8Array([1, 2]).buffer;',
+  'const e = new Error("ab"); e.buf = new Uint8Array([1, 2]).buffer; throw e;',
+  'const e = new Error("sab"); e.sab = new SharedArrayBuffer(2); e.x = 1; throw e;',
+  'throw JSON.parse(\'{"__proto__":{"flag":true},"a":1}\');',
+  'class C { [Symbol.for("nodejs.util.inspect.custom")]() { return "CUSTOM C"; } } throw new C();',
+  'const e = new Error("d"); e.d = new Date(NaN); throw e;',
 ];
 const describe = (e) => {
   if (e === null || typeof e !== 'object') return typeof e + ' ' + String(e);
+  if (Object.getPrototypeOf(e) === null) return 'null prototype ' + require('util').inspect(e);
+  if (e instanceof ArrayBuffer) return 'ArrayBuffer ' + new Uint8Array(e).join(',');
   const props = Object.getOwnPropertyNames(e).filter((k) => k !== 'stack').sort()
-    .map((k) => k + '=' + (typeof e[k] === 'object' && e[k] !== null ? Object.prototype.toString.call(e[k]) : String(e[k])));
+    .map((k) => k + '=' + (typeof e[k] === 'object' && e[k] !== null ? Object.prototype.toString.call(e[k]) : String(e[k])) +
+      (e[k] instanceof ArrayBuffer ? ':' + new Uint8Array(e[k]).join(',') : '') +
+      (e[k] instanceof Date ? ':' + String(e[k].getTime()) : '') +
+      (k === '__proto__' ? ':own flag=' + e.flag : ''));
   return [e.constructor && e.constructor.name, e instanceof Error, Object.prototype.toString.call(e),
     typeof e.stack, e.cause ? e.cause.constructor.name + ':' + e.cause.message : '-', ...props].join(' ');
 };
@@ -387,7 +398,7 @@ next(0);
 		"RangeError true [object Error] string - g=1 message=custom name=MyErr",
 		"URIError true [object Error] string - message=later name=URIError",
 		"Error true [object Error] string TypeError:inner cause=[object Error] message=outer name=Error",
-		"Error true [object Error] string - b=10 d=[object Date] m=[object Map] message=f n=NaN name=Error",
+		"Error true [object Error] string - b=10 d=[object Date]:0 m=[object Map] message=f n=NaN name=Error",
 		"Error true [object Error] string - message=nf",
 		"Error true [object Error] string - errors=[object Array] message=agg name=AggregateError",
 		"string a string",
@@ -395,6 +406,12 @@ next(0);
 		"Object false [object Object] undefined - a=1",
 		"string { f: [Function: f] }",
 		"SyntaxError true [object Error] string - message=Unexpected token ';' name=SyntaxError",
+		"ArrayBuffer 1,2",
+		"Error true [object Error] string - buf=[object ArrayBuffer]:1,2 message=ab name=Error",
+		"Error true [object Error] string - message=sab",
+		"Object false [object Object] undefined - __proto__=[object Object]:own flag=undefined a=1",
+		"null prototype CUSTOM C",
+		"Error true [object Error] string - d=[object Date]:NaN message=d name=Error",
 	}
 	if !reflect.DeepEqual(notes, want) {
 		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
