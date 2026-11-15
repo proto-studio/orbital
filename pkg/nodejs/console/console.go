@@ -750,7 +750,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	length := v.ArrayLength()
 	if length == 0 {
 		// What goes before the bracket: a subclass's name, say. reduceArray adds it otherwise.
-		prefix, _ := c.inspectCall("arrayPrefix", v)
+		prefix, _ := c.inspectCall("arrayPrefix", v, c.integer(level(depth)))
 		return prefix + "[]"
 	}
 	circular, done := c.track(v)

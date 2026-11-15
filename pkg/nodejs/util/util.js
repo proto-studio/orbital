@@ -215,7 +215,7 @@
 		}
 
 		function formatArray(arr, depth) {
-			const prefix = inspectShared.arrayPrefix(arr);
+			const prefix = inspectShared.arrayPrefix(arr, opts.depth === null ? Infinity : opts.depth - depth);
 			if (arr.length === 0) return prefix + '[]';
 			layout.currentDepth = depth;
 
