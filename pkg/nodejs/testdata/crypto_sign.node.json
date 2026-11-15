@@ -1,0 +1,206 @@
+{
+  "callback": [
+    "null",
+    "null",
+    true,
+    [
+      "sync",
+      "callback"
+    ]
+  ],
+  "ecdsa": {
+    "value": [
+      64,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "ed25519": {
+    "value": "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b"
+  },
+  "ed25519FromPem": {
+    "value": "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b"
+  },
+  "errors": {
+    "badDsaEncoding": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The property 'options.dsaEncoding' is invalid. Received 'x'",
+      "name": "TypeError"
+    },
+    "badPadding": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The property 'options.padding' is invalid. Received 'x'",
+      "name": "TypeError"
+    },
+    "badPem": {
+      "code": "ERR_OSSL_UNSUPPORTED",
+      "message": "error:1E08010C:DECODER routines::unsupported",
+      "name": "Error"
+    },
+    "badSaltLength": {
+      "code": "ERR_INVALID_ARG_VALUE",
+      "message": "The property 'options.saltLength' is invalid. Received 1.5",
+      "name": "TypeError"
+    },
+    "ed25519Digest": {
+      "code": "ERR_OSSL_INVALID_DIGEST",
+      "message": "error:1C80007A:Provider routines::invalid digest",
+      "name": "Error"
+    },
+    "ed25519Stream": {
+      "code": "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+      "message": "Unsupported crypto operation",
+      "name": "Error"
+    },
+    "numberAlgorithm": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"algorithm\" argument must be of type string. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberData": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"data\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberDigest": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"algorithm\" argument must be of type string. Received type number (5)",
+      "name": "TypeError"
+    },
+    "numberUpdate": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received type number (5)",
+      "name": "TypeError"
+    },
+    "publicKeyToSign": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected private.",
+      "name": "TypeError"
+    },
+    "secretKey": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type secret, expected private.",
+      "name": "TypeError"
+    },
+    "unknownDigest": {
+      "code": "ERR_CRYPTO_INVALID_DIGEST",
+      "message": "Invalid digest",
+      "name": "TypeError"
+    }
+  },
+  "pss": {
+    "value": [
+      128,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "rsaFromObject": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaFromPem": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaHexOutput": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaOneShotDefaultDigest": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaOneShotSha1": {
+    "value": "ab3362362f5943d8a26b08d87d02a4095a65fcf55e8b1370232639b7e84c7969a67c6aca3a74e5dee48da4690417d30f1477a2752428f1cb1f7d3b0009dc4a5ed0166d5da162678d39ca8a2659ccb0a01e96759c5c8fbfdce77d4e32f19a150b8acd578fc45188c1678b891c99d075e58f0ea9c26aaf7a2424bfbb8fcba37e2a"
+  },
+  "rsaPkcs1_RSA-SHA256": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaPkcs1_SHA384": {
+    "value": "ac0d06faa280ae5c81465f5af5bd2104c56f05fc51449e7b605173ef89c9df04f3de2823d57b5389cc8230ab8ec5628b02f031e9acde70cc4704fe7cdcc2a0f1402fca930f57ad129aa008e1ff56e1fe1ff4b1a6622a25b8dd018648ecea3ba000f1b36843872b66fcebe7e7840b322cfe8eaabbc40ef065f6d784e9baed553a"
+  },
+  "rsaPkcs1_md5": {
+    "value": "0fb5dff6957d51dda5df27e2e4d4d910f90c2bd2b754a94acc31068da3a061444358767804e6fc28c1deb32aed0fb3c4a55fc9d74801390da184e955d42b7b06adc8cb98fd128ca6ab871f4d08c6cd866c05604c0b45b2e97053fcb99f4ffdc8a5417145fb257b1a2a1111a873ad9eb528e054b9e82985655728761ae8495fe9"
+  },
+  "rsaPkcs1_sha1": {
+    "value": "ab3362362f5943d8a26b08d87d02a4095a65fcf55e8b1370232639b7e84c7969a67c6aca3a74e5dee48da4690417d30f1477a2752428f1cb1f7d3b0009dc4a5ed0166d5da162678d39ca8a2659ccb0a01e96759c5c8fbfdce77d4e32f19a150b8acd578fc45188c1678b891c99d075e58f0ea9c26aaf7a2424bfbb8fcba37e2a"
+  },
+  "rsaPkcs1_sha256": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaPkcs1_sha256WithRSAEncryption": {
+    "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+  },
+  "rsaPkcs1_sha3-256": {
+    "value": "86fc552fedc30212cca6521262acebd93d22fe57f02e1783b1700fb0116bebcdd60fa2890a0c69d30bc8366b0702fcdd363f6189425156f063694536a2a5e4920bb42387f9344cd1f71add810d5d40392967df97661691a73384a5b1bf64eae98e7cdfe475eb84ae1cb1954ac2a783a4ac2ebdb63f9d96d35920d6d388102f5a"
+  },
+  "rsaPkcs1_sha512": {
+    "value": "6547a4105f95218bd6b98d2419edf690363a0cb90fad06ee0c63450a86b891019de9082b3179024bb905fc105f183bff2eee6c7f4366e1a4ba3ebc135ea91be2e531b4a5f75b5a42d6223d8001116c1bc2876633dee73f0f09a2b156471cddf2593a6fdb46504faa23f5501eae2c64f0a4ec2636d155a2988f474bd5d63b4328"
+  },
+  "shape": [
+    "function",
+    "function",
+    true,
+    true,
+    "_write,sign,update",
+    "1,6,-1,-2,-2,4"
+  ],
+  "states": [
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Not initialised",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Not initialised",
+      "name": "Error"
+    },
+    {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Not initialised",
+      "name": "Error"
+    }
+  ],
+  "stream": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b",
+  "verify": {
+    "ed25519": {
+      "value": true
+    },
+    "ed25519Wrong": {
+      "value": false
+    },
+    "good": {
+      "value": true
+    },
+    "hexSignature": {
+      "value": true
+    },
+    "pem": {
+      "value": true
+    },
+    "privateKey": {
+      "value": true
+    },
+    "short": {
+      "value": false
+    },
+    "stringData": {
+      "value": true
+    },
+    "wrongDigest": {
+      "value": false
+    },
+    "wrongMessage": {
+      "value": false
+    }
+  }
+}
