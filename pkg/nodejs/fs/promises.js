@@ -227,34 +227,14 @@
       });
     },
 
-    // Get file stats
+    // Get file stats. The sync calls throw Node's error, which rejects the promise.
     stat: function(path, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          const result = fs.statSync(path, options);
-          if (result === null || result === undefined) {
-            reject(new Error(`ENOENT: no such file or directory, stat '${path}'`));
-          } else {
-            // Add methods to stat object
-            result.isDirectory = function() { return this._isDirectory; };
-            result.isFile = function() { return this._isFile; };
-            result.isSymbolicLink = function() { return false; };
-            result.isBlockDevice = function() { return false; };
-            result.isCharacterDevice = function() { return false; };
-            result.isFIFO = function() { return false; };
-            result.isSocket = function() { return false; };
-            resolve(result);
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
+      return attempt(() => fs.statSync(path));
     },
 
     // Get file stats (don't follow symlinks)
     lstat: function(path, options) {
-      // For now, lstat behaves like stat
-      return fsPromises.stat(path, options);
+      return attempt(() => fs.lstatSync(path));
     },
 
     // Check access permissions

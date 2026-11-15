@@ -169,9 +169,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `ftruncate`, `fsync`, `fdatasync`, `chmod`, `fchmod`, `chown`, `fchown`, `utimes`, `futimes`,
   `mkdtemp`, `opendir`, `cp`, `statfs`, `readv`, `writev`, `watch`, `watchFile`, `openAsBlob`,
   and the `fs.Stats`, `fs.Dirent` and `fs.Dir` classes. (#132)
-- **[gap] `statSync` and `lstatSync` of a missing path return `undefined`.** Node throws
-  `ENOENT` unless `throwIfNoEntry: false` is passed. The other sync calls throw Node's errors.
-  (#133)
 - **[approx] A write stream destroyed before it opens emits `'close'` before `'open'`.** Node
   waits for the open, emits `'open'` with `ws.fd` set, then closes. In Orbital `ws.fd` is
   already `null` when `'open'` fires. (#134)

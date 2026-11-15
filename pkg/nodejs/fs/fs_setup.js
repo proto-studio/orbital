@@ -278,6 +278,21 @@
     }
   }
 
+  // statSync and lstatSync throw Node's error, except that { throwIfNoEntry: false } makes a
+  // missing path return undefined instead.
+  for (const name of ['statSync', 'lstatSync']) {
+    const native = fs[name];
+    if (typeof native !== 'function') continue;
+    fs[name] = function (path, options) {
+      const result = native.call(this, path);
+      if (result && result.__fsError && result.code === 'ENOENT' &&
+          options && typeof options === 'object' && options.throwIfNoEntry === false) {
+        return undefined;
+      }
+      return check(result);
+    };
+  }
+
   // mkdirSync(path[, mode]) or mkdirSync(path[, { recursive, mode }]). The mode is checked as
   // Node checks it, before the directory is made, and defaults to 0o777.
   function mkdirOptions(options) {
@@ -411,13 +426,6 @@
       }
       return result;
     };
-  }
-
-  // lstatSync: Orbital's Stat follows symlinks and does not track them
-  // separately, so lstat behaves like stat here (adequate for consumers that
-  // only need file/directory classification).
-  if (typeof fs.lstatSync !== 'function' && typeof fs.statSync === 'function') {
-    fs.lstatSync = fs.statSync;
   }
 
   // realpathSync: without a native symlink resolver, canonicalization is a

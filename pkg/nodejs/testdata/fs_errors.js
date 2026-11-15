@@ -221,6 +221,22 @@ async function testRmdirFile() {
   results.rmdir_file_kept = read('rmdir_file');
 }
 
+// A missing path throws from statSync and lstatSync unless throwIfNoEntry is false, which
+// covers only ENOENT.
+async function testStatMissing() {
+  fs.writeFileSync(file('stat_file'), 'x');
+  for (const name of ['statSync', 'lstatSync']) {
+    attempt(name + '_missing', () => fs[name](file('stat_missing')));
+    attempt(name + '_missing_nothrow', () => fs[name](file('stat_missing'), { throwIfNoEntry: false }));
+    attempt(name + '_notdir_nothrow', () => fs[name](file('stat_file/x'), { throwIfNoEntry: false }));
+    attempt(name + '_file', () => fs[name](file('stat_file'), { throwIfNoEntry: false }).isFile());
+  }
+  for (const name of ['stat', 'lstat']) {
+    await attemptAsync(name + '_missing', () => callback((cb) => fs[name](file('stat_missing'), cb)));
+    await attemptAsync('promises_' + name + '_missing', () => fsp[name](file('stat_missing')));
+  }
+}
+
 async function main() {
   testMissingDirectory();
   await testAsyncErrors();
@@ -232,6 +248,7 @@ async function main() {
   await testRm();
   await testMkdirModes();
   await testRmdirFile();
+  await testStatMissing();
   return results;
 }
 

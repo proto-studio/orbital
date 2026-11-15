@@ -112,6 +112,45 @@
       "syscall": "open"
     }
   },
+  "lstatSync_file": {
+    "value": true
+  },
+  "lstatSync_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "lstat"
+    }
+  },
+  "lstatSync_missing_nothrow": {
+    "value": null
+  },
+  "lstatSync_notdir_nothrow": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/stat_file/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_file/x",
+      "syscall": "lstat"
+    }
+  },
+  "lstat_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "lstat"
+    }
+  },
   "mkdirSync_mode": {
     "value": "701"
   },
@@ -427,6 +466,17 @@
     }
   },
   "promises_flag_a": "onetwothree",
+  "promises_lstat_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "lstat"
+    }
+  },
   "promises_mkdir_mode": {
     "value": "750"
   },
@@ -453,6 +503,17 @@
       "name": "Error",
       "path": "\u003cdir\u003e/rmdir_file",
       "syscall": "rmdir"
+    }
+  },
+  "promises_stat_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "stat"
     }
   },
   "promises_writeFile_flag_fraction": {
@@ -582,6 +643,45 @@
     }
   },
   "rmdir_file_kept": "x",
+  "statSync_file": {
+    "value": true
+  },
+  "statSync_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "stat"
+    }
+  },
+  "statSync_missing_nothrow": {
+    "value": null
+  },
+  "statSync_notdir_nothrow": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "isError": true,
+      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/stat_file/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_file/x",
+      "syscall": "stat"
+    }
+  },
+  "stat_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "isError": true,
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/stat_missing'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/stat_missing",
+      "syscall": "stat"
+    }
+  },
   "sync_flags": "onetwo",
   "writeFileSync_bad_flag": {
     "error": {
