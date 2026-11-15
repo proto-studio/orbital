@@ -3,14 +3,17 @@ package process
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"proto.zip/studio/orbital/internal/v8dist"
+	"proto.zip/studio/orbital/pkg/nodejs/internal/sysconst"
 	goruntime "proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -133,6 +136,30 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 	if err := processObj.Set("chdir", chdirVal); err != nil {
+		return err
+	}
+
+	// The native half of process.kill and the host's signal numbers. The setup script below
+	// takes both and removes them from process.
+	killFn, err := iso.NewFunctionTemplate(p.killFunc)
+	if err != nil {
+		return err
+	}
+	killVal, err := killFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := processObj.Set("__orbitalKill", killVal); err != nil {
+		return err
+	}
+	signals, err := ctx.NewObject()
+	if err != nil {
+		return err
+	}
+	for _, sig := range sysconst.Signals() {
+		signals.Set(sig.Name, ctx.NewInteger(int64(sig.Value)))
+	}
+	if err := processObj.Set("__orbitalSignals", signals); err != nil {
 		return err
 	}
 
@@ -275,6 +302,57 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 				// and returning from a native call is not one. A loop checks on every
 				// iteration, so nothing after process.exit runs, not even a finally block.
 				for (;;) {}
+			};
+		}
+
+		// process.kill as in Node: it validates its arguments, then signals through the
+		// runtime's ProcessSignaler and throws what that refuses as an errno error.
+		if (process && typeof process.__orbitalKill === 'function') {
+			var nativeKill = process.__orbitalKill;
+			var signalNumbers = process.__orbitalSignals;
+			delete process.__orbitalKill;
+			delete process.__orbitalSignals;
+			var describe = function (value) {
+				if (value === null || value === undefined) return 'Received ' + value;
+				if (typeof value === 'function') return 'Received function ' + value.name;
+				if (typeof value === 'object') {
+					return value.constructor && value.constructor.name
+						? 'Received an instance of ' + value.constructor.name
+						: 'Received ' + String(value);
+				}
+				var shown = typeof value === 'string' ? "'" + value + "'" : String(value);
+				return 'Received type ' + typeof value + ' (' + shown + ')';
+			};
+			var codedError = function (code, message) {
+				var err = new TypeError(message);
+				err.code = code;
+				return err;
+			};
+			process.kill = function kill(pid, sig) {
+				// eslint-disable-next-line eqeqeq
+				if (pid != (pid | 0)) {
+					throw codedError('ERR_INVALID_ARG_TYPE',
+						'The "pid" argument must be of type number. ' + describe(pid));
+				}
+				var number;
+				if (sig === (sig | 0)) {
+					number = sig;
+				} else {
+					sig = sig || 'SIGTERM';
+					if (!Object.prototype.hasOwnProperty.call(signalNumbers, sig)) {
+						throw codedError('ERR_UNKNOWN_SIGNAL', 'Unknown signal: ' + sig);
+					}
+					number = signalNumbers[sig];
+				}
+				var result = nativeKill(pid | 0, number);
+				if (result !== 0) {
+					var err = new Error('kill ' + result[1]);
+					err.errno = result[0];
+					err.code = result[1];
+					err.syscall = 'kill';
+					throw err;
+				}
+				return true;
 			};
 		}
 
@@ -573,6 +651,33 @@ func (p *Process) cwdFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	val, _ := info.Context().NewString(cwd)
 	return val
+}
+
+// killFunc(pid, signal) sends a signal through the runtime's ProcessSignaler. It returns 0,
+// or the negative errno and its code as [errno, code], as libuv reports them.
+func (p *Process) killFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 2 {
+		return ctx.NewInteger(0)
+	}
+	err := p.rt.ProcessSignaler().Kill(int(args[0].Integer()), syscall.Signal(args[1].Integer()))
+	if err == nil {
+		return ctx.NewInteger(0)
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		errno = syscall.EPERM
+	}
+	code, ok := sysconst.ErrnoName(errno)
+	if !ok {
+		code = "UNKNOWN"
+	}
+	result, _ := ctx.NewArray(2)
+	result.SetIndex(0, ctx.NewInteger(-int64(errno)))
+	codeVal, _ := ctx.NewString(code)
+	result.SetIndex(1, codeVal)
+	return result
 }
 
 func (p *Process) chdirFunc(info *v8.FunctionCallbackInfo) *v8.Value {

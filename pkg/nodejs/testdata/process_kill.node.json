@@ -1,0 +1,64 @@
+{
+  "exists": {
+    "returned": true
+  },
+  "existsByString": {
+    "returned": true
+  },
+  "fractionPid": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"pid\" argument must be of type number. Received type number (1.5)",
+    "name": "TypeError"
+  },
+  "fractionSignal": {
+    "code": "ERR_UNKNOWN_SIGNAL",
+    "message": "Unknown signal: 1.5",
+    "name": "TypeError"
+  },
+  "invalidSignalNumber": {
+    "code": "EINVAL",
+    "errno": -22,
+    "message": "kill EINVAL",
+    "name": "Error",
+    "syscall": "kill"
+  },
+  "lowercaseName": {
+    "code": "ERR_UNKNOWN_SIGNAL",
+    "message": "Unknown signal: sigterm",
+    "name": "TypeError"
+  },
+  "noPid": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"pid\" argument must be of type number. Received undefined",
+    "name": "TypeError"
+  },
+  "noSuchProcess": {
+    "code": "ESRCH",
+    "errno": -3,
+    "message": "kill ESRCH",
+    "name": "Error",
+    "syscall": "kill"
+  },
+  "noSuchProcessTerm": {
+    "code": "ESRCH",
+    "errno": -3,
+    "message": "kill ESRCH",
+    "name": "Error",
+    "syscall": "kill"
+  },
+  "objectPid": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"pid\" argument must be of type number. Received an instance of Object",
+    "name": "TypeError"
+  },
+  "stringPid": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"pid\" argument must be of type number. Received type string ('abc')",
+    "name": "TypeError"
+  },
+  "unknownName": {
+    "code": "ERR_UNKNOWN_SIGNAL",
+    "message": "Unknown signal: SIGFOO",
+    "name": "TypeError"
+  }
+}
