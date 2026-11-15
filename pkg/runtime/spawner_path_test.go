@@ -70,3 +70,23 @@ func TestSpawnArgv0(t *testing.T) {
 		t.Fatalf("argv[0] = %q, want custom0", s)
 	}
 }
+
+// As in Node, a PATH entry this process may not execute is skipped, and an empty PATH
+// searches the working directory.
+func TestRealSpawnerPathSearch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute any file with an execute bit")
+	}
+	first, second := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(first, "orbital-path-tool"), []byte("#!/bin/sh\necho first\n"), 0o010); err != nil {
+		t.Fatal(err)
+	}
+	writeTool(t, second, "orbital-path-tool", "second")
+	env := []string{"PATH=" + first + string(os.PathListSeparator) + second}
+	if got := spawnOutput(t, NewRealProcessSpawner(), "orbital-path-tool", &SpawnOptions{Env: env}); got != "second" {
+		t.Fatalf("got %q, want second", got)
+	}
+	if got := spawnOutput(t, NewRealProcessSpawner(), "orbital-path-tool", &SpawnOptions{Cwd: second, Env: []string{"PATH="}}); got != "second" {
+		t.Fatalf("empty PATH: got %q, want second", got)
+	}
+}

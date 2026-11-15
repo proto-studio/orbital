@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -207,7 +209,12 @@ func lookPathIn(file, pathList, cwd string) (string, error) {
 		}
 		cwd = filepath.Join(wd, cwd)
 	}
-	for _, dir := range filepath.SplitList(pathList) {
+	dirs := filepath.SplitList(pathList)
+	if len(dirs) == 0 {
+		// An empty PATH is one empty entry, the current directory, as the shell reads it.
+		dirs = []string{""}
+	}
+	for _, dir := range dirs {
 		if dir == "" {
 			dir = "."
 		}
@@ -215,7 +222,12 @@ func lookPathIn(file, pathList, cwd string) (string, error) {
 			dir = filepath.Join(cwd, dir)
 		}
 		candidate := filepath.Join(dir, file)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+		// As exec.LookPath does, skip what this process may not execute.
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if unix.Faccessat(unix.AT_FDCWD, candidate, unix.X_OK, unix.AT_EACCESS) == nil {
 			return candidate, nil
 		}
 	}
