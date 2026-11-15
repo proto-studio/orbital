@@ -17,6 +17,8 @@
 		'fs': () => __fs_module,
 		'fs/promises': () => __fs_promises_module,
 		'path': () => __path_module,
+		'path/posix': () => __path_module.posix,
+		'path/win32': () => __path_module.win32,
 		'buffer': () => __buffer_module,
 		'stream': () => __stream_module,
 		'stream/promises': () => __stream_promises_module,
