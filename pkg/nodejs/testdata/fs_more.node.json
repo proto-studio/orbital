@@ -620,6 +620,13 @@
       "name": "Error"
     }
   },
+  "opendir_encoding": {
+    "value": [
+      "61",
+      "62",
+      "636166c3a9"
+    ]
+  },
   "opendir_file": {
     "error": {
       "code": "ENOTDIR",

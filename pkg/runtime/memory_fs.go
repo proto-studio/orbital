@@ -152,6 +152,16 @@ func (m *MemoryFilesystem) WriteFile(path string, data []byte, perm fs.FileMode)
 	defer m.mu.Unlock()
 
 	path = m.normalizePath(path)
+	// An existing file keeps its identity and mode, as a real one does, so handles open on it
+	// see the new contents.
+	if mf, ok := m.files[path]; ok {
+		if mf.isDir {
+			return &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
+		}
+		mf.data = append([]byte(nil), data...)
+		mf.modTime = time.Now()
+		return nil
+	}
 	m.files[path] = &memFile{
 		data:    append([]byte(nil), data...),
 		mode:    perm,
