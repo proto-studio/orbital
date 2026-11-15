@@ -86,6 +86,10 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 				rest = rest[len("localhost"):]
 			}
 		}
+		// A file: URL is absolute: file:a/b names /a/b.
+		if !strings.HasPrefix(rest, "/") {
+			rest = "/" + rest
+		}
 	}
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest, suffix = rest[:i], normalizeSuffix(rest[i:])
@@ -131,6 +135,13 @@ func percentEncode(s, set string) string {
 		b.WriteByte(c)
 	}
 	return b.String()
+}
+
+// isURLSpecifier reports a specifier Node reads as a URL: relative, absolute or
+// file:.
+func isURLSpecifier(spec string) bool {
+	return strings.HasPrefix(spec, "file:") || strings.HasPrefix(spec, "./") ||
+		strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/")
 }
 
 // hasEncodedSeparator reports an escaped "/" or "\" in a URL path, which Node
@@ -274,9 +285,12 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 
 	dir := e.referrerDir(referrer)
 	var attempted, encoded, suffix string
+	if isURLSpecifier(spec) {
+		// The URL parser drops tabs and newlines wherever they appear.
+		spec = strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(spec)
+	}
 	switch {
-	case strings.HasPrefix(spec, "file:") || strings.HasPrefix(spec, "./") ||
-		strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/"):
+	case isURLSpecifier(spec):
 		var encodedSep bool
 		attempted, encoded, suffix, encodedSep = urlPath(spec, dir)
 		if encodedSep {
@@ -290,11 +304,15 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	case winAbs(spec):
 		attempted = spec
 	default:
+		// A query or fragment stays on the package file's url, as in Node.
+		if i := strings.IndexAny(spec, "?#"); i >= 0 {
+			spec, suffix = spec[:i], normalizeSuffix(spec[i:])
+		}
 		abs, err := e.resolveBare(spec, dir, referrer)
 		if err != nil {
 			return "", err
 		}
-		return e.moduleKey(abs, ""), nil
+		return e.moduleKey(abs, suffix), nil
 	}
 	abs := e.resolveFile(attempted)
 	if abs == "" && e.fsIsDir(attempted) {

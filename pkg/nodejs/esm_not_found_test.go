@@ -296,3 +296,43 @@ func TestDynamicImport_EquivalentQueriesShareAModule(t *testing.T) {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// More URL forms read as Node reads them: a file: URL without a slash is still
+// rooted, tabs and newlines are dropped, and a bare package import keeps its query.
+// Expected from Node 20.18.1.
+func TestDynamicImport_MoreURLForms(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"relative/x.mjs":                "export default 'local';",
+		"dep.mjs":                       `export const n = Math.random();`,
+		"node_modules/pkg/package.json": `{"type":"module"}`,
+		"node_modules/pkg/sub.js":       `export const u = import.meta.url;`,
+		"entry.mjs": `try { log.push((await import('file:relative/x.mjs')).default); } catch (e) { log.push(e.code, e.message.split(' imported')[0]); }
+const a = (await import('./dep.mjs?q=ab')).n, b = (await import('./dep.mjs?q=a\tb')).n, c = (await import('./de\np.mjs')).n, d = (await import('./dep.mjs')).n;
+log.push(a === b, c === d, (await import('pkg/sub.js?worker')).u.split('/').slice(-2).join('/'));`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["ERR_MODULE_NOT_FOUND","Cannot find module '/relative/x.mjs'",true,true,"pkg/sub.js?worker"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// Replacing the loader's global helper doesn't change how a link error is reported.
+func TestStaticImport_NotFoundIgnoresReplacedHelper(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript(`globalThis.__esmRejected = () => Promise.resolve();`, "init.js"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = inst.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) || !strings.Contains(uncaught.Message, "ERR_MODULE_NOT_FOUND") {
+		t.Fatalf("RunModuleFile: %v, want the uncaught ERR_MODULE_NOT_FOUND", err)
+	}
+}
