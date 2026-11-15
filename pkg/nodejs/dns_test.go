@@ -262,12 +262,15 @@ out.filtered = await new Promise(async (resolve) => {
   const got = [];
   const finish = () => { clearTimeout(deadline); stranger.close(); b.close(); resolve(got); };
   // Loopback keeps the order datagrams were sent in, so once the peer's
-  // datagram arrives the stranger's would already have been delivered.
+  // datagram arrives the stranger's would already have been delivered. The
+  // peer's send must also have finished, since a's send queue is checked below.
   const deadline = setTimeout(finish, 5000);
-  b.on('message', (m) => { got.push(String(m)); if (String(m) === 'peer') finish(); });
+  let waiting = 2;
+  const step = () => { if (--waiting === 0) finish(); };
+  b.on('message', (m) => { got.push(String(m)); if (String(m) === 'peer') step(); });
   b.connect(port, '127.0.0.1', () => {
     const p = b.address().port;
-    stranger.send('stranger', p, '127.0.0.1', () => a.send('peer', p, '127.0.0.1'));
+    stranger.send('stranger', p, '127.0.0.1', () => a.send('peer', p, '127.0.0.1', step));
   });
 });
 out.options = [a.setTTL(5), a.setMulticastTTL(6), a.setMulticastLoopback(true), a.getRecvBufferSize() > 0, a.getSendBufferSize() > 0, a.getSendQueueCount()];
