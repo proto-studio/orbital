@@ -280,3 +280,19 @@ for (const s of ['./a%2Fb.mjs', './nope.mjs']) {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Equivalent spellings of a query or fragment are one module, as the URL parser
+// serializes them; different ones are not. Expected from Node 20.18.1.
+func TestDynamicImport_EquivalentQueriesShareAModule(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"dep.mjs": `export const n = Math.random();`,
+		"entry.mjs": "const r = async (s) => (await import(s)).n;\n" +
+			"const a = await r('./dep.mjs?q=hello world'), b = await r('./dep.mjs?q=hello%20world'), c = await r(\"./dep.mjs?q='x'\"), d = await r('./dep.mjs?q=%27x%27');\n" +
+			"const f1 = await r('./dep.mjs#a b'), f2 = await r('./dep.mjs#a%20b'), f3 = await r('./dep.mjs#`'), f4 = await r('./dep.mjs#%60'), u1 = await r('./dep.mjs?é'), u2 = await r('./dep.mjs?%C3%A9');\n" +
+			"const g1 = await r('./dep.mjs?a<b>\"c\"'), g2 = await r('./dep.mjs?a%3Cb%3E%22c%22'), h1 = await r('./dep.mjs?x{y}|'), h2 = await r('./dep.mjs?x%7By%7D%7C');\n" +
+			"log.push(a === b, c === d, f1 === f2, f3 === f4, u1 === u2, g1 === g2, h1 === h2);",
+	})
+	if want := `[true,true,true,true,true,true,false]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
