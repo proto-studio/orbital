@@ -310,7 +310,12 @@
 
     cp: function(src, dest, options) {
       return new Promise((resolve, reject) => {
-        fs.cp(src, dest, options || {}, (err) => (err ? reject(err) : resolve()));
+        // A filter's promise rejected with a falsy reason rejects this with that reason, as
+        // Node's does; the callback form gets an error instead.
+        fs.cp(src, dest, options || {}, (err) => {
+          if (!err) resolve();
+          else reject(err.code === 'ERR_FALSY_VALUE_REJECTION' && 'reason' in err ? err.reason : err);
+        });
       });
     },
 
