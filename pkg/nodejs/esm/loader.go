@@ -21,6 +21,7 @@ import (
 	"regexp"
 	goruntime "runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -76,7 +77,10 @@ func stripFileURL(u string) string {
 // encoded separator names it), whether the specifier encodes a separator, and
 // the query and fragment, which make a distinct module but aren't part of the
 // file's path.
-func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
+//
+// malformed reports an escape that decodes to invalid UTF-8, which Node's
+// decodeURIComponent refuses ("URI malformed").
+func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malformed bool) {
 	rest := spec
 	if strings.HasPrefix(rest, "file:") {
 		// file:///p, file://localhost/p and file:/p all name /p. (A host other
@@ -104,11 +108,12 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep bool) {
 	decoded := rest
 	if d, err := url.PathUnescape(rest); err == nil {
 		decoded = d
+		malformed = !utf8.ValidString(d) && utf8.ValidString(rest)
 	}
 	if strings.HasPrefix(rest, "/") {
-		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep
+		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep, malformed
 	}
-	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep
+	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep, malformed
 }
 
 // nodePlatform is process.platform for this OS.
@@ -133,8 +138,21 @@ func fileURLHost(spec string) string {
 }
 
 // escapePath is a file path as it appears in a file: URL.
+// Like Node's pathToFileURL: "%", "\\" and control characters, spaces,
+// non-ASCII bytes and the URL path's own reserved characters (" # < > ? ` { })
+// are percent-encoded; everything else, "!" and "(" included, is kept.
 func escapePath(p string) string {
-	return (&url.URL{Path: filepath.ToSlash(p)}).EscapedPath()
+	p = filepath.ToSlash(p)
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		if c <= ' ' || c >= 0x7f || strings.IndexByte("%\\\"#<>?`{}", c) >= 0 {
+			fmt.Fprintf(&b, "%%%02X", c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // normalizeSuffix serializes a URL's query and fragment the way the URL parser
@@ -223,7 +241,10 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 	if err := checkFileURLHost(u); err != nil {
 		return "", err
 	}
-	path, encoded, suffix, _ := urlPath(u, "/")
+	path, encoded, suffix, _, malformed := urlPath(u, "/")
+	if malformed {
+		return "", uriMalformed()
+	}
 	// Node turns a hook's url into a path with fileURLToPath, which refuses an
 	// encoded "/".
 	if strings.Contains(strings.ToLower(encoded), "%2f") {
@@ -357,15 +378,13 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 		if err := checkFileURLHost(spec); err != nil {
 			return "", err
 		}
-		var encodedSep bool
-		attempted, encoded, suffix, encodedSep = urlPath(spec, dir)
+		var encodedSep, malformed bool
+		attempted, encoded, suffix, encodedSep, malformed = urlPath(spec, dir)
 		if encodedSep {
-			return "", &moduleError{
-				msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
-					e.importerPath(referrer),
-				code:      "ERR_INVALID_MODULE_SPECIFIER",
-				typeError: true,
-			}
+			return "", e.encodedSeparator(encoded, referrer)
+		}
+		if malformed {
+			return "", uriMalformed()
 		}
 	case winAbs(spec):
 		attempted = spec
@@ -396,12 +415,72 @@ type moduleError struct {
 	code string
 	// typeError makes it a TypeError, as some of Node's are.
 	typeError bool
+	// uriError makes it a URIError, Node's error for a malformed escape.
+	uriError bool
 	// url is the file: URL of the missing module, empty when Node reports none
 	// (a missing package).
 	url string
 }
 
 func (m *moduleError) Error() string { return m.msg }
+
+// kind is the error's class name.
+func (m *moduleError) kind() string {
+	switch {
+	case m.uriError:
+		return "URIError"
+	case m.typeError:
+		return "TypeError"
+	}
+	return "Error"
+}
+
+// encodedSeparator is Node's error for a module URL path that encodes "/" or
+// "\"; encoded is that path.
+func (e *ESM) encodedSeparator(encoded, referrer string) *moduleError {
+	return &moduleError{
+		msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
+			e.importerPath(referrer),
+		code:      "ERR_INVALID_MODULE_SPECIFIER",
+		typeError: true,
+	}
+}
+
+// validPackageTarget reports whether an "exports" target is one Node accepts:
+// "./" followed by segments none of which is empty, ".", "..", or
+// node_modules (in any case, percent-encoded or not).
+func validPackageTarget(target string) bool {
+	if !strings.HasPrefix(target, "./") {
+		return false
+	}
+	for _, seg := range strings.Split(strings.ReplaceAll(target[2:], "\\", "/"), "/") {
+		if d, err := url.PathUnescape(seg); err == nil {
+			seg = d
+		}
+		switch strings.ToLower(seg) {
+		case "", ".", "..", "node_modules":
+			return false
+		}
+	}
+	return true
+}
+
+// invalidPackageTarget is Node's ERR_INVALID_PACKAGE_TARGET.
+func (e *ESM) invalidPackageTarget(target, sub, pkgJSON, referrer string) *moduleError {
+	where := `main target "` + target + `" defined`
+	if sub != "." {
+		where = `target "` + target + `" defined for '` + sub + `'`
+	}
+	return &moduleError{
+		msg:  `Invalid "exports" ` + where + ` in the package config ` + pkgJSON + ` imported from ` + e.importerPath(referrer),
+		code: "ERR_INVALID_PACKAGE_TARGET",
+	}
+}
+
+// uriMalformed is decodeURIComponent's error for an escape that isn't UTF-8.
+func uriMalformed() *moduleError {
+	return &moduleError{msg: "URI malformed", uriError: true}
+}
 
 // moduleNotFound is Node's error for a module file that does not exist.
 func (e *ESM) moduleNotFound(path, referrer string) *moduleError {
@@ -437,7 +516,7 @@ func fileURL(p string) string {
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	return (&url.URL{Scheme: "file", Path: p}).String()
+	return "file://" + escapePath(p)
 }
 
 // ---- bare / package.json "exports" resolution -----------------------------
@@ -498,9 +577,18 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 					var exp interface{}
 					if json.Unmarshal(raw, &exp) == nil {
 						if target := resolveExports(exp, sub); target != "" {
+							if !validPackageTarget(target) {
+								return "", "", e.invalidPackageTarget(target, sub, pkgJSON, referrer)
+							}
 							// The target is a URL relative to the package: its
 							// path is decoded and a query or fragment kept.
-							abs, _, suffix, _ := urlPath(target, pkgDir)
+							abs, encoded, suffix, encodedSep, malformed := urlPath(target, pkgDir)
+							if encodedSep {
+								return "", "", e.encodedSeparator(encoded, referrer)
+							}
+							if malformed {
+								return "", "", uriMalformed()
+							}
 							if r := e.resolveFile(abs); r != "" {
 								return r, suffix, nil
 							}
@@ -539,14 +627,12 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 	if sub != "." {
 		// As a URL path relative to the package: decoded, with the suffix kept
 		// apart, and refused if it encodes a separator.
-		path, encoded, sfx, encodedSep := urlPath(sub, pkgDir)
+		path, encoded, sfx, encodedSep, malformed := urlPath(sub, pkgDir)
 		if encodedSep {
-			return "", "", &moduleError{
-				msg: `Invalid module "` + filepath.ToSlash(encoded) + `" must not include encoded "/" or "\" characters imported from ` +
-					e.importerPath(referrer),
-				code:      "ERR_INVALID_MODULE_SPECIFIER",
-				typeError: true,
-			}
+			return "", "", e.encodedSeparator(encoded, referrer)
+		}
+		if malformed {
+			return "", "", uriMalformed()
 		}
 		target, suffix = path, sfx
 	}

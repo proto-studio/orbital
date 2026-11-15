@@ -26,6 +26,7 @@
   // Captured now so code replacing the globals cannot change these errors.
   var NativeError = Error;
   var NativeTypeError = TypeError;
+  var NativeURIError = URIError;
   var reject = Promise.reject.bind(Promise);
   var defineProperty = Object.defineProperty;
 
@@ -46,8 +47,11 @@
   own(CodedTypeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
 
-  globalThis.__esmModuleError = function (message, code, url, isTypeError) {
-    var err = isTypeError ? new NativeTypeError(message) : new NativeError(message);
+  // kind is the error's class: "Error", "TypeError" or "URIError".
+  globalThis.__esmModuleError = function (message, code, url, kind) {
+    var isTypeError = kind === 'TypeError';
+    var err = isTypeError ? new NativeTypeError(message)
+      : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
     if (code) {
       var name = isTypeError ? 'TypeError' : 'Error';
       var stack;

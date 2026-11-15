@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -481,6 +482,38 @@ try { await import('./nope.mjs'); } catch (e) { log.push(e.code); }`,
 	got := runLogModuleIn(t, dir)
 	want := `["sub:sub.js","x","ab:a%20b.js",["ERR_INVALID_MODULE_SPECIFIER","Invalid module \"<d>/node_modules/pkg/a%2Fb.js\" must not include encoded \"/\" or \"\\\" characters"],` +
 		`"raw:raw.mjs?x","exab:a%20b.mjs","Error [ERR_MODULE_NOT_FOUND]: Cannot find module '<d>/nope.mjs'",true,true,"ERR_MODULE_NOT_FOUND"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// "exports" targets are checked as Node checks them, an escape that isn't UTF-8 is a
+// URIError, and import.meta.url encodes a file name the way Node's pathToFileURL
+// does. Expected from Node 20.18.1.
+func TestDynamicImport_PackageTargetsAndURLEscaping(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{"a!b", "a'b", "a(b)", "a*b", "a{b}", "a`b", "a~b", "a;b", "a=b", "a@b", "a&b", "a+b", "a,b", "a$b", "a[b]", "a|b", "a^b", "aéb"}
+	files := map[string]string{
+		"node_modules/e1/package.json": `{"type":"module","exports":{".":"./a%2Fb.mjs"}}`,
+		"node_modules/e1/a/b.mjs":      `export default 'nested';`,
+		"node_modules/e2/package.json": `{"type":"module","exports":{".":"./%2e%2e/out.mjs"}}`,
+		"node_modules/out.mjs":         `export default 'out';`,
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		files[n+".mjs"] = `export default import.meta.url.split('/').pop();`
+		quoted[i] = strconv.Quote(n)
+	}
+	files["entry.mjs"] = `const d = decodeURIComponent(import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, ''));
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.name, e.code, e.message.split(' imported')[0].replace(d, '<d>')]; } };
+log.push(await r('e1'), await r('e2'), await r('./x%FF.mjs'));
+for (const n of [` + strings.Join(quoted, ",") + `]) log.push(await r('./' + encodeURIComponent(n) + '.mjs'));`
+	writeFiles(t, dir, files)
+	got := runLogModuleIn(t, dir)
+	want := `[["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"<d>/node_modules/e1/a%2Fb.mjs\" must not include encoded \"/\" or \"\\\" characters"],` +
+		`["Error","ERR_INVALID_PACKAGE_TARGET","Invalid \"exports\" main target \"./%2e%2e/out.mjs\" defined in the package config <d>/node_modules/e2/package.json"],` +
+		`["URIError",null,"URI malformed"],` +
+		`"a!b.mjs","a'b.mjs","a(b).mjs","a*b.mjs","a%7Bb%7D.mjs","a%60b.mjs","a~b.mjs","a;b.mjs","a=b.mjs","a@b.mjs","a&b.mjs","a+b.mjs","a,b.mjs","a$b.mjs","a[b].mjs","a|b.mjs","a^b.mjs","a%C3%A9b.mjs"]`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
