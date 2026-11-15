@@ -53,6 +53,21 @@ type MetadataFilesystem interface {
 	Access(path string, mode uint32) error
 }
 
+// LinkFilesystem is implemented by a Filesystem with symbolic and hard links. It is optional:
+// without it symlink, readlink and link fail with ENOSYS, and realpath only checks that the
+// path exists.
+type LinkFilesystem interface {
+	// Symlink makes path a symbolic link to target, which is stored as given.
+	Symlink(target, path string) error
+	// Readlink gives the target of the symbolic link at path.
+	Readlink(path string) (string, error)
+	// Link makes path another name for the file existing names.
+	Link(existing, path string) error
+	// Realpath gives the absolute path p names with every symbolic link resolved. The path
+	// must exist.
+	Realpath(p string) (string, error)
+}
+
 // StatfsFilesystem is implemented by a Filesystem that can describe the filesystem a path
 // is on. It is optional: without it statfs fails with ENOSYS.
 type StatfsFilesystem interface {
@@ -73,6 +88,8 @@ type MetadataFile interface {
 type DirEntry struct {
 	Name  string
 	IsDir bool
+	// Type is the entry's type bits, such as fs.ModeSymlink, if the Filesystem reports them.
+	Type fs.FileMode
 }
 
 // File represents an open file handle.

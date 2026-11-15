@@ -187,27 +187,10 @@
       return viaCallback('truncate', path, len);
     },
 
-    // Create symbolic link (stub - may not work in sandbox)
-    symlink: function(target, path, type) {
-      return Promise.reject(new Error('symlink not supported'));
-    },
-
-    // Read symbolic link (stub)
-    readlink: function(path, options) {
-      return Promise.reject(new Error('readlink not supported'));
-    },
-
-    // Get real path
-    realpath: function(path, options) {
-      return new Promise((resolve, reject) => {
-        // For now, just return the path if it exists
-        if (fs.existsSync(path)) {
-          resolve(path);
-        } else {
-          reject(new Error(`ENOENT: no such file or directory, realpath '${path}'`));
-        }
-      });
-    },
+    symlink: (target, path, type) => viaCallback('symlink', target, path, type),
+    readlink: (path, options) => viaCallback('readlink', path, options),
+    link: (existingPath, newPath) => viaCallback('link', existingPath, newPath),
+    realpath: (path, options) => viaCallback('realpath', path, options),
 
     chmod: function(path, mode) {
       return viaCallback('chmod', path, mode);
@@ -261,19 +244,7 @@
       });
     },
 
-    // Make temporary directory
-    mkdtemp: function(prefix, options) {
-      return new Promise((resolve, reject) => {
-        try {
-          const suffix = Math.random().toString(36).substring(2, 8);
-          const dir = prefix + suffix;
-          fs.mkdirSync(dir, { recursive: true });
-          resolve(dir);
-        } catch (e) {
-          reject(e);
-        }
-      });
-    },
+    mkdtemp: (prefix, options) => viaCallback('mkdtemp', prefix, options),
 
     // The same object as fs.constants, as in Node.
     constants: fs.constants

@@ -166,6 +166,7 @@ func (l *LocalFilesystem) ReadDir(path string) ([]DirEntry, error) {
 		result[i] = DirEntry{
 			Name:  e.Name(),
 			IsDir: e.IsDir(),
+			Type:  e.Type(),
 		}
 	}
 	return result, nil
@@ -480,5 +481,101 @@ var (
 	_ MetadataFilesystem = (*LocalFilesystem)(nil)
 	_ StatfsFilesystem   = (*LocalFilesystem)(nil)
 	_ LstatFilesystem    = (*LocalFilesystem)(nil)
+	_ LinkFilesystem     = (*LocalFilesystem)(nil)
 	_ MetadataFile       = (*localFile)(nil)
 )
+
+// hostTarget gives the target to store for a symbolic link the script makes: with a root,
+// an absolute target names a path under the root, as every other absolute path does.
+func (l *LocalFilesystem) hostTarget(target string) (string, error) {
+	if l.Root == "" || !filepath.IsAbs(target) {
+		return target, nil
+	}
+	absRoot, err := filepath.Abs(l.Root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(absRoot, target), nil
+}
+
+// scriptPath gives a host path as the script names it: with a root, a path under the root
+// is given from the root, as "/" followed by the rest. Any other path is given as it is.
+func (l *LocalFilesystem) scriptPath(p string) string {
+	if l.Root == "" || !filepath.IsAbs(p) {
+		return p
+	}
+	absRoot, err := filepath.Abs(l.Root)
+	if err != nil {
+		return p
+	}
+	if rel, ok := l.underRoot(p, absRoot); ok {
+		return filepath.Clean(string(filepath.Separator) + rel)
+	}
+	return p
+}
+
+// Symlink makes path a symbolic link to target. The link is checked like any other path
+// when it is used.
+func (l *LocalFilesystem) Symlink(target, path string) error {
+	stored, err := l.hostTarget(target)
+	if err != nil {
+		return err
+	}
+	if l.Root != "" {
+		return l.rootedSymlink(stored, path)
+	}
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Symlink(stored, resolved)
+}
+
+// Readlink gives the target of the symbolic link at path.
+func (l *LocalFilesystem) Readlink(path string) (string, error) {
+	if l.Root != "" {
+		target, err := l.rootedReadlink(path)
+		if err != nil {
+			return "", err
+		}
+		return l.scriptPath(target), nil
+	}
+	resolved, err := l.resolvePath(path)
+	if err != nil {
+		return "", err
+	}
+	return os.Readlink(resolved)
+}
+
+// Link makes path another name for the file existing names. A symbolic link at existing is
+// followed, so the new name always names the file the walk reached.
+func (l *LocalFilesystem) Link(existing, path string) error {
+	if l.Root != "" {
+		return l.rootedLink(existing, path)
+	}
+	from, err := l.resolvePath(existing)
+	if err != nil {
+		return err
+	}
+	if real, err := filepath.EvalSymlinks(from); err == nil {
+		from = real
+	}
+	to, err := l.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Link(from, to)
+}
+
+// Realpath gives the path p names with every symbolic link resolved, from the root if there
+// is one.
+func (l *LocalFilesystem) Realpath(p string) (string, error) {
+	if l.Root != "" {
+		return l.rootedRealpath(p)
+	}
+	resolved, err := l.resolvePath(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(resolved)
+}

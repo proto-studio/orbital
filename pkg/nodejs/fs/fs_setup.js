@@ -558,23 +558,6 @@
     };
   }
 
-  // realpathSync: without a native symlink resolver, canonicalization is a
-  // no-op beyond existence checking. Node's realpath on a non-symlink path
-  // returns that same path, so returning the (already absolute) input matches
-  // for the common case while still throwing ENOENT for missing paths.
-  if (typeof fs.realpathSync !== 'function' && typeof fs.existsSync === 'function') {
-    fs.realpathSync = function (p) {
-      if (!fs.existsSync(p)) {
-        const e = new Error("ENOENT: no such file or directory, realpath '" + p + "'");
-        e.code = 'ENOENT';
-        e.errno = -2;
-        e.syscall = 'realpath';
-        e.path = p;
-        throw e;
-      }
-      return p;
-    };
-  }
 
   // Node errno values for the codes the native async layer produces. Real
   // packages (send, http-errors) branch on err.code, and occasionally err.errno.
@@ -969,20 +952,6 @@
     const [args, cb] = withCallback(arguments);
     runAsync('readdir', args.slice(0, 2), cb, (entries) => fs.__direntsOf(entries, args[0]));
   };
-  // realpath only checks that the path exists, as realpathSync does, and reports a missing
-  // one with realpathSync's error.
-  fs.realpath = function (path, options, callback) {
-    const [args, cb] = withCallback(arguments);
-    runAsync('access', [args[0], 0], (err) => {
-      if (!err) return cb(null, args[0]);
-      try {
-        fs.realpathSync(args[0]);
-      } catch (e) {
-        err = e;
-      }
-      cb(err);
-    });
-  };
   // appendFile(path, data[, options], callback); given a descriptor it writes there.
   fs.appendFile = function (path, data, options, callback) {
     if (typeof options === 'function') {
@@ -1104,7 +1073,7 @@
     };
   }
   for (const name of ['truncate', 'ftruncate', 'fsync', 'fdatasync', 'chmod', 'fchmod', 'chown', 'fchown',
-    'utimes', 'futimes', 'access', 'statfs']) {
+    'utimes', 'futimes', 'access', 'statfs', 'symlink', 'readlink', 'link', 'realpath', 'mkdtemp']) {
     nativeSync[name] = fs[name + 'Sync'];
     delete fs[name + 'Sync'];
   }
@@ -1122,6 +1091,76 @@
   defineCall('futimes', (fd, atime, mtime) => [fdArg(fd), timeArg(atime), timeArg(mtime)], 'futimes');
   // access(path[, mode], callback).
   defineCall('access', (path, mode) => [path, accessMode(mode)], 'access', () => undefined);
+  // symlink(target, path[, type]): type matters only on Windows, but is checked as in Node.
+  function symlinkArgs(target, path, type) {
+    if (type !== undefined && type !== null && !['dir', 'file', 'junction'].includes(type)) {
+      throw codedError(Error, 'ERR_FS_INVALID_SYMLINK_TYPE',
+        'Symlink type must be one of "dir", "file", or "junction". Received ' + JSON.stringify(type));
+    }
+    return [pathString(target), path];
+  }
+  function pathString(p) {
+    if (typeof p === 'string') return p;
+    if (ArrayBuffer.isView(p)) return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
+    if (p && typeof p === 'object' && typeof p.href === 'string' && p.protocol === 'file:') {
+      return decodeURIComponent(p.pathname);
+    }
+    return p;
+  }
+  // A path the native layer gives, in the encoding options ask for: a string, or a Buffer for
+  // 'buffer'.
+  function namedIn(name, options) {
+    const encoding = encodingOf(options);
+    if (encoding === 'buffer') return Buffer.from(name);
+    if (encoding && !isUtf8(encoding)) return Buffer.from(name).toString(encoding);
+    return name;
+  }
+  defineCall('symlink', symlinkArgs, 'symlink');
+  defineCall('readlink', (path, options) => [path, options], 'readlink', (target, [, options]) => namedIn(target, options));
+  defineCall('link', (existingPath, newPath) => [existingPath, newPath], 'link');
+  // mkdtemp(prefix[, options]) makes prefix followed by six random characters, mode 0o700.
+  function prefixArg(prefix) {
+    if (typeof prefix !== 'string' && !ArrayBuffer.isView(prefix) && !(prefix && typeof prefix.href === 'string')) {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+        'The "prefix" argument must be of type string or an instance of Buffer or URL. Received ' + receivedType(prefix));
+    }
+    return pathString(prefix);
+  }
+  defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), options], 'mkdtemp', (path, [, options]) => namedIn(path, options));
+
+  // realpath.native names realpath in its errors, as the C call does. Plain realpath, like
+  // Node's JavaScript one, reports a missing path from lstat, or a link to one from stat, by
+  // its absolute path.
+  defineCall('realpath', (path, options) => [path, options], 'realpath', (real, [, options]) => namedIn(real, options));
+  const realpathNativeSync = fs.realpathSync;
+  const realpathNative = fs.realpath;
+  function asJsRealpathError(e, path) {
+    if (!e || e.code !== 'ENOENT' || e.syscall !== 'realpath') return e;
+    let syscall = 'lstat';
+    try {
+      fs.lstatSync(path);
+      syscall = 'stat';
+    } catch (ignored) {}
+    const p = pathModule() ? pathModule().resolve(String(pathString(path))) : String(path);
+    e.syscall = syscall;
+    e.path = p;
+    e.message = "ENOENT: no such file or directory, " + syscall + " '" + p + "'";
+    return e;
+  }
+  fs.realpathSync = function (path, options) {
+    try {
+      return realpathNativeSync(path, options);
+    } catch (e) {
+      throw asJsRealpathError(e, path);
+    }
+  };
+  fs.realpathSync.native = realpathNativeSync;
+  fs.realpath = function (path, options, callback) {
+    const [args, cb] = withCallback(arguments);
+    realpathNative(...args, (err, real) => (err ? cb(asJsRealpathError(err, args[0])) : cb(null, real)));
+  };
+  fs.realpath.native = realpathNative;
+
   // exists(path, callback) calls back with only true or false.
   fs.exists = function (path, callback) {
     checkCallback(callback);
@@ -1404,6 +1443,16 @@
   }
   function* copyEntry(srcStat, destStat, src, dest, opts) {
     const stat = opts.dereference ? 'stat' : 'lstat';
+    if (srcStat.isSymbolicLink()) {
+      // A link is copied as a link. Its relative target is made absolute, as from the source's
+      // directory, unless verbatimSymlinks asks for it as it is.
+      const path = pathModule();
+      let target = yield ['readlink', src];
+      if (!opts.verbatimSymlinks && !path.isAbsolute(target)) target = path.resolve(path.dirname(src), target);
+      if (destStat) yield ['unlink', dest];
+      yield ['symlink', target, dest];
+      return;
+    }
     if (srcStat.isDirectory()) {
       if (!opts.recursive) {
         // Node's errno here is EINVAL from cpSync and EISDIR from cp.
@@ -1452,6 +1501,7 @@
     statOrNothing: orNothing((p) => fs.statSync(p)), lstatOrNothing: orNothing((p) => fs.lstatSync(p)),
     readdir: (p) => fs.readdirSync(p), mkdir: (p, o) => fs.mkdirSync(p, o), chmod: (p, m) => fs.chmodSync(p, m),
     mkdirParents: (p) => { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); },
+    readlink: (p) => fs.readlinkSync(p), symlink: (target, p) => fs.symlinkSync(target, p),
     unlink: (p) => fs.unlinkSync(p), copyFile: (a, b, m) => fs.copyFileSync(a, b, m),
     utimes: (p, a, m) => fs.utimesSync(p, a, m)
   };
@@ -1493,6 +1543,7 @@
     stat: (p, cb) => fs.stat(p, cb), lstat: (p, cb) => fs.lstat(p, cb),
     statOrNothing: orNothingAsync((p, cb) => fs.stat(p, cb)), lstatOrNothing: orNothingAsync((p, cb) => fs.lstat(p, cb)),
     readdir: (p, cb) => fs.readdir(p, cb), mkdir: (...args) => fs.mkdir(...args), chmod: (p, m, cb) => fs.chmod(p, m, cb),
+    readlink: (p, cb) => fs.readlink(p, cb), symlink: (target, p, cb) => fs.symlink(target, p, cb),
     mkdirParents: (p, cb) => fs.access(p, (missing) => (missing ? fs.mkdir(p, { recursive: true }, cb) : cb(null))),
     unlink: (p, cb) => fs.unlink(p, cb), copyFile: (a, b, m, cb) => fs.copyFile(a, b, m, cb),
     utimes: (p, a, m, cb) => fs.utimes(p, a, m, cb)
@@ -1787,6 +1838,8 @@
     access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path'],
     mkdir: ['path'], rmdir: ['path'], rm: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
     rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest'],
+    symlinkSync: ['target', 'path'], symlink: ['target', 'path'], readlinkSync: ['path'], readlink: ['path'],
+    linkSync: ['existingPath', 'newPath'], link: ['existingPath', 'newPath'], mkdtempSync: ['prefix'], mkdtemp: ['prefix'],
     truncateSync: ['path'], truncate: ['path'], chmodSync: ['path'], chmod: ['path'],
     chownSync: ['path'], chown: ['path'], utimesSync: ['path'], utimes: ['path'],
     statfsSync: ['path'], statfs: ['path'], opendirSync: ['path'], opendir: ['path'],
@@ -1801,6 +1854,14 @@
       names.forEach((argName, i) => checkPath(arguments[i], argName));
       return original.apply(this, arguments);
     };
+    // realpath.native and realpathSync.native are checked the same way.
+    if (typeof original.native === 'function') {
+      const native = original.native;
+      fs[name].native = function () {
+        names.forEach((argName, i) => checkPath(arguments[i], argName));
+        return native.apply(this, arguments);
+      };
+    }
   }
   const _existsSync = fs.existsSync;
   fs.existsSync = function (path) {

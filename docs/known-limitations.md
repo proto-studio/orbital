@@ -160,7 +160,9 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `writeFile` read and write synchronously, and `fs.createWriteStream` opens its file
   synchronously. The other callback and promise forms, and write streams' writes, run off
   the thread.
-- **[gap] `fs.mkdtemp` and the symbolic link calls are missing.** (#87)
+- **[approx] `fs.link` given a symbolic link links the file it leads to,** as on macOS. On
+  Linux, Node links the symbolic link itself. A custom `Filesystem` without
+  `LinkFilesystem` fails `symlink`, `readlink` and `link` with `ENOSYS`.
 - **[approx] `fs.watch` and `fs.watchFile` poll.** `watch` checks every 100 ms and reports
   `'rename'` when an entry appears or goes and `'change'` when its stats change, so it can
   miss a change undone within one poll and doesn't report the events in Node's exact order.
@@ -168,8 +170,9 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[approx] `fs.opendir` and `fs.openAsBlob` read when they open.** A `Dir` lists the
   directory when it's opened rather than as it's read, and `openAsBlob` reads the file into
   the `Blob` at once.
-- **[approx] `fs.cp` copies what a symbolic link points to,** because `lstat` still follows
-  links (#87), and doesn't copy sockets, FIFOs or devices specially.
+- **[approx] `fs.cp` doesn't copy sockets, FIFOs or devices specially,** and copies a
+  symbolic link over an existing destination without Node's checks on what that link points
+  to.
 - **[approx] Some `fs.Stats` details depend on the filesystem.** On Linux `birthtime` is the
   change time. A custom `Filesystem` without `MetadataFilesystem` reports default `dev`,
   `ino`, `uid` and the like, and fails `truncate`, `chmod`, `chown` and `utimes` with

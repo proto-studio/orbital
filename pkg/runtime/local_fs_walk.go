@@ -478,7 +478,7 @@ func (l *LocalFilesystem) rootedReadDir(p string) ([]DirEntry, error) {
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	result := make([]DirEntry, len(entries))
 	for i, e := range entries {
-		result[i] = DirEntry{Name: e.Name(), IsDir: e.IsDir()}
+		result[i] = DirEntry{Name: e.Name(), IsDir: e.IsDir(), Type: e.Type()}
 	}
 	return result, nil
 }

@@ -51,3 +51,13 @@ func (l *LocalFilesystem) rootedChtimes(p string, atime, mtime time.Time) error 
 func (l *LocalFilesystem) rootedAccess(p string, mode uint32) error { return errNoWalk }
 
 func (l *LocalFilesystem) rootedStatfs(p string) (*FsStats, error) { return nil, errNoWalk }
+
+func (l *LocalFilesystem) rootedSymlink(target, p string) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedReadlink(p string) (string, error) { return "", errNoWalk }
+
+func (l *LocalFilesystem) rootedLink(existing, p string) error { return errNoWalk }
+
+func (l *LocalFilesystem) rootedRealpath(p string) (string, error) { return "", errNoWalk }
+
+func (l *LocalFilesystem) underRoot(p, absRoot string) (string, bool) { return "", false }

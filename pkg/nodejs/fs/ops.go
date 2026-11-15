@@ -199,6 +199,11 @@ func (f *FS) registerOps(regFn func(string, v8.FunctionCallback) error) error {
 		"access":     f.accessOp,
 		"readv":      f.readvOp,
 		"writev":     f.writevOp,
+		"symlink":    f.symlinkOp,
+		"readlink":   f.readlinkOp,
+		"link":       f.linkOp,
+		"realpath":   f.realpathOp,
+		"mkdtemp":    f.mkdtempOp,
 	}
 	for name, op := range ops {
 		if err := regFn(name+"Sync", f.syncCall(op)); err != nil {
