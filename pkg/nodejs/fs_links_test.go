@@ -141,3 +141,21 @@ setTimeout(() => done({ reached, someReads: reads > 100 }), 1700);
 `)
 	wantJSON(t, got, map[string]any{"reached": 0.0, "someReads": true})
 }
+
+// A file: URL with an encoded NUL is refused by the link calls, as by the others.
+func TestFSLinks_URLWithNUL(t *testing.T) {
+	dir := t.TempDir()
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+const code = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.code; } };
+const url = new URL('file://' + dir + '/out%%00ignored');
+done({
+  symlink: code(() => fs.symlinkSync('/x', url)),
+  link: code(() => fs.linkSync(url, dir + '/h')),
+  readlink: code(() => fs.readlinkSync(url)),
+  made: fs.existsSync(dir + '/out'),
+});
+`, dir))
+	wantJSON(t, got, map[string]any{"symlink": "ERR_INVALID_ARG_VALUE", "link": "ERR_INVALID_ARG_VALUE", "readlink": "ERR_INVALID_ARG_VALUE", "made": false})
+}
