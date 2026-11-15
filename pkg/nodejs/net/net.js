@@ -623,8 +623,11 @@
       if (this._listening) {
         throw codedError(Error, 'ERR_SERVER_ALREADY_LISTEN', 'Listen method has been called more than once without closing.');
       }
-      if (options.handle || options.fd !== undefined) {
-        throw codedError(Error, 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM', 'Listening on an existing handle is not supported');
+      // A handle object carries its descriptor as fd, as in listen({ fd }) or listen(handle).
+      let fd = options.fd;
+      if (fd === undefined && options.handle && typeof options.handle === 'object') fd = options.handle.fd;
+      if (options.handle && fd === undefined) {
+        throw codedError(Error, 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM', 'Listening on a handle other than a file descriptor is not supported');
       }
       const port = options.port === undefined || options.port === null ? 0 : validatePort(options.port);
 
@@ -634,7 +637,21 @@
       if (!this._refed) internal.unrefServer(this._id);
 
       let encodedError;
-      if (options.path !== undefined && options.path !== null) {
+      if (fd !== undefined) {
+        if (typeof fd !== 'number' || !Number.isInteger(fd) || fd < 0) {
+          throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', `The argument 'options' is invalid. Received ${String(fd)}`);
+        }
+        // Only descriptors the embedder made available can be listened on.
+        encodedError = internal.listenInherited(this._id, fd);
+        if (encodedError) {
+          const desc = JSON.parse(encodedError);
+          if (desc.code === 'EINVAL') desc.message = 'listen EINVAL: invalid argument';
+          const err = listenError(desc, null);
+          err.address = null;
+          this._failListen(err, callback);
+          return this;
+        }
+      } else if (options.path !== undefined && options.path !== null) {
         encodedError = internal.listenUnix(this._id, String(options.path));
         if (encodedError) {
           this._failListen(listenError(JSON.parse(encodedError), options.path), callback);

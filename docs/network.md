@@ -77,3 +77,13 @@ Unix sockets reach local services through the filesystem, and a network policy k
 about them. They work only with `RealSocketFactory` itself and an unrestricted filesystem,
 and otherwise fail with `EACCES`. A type that embeds `RealSocketFactory` does not inherit
 them. A custom factory can offer them by implementing `UnixSocketFactory`.
+
+## Inherited listening sockets
+
+A script can listen on a listening socket the process was given when it started, as with
+systemd socket activation, through `server.listen({ fd })`. Only descriptors the embedder
+names can be used: call `AllowInheritedListeners(fds...)` on a `RealSocketFactory`, or
+implement `InheritedListenerFactory` on a custom factory. `FilteredSocketFactory` passes them
+through, checking the address the socket listens on and the connections it accepts against
+the policy as for any other server. Only TCP listeners are accepted. The `orbital` CLI
+allows the descriptors systemd passes in `LISTEN_FDS` when `LISTEN_PID` is its own.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -247,7 +248,72 @@ type SocketFactory interface {
 }
 
 // RealSocketFactory creates real network sockets.
-type RealSocketFactory struct{}
+type RealSocketFactory struct {
+	// inheritedListeners are the file descriptors scripts may listen on. None by default.
+	inheritedListeners []int
+	mu                 sync.Mutex
+	// inheritedFiles keeps each descriptor's os.File alive, since a collected one would
+	// close the descriptor.
+	inheritedFiles map[int]*os.File
+}
+
+// InheritedListenerFactory is an optional extension of SocketFactory for listening sockets
+// the process was given when it started, such as by systemd socket activation or a
+// supervisor, which scripts name by file descriptor as in server.listen({ fd }).
+type InheritedListenerFactory interface {
+	// ListenInherited returns a server accepting on the inherited listening socket fd. A
+	// factory refuses any descriptor it was not told a script may use.
+	ListenInherited(fd int) (TCPServer, error)
+}
+
+// ErrNotInherited reports a file descriptor that is not one the embedder made available.
+// Node reports EINVAL for a descriptor it can't listen on.
+var ErrNotInherited = fmt.Errorf("inherited listener: %w", syscall.EINVAL)
+
+// AllowInheritedListeners lets scripts listen on the given inherited listening sockets.
+// Nothing else in the process can be reached by descriptor.
+func (f *RealSocketFactory) AllowInheritedListeners(fds ...int) {
+	f.inheritedListeners = append(f.inheritedListeners, fds...)
+}
+
+// ListenInherited listens on fd if it was allowed with AllowInheritedListeners.
+func (f *RealSocketFactory) ListenInherited(fd int) (TCPServer, error) {
+	allowed := false
+	for _, a := range f.inheritedListeners {
+		if a == fd {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return nil, ErrNotInherited
+	}
+	f.mu.Lock()
+	file := f.inheritedFiles[fd]
+	if file == nil {
+		file = os.NewFile(uintptr(fd), "inherited")
+		if file == nil {
+			f.mu.Unlock()
+			return nil, ErrNotInherited
+		}
+		if f.inheritedFiles == nil {
+			f.inheritedFiles = map[int]*os.File{}
+		}
+		f.inheritedFiles[fd] = file
+	}
+	f.mu.Unlock()
+	// FileListener works on a copy of the descriptor, so the original stays open for a
+	// later listen, as in Node.
+	listener, err := net.FileListener(file)
+	if err != nil {
+		return nil, err
+	}
+	// Only TCP: a Unix socket's path is checked differently, by the Unix socket factory.
+	if _, ok := listener.Addr().(*net.TCPAddr); !ok {
+		listener.Close()
+		return nil, ErrNotInherited
+	}
+	return &RealTCPServer{listener: listener}, nil
+}
 
 // NewRealSocketFactory creates a factory for real sockets.
 func NewRealSocketFactory() *RealSocketFactory {

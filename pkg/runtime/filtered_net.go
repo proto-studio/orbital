@@ -39,6 +39,30 @@ func (f *FilteredSocketFactory) CreateTCPSocket() TCPSocket {
 }
 
 // CreateTCPServer creates a TCP server with policy enforcement.
+// ListenInherited listens on an inherited socket from the underlying factory, and applies the
+// policy to the address it listens on and the connections it accepts as for any server.
+func (f *FilteredSocketFactory) ListenInherited(fd int) (TCPServer, error) {
+	inherited, ok := f.underlying.(InheritedListenerFactory)
+	if !ok {
+		return nil, ErrNotInherited
+	}
+	server, err := inherited.ListenInherited(fd)
+	if err != nil {
+		return nil, err
+	}
+	addr, ok := server.Addr().(*net.TCPAddr)
+	if !ok {
+		server.Close()
+		return nil, ErrNotInherited
+	}
+	address, port := addr.IP.String(), addr.Port
+	if err := f.policy.CheckConnection(ProtocolTCP, DirectionInbound, address, port); err != nil {
+		server.Close()
+		return nil, err
+	}
+	return &FilteredTCPServer{underlying: server, policy: f.policy, listenPort: port}, nil
+}
+
 func (f *FilteredSocketFactory) CreateTCPServer() TCPServer {
 	return &FilteredTCPServer{
 		underlying: f.underlying.CreateTCPServer(),

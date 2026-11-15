@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -475,6 +476,16 @@ func createRuntime() (*runtime.Runtime, error) {
 		cfg.SocketFactory = runtime.NewNoOpSocketFactory()
 		cfg.ProcessSpawner = runtime.NewNoOpProcessSpawner()
 		cfg.ProcessSignaler = runtime.NewNoOpProcessSignaler()
+	}
+
+	// Listening sockets passed by systemd socket activation (LISTEN_FDS, from descriptor 3)
+	// can be listened on with server.listen({ fd }). No other descriptor can.
+	if cfg.SocketFactory == nil {
+		if fds := systemdListenFDs(); len(fds) > 0 {
+			factory := runtime.NewRealSocketFactory()
+			factory.AllowInheritedListeners(fds...)
+			cfg.SocketFactory = factory
+		}
 	}
 
 	// Set up network policy (Deno-style --allow-net / --deny-net)
@@ -1037,4 +1048,21 @@ func isIncomplete(code string) bool {
 	}
 
 	return braces > 0 || brackets > 0 || parens > 0 || inString
+}
+
+// systemdListenFDs returns the descriptors systemd passed to this process for socket
+// activation, if it passed any.
+func systemdListenFDs() []int {
+	if pid, err := strconv.Atoi(os.Getenv("LISTEN_PID")); err != nil || pid != os.Getpid() {
+		return nil
+	}
+	n, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if err != nil || n <= 0 {
+		return nil
+	}
+	fds := make([]int, n)
+	for i := range fds {
+		fds[i] = 3 + i
+	}
+	return fds
 }
