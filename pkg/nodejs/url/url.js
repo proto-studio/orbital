@@ -28,33 +28,58 @@
 		return out;
 	}
 
-	// utf8Decode reads bytes as UTF-8, putting U+FFFD in place of each malformed sequence.
+	// utf8Decode is the Encoding standard's UTF-8 decoder: each malformed sequence becomes
+	// one U+FFFD, and a byte that cannot continue a sequence is read again on its own.
 	function utf8Decode(bytes) {
 		let out = '';
-		for (let i = 0; i < bytes.length;) {
+		let codePoint = 0;
+		let needed = 0;
+		let seen = 0;
+		let lower = 0x80;
+		let upper = 0xBF;
+		for (let i = 0; i < bytes.length; i++) {
 			const b = bytes[i];
-			let need = 0;
-			let c = 0;
-			let min = 0;
-			if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
-			if (b >= 0xC2 && b <= 0xDF) { need = 1; c = b & 31; min = 0x80; }
-			else if (b >= 0xE0 && b <= 0xEF) { need = 2; c = b & 15; min = 0x800; }
-			else if (b >= 0xF0 && b <= 0xF4) { need = 3; c = b & 7; min = 0x10000; }
-			else { out += '\uFFFD'; i++; continue; }
-			let j = 1;
-			for (; j <= need && i + j < bytes.length && (bytes[i + j] & 0xC0) === 0x80; j++) {
-				c = (c << 6) | (bytes[i + j] & 63);
-			}
-			if (j <= need || c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
-				out += '\uFFFD';
-				i += Math.max(1, j);
+			if (needed === 0) {
+				if (b <= 0x7F) {
+					out += String.fromCharCode(b);
+				} else if (b >= 0xC2 && b <= 0xDF) {
+					needed = 1;
+					codePoint = b & 0x1F;
+				} else if (b >= 0xE0 && b <= 0xEF) {
+					if (b === 0xE0) lower = 0xA0;
+					if (b === 0xED) upper = 0x9F;
+					needed = 2;
+					codePoint = b & 0x0F;
+				} else if (b >= 0xF0 && b <= 0xF4) {
+					if (b === 0xF0) lower = 0x90;
+					if (b === 0xF4) upper = 0x8F;
+					needed = 3;
+					codePoint = b & 0x07;
+				} else {
+					out += '\uFFFD';
+				}
 				continue;
 			}
-			out += String.fromCodePoint(c);
-			i += need + 1;
+			if (b < lower || b > upper) {
+				codePoint = needed = seen = 0;
+				lower = 0x80;
+				upper = 0xBF;
+				out += '\uFFFD';
+				i--;
+				continue;
+			}
+			lower = 0x80;
+			upper = 0xBF;
+			codePoint = (codePoint << 6) | (b & 0x3F);
+			if (++seen === needed) {
+				out += String.fromCodePoint(codePoint);
+				codePoint = needed = seen = 0;
+			}
 		}
+		if (needed !== 0) out += '\uFFFD';
 		return out;
 	}
+
 
 	function isHex(b) {
 		return (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66);
@@ -124,6 +149,25 @@
 		return out;
 	}
 
+	// querystringStringify is querystring.stringify, which the legacy url.format() uses for
+	// an object query: encodeURIComponent's escaping, an array as repeated keys, and an
+	// empty value for anything but a string, number, bigint or boolean.
+	function querystringStringify(obj) {
+		const str = (v) => (typeof v === 'string' || (typeof v === 'number' && isFinite(v)) ||
+			typeof v === 'bigint' || typeof v === 'boolean' ? String(v) : '');
+		const parts = [];
+		for (const key of Object.keys(obj)) {
+			const k = encodeURIComponent(str(key)) + '=';
+			const value = obj[key];
+			if (Array.isArray(value)) {
+				for (const v of value) parts.push(k + encodeURIComponent(str(v)));
+			} else {
+				parts.push(k + encodeURIComponent(str(value)));
+			}
+		}
+		return parts.join('&');
+	}
+
 	// URLSearchParams class
 	class URLSearchParams {
 		constructor(init) {
@@ -164,8 +208,15 @@
 			this._update();
 		}
 
+		// The list is changed in place so iterators already handed out see the change, as
+		// the standard's iterators do.
+		_replace(list) {
+			this._params.length = 0;
+			for (const entry of list) this._params.push(entry);
+		}
+
 		delete(name) {
-			this._params = this._params.filter(([key]) => key !== name);
+			this._replace(this._params.filter(([key]) => key !== name));
 			this._update();
 		}
 
@@ -184,7 +235,7 @@
 
 		set(name, value) {
 			let found = false;
-			this._params = this._params.filter(([key]) => {
+			this._replace(this._params.filter(([key]) => {
 				if (key === name) {
 					if (!found) {
 						found = true;
@@ -193,7 +244,7 @@
 					return false;
 				}
 				return true;
-			});
+			}));
 			if (found) {
 				const idx = this._params.findIndex(([key]) => key === name);
 				this._params[idx][1] = String(value);
@@ -205,10 +256,10 @@
 
 		sort() {
 			// Stable, by UTF-16 code units, as the standard says.
-			this._params = this._params
+			this._replace(this._params
 				.map((entry, i) => [entry, i])
 				.sort((a, b) => (a[0][0] < b[0][0] ? -1 : a[0][0] > b[0][0] ? 1 : a[1] - b[1]))
-				.map(([entry]) => entry);
+				.map(([entry]) => entry));
 			this._update();
 		}
 
@@ -224,16 +275,21 @@
 			});
 		}
 
+		// The iterators read the live list by position, as the standard's do.
+		*_iterate(pick) {
+			for (let i = 0; i < this._params.length; i++) yield pick(this._params[i]);
+		}
+
 		entries() {
-			return this._params[Symbol.iterator]();
+			return this._iterate(([key, value]) => [key, value]);
 		}
 
 		keys() {
-			return this._params.map(([key]) => key)[Symbol.iterator]();
+			return this._iterate(([key]) => key);
 		}
 
 		values() {
-			return this._params.map(([, value]) => value)[Symbol.iterator]();
+			return this._iterate(([, value]) => value);
 		}
 
 		[Symbol.iterator]() {
@@ -447,7 +503,7 @@
 			if (value.startsWith('?')) value = value.slice(1);
 			const special = /^(https?|wss?|ftp|file):$/.test(this._protocol);
 			this._search = value === '' ? '' : '?' + encodeQuery(value, special);
-			this._searchParams._params = parseUrlencoded(value);
+			this._searchParams._replace(parseUrlencoded(value));
 		}
 
 		get searchParams() {
@@ -491,7 +547,7 @@
 			this._search = newUrl._search;
 			this._hash = newUrl._hash;
 			// The same URLSearchParams object stays attached, with the new entries.
-			this._searchParams._params = newUrl._searchParams._params;
+			this._searchParams._replace(newUrl._searchParams._params);
 		}
 
 		toString() {
@@ -532,9 +588,10 @@
 			result.port = url.port || null;
 			result.host = url._slashes ? url.host : (url.host || null);
 			result.pathname = url.pathname || null;
-			result.search = url.search || null;
+			// The query as written, a bare "?" included, as Node's legacy parser keeps it.
+			result.search = url._search || null;
 			result.hash = url.hash || null;
-			result.path = (url.pathname || '') + (url.search || '');
+			result.path = (url.pathname || '') + (url._search || '');
 
 			if (url.username || url.password) {
 				result.auth = url.username + (url.password ? ':' + url.password : '');
@@ -714,7 +771,7 @@
 			if (typeof urlObject.query === 'string') {
 				result += '?' + urlObject.query;
 			} else {
-				result += '?' + new URLSearchParams(urlObject.query).toString();
+				result += '?' + querystringStringify(urlObject.query);
 			}
 		}
 

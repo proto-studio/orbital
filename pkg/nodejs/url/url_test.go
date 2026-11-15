@@ -335,3 +335,29 @@ func TestURLSearchParams_UTF8(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// url.parse() keeps a bare "?", url.format() serializes an object query as querystring
+// does, searchParams iterators follow later changes, and malformed UTF-8 decodes as the
+// Encoding standard says. Expected values are Node 20.18.1's.
+func TestURL_LegacyQueryAndLiveParams(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const out = [];
+const p = __url_module.parse('http://h/?'); const p2 = __url_module.parse('http://h/?', true);
+out.push([p.search, p.query, p.path, __url_module.format(p), p2.search, JSON.stringify(p2.query), p2.path]);
+out.push(__url_module.format({ protocol: 'https:', host: 'example.com', query: { q: 'a b', t: "~!'()*", a: [1, 2], b: true, c: null, d: undefined, e: {}, f: 'é' } }));
+const sp = new URLSearchParams('b=2&a=1'); const it = sp.entries(); const kt = sp.keys(); sp.sort(); sp.append('c', '3'); out.push(JSON.stringify([...it]), JSON.stringify([...kt]));
+const sp2 = new URLSearchParams('a=1&b=2&c=3'); const it2 = sp2.values(); it2.next(); sp2.delete('a'); out.push(JSON.stringify([...it2]));
+for (const s of ['%ED%A0%80', '%C0%80', '%F4%90%80%80', '%E0%80%80', '%F0%80%80%80', '%E2%82', '%F0%9F%98', '%C2', '%80%80', '%EF%BF%BD', '%E2%82%AC%F0%9F%98%80']) out.push(new URLSearchParams('x=' + s).get('x'));
+JSON.stringify(out);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["?","","/?","http://h/?","?","{}","/?"],"https://example.com?q=a%20b&t=~!'()*&a=1&a=2&b=true&c=&d=&e=&f=%C3%A9","[[\"a\",\"1\"],[\"b\",\"2\"],[\"c\",\"3\"]]","[\"a\",\"b\",\"c\"]","[\"3\"]","���","��","����","���","����","�","�","�","��","�","€😀"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
