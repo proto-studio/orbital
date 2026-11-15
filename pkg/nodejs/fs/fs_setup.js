@@ -1196,7 +1196,18 @@
       }
       throw e;
     }
-    return new Dir(typeof path === 'string' ? path : String(path), entries);
+    return new Dir(typeof path === 'string' ? path : String(path), encodedDirents(entries, options));
+  }
+  // The entries with their names in the encoding options ask for, once the walk that needs
+  // the names as they are is done.
+  function encodedDirents(entries, options) {
+    const encoding = encodingOf(options);
+    if (!encoding || isUtf8(encoding)) return entries;
+    return entries.map((e) => {
+      const name = encoding === 'buffer' ? Buffer.from(e.name) : Buffer.from(e.name).toString(encoding);
+      const d = new Dirent(name, e[kType], e.parentPath);
+      return d;
+    });
   }
   defineCall('opendir', (path, options) => [path, options], (path, options) => openDir(path, options, true));
   fs.opendirSync = function (path, options) {

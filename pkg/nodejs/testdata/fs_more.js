@@ -252,6 +252,16 @@ async function testOpendir() {
     for await (const e of await fsp.opendir(file('od'), { recursive: true })) names.push(e.name);
     return names.sort();
   });
+  attempt('opendir_encoding', () => {
+    fs.writeFileSync(file('od/caf\u00e9'), 'c');
+    const d = fs.opendirSync(file('od'), { encoding: 'hex' });
+    const names = [];
+    let e;
+    while ((e = d.readSync()) !== null) names.push(Buffer.isBuffer(e.name) ? 'buffer' : e.name);
+    d.closeSync();
+    fs.unlinkSync(file('od/caf\u00e9'));
+    return names.sort();
+  });
   attempt('opendir_missing', () => fs.opendirSync(file('missing')));
   attempt('opendir_file', () => fs.opendirSync(file('od/a')));
   attempt('opendir_closed', () => { const d = fs.opendirSync(file('od')); d.closeSync(); return d.readSync(); });

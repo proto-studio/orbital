@@ -130,3 +130,28 @@ func TestMemoryFilesystem_HandleKeepsItsFile(t *testing.T) {
 		t.Errorf("/a = %v, %d; want it unchanged", info.Mode.Perm(), info.Size)
 	}
 }
+
+// WriteFile over an open file keeps that file, so the handle's calls change what the path
+// names.
+func TestMemoryFilesystem_WriteFileKeepsTheFile(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/f", []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := m.OpenFile("/f", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.WriteFile("/f", []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.(MetadataFile).Truncate(1); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := m.ReadFile("/f"); string(data) != "r" {
+		t.Errorf("/f = %q, want %q", data, "r")
+	}
+	if info, _ := m.Stat("/f"); info.Mode.Perm() != 0o644 {
+		t.Errorf("/f mode = %v, want the original 0644", info.Mode.Perm())
+	}
+}
