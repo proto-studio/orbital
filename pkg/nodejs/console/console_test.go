@@ -2,9 +2,9 @@ package console
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 )
@@ -454,27 +454,39 @@ func TestConsole_LogBreaksLines(t *testing.T) {
 }
 
 // Tracking which objects are being printed, to find the ones that hold themselves, costs a
-// little per object printed and nothing for objects left out. An object holding 20000 objects
-// prints in about 100 ms; walking objects it leaves out, like the elements of a long array,
-// would take far longer.
+// little per object printed and nothing for objects left out: printing a million-element array,
+// of which 100 elements show, takes about as long as printing those 100. Both are timed in the
+// same run, so a slower machine or coverage instrumentation slows both alike; walking the
+// left-out elements would take hundreds of times longer.
 func TestConsole_LogManyObjectsTime(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rt := setupRuntime(t, &stdout, &stderr)
 	defer rt.Dispose()
 
-	start := time.Now()
-	_, err := rt.RunScript(`
+	result, err := rt.RunScript(`
 		const wide = {};
 		for (let i = 0; i < 20000; i++) wide['k' + i] = { v: i };
-		const long = Array.from({ length: 1000000 }, (_, i) => ({ v: i }));
 		wide.self = wide;
-		console.log(wide, long);
+		console.log(wide);
+		const long = Array.from({ length: 1000000 }, (_, i) => ({ v: i }));
+		const short = long.slice(0, 100);
+		const time = (value) => {
+			const start = Date.now();
+			console.log(value);
+			return Date.now() - start;
+		};
+		time(short);
+		JSON.stringify({ short: time(short), long: time(long) });
 	`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("printing took %v", elapsed)
+	var ms struct{ Short, Long int }
+	if err := json.Unmarshal([]byte(result.String()), &ms); err != nil {
+		t.Fatalf("decoding %q: %v", result.String(), err)
+	}
+	if ms.Long > 5*ms.Short+100 {
+		t.Errorf("printing the long array took %d ms, the 100 elements it shows %d ms", ms.Long, ms.Short)
 	}
 	out := stdout.String()
 	if !strings.HasPrefix(out, "<ref *1> {\n  k0: { v: 0 },") || !strings.Contains(out, "self: [Circular *1]") {
