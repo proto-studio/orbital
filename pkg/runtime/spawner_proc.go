@@ -6,8 +6,8 @@
 //  1. Disallow All - NewNoOpProcessSpawner()
 //     All process spawning fails with EPERM error.
 //
-//  2. Allow List - NewAllowListProcessSpawner(commands)
-//     Only specified commands can be spawned.
+//  2. Allow List - NewAllowListProcessSpawner(paths)
+//     Only the executables at the given absolute paths can be spawned.
 //
 //  3. Allow All - NewRealProcessSpawner()
 //     Same behavior as Node.js, no restrictions.
@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -44,6 +45,10 @@ type SpawnOptions struct {
 	Shell    bool
 	Detached bool
 	Timeout  int // milliseconds, 0 = no timeout
+
+	// Argv0 is the name the process sees as argv[0], if not the command. Spawn and
+	// ExecFile only.
+	Argv0 string
 
 	// Input is written to the stdin of Exec and ExecFile commands. Spawn ignores it,
 	// because its caller writes to Stdin itself.
@@ -112,6 +117,9 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", shellCmd)
 	} else {
 		cmd = exec.CommandContext(ctx, command, args...)
+		if options.Argv0 != "" {
+			cmd.Args[0] = options.Argv0
+		}
 	}
 
 	if options.Cwd != "" {
@@ -219,6 +227,9 @@ func (s *RealProcessSpawner) ExecFile(ctx context.Context, file string, args []s
 	}
 
 	cmd := exec.CommandContext(ctx, file, args...)
+	if options.Argv0 != "" {
+		cmd.Args[0] = options.Argv0
+	}
 
 	if options.Cwd != "" {
 		cmd.Dir = options.Cwd
@@ -327,11 +338,18 @@ func (b *safeBuffer) Bytes() []byte {
 }
 
 // SandboxedProcessSpawner implements ProcessSpawner with restrictions.
+//
+// Commands are compared by the executable they run, not by name. AllowedCommands and
+// BlockedCommands hold absolute paths, which are resolved through symlinks when the rules
+// are first used. Each command a script runs is resolved the same way: a bare name on the
+// host's PATH, a relative path against the working directory, then through symlinks. Only
+// an exact match counts, and the resolved path is what runs.
 type SandboxedProcessSpawner struct {
-	// AllowedCommands is a list of allowed command names/paths/patterns.
-	// If empty and AllowAll is false, all commands are blocked.
+	// AllowedCommands lists the absolute paths of the executables that may run, in
+	// allowlist mode. If empty and AllowAll is false, all commands are blocked.
 	AllowedCommands []string
-	// BlockedCommands is a list of blocked command names/paths/patterns.
+	// BlockedCommands lists the absolute paths of executables that may not run. It applies
+	// in both modes.
 	BlockedCommands []string
 	// AllowAll allows all commands (use with BlockedCommands for denylist mode).
 	AllowAll bool
@@ -345,15 +363,22 @@ type SandboxedProcessSpawner struct {
 	real        *RealProcessSpawner
 	activeCount int
 	mu          sync.Mutex
+
+	rulesOnce sync.Once
+	allowed   map[string]bool // resolved AllowedCommands
+	blocked   map[string]bool // resolved BlockedCommands
+	rulesErr  error
 }
 
 // SandboxProcessConfig configures the sandboxed process spawner.
 type SandboxProcessConfig struct {
-	// AllowedCommands is a list of allowed command names, paths, or glob patterns.
-	// Supports: exact match ("ls"), glob patterns ("/usr/bin/*"), prefix ("npm:*")
+	// AllowedCommands lists the absolute paths of the executables that may run, such as
+	// "/bin/ls". A symlink is resolved to its target, which is what the entry allows. A
+	// bare name a script runs is looked up on the host's PATH and allowed if it resolves
+	// to an entry.
 	AllowedCommands []string
-	// BlockedCommands is a list of blocked command names, paths, or glob patterns.
-	// Applied after AllowedCommands check when AllowAll is true.
+	// BlockedCommands lists the absolute paths of executables that may not run, resolved
+	// in the same way. It is checked first, so it also applies when AllowAll is true.
 	BlockedCommands []string
 	// AllowAll allows all commands (use with BlockedCommands for denylist mode).
 	AllowAll bool
@@ -361,17 +386,21 @@ type SandboxProcessConfig struct {
 	// run (0 = unlimited).
 	MaxProcesses int
 	// AllowShellCommands allows shell command lines even in allowlist mode: exec(), and
-	// spawn with shell: true. When false, these are refused unless AllowAll is true and
-	// /bin/sh is not blocked.
+	// spawn with shell: true. When false, these are refused unless AllowAll is true. Either
+	// way they are refused if /bin/sh is blocked.
 	AllowShellCommands bool
 }
 
 // NewSandboxedProcessSpawner creates a sandboxed process spawner with full config.
+//
+// Every entry of AllowedCommands and BlockedCommands must be an absolute path to an
+// existing file. If one isn't, the spawner refuses every command with an error that names
+// the entry, and Err reports it.
 func NewSandboxedProcessSpawner(cfg *SandboxProcessConfig) *SandboxedProcessSpawner {
 	if cfg == nil {
 		cfg = &SandboxProcessConfig{}
 	}
-	return &SandboxedProcessSpawner{
+	s := &SandboxedProcessSpawner{
 		AllowedCommands:    cfg.AllowedCommands,
 		BlockedCommands:    cfg.BlockedCommands,
 		AllowAll:           cfg.AllowAll,
@@ -379,101 +408,149 @@ func NewSandboxedProcessSpawner(cfg *SandboxProcessConfig) *SandboxedProcessSpaw
 		AllowShellCommands: cfg.AllowShellCommands,
 		real:               NewRealProcessSpawner(),
 	}
+	s.rules()
+	return s
 }
 
-// NewAllowListProcessSpawner creates a spawner that only allows specific commands.
-// Commands can be exact names ("ls"), full paths ("/usr/bin/node"), or glob patterns ("/usr/bin/*").
+// NewAllowListProcessSpawner creates a spawner that only allows the executables at the
+// given absolute paths. See NewSandboxedProcessSpawner.
 //
 // Example:
 //
-//	spawner := process.NewAllowListProcessSpawner("ls", "cat", "grep", "/usr/bin/node")
+//	spawner := runtime.NewAllowListProcessSpawner("/bin/ls", "/bin/cat", "/usr/bin/grep")
 func NewAllowListProcessSpawner(commands ...string) *SandboxedProcessSpawner {
-	return &SandboxedProcessSpawner{
-		AllowedCommands:    commands,
-		AllowAll:           false,
-		AllowShellCommands: false,
-		real:               NewRealProcessSpawner(),
-	}
+	return NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: commands})
 }
 
-// NewDenyListProcessSpawner creates a spawner that allows all commands except those blocked.
-// Commands can be exact names, full paths, or glob patterns.
+// NewDenyListProcessSpawner creates a spawner that allows all commands except the
+// executables at the given absolute paths. See NewSandboxedProcessSpawner.
 //
 // Example:
 //
-//	spawner := process.NewDenyListProcessSpawner("rm", "sudo", "chmod")
+//	spawner := runtime.NewDenyListProcessSpawner("/bin/rm", "/usr/bin/sudo", "/bin/chmod")
 func NewDenyListProcessSpawner(blockedCommands ...string) *SandboxedProcessSpawner {
-	return &SandboxedProcessSpawner{
+	return NewSandboxedProcessSpawner(&SandboxProcessConfig{
 		BlockedCommands:    blockedCommands,
 		AllowAll:           true,
 		AllowShellCommands: true,
-		real:               NewRealProcessSpawner(),
-	}
+	})
 }
 
-// matchPattern checks if a command matches a pattern.
-// Supports exact match, glob patterns (*, ?), and path matching.
-func matchPattern(pattern, command string) bool {
-	// Exact match
-	if pattern == command {
-		return true
-	}
-
-	// Try glob match
-	if strings.ContainsAny(pattern, "*?[") {
-		matched, err := filepath.Match(pattern, command)
-		if err == nil && matched {
-			return true
-		}
-		// Also try matching just the base name
-		matched, err = filepath.Match(pattern, filepath.Base(command))
-		if err == nil && matched {
-			return true
-		}
-	}
-
-	// Match base name against pattern (e.g., "node" matches "/usr/bin/node")
-	if filepath.Base(command) == pattern {
-		return true
-	}
-
-	return false
+// Err reports an entry of AllowedCommands or BlockedCommands that is not an absolute path
+// to an existing file. While there is one, every command is refused.
+func (s *SandboxedProcessSpawner) Err() error {
+	_, _, err := s.rules()
+	return err
 }
 
-// isCommandAllowed checks if a command is permitted by the allowlist/blocklist rules.
-func (s *SandboxedProcessSpawner) isCommandAllowed(command string) bool {
-	// Check blocked list first
-	for _, blocked := range s.BlockedCommands {
-		if matchPattern(blocked, command) {
-			return false
+// rules resolves AllowedCommands and BlockedCommands once.
+func (s *SandboxedProcessSpawner) rules() (allowed, blocked map[string]bool, err error) {
+	s.rulesOnce.Do(func() {
+		s.allowed, s.rulesErr = resolveEntries("AllowedCommands", s.AllowedCommands)
+		if s.rulesErr == nil {
+			s.blocked, s.rulesErr = resolveEntries("BlockedCommands", s.BlockedCommands)
 		}
-	}
+	})
+	return s.allowed, s.blocked, s.rulesErr
+}
 
-	// If AllowAll, permit unless blocked
-	if s.AllowAll {
-		return true
-	}
-
-	// Check allowed list
-	for _, allowed := range s.AllowedCommands {
-		if matchPattern(allowed, command) {
-			return true
+// resolveEntries resolves a list of absolute executable paths through symlinks.
+func resolveEntries(field string, entries []string) (map[string]bool, error) {
+	resolved := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if !filepath.IsAbs(entry) {
+			return nil, fmt.Errorf("%w: %s entry %q is not an absolute path", ErrCommandNotAllowed, field, entry)
 		}
+		path, err := filepath.EvalSymlinks(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s entry %q: %v", ErrCommandNotAllowed, field, entry, err)
+		}
+		resolved[path] = true
 	}
+	return resolved, nil
+}
 
-	return false
+// resolveCommand finds the executable command names, as the OS would run it: a bare name
+// on the host's PATH, a relative path against cwd (or the host's working directory), and
+// then through symlinks.
+func resolveCommand(command, cwd string) (string, error) {
+	path := command
+	if !strings.Contains(command, "/") {
+		found, err := exec.LookPath(command)
+		if err != nil {
+			return "", err
+		}
+		path = found
+	}
+	if !filepath.IsAbs(path) {
+		if cwd == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			cwd = wd
+		}
+		path = filepath.Join(cwd, path)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", &exec.Error{Name: command, Err: err}
+	}
+	return resolved, nil
+}
+
+// pathAllowed reports whether the rules let the executable at a resolved path run.
+func (s *SandboxedProcessSpawner) pathAllowed(resolved string) error {
+	allowed, blocked, err := s.rules()
+	if err != nil {
+		return err
+	}
+	if blocked[resolved] {
+		return ErrCommandNotAllowed
+	}
+	if s.AllowAll || allowed[resolved] {
+		return nil
+	}
+	return ErrCommandNotAllowed
+}
+
+// checkCommand resolves command and checks it. It returns the path to run, and options
+// that keep the name the script gave as argv[0].
+func (s *SandboxedProcessSpawner) checkCommand(command string, options *SpawnOptions) (string, *SpawnOptions, error) {
+	if err := s.Err(); err != nil {
+		return "", nil, err
+	}
+	opts := SpawnOptions{}
+	if options != nil {
+		opts = *options
+	}
+	resolved, err := resolveCommand(command, opts.Cwd)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := s.pathAllowed(resolved); err != nil {
+		return "", nil, err
+	}
+	if opts.Argv0 == "" {
+		opts.Argv0 = command
+	}
+	return resolved, &opts, nil
 }
 
 // Spawn starts a new process if the command is allowed by the sandbox rules.
 func (s *SandboxedProcessSpawner) Spawn(ctx context.Context, command string, args []string, options *SpawnOptions) (ChildProcess, error) {
-	// A shell runs the whole line, command and arguments joined, so the command's name
-	// says nothing about what runs. Such a spawn needs the rules that allow a shell.
+	// A shell runs the whole line, command and arguments joined, so the program that runs
+	// is the shell. Such a spawn needs the rules that allow a shell.
 	if options != nil && options.Shell {
-		if !s.shellAllowed() {
-			return nil, ErrCommandNotAllowed
+		if err := s.shellAllowed(); err != nil {
+			return nil, err
 		}
-	} else if !s.isCommandAllowed(command) {
-		return nil, ErrCommandNotAllowed
+	} else {
+		resolved, opts, err := s.checkCommand(command, options)
+		if err != nil {
+			return nil, err
+		}
+		command, options = resolved, opts
 	}
 
 	if err := s.acquire(); err != nil {
@@ -494,8 +571,8 @@ func (s *SandboxedProcessSpawner) Spawn(ctx context.Context, command string, arg
 
 // Exec executes a shell command if shell commands are allowed.
 func (s *SandboxedProcessSpawner) Exec(ctx context.Context, command string, options *SpawnOptions) ([]byte, []byte, int, error) {
-	if !s.shellAllowed() {
-		return nil, nil, -1, ErrCommandNotAllowed
+	if err := s.shellAllowed(); err != nil {
+		return nil, nil, -1, err
 	}
 	if err := s.acquire(); err != nil {
 		return nil, nil, -1, err
@@ -508,25 +585,38 @@ func (s *SandboxedProcessSpawner) Exec(ctx context.Context, command string, opti
 // ExecFile executes a file if it is allowed by the sandbox rules.
 func (s *SandboxedProcessSpawner) ExecFile(ctx context.Context, file string, args []string, options *SpawnOptions) ([]byte, []byte, int, error) {
 	// ExecFile runs file directly, without a shell, so the file is what gets checked.
-	if !s.isCommandAllowed(file) {
-		return nil, nil, -1, ErrCommandNotAllowed
+	resolved, opts, err := s.checkCommand(file, options)
+	if err != nil {
+		return nil, nil, -1, err
 	}
 	if err := s.acquire(); err != nil {
 		return nil, nil, -1, err
 	}
 	defer s.release()
 
-	return s.real.ExecFile(ctx, file, args, options)
+	return s.real.ExecFile(ctx, resolved, args, opts)
 }
 
-// shellAllowed reports whether the rules let a shell run a command line.
-func (s *SandboxedProcessSpawner) shellAllowed() bool {
+// shellAllowed reports whether the rules let a shell run a command line. The real spawner
+// runs command lines with /bin/sh.
+func (s *SandboxedProcessSpawner) shellAllowed() error {
+	if err := s.Err(); err != nil {
+		return err
+	}
 	// A command line is too complex to check, so it takes an explicit allowance.
 	if !s.AllowAll && !s.AllowShellCommands {
-		return false
+		return ErrCommandNotAllowed
 	}
-	// In denylist mode, the shell itself may be denied.
-	return !s.AllowAll || s.isCommandAllowed("/bin/sh")
+	// The shell itself may be blocked.
+	_, blocked, _ := s.rules()
+	shell, err := filepath.EvalSymlinks("/bin/sh")
+	if err != nil {
+		return err
+	}
+	if blocked[shell] {
+		return ErrCommandNotAllowed
+	}
+	return nil
 }
 
 // acquire counts a process against MaxProcesses, or fails if the limit is reached. Exec and

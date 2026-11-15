@@ -14,7 +14,7 @@ func TestChildProcessEnvironment(t *testing.T) {
 	os.Setenv("ORBITAL_FILTERED_VAR", "filtered-value")
 	defer os.Unsetenv("ORBITAL_FILTERED_VAR")
 	env := runtime.NewFilteredEnvironment(runtime.NewRealEnvironment(), nil, []string{"ORBITAL_FILTERED_VAR"})
-	cfg := &runtime.Config{Environment: env, ProcessSpawner: runtime.NewAllowListProcessSpawner("printenv", "/usr/bin/env"), Timeout: 20 * time.Second}
+	cfg := &runtime.Config{Environment: env, ProcessSpawner: runtime.NewAllowListProcessSpawner(lookPath(t, "printenv"), "/usr/bin/env"), Timeout: 20 * time.Second}
 	got := runJS(t, cfg, `
 const cp = require('child_process');
 const run = (cmd, args, opts) => new Promise((r) => {

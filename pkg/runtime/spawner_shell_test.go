@@ -15,7 +15,7 @@ func TestSandboxedSpawnWithShellNeedsShellRules(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	line := []string{"hi;", "touch", marker}
 
-	allowlist := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{"echo"}})
+	allowlist := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{hostPath(t, "echo")}})
 	if _, err := allowlist.Spawn(context.Background(), "echo", line, &SpawnOptions{Shell: true}); !errors.Is(err, ErrCommandNotAllowed) {
 		t.Fatalf("shell spawn of an allowed name: err = %v, want ErrCommandNotAllowed", err)
 	}
@@ -35,7 +35,7 @@ func TestSandboxedSpawnWithShellNeedsShellRules(t *testing.T) {
 	}
 
 	// AllowShellCommands is what permits a shell line, as it does for Exec.
-	shells := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{"echo"}, AllowShellCommands: true})
+	shells := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{hostPath(t, "echo")}, AllowShellCommands: true})
 	proc, err = shells.Spawn(context.Background(), "echo", []string{"ok"}, &SpawnOptions{Shell: true})
 	if err != nil {
 		t.Fatal(err)
@@ -71,13 +71,13 @@ func TestSandboxedExecCountsTowardMaxProcesses(t *testing.T) {
 
 // ExecFile runs its file without a shell, so the file's own rule applies.
 func TestSandboxedExecFileChecksTheFile(t *testing.T) {
-	allowlist := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{"echo"}})
+	allowlist := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowedCommands: []string{hostPath(t, "echo")}})
 	out, _, _, err := allowlist.ExecFile(context.Background(), "echo", []string{"ok"}, &SpawnOptions{Shell: true})
 	if err != nil || strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("allowed file: out = %q, err = %v", out, err)
 	}
 
-	denied := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowAll: true, BlockedCommands: []string{"echo"}})
+	denied := NewSandboxedProcessSpawner(&SandboxProcessConfig{AllowAll: true, BlockedCommands: []string{hostPath(t, "echo")}})
 	if _, _, _, err := denied.ExecFile(context.Background(), "echo", []string{"x"}, &SpawnOptions{Shell: true}); !errors.Is(err, ErrCommandNotAllowed) {
 		t.Fatalf("blocked file: err = %v", err)
 	}
