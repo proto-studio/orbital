@@ -1,9 +1,13 @@
 package nodejs
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 // A module or package that cannot be found makes import() reject with Node's
@@ -158,5 +162,87 @@ log.push((await import('./real.js')).default);`,
 	})
 	if got, want := runLogModuleIn(t, dir), `[true,"real"]`; got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// A query or fragment makes a separate module instance and stays in the error's url,
+// an encoded "/" or "\" is rejected, and file:/ with one slash is a file URL, as in
+// Node 20.18.1.
+func TestDynamicImport_FileURLForms(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"sub/m.mjs": `export const n = Math.random(); export const u = import.meta.url;`,
+		"entry.mjs": `const d = 'file://' + import.meta.url.slice('file://'.length).replace(/[^/]*$/, '') + 'sub/';
+const a = await import(d + 'm.mjs?v=1'), b = await import(d + 'm.mjs?v=2'), c = await import(d + 'm.mjs?v=1');
+const f = await import('./sub/m.mjs#x'), g = await import('./sub/m.mjs?v=1'), h = await import(d.replace('file://', 'file:') + 'm.mjs');
+log.push(a.n === b.n, a.n === c.n, a.n === g.n, a.u.endsWith('/sub/m.mjs?v=1'), f.u.endsWith('/sub/m.mjs#x'), h.u.endsWith('/sub/m.mjs'));
+for (const s of [d + 'a%2Fb.mjs', d + 'a%5cb.mjs', './nope.mjs?q=1']) {
+  try { await import(s); } catch (e) { log.push([e.name, e.code, e.message, e.url]); }
+}`,
+	})
+	got := strings.ReplaceAll(runLogModuleIn(t, dir), dir, "<dir>")
+	want := `[false,true,true,true,true,true,` +
+		`["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"<dir>/sub/a%2Fb.mjs\" must not include encoded \"/\" or \"\\\" characters imported from <dir>/entry.mjs",null],` +
+		`["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"<dir>/sub/a%5cb.mjs\" must not include encoded \"/\" or \"\\\" characters imported from <dir>/entry.mjs",null],` +
+		`["Error","ERR_MODULE_NOT_FOUND","Cannot find module '<dir>/nope.mjs' imported from <dir>/entry.mjs","file://<dir>/nope.mjs?q=1"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// The error stays a real Error even if code replaced the global constructor.
+func TestDynamicImport_NotFoundIgnoresReplacedError(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"entry.mjs": `const E = Error; globalThis.Error = function () { return {}; };
+try { await import('./nope.mjs'); } catch (e) { log.push(e instanceof E, e.code); }`,
+	})
+	if want := `[true,"ERR_MODULE_NOT_FOUND"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// A static import that can't be resolved fails the entry the way Node fails it: as an
+// uncaught exception printed with its stack, code and url, which an
+// 'uncaughtException' listener can handle.
+func TestStaticImport_NotFoundIsUncaught(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, err = inst.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) {
+		t.Fatalf("RunModuleFile: %v, want an uncaught exception", err)
+	}
+	msg := strings.ReplaceAll(uncaught.Message, dir, "<dir>")
+	for _, part := range []string{
+		"Error [ERR_MODULE_NOT_FOUND]: Cannot find module '<dir>/nope.mjs' imported from <dir>/entry.mjs\n",
+		"code: 'ERR_MODULE_NOT_FOUND'",
+		"url: 'file://<dir>/nope.mjs'",
+	} {
+		if !strings.Contains(msg, part) {
+			t.Fatalf("message %q lacks %q", msg, part)
+		}
+	}
+
+	dir = t.TempDir()
+	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
+	handled, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handled.Runtime.Dispose()
+	if _, err := handled.Runtime.RunScript(`globalThis.log = []; process.on('uncaughtException', (e) => log.push(e.code));`, "init.js"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handled.ESM.RunModuleFile(filepath.Join(dir, "entry.mjs")); err != nil {
+		t.Fatalf("with a listener: %v", err)
+	}
+	logged, _ := handled.Runtime.RunScript("JSON.stringify(log)", "read.js")
+	if got := logged.String(); got != `["ERR_MODULE_NOT_FOUND"]` {
+		t.Fatalf("listener saw %s", got)
 	}
 }
