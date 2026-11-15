@@ -329,7 +329,7 @@
   function defaultLoad(url, context) {
     const attrs = context && context.importAttributes;
     const r = globalThis.__goLoad(url, (context && context.format) || '',
-      attrs == null ? '{}' : JSON.stringify(attrs), checkAttributes ? '1' : '');
+      encodeAttrs(attrs), checkAttributes ? '1' : '');
     if (r.code) {
       // An import attribute the module's format doesn't allow (Node's
       // validateAttributes in its default load).
@@ -338,6 +338,24 @@
       throw err;
     }
     return { source: r.source, format: r.format, shortCircuit: true };
+  }
+
+  // Attributes cross to Go as JSON [key, value] pairs, with undefined values
+  // marked (JSON.stringify would drop them), so every key is still checked.
+  function encodeAttrs(attrs) {
+    if (attrs == null || typeof attrs !== 'object') return '[]';
+    return JSON.stringify(Object.keys(attrs).map((k) => {
+      const v = attrs[k];
+      return [k, v === undefined ? { undefined: true } : v];
+    }));
+  }
+
+  function decodeAttrs(text) {
+    const attrs = {};
+    for (const [k, v] of JSON.parse(text || '[]')) {
+      attrs[k] = v !== null && typeof v === 'object' && v.undefined === true ? undefined : v;
+    }
+    return attrs;
   }
 
   // Whether the load in progress checks import attributes (not for an entry point).
@@ -370,7 +388,7 @@
     return {
       url: res.url,
       format: res.format == null ? '' : res.format,
-      importAttributes: JSON.stringify(resolvedAttributes),
+      importAttributes: encodeAttrs(resolvedAttributes),
     };
   };
 
@@ -379,7 +397,7 @@
     const ctx = {
       format: format || undefined,
       conditions: ['node', 'import', 'module', 'default'],
-      importAttributes: JSON.parse(attrsJSON || '{}'),
+      importAttributes: decodeAttrs(attrsJSON),
     };
     checkAttributes = !!check;
     const res = await chain(url, ctx);

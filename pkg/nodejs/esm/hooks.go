@@ -217,7 +217,7 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			if checkFormat == "" {
 				checkFormat = format
 			}
-			if cerr := checkImportAttributes(url, checkFormat, parseAttrsJSON(argString(info, 2))); cerr != nil {
+			if cerr := checkImportAttributes(e.displayURL(url), checkFormat, parseAttrsJSON(argString(info, 2))); cerr != nil {
 				me := cerr.(*moduleError)
 				mv, _ := c.NewString(me.msg)
 				cv, _ := c.NewString(me.code)
@@ -340,7 +340,10 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	if err != nil {
 		return "", "", err
 	}
-	return final, url, nil
+	if attrs == nil {
+		return final, url, nil
+	}
+	return final, e.typedKey(url, format, parseAttrsJSON(resolvedAttrs)), nil
 }
 
 // callLoaderRealm invokes a global function in the loader realm with string args
