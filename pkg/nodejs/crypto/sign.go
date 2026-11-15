@@ -101,6 +101,90 @@ func pssSalt(n int) int {
 	return n
 }
 
+// Go's PSS takes a salt length of 0 to mean "automatic", so a PSS
+// signature with an empty salt (RFC 8017 EMSA-PSS with sLen 0) is made and
+// checked here.
+func mgf1XOR(out []byte, h func() hash.Hash, seed []byte) {
+	var counter [4]byte
+	done := 0
+	for done < len(out) {
+		d := h()
+		d.Write(seed)
+		d.Write(counter[:])
+		block := d.Sum(nil)
+		for i := 0; i < len(block) && done < len(out); i++ {
+			out[done] ^= block[i]
+			done++
+		}
+		for i := 3; i >= 0; i-- {
+			counter[i]++
+			if counter[i] != 0 {
+				break
+			}
+		}
+	}
+}
+
+func pssNoSaltHash(h func() hash.Hash, mHash []byte) []byte {
+	d := h()
+	d.Write(make([]byte, 8))
+	d.Write(mHash)
+	return d.Sum(nil)
+}
+
+func signPSSNoSalt(k *rsa.PrivateKey, h func() hash.Hash, mHash []byte) ([]byte, error) {
+	emBits := k.N.BitLen() - 1
+	emLen := (emBits + 7) / 8
+	hLen := len(mHash)
+	if emLen < hLen+2 {
+		return nil, errDigestTooBig
+	}
+	H := pssNoSaltHash(h, mHash)
+	db := make([]byte, emLen-hLen-1)
+	db[len(db)-1] = 0x01
+	mgf1XOR(db, h, H)
+	db[0] &= 0xff >> (8*emLen - emBits)
+	em := append(append(db, H...), 0xbc)
+	k.Precompute()
+	m := new(big.Int).SetBytes(em)
+	sig := new(big.Int).Exp(m, k.D, k.N)
+	return sig.FillBytes(make([]byte, (k.N.BitLen()+7)/8)), nil
+}
+
+func verifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bool {
+	size := (k.N.BitLen() + 7) / 8
+	if len(sig) != size {
+		return false
+	}
+	s := new(big.Int).SetBytes(sig)
+	if s.Cmp(k.N) >= 0 {
+		return false
+	}
+	emBits := k.N.BitLen() - 1
+	emLen := (emBits + 7) / 8
+	em := new(big.Int).Exp(s, big.NewInt(int64(k.E)), k.N).FillBytes(make([]byte, emLen))
+	hLen := len(mHash)
+	if emLen < hLen+2 || em[emLen-1] != 0xbc {
+		return false
+	}
+	db := append([]byte{}, em[:emLen-hLen-1]...)
+	H := em[emLen-hLen-1 : emLen-1]
+	if db[0]&^(0xff>>(8*emLen-emBits)) != 0 {
+		return false
+	}
+	mgf1XOR(db, h, H)
+	db[0] &= 0xff >> (8*emLen - emBits)
+	for _, b := range db[:len(db)-1] {
+		if b != 0 {
+			return false
+		}
+	}
+	if db[len(db)-1] != 0x01 {
+		return false
+	}
+	return string(pssNoSaltHash(h, mHash)) == string(H)
+}
+
 func ecdsaSize(k *ecdsa.PublicKey) int {
 	return (k.Curve.Params().BitSize + 7) / 8
 }
@@ -129,6 +213,9 @@ func signWith(priv any, data []byte, p signParams) ([]byte, error) {
 			}
 			return sig, nil
 		case rsaPSSPadding:
+			if p.saltLength == 0 {
+				return signPSSNoSalt(k, h, sum)
+			}
 			sig, err := rsa.SignPSS(rand.Reader, k, id, sum, &rsa.PSSOptions{SaltLength: pssSalt(p.saltLength)})
 			if err != nil {
 				return nil, errDigestTooBig
@@ -181,6 +268,9 @@ func verifyWith(pub any, data, sig []byte, p signParams) (bool, error) {
 		case rsaPKCS1Padding:
 			return rsa.VerifyPKCS1v15(k, id, sum, sig) == nil, nil
 		case rsaPSSPadding:
+			if p.saltLength == 0 {
+				return verifyPSSNoSalt(k, h, sum, sig), nil
+			}
 			return rsa.VerifyPSS(k, id, sum, sig, &rsa.PSSOptions{SaltLength: pssSalt(p.saltLength)}) == nil, nil
 		}
 		return false, errIllegalPadding
@@ -231,7 +321,22 @@ func (c *Crypto) signFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw(errUnsupportedOp.Error())
 	}
 	data, _ := base64.StdEncoding.DecodeString(args[1].String())
-	sig, err := signWith(priv, data, signParamsFrom(args, 2))
+	params := signParamsFrom(args, 2)
+	if len(args) > 7 && args[7].IsFunction() {
+		// The callback form signs off the JS thread.
+		c.runOffThread(args[7], func() func(*v8.Context) []*v8.Value {
+			sig, err := signWith(priv, data, params)
+			return func(ctx *v8.Context) []*v8.Value {
+				if err != nil {
+					return errorArgs(ctx, err)
+				}
+				v, _ := ctx.NewString(base64.StdEncoding.EncodeToString(sig))
+				return []*v8.Value{ctx.Undefined(), v}
+			}
+		})
+		return ctx.Undefined()
+	}
+	sig, err := signWith(priv, data, params)
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}
@@ -257,7 +362,21 @@ func (c *Crypto) verifyFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	data, _ := base64.StdEncoding.DecodeString(args[1].String())
 	sig, _ := base64.StdEncoding.DecodeString(args[2].String())
-	ok, err := verifyWith(pub, data, sig, signParamsFrom(args, 3))
+	params := signParamsFrom(args, 3)
+	if len(args) > 8 && args[8].IsFunction() {
+		// The callback form verifies off the JS thread.
+		c.runOffThread(args[8], func() func(*v8.Context) []*v8.Value {
+			ok, err := verifyWith(pub, data, sig, params)
+			return func(ctx *v8.Context) []*v8.Value {
+				if err != nil {
+					return errorArgs(ctx, err)
+				}
+				return []*v8.Value{ctx.Undefined(), ctx.NewBoolean(ok)}
+			}
+		})
+		return ctx.Undefined()
+	}
+	ok, err := verifyWith(pub, data, sig, params)
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}

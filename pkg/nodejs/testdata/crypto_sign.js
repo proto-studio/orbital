@@ -77,6 +77,16 @@ results.pss = outcome(() => {
     verifies('sha256', k.rsaPub, Buffer.from(nodeSigs.pssMax, 'base64'))];
 });
 
+// PSS with an explicitly empty salt is deterministic, so it's compared byte for byte.
+results.pssZeroSalt = outcome(() => {
+  const pss0 = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 0 };
+  const sig = crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss0 });
+  return [sig.toString('hex'), verifies('sha256', k.rsaPub, sig, pss0),
+    verifies('sha256', k.rsaPub, sig, { padding: 6, saltLength: 32 }), verifies('sha256', k.rsaPub, sig, { padding: 6 }),
+    verifies('sha256', k.rsaPub, crypto.sign('sha256', msg, { key: k.rsaPriv, padding: 6 }), pss0),
+    verifies('sha256', k.rsaPub, Buffer.from(nodeSigs.pss, 'base64'), pss0)];
+});
+
 // Verification.
 const good = crypto.sign('sha256', msg, k.rsaPriv);
 results.verify = {
@@ -90,6 +100,9 @@ results.verify = {
   ed25519: outcome(() => crypto.verify(null, msg, k.edPub, crypto.sign(null, msg, k.edPriv))),
   ed25519Wrong: outcome(() => crypto.verify(null, Buffer.from('x'), k.edPub, crypto.sign(null, msg, k.edPriv))),
   stringData: outcome(() => crypto.verify('sha256', 'message to sign', k.rsaPub, good)),
+  privatePem: outcome(() => crypto.verify('sha256', msg, keys.rsaPriv, good)),
+  privatePemObject: outcome(() => crypto.verify('sha256', msg, { key: keys.rsaPriv }, good)),
+  privatePemStream: outcome(() => crypto.createVerify('sha256').update(msg).verify(keys.ecPriv, crypto.sign('sha256', msg, k.ecPriv))),
 };
 
 // Errors.

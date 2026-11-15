@@ -106,6 +106,16 @@
       false
     ]
   },
+  "pssZeroSalt": {
+    "value": [
+      "2e53c675022f6a95dc743054dc3265a57a111dad26428414b67bc2099728e4cfd3be4f1917a36b0f25bdeb8c130681f835a8828ac3626f094652aabb3c68da075996a92f860b991111c1df26bf3fd1b821df76c79a5d5ecdcda5be03f23c79eb6fba57923e65e35eb7973cfe20aebfdbc9aedb1f5b7f63b6aa579135e32849d7",
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
   "rsaFromObject": {
     "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
   },
@@ -188,6 +198,15 @@
       "value": true
     },
     "privateKey": {
+      "value": true
+    },
+    "privatePem": {
+      "value": true
+    },
+    "privatePemObject": {
+      "value": true
+    },
+    "privatePemStream": {
       "value": true
     },
     "short": {
