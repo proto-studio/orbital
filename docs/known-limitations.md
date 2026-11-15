@@ -217,9 +217,15 @@ traceability.
 
 ### Still missing
 
-- **[gap] `node:crypto` symmetric & signature operations.** The module exposes
-  hash / hmac / random + the KeyObject API, but **not**: `createCipheriv` /
-  `createDecipheriv`, `createSign` / `createVerify` and one-shot `sign` /
+- **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
+  CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`), the ciphers Go's standard
+  library has (`cipher.go`). CCM, OCB, XTS, ChaCha20-Poly1305, CFB1, key wrap, ARIA,
+  Camellia and SM4 throw `ERR_CRYPTO_UNKNOWN_CIPHER`.
+- **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
+  `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
+  so a GCM context holds it in memory.
+- **[gap] `node:crypto` signature operations.** The module exposes
+  hash / hmac / random, ciphers + the KeyObject API, but **not**: `createSign` / `createVerify` and one-shot `sign` /
   `verify`, `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
   passes, but native `node:crypto` consumers of them will not work. (#141)
