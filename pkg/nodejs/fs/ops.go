@@ -506,42 +506,35 @@ func vectorAt(args []*v8.Value, i int) []*v8.Value {
 // of them. A position of -1 means the file's offset.
 func (f *FS) writevOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
 	fd := fdAt(args)
-	var chunks [][]byte
+	// The buffers go out in one write, as writev(2) sends them, so another writer to a pipe
+	// can't come between them.
+	var all []byte
 	for _, item := range vectorAt(args, 1) {
 		data, err := decodeData(item)
 		if err != nil {
 			return nil, -1, ctx.Throw(err.Error())
 		}
-		chunks = append(chunks, data)
+		all = append(all, data...)
 	}
 	position := intAt(args, 2)
 	return func() opResult {
+		if len(all) == 0 {
+			return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(0) }}
+		}
 		// Descriptors 1 and 2 are the process's own stdout and stderr, as for write.
-		var write func([]byte) (int, error)
+		var n int
+		var err error
 		if file, ok := f.fileForFD(fd); ok {
-			write = func(data []byte) (int, error) {
-				return atPosition(file, position, func() (int, error) { return file.Write(data) })
-			}
+			n, err = atPosition(file, position, func() (int, error) { return file.Write(all) })
 		} else if std := map[int]*os.File{1: os.Stdout, 2: os.Stderr}[fd]; std != nil {
-			write = std.Write
+			n, err = std.Write(all)
 		} else {
-			return failed(syscall.EBADF, "write", "")
+			err = syscall.EBADF
 		}
-		total := 0
-		for _, data := range chunks {
-			n, err := write(data)
-			if err != nil {
-				return failed(err, "write", "")
-			}
-			total += n
-			if position >= 0 {
-				position += int64(n)
-			}
-			if n < len(data) {
-				break
-			}
+		if err != nil {
+			return failed(err, "write", "")
 		}
-		return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(int64(total)) }}
+		return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(int64(n)) }}
 	}, fd, nil
 }
 
