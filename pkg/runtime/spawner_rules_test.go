@@ -152,3 +152,37 @@ func TestSandboxedSpawnerRejectsInvalidEntries(t *testing.T) {
 		}
 	}
 }
+
+// A relative command and a relative working directory resolve to the path that runs.
+func TestSandboxedSpawnerRelativeCwd(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	for _, dir := range []string{"sub", filepath.Join("sub", "sub")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeExecutable(t, filepath.Join(dir, "tool"), dir)
+	}
+	allowed := filepath.Join(base, "sub", "tool")
+
+	s := NewAllowListProcessSpawner(allowed)
+	out, _, _, err := s.ExecFile(context.Background(), "./tool", nil, &SpawnOptions{Cwd: "sub"})
+	if err != nil || strings.TrimSpace(string(out)) != "sub" {
+		t.Fatalf("allowed: out = %q, err = %v", out, err)
+	}
+
+	denied := NewDenyListProcessSpawner(allowed)
+	if _, _, _, err := denied.ExecFile(context.Background(), "./tool", nil, &SpawnOptions{Cwd: "sub"}); !errors.Is(err, ErrCommandNotAllowed) {
+		t.Fatalf("blocked: err = %v, want ErrCommandNotAllowed", err)
+	}
+}

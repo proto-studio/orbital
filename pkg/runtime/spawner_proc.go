@@ -483,12 +483,14 @@ func resolveCommand(command, cwd string) (string, error) {
 		path = found
 	}
 	if !filepath.IsAbs(path) {
-		if cwd == "" {
+		// The process starts in cwd, which is itself relative to the host's working
+		// directory if it is relative.
+		if !filepath.IsAbs(cwd) {
 			wd, err := os.Getwd()
 			if err != nil {
 				return "", err
 			}
-			cwd = wd
+			cwd = filepath.Join(wd, cwd)
 		}
 		path = filepath.Join(cwd, path)
 	}
