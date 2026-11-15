@@ -1,6 +1,7 @@
 package nodejs
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,4 +136,27 @@ try { await import('nopkg-hook'); } catch (e) { log.push(e.code, e.message, e.ur
 
 func jsString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "\\'") + "'"
+}
+
+// The error's url is percent-encoded like Node's, and a hook can resolve it again: a
+// directory name with a space round-trips through the file: URL.
+func TestDynamicImport_NotFoundURLRoundTrips(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a dir")
+	writeFiles(t, dir, map[string]string{
+		"hooks.mjs": `export async function resolve(specifier, context, next) {
+  try { return await next(specifier, context); }
+  catch (e) {
+    if (e.code === 'ERR_MODULE_NOT_FOUND' && e.url && e.url.endsWith('.js')) return next(e.url.slice(0, -3) + '.mjs', context);
+    throw e;
+  }
+}`,
+		"real.mjs": `export default 'real';`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('./gone.mjs'); } catch (e) { log.push(e.url.includes('/a%20dir/gone.mjs')); }
+log.push((await import('./real.js')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[true,"real"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
 }

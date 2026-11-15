@@ -55,11 +55,16 @@ func (e *ESM) fsIsDir(p string) bool {
 
 // stripFileURL turns a file:// URL into a plain filesystem path (leaving other
 // urls and plain paths unchanged).
+// Percent-escapes are decoded, so a URL Node built for a path with spaces (as in
+// an ERR_MODULE_NOT_FOUND error's url) names that path again.
 func stripFileURL(u string) string {
-	if strings.HasPrefix(u, "file://") {
-		return u[len("file://"):]
+	if !strings.HasPrefix(u, "file://") {
+		return u
 	}
-	return u
+	if parsed, err := url.Parse(u); err == nil && (parsed.Host == "" || parsed.Host == "localhost") && parsed.Path != "" {
+		return parsed.Path
+	}
+	return u[len("file://"):]
 }
 
 func looksLikeESM(src string) bool {
@@ -98,10 +103,7 @@ func (e *ESM) referrerDir(referrer string) string {
 	if referrer == "" || strings.HasPrefix(referrer, "node:") || strings.HasPrefix(referrer, "native:") {
 		return e.cwd()
 	}
-	r := referrer
-	if strings.HasPrefix(r, "file://") {
-		r = r[len("file://"):]
-	}
+	r := stripFileURL(referrer)
 	if strings.HasPrefix(r, "/") || winAbs(r) {
 		return filepath.Dir(r)
 	}
@@ -145,10 +147,7 @@ func (e *ESM) resolveIndex(dir string) string {
 // resolveToURL implements Node's default resolution and returns a stable module
 // url (an absolute path, or "node:<name>" for builtins).
 func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
-	spec := specifier
-	if strings.HasPrefix(spec, "file://") {
-		spec = spec[len("file://"):]
-	}
+	spec := stripFileURL(specifier)
 
 	// Builtins (with or without node: prefix).
 	if bare, ok := e.builtinBare(spec); ok {
