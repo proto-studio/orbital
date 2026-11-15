@@ -365,8 +365,8 @@ type SandboxedProcessSpawner struct {
 	mu          sync.Mutex
 
 	rulesOnce sync.Once
-	allowed   map[string]bool // resolved AllowedCommands
-	blocked   map[string]bool // resolved BlockedCommands
+	allowed   map[string][]string // resolved AllowedCommands, to the entries naming each
+	blocked   map[string]bool     // resolved BlockedCommands
 	rulesErr  error
 }
 
@@ -444,19 +444,26 @@ func (s *SandboxedProcessSpawner) Err() error {
 }
 
 // rules resolves AllowedCommands and BlockedCommands once.
-func (s *SandboxedProcessSpawner) rules() (allowed, blocked map[string]bool, err error) {
+func (s *SandboxedProcessSpawner) rules() (allowed map[string][]string, blocked map[string]bool, err error) {
 	s.rulesOnce.Do(func() {
 		s.allowed, s.rulesErr = resolveEntries("AllowedCommands", s.AllowedCommands)
-		if s.rulesErr == nil {
-			s.blocked, s.rulesErr = resolveEntries("BlockedCommands", s.BlockedCommands)
+		if s.rulesErr != nil {
+			return
+		}
+		var blockedEntries map[string][]string
+		blockedEntries, s.rulesErr = resolveEntries("BlockedCommands", s.BlockedCommands)
+		s.blocked = make(map[string]bool, len(blockedEntries))
+		for path := range blockedEntries {
+			s.blocked[path] = true
 		}
 	})
 	return s.allowed, s.blocked, s.rulesErr
 }
 
-// resolveEntries resolves a list of absolute executable paths through symlinks.
-func resolveEntries(field string, entries []string) (map[string]bool, error) {
-	resolved := make(map[string]bool, len(entries))
+// resolveEntries resolves a list of absolute executable paths through symlinks. It maps
+// each resolved path to the entries that name it, in order.
+func resolveEntries(field string, entries []string) (map[string][]string, error) {
+	resolved := make(map[string][]string, len(entries))
 	for _, entry := range entries {
 		if !filepath.IsAbs(entry) {
 			return nil, fmt.Errorf("%w: %s entry %q is not an absolute path", ErrCommandNotAllowed, field, entry)
@@ -465,7 +472,7 @@ func resolveEntries(field string, entries []string) (map[string]bool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s entry %q: %v", ErrCommandNotAllowed, field, entry, err)
 		}
-		resolved[path] = true
+		resolved[path] = append(resolved[path], entry)
 	}
 	return resolved, nil
 }
@@ -510,7 +517,7 @@ func (s *SandboxedProcessSpawner) pathAllowed(resolved string) error {
 	if blocked[resolved] {
 		return ErrCommandNotAllowed
 	}
-	if s.AllowAll || allowed[resolved] {
+	if s.AllowAll || len(allowed[resolved]) > 0 {
 		return nil
 	}
 	return ErrCommandNotAllowed
@@ -533,9 +540,27 @@ func (s *SandboxedProcessSpawner) checkCommand(command string, options *SpawnOpt
 	if err := s.pathAllowed(resolved); err != nil {
 		return "", nil, err
 	}
-	if opts.Argv0 == "" {
-		opts.Argv0 = command
+	// Some programs act on the name they are run by, as a multicall binary does, so an
+	// entry allows the program under its own name. A name that no entry for this program
+	// has is replaced with the first entry.
+	argv0 := opts.Argv0
+	if argv0 == "" {
+		argv0 = command
 	}
+	allowed, _, _ := s.rules()
+	if entries := allowed[resolved]; len(entries) > 0 {
+		named := false
+		for _, entry := range entries {
+			if filepath.Base(entry) == filepath.Base(argv0) {
+				named = true
+				break
+			}
+		}
+		if !named {
+			argv0 = entries[0]
+		}
+	}
+	opts.Argv0 = argv0
 	return resolved, &opts, nil
 }
 
