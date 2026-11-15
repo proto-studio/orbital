@@ -362,8 +362,10 @@ done({ encoded, iterated, viaReadable });`)
 
 	t.Run("timeouts", func(t *testing.T) {
 		result := runScript(t, &runtime.Config{}, `
+// The server sends a byte every 15 ms for 300 ms, then goes quiet.
 const server = await listen((c) => {
   const interval = setInterval(() => c.write('x'), 15);
+  setTimeout(() => clearInterval(interval), 300);
   c.on('close', () => clearInterval(interval));
 });
 const port = server.address().port;
@@ -374,12 +376,20 @@ const idle = await new Promise((resolve) => {
     c.setTimeout(30, () => { const v = c.timeout; c.destroy(); quiet.close(); resolve(v); });
   });
 });
+// Data resets the idle timer, so the timeout fires only once the socket has been quiet for
+// the whole timeout, however slowly the data arrives. A timer that data didn't reset would
+// fire while bytes were still arriving every 15 ms.
 const active = await new Promise((resolve) => {
   const c = net.connect(port, '127.0.0.1');
-  c.resume();
-  let fired = false;
-  c.setTimeout(60, () => { fired = true; });
-  setTimeout(() => { c.destroy(); resolve(fired); }, 150);
+  let lastData = 0;
+  let received = 0;
+  c.on('data', (d) => { lastData = Date.now(); received += d.length; });
+  c.setTimeout(60, () => {
+    const quiet = Date.now() - lastData;
+    c.destroy();
+    // Timers may fire a few milliseconds early by the wall clock.
+    resolve({ quietForTimeout: quiet >= 50, sawData: received > 0 });
+  });
 });
 const cleared = await new Promise((resolve) => {
   const c = net.connect(port, '127.0.0.1');
@@ -391,7 +401,11 @@ const cleared = await new Promise((resolve) => {
 });
 server.close();
 done({ idle, active, cleared });`)
-		wantJSON(t, result, map[string]any{"idle": float64(30), "active": false, "cleared": false})
+		wantJSON(t, result, map[string]any{
+			"idle":    float64(30),
+			"active":  map[string]any{"quietForTimeout": true, "sawData": true},
+			"cleared": false,
+		})
 	})
 
 	t.Run("half-open and event order", func(t *testing.T) {
