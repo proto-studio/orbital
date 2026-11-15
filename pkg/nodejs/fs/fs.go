@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -657,6 +658,19 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	num("ino", ino)
 	num("size", float64(stat.Size))
 	num("blocks", blocks)
+	// The same ten numbers exactly, as decimal strings, for { bigint: true }, since an inode
+	// or size past 2^53 doesn't fit a Number.
+	exact, _ := ctx.NewArray(10)
+	for i, v := range []string{
+		strconv.FormatUint(stat.Dev, 10), strconv.FormatUint(uint64(posixMode(stat.Mode)), 10),
+		strconv.FormatFloat(nlink, 'f', 0, 64), strconv.Itoa(stat.Uid), strconv.Itoa(stat.Gid),
+		strconv.FormatUint(stat.Rdev, 10), strconv.FormatFloat(blksize, 'f', 0, 64),
+		strconv.FormatUint(stat.Ino, 10), strconv.FormatInt(stat.Size, 10), strconv.FormatFloat(blocks, 'f', 0, 64),
+	} {
+		sv, _ := ctx.NewString(v)
+		exact.SetIndex(i, sv)
+	}
+	obj.Set("exact", exact)
 	num("atimeMs", ms(stat.AccessTime))
 	num("mtimeMs", ms(stat.ModTime))
 	num("ctimeMs", ms(stat.ChangeTime))
