@@ -328,6 +328,11 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	if err := fsObj.Set("__openFlags", openFlags); err != nil {
 		return err
 	}
+	// Whether relative paths name files from the working directory, as on an unrestricted
+	// filesystem, rather than from a root.
+	if err := fsObj.Set("__cwdRelative", ctx.NewBoolean(runtime.FilesystemIsUnrestricted(rt.Filesystem()))); err != nil {
+		return err
+	}
 
 	// Set fs as global module
 	if err := rt.SetGlobal("__fs_module", fsObj); err != nil {
