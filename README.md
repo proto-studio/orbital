@@ -121,7 +121,9 @@ cfg := &runtime.Config{
 inst, err := nodejs.New(cfg)
 ```
 
-See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DNS use these controls.
+See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DNS use these controls,
+and [`docs/child-processes.md`](docs/child-processes.md) for `ProcessSpawner`: the built-in
+spawners, `SandboxProcessConfig`, and wrapping one with your own policy.
 
 ## Uncaught exceptions and `process.exit`
 
@@ -213,6 +215,7 @@ Fuller examples live in [`examples/`](examples/):
 - [`examples/native/modules`](examples/native/modules) — native Go modules callable from JS
 - [`examples/native/esm`](examples/native/esm) — ES modules
 - [`examples/sandbox-server`](examples/sandbox-server) — sandboxed HTTP server
+- [`examples/process-spawner`](examples/process-spawner) — a `ProcessSpawner` that logs calls and refuses some
 
 ## Documentation
 
@@ -220,6 +223,7 @@ Fuller examples live in [`examples/`](examples/):
 - [CLI flags](docs/cli-flags.md) — Orbital flags vs Node.js
 - [Node.js module checklist](modules.md)
 - [Known limitations](docs/known-limitations.md)
+- [Child processes](docs/child-processes.md) — `ProcessSpawner` and choosing a policy
 
 ## Contributing
 
