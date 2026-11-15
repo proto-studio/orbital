@@ -1,0 +1,484 @@
+{
+  "checkPrimeCallback": {
+    "err": "undefined",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "boolean true"
+  },
+  "checkPrimeOptionsCallback": {
+    "err": "undefined",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "boolean false"
+  },
+  "checkPrimeSync_bigEndian": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_buffer13": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_carmichael561": {
+    "value": "boolean false"
+  },
+  "checkPrimeSync_checks10": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_emptyArrayBuffer": {
+    "value": "boolean false"
+  },
+  "checkPrimeSync_fractionChecks": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.checks\" is out of range. It must be an integer. Received 1.5",
+    "name": "RangeError"
+  },
+  "checkPrimeSync_mersenne127": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_negative": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"candidate\" is out of range. It must be \u003e= 0. Received -1n",
+    "name": "RangeError"
+  },
+  "checkPrimeSync_negativeChecks": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.checks\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 2147483647. Received -1",
+    "name": "RangeError"
+  },
+  "checkPrimeSync_number": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"candidate\" argument must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView. Received type number (13)",
+    "name": "TypeError"
+  },
+  "checkPrimeSync_one": {
+    "value": "boolean false"
+  },
+  "checkPrimeSync_optionsNotObject": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options\" argument must be of type object. Received type number (5)",
+    "name": "TypeError"
+  },
+  "checkPrimeSync_string": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"candidate\" argument must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView. Received type string ('13')",
+    "name": "TypeError"
+  },
+  "checkPrimeSync_thirteen": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_twelve": {
+    "value": "boolean false"
+  },
+  "checkPrimeSync_two": {
+    "value": "boolean true"
+  },
+  "checkPrimeSync_zero": {
+    "value": "boolean false"
+  },
+  "checkPrime_noCallback": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"callback\" argument must be of type function. Received undefined",
+    "name": "TypeError"
+  },
+  "exports": [
+    "randomFill function",
+    "randomFillSync function",
+    "getRandomValues function",
+    "webcrypto object",
+    "subtle object",
+    "checkPrime function",
+    "checkPrimeSync function",
+    "generatePrime function",
+    "generatePrimeSync function",
+    "getFips function",
+    "Certificate function",
+    "secureHeapUsed function",
+    "setEngine function"
+  ],
+  "generatePrimeCallback": {
+    "err": "undefined",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "number 16"
+  },
+  "generatePrimeErrorCallback": {
+    "err": "error:01800076:bignum routines::bits too small",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "undefined undefined"
+  },
+  "generatePrimeSync_addRem": {
+    "value": "string bigint 8 true rem true"
+  },
+  "generatePrimeSync_addString": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.add\" property must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView. Received type string ('6')",
+    "name": "TypeError"
+  },
+  "generatePrimeSync_addTooBig": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "invalid options.add",
+    "name": "RangeError"
+  },
+  "generatePrimeSync_bigint": {
+    "value": "string bigint 8 true"
+  },
+  "generatePrimeSync_bigintOption": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.bigint\" property must be of type boolean. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "generatePrimeSync_bits8": {
+    "value": "string ArrayBuffer 1 8 true"
+  },
+  "generatePrimeSync_bufferAddRem": {
+    "value": "string bigint 16 true rem true"
+  },
+  "generatePrimeSync_negative": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size\" is out of range. It must be \u003e= 1 \u0026\u0026 \u003c= 2147483647. Received -1",
+    "name": "RangeError"
+  },
+  "generatePrimeSync_negativeAdd": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.add\" is out of range. It must be \u003e= 0. Received -6n",
+    "name": "RangeError"
+  },
+  "generatePrimeSync_one": {
+    "message": "error:01800076:bignum routines::bits too small",
+    "name": "Error"
+  },
+  "generatePrimeSync_remNotBelowAdd": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "invalid options.rem",
+    "name": "RangeError"
+  },
+  "generatePrimeSync_remOnly": {
+    "value": "string ArrayBuffer 1 8 true"
+  },
+  "generatePrimeSync_safe": {
+    "value": "string bigint 8 true safe true"
+  },
+  "generatePrimeSync_safe3": {
+    "value": "string ArrayBuffer 1 3 true safe true"
+  },
+  "generatePrimeSync_safe4": {
+    "message": "error:01800076:bignum routines::bits too small",
+    "name": "Error"
+  },
+  "generatePrimeSync_safeOption": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.safe\" property must be of type boolean. Received type number (1)",
+    "name": "TypeError"
+  },
+  "generatePrimeSync_string": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"size\" argument must be of type number. Received type string ('8')",
+    "name": "TypeError"
+  },
+  "generatePrimeSync_tooBig": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size\" is out of range. It must be \u003e= 1 \u0026\u0026 \u003c= 2147483647. Received 2147483648",
+    "name": "RangeError"
+  },
+  "generatePrimeSync_two": {
+    "value": "string ArrayBuffer 1 2 true"
+  },
+  "generatePrimeSync_zero": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size\" is out of range. It must be \u003e= 1 \u0026\u0026 \u003c= 2147483647. Received 0",
+    "name": "RangeError"
+  },
+  "generatePrime_noCallback": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"callback\" argument must be of type function. Received undefined",
+    "name": "TypeError"
+  },
+  "getFips": {
+    "value": "number 0"
+  },
+  "getRandomValues_bigint64": {
+    "value": "number 2"
+  },
+  "getRandomValues_code": 17,
+  "getRandomValues_dataView": {
+    "code": 17,
+    "message": "The data argument must be an integer-type TypedArray",
+    "name": "TypeMismatchError"
+  },
+  "getRandomValues_float32": {
+    "code": 17,
+    "message": "The data argument must be an integer-type TypedArray",
+    "name": "TypeMismatchError"
+  },
+  "getRandomValues_max": {
+    "value": "number 65536"
+  },
+  "getRandomValues_string": {
+    "code": 17,
+    "message": "The data argument must be an integer-type TypedArray",
+    "name": "TypeMismatchError"
+  },
+  "getRandomValues_tooLong": {
+    "code": 22,
+    "message": "The requested length exceeds 65,536 bytes",
+    "name": "QuotaExceededError"
+  },
+  "getRandomValues_uint8": {
+    "value": "number 4"
+  },
+  "randomFillCallback": {
+    "err": "null",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "number 4"
+  },
+  "randomFillOffsetCallback": {
+    "err": "null",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "string Uint16Array"
+  },
+  "randomFillSizeCallback": {
+    "err": "null",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "string ArrayBuffer"
+  },
+  "randomFillSync_arrayBuffer": {
+    "value": "Array [true,4,true]"
+  },
+  "randomFillSync_dataView": {
+    "value": "Array [true,3,true]"
+  },
+  "randomFillSync_float64": {
+    "value": "Array [true,16,true]"
+  },
+  "randomFillSync_fractionOffset": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_nanSize": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 2147483647. Received NaN",
+    "name": "RangeError"
+  },
+  "randomFillSync_negativeOffset": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"offset\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 8. Received -1",
+    "name": "RangeError"
+  },
+  "randomFillSync_notABuffer": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"buf\" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "randomFillSync_offset": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_offsetAtEnd": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_offsetSize": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_offsetTooBig": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"offset\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 8. Received 9",
+    "name": "RangeError"
+  },
+  "randomFillSync_sizePastEnd": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size + offset\" is out of range. It must be \u003c= 8. Received 9",
+    "name": "RangeError"
+  },
+  "randomFillSync_stringOffset": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"offset\" argument must be of type number. Received type string ('1')",
+    "name": "TypeError"
+  },
+  "randomFillSync_uint32Offset": {
+    "value": "Array [true,16,true]"
+  },
+  "randomFillSync_uint32SizePastEnd": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size + offset\" is out of range. It must be \u003c= 16. Received 20",
+    "name": "RangeError"
+  },
+  "randomFillSync_undefinedOffset": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_untouched": {
+    "value": "boolean true"
+  },
+  "randomFillSync_whole": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillSync_zeroSize": {
+    "value": "Array [true,8,true]"
+  },
+  "randomFillZeroCallback": {
+    "err": "null",
+    "order": [
+      "callback",
+      "sync"
+    ],
+    "returned": "undefined",
+    "value": "number 4"
+  },
+  "randomFill_badOffset": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"offset\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 8. Received 9",
+    "name": "RangeError"
+  },
+  "randomFill_badSize": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"size + offset\" is out of range. It must be \u003c= 8. Received 9",
+    "name": "RangeError"
+  },
+  "randomFill_noCallback": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"callback\" argument must be of type function. Received undefined",
+    "name": "TypeError"
+  },
+  "secureHeapUsed": {
+    "value": "Object {\"total\":0,\"used\":0,\"utilization\":0,\"min\":0}"
+  },
+  "setEngine": {
+    "code": "ERR_CRYPTO_ENGINE_UNKNOWN",
+    "message": "Engine \"x\" was not found",
+    "name": "Error"
+  },
+  "setEngineFlags": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"flags\" argument must be of type number. Received type string ('y')",
+    "name": "TypeError"
+  },
+  "setEngineNumber": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"id\" argument must be of type string. Received type number (5)",
+    "name": "TypeError"
+  },
+  "spkacInput_corrupt": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "string "
+    },
+    {
+      "value": "boolean false"
+    }
+  ],
+  "spkacInput_empty": [
+    {
+      "value": "string "
+    },
+    {
+      "value": "string "
+    },
+    {
+      "value": "string "
+    }
+  ],
+  "spkacInput_garbage": [
+    {
+      "value": "string "
+    },
+    {
+      "value": "string "
+    },
+    {
+      "value": "boolean false"
+    }
+  ],
+  "spkacInput_tampered": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDF0LbAj+nWDbYirXqRdr5zwWf/\nb8VWMf57irqB1unhao0k2IM89WtAVasxsUsViSHbyq9L/d3Z/N+N08S4EyIBSW4I\nL8HXjrAHxCdZqrM4PDWy4Nrgzp2KtMx83P7FaJpDJUqeMyyxea/A3ySBgARedkZ5\nfxNzwzyz8HgGd3vRFQIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean false"
+    }
+  ],
+  "spkacInput_u8": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDF0LbAj+nWDbYirXqRdr5zwWf/\nb8VWMf57irqB1unhao0k2IM89WtAVasxsUsViSHbyq9L/d3Z/N+N08S4EyIBSW4I\nL8HXjrAHxCdZqrM4PDWy4Nrgzp2KtMx83P7FaJpDJUqeMyyxea/A3ySBgARedkZ5\nfxNzwzyz8HgGd3vRFQIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
+  "spkac_ecSha256": [
+    {
+      "value": "Buffer ec challenge"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaNgEoWxnzzdPwzv8xTCE51UGUTGr\n57NOu4zqbFM0o+ppaUx/6emK2Rd1c1q/Ut41fdcnHf1G8Qx2LtjAwL8I1A==\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
+  "spkac_encoding": {
+    "value": "Buffer hello"
+  },
+  "spkac_instance": {
+    "value": "string function true true"
+  },
+  "spkac_null": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"spkac\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received null",
+    "name": "TypeError"
+  },
+  "spkac_number": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"spkac\" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)",
+    "name": "TypeError"
+  },
+  "spkac_rsaMd5": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDF0LbAj+nWDbYirXqRdr5zwWf/\nb8VWMf57irqB1unhao0k2IM89WtAVasxsUsViSHbyq9L/d3Z/N+N08S4EyIBSW4I\nL8HXjrAHxCdZqrM4PDWy4Nrgzp2KtMx83P7FaJpDJUqeMyyxea/A3ySBgARedkZ5\nfxNzwzyz8HgGd3vRFQIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
+  "spkac_rsaSha256": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDF0LbAj+nWDbYirXqRdr5zwWf/\nb8VWMf57irqB1unhao0k2IM89WtAVasxsUsViSHbyq9L/d3Z/N+N08S4EyIBSW4I\nL8HXjrAHxCdZqrM4PDWy4Nrgzp2KtMx83P7FaJpDJUqeMyyxea/A3ySBgARedkZ5\nfxNzwzyz8HgGd3vRFQIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
+  "spkac_shape": [
+    "exportChallenge,exportPublicKey,length,name,prototype,verifySpkac",
+    "constructor,exportChallenge,exportPublicKey,verifySpkac"
+  ],
+  "subtleIsGlobal": true,
+  "webcryptoIsGlobal": true
+}

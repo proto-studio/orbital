@@ -676,10 +676,10 @@
             typedArray instanceof Uint32Array ||
             typedArray instanceof BigInt64Array ||
             typedArray instanceof BigUint64Array)) {
-        throw new TypeError('Expected TypedArray');
+        throw new DOMException('The data argument must be an integer-type TypedArray', 'TypeMismatchError');
       }
       if (typedArray.byteLength > 65536) {
-        throw new DOMException('Quota exceeded', 'QuotaExceededError');
+        throw new DOMException('The requested length exceeds 65,536 bytes', 'QuotaExceededError');
       }
       const buffer = cryptoModule.randomBytes(typedArray.byteLength);
       const view = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);

@@ -247,9 +247,10 @@ traceability.
   `ERR_OSSL_ASN1_WRONG_TAG` whatever OpenSSL's reason would be. `checkIssued` compares
   names, key identifiers and key usage but not the authority key identifier's issuer
   and serial.
-- **[gap] Other `node:crypto` exports are missing.** `randomFill` / `randomFillSync`,
-  `getRandomValues`, `webcrypto`, `subtle`, `checkPrime` / `generatePrime`, `getFips` and
-  `Certificate` are `undefined`. `globalThis.crypto` has the WebCrypto object. (#144)
+- **[approx] No FIPS mode, secure heap or engines.** Orbital uses Go's crypto, so
+  `getFips()` is always 0, `secureHeapUsed()` reports an empty heap, and `setEngine`
+  finds no engine (`ERR_CRYPTO_ENGINE_UNKNOWN`). `setFips` and the deprecated `fips`
+  property are not provided.
 
 ### Closed during this cycle
 
