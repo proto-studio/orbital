@@ -8,13 +8,17 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
+	"os"
+	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1181,5 +1185,166 @@ done(out);`)
 		"startTLS":           "HELLO",
 		"badCreds":           []any{"string", "string", "string"},
 		"versionBound":       "TLSv1.2",
+	})
+}
+
+// issueTemplate issues a server certificate whose names edit sets.
+func (ca *testCA) issueTemplate(t *testing.T, edit func(*x509.Certificate)) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	edit(tmpl)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// The default hostname check follows Node's tls.checkServerIdentity, not Go's. The expected
+// values are what Node 20.18.1 reports for the same certificates; run with
+// ORBITAL_CAPTURE_NODE=1 to check them against node.
+func TestTLSConnect_DefaultIdentityCheckFollowsNode(t *testing.T) {
+	ca := newTestCA(t)
+	serve := func(edit func(*x509.Certificate)) int { return newTLSServer(t, ca.issueTemplate(t, edit)) }
+	ports := map[string]int{
+		"cnOnly":         serve(func(c *x509.Certificate) { c.Subject.CommonName = "localhost" }),
+		"cnWildcard":     serve(func(c *x509.Certificate) { c.Subject.CommonName = "*.example.test" }),
+		"partialLabel":   serve(func(c *x509.Certificate) { c.DNSNames = []string{"f*.example.test"} }),
+		"tldWildcard":    serve(func(c *x509.Certificate) { c.DNSNames = []string{"*.test"} }),
+		"cnIgnored":      serve(func(c *x509.Certificate) { c.Subject.CommonName = "localhost"; c.DNSNames = []string{"other.test"} }),
+		"ipSAN":          serve(func(c *x509.Certificate) { c.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")} }),
+		"ipCN":           serve(func(c *x509.Certificate) { c.Subject.CommonName = "127.0.0.1" }),
+		"commaInDNSName": serve(func(c *x509.Certificate) { c.DNSNames = []string{"evil.test, DNS:localhost"} }),
+		"noNames":        serve(func(c *x509.Certificate) {}),
+	}
+	type attempt struct{ port, host, servername string }
+	attempts := map[string]attempt{
+		"cnOnly":         {"cnOnly", "localhost", ""},
+		"cnWildcard":     {"cnWildcard", "127.0.0.1", "a.example.test"},
+		"partialLabel":   {"partialLabel", "127.0.0.1", "foo.example.test"},
+		"partialLabelNo": {"partialLabel", "127.0.0.1", "bar.example.test"},
+		"tldWildcard":    {"tldWildcard", "127.0.0.1", "a.test"},
+		"cnIgnored":      {"cnIgnored", "localhost", ""},
+		"ipSAN":          {"ipSAN", "127.0.0.1", ""},
+		"ipCN":           {"ipCN", "127.0.0.1", ""},
+		"commaInDNSName": {"commaInDNSName", "localhost", ""},
+		"noNames":        {"noNames", "localhost", ""},
+		"lenient":        {"tldWildcard", "127.0.0.1", "a.test"},
+	}
+	var cases strings.Builder
+	for name, a := range attempts {
+		extra := ""
+		if name == "lenient" {
+			extra = ", rejectUnauthorized: false"
+		}
+		fmt.Fprintf(&cases, "  %q: { port: %d, host: %q, servername: %q%s },\n", name, ports[a.port], a.host, a.servername, extra)
+	}
+	script := `
+const tls = require('tls');
+const ca = ` + strconv.Quote(ca.pem) + `;
+const cases = {
+` + cases.String() + `};
+const results = {};
+(async () => {
+  for (const [name, c] of Object.entries(cases)) {
+    results[name] = await new Promise((resolve) => {
+      const options = { host: c.host, port: c.port, ca, rejectUnauthorized: c.rejectUnauthorized !== false };
+      if (c.servername) options.servername = c.servername;
+      const socket = tls.connect(options, () => {
+        resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError || null });
+        socket.destroy();
+      });
+      socket.on('error', (e) => resolve({
+        error: e.code, message: e.message, reason: e.reason, host: e.host,
+        certCN: e.cert && e.cert.subject ? (e.cert.subject.CN || null) : null,
+        certAltNames: e.cert ? (e.cert.subjectaltname || null) : null,
+        string: String(e).split(':')[0],
+      }));
+    });
+  }
+  if (globalThis.done) done(results);
+  else process.stdout.write(JSON.stringify(results));
+})();
+`
+	var got map[string]any
+	if captureFromNode(t) {
+		path := t.TempDir() + "/identity.js"
+		if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.Command("node", path).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(output, &got); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		got = runJS(t, &runtime.Config{}, script)
+	}
+	ok := map[string]any{"authorized": true, "authorizationError": nil}
+	mismatch := func(host, reason string, cn, altnames any) map[string]any {
+		return map[string]any{
+			"error": "ERR_TLS_CERT_ALTNAME_INVALID", "message": "Hostname/IP does not match certificate's altnames: " + reason,
+			"reason": reason, "host": host, "certCN": cn, "certAltNames": altnames, "string": "Error [ERR_TLS_CERT_ALTNAME_INVALID]",
+		}
+	}
+	// Node escapes the comma, so the name cannot be read as two.
+	quotedName := `DNS:"evil.test` + "\\u002c" + ` DNS:localhost"`
+	wantJSON(t, got, map[string]any{
+		"cnOnly":         ok,
+		"cnWildcard":     ok,
+		"partialLabel":   ok,
+		"partialLabelNo": mismatch("bar.example.test", "Host: bar.example.test. is not in the cert's altnames: DNS:f*.example.test", nil, "DNS:f*.example.test"),
+		"tldWildcard":    mismatch("a.test", "Host: a.test. is not in the cert's altnames: DNS:*.test", nil, "DNS:*.test"),
+		"cnIgnored":      mismatch("localhost", "Host: localhost. is not in the cert's altnames: DNS:other.test", "localhost", "DNS:other.test"),
+		"ipSAN":          ok,
+		"ipCN":           mismatch("127.0.0.1", "IP: 127.0.0.1 is not in the cert's list: ", "127.0.0.1", nil),
+		"commaInDNSName": mismatch("localhost", "Host: localhost. is not in the cert's altnames: "+quotedName, nil, quotedName),
+		"noNames":        mismatch("localhost", "Cert does not contain a DNS name", nil, nil),
+		"lenient":        map[string]any{"authorized": false, "authorizationError": "ERR_TLS_CERT_ALTNAME_INVALID"},
+	})
+}
+
+// More of tls.checkServerIdentity, with what Node 20.18.1 returns.
+func TestTLSCheckServerIdentity_MatchesNode(t *testing.T) {
+	result := runJS(t, &runtime.Config{}, `
+const tls = require('tls');
+const check = (host, c) => { const e = tls.checkServerIdentity(host, c); return e ? e.reason : 'ok'; };
+done({
+  cnWildcard: check('a.example.com', { subject: { CN: '*.example.com' } }),
+  cnArray: check('a.example.com', { subject: { CN: ['x', '*.example.com'] } }),
+  ipv6Long: check('::1', { subject: {}, subjectaltname: 'IP Address:0:0:0:0:0:0:0:1' }),
+  ipv6Short: check('0:0::1', { subject: {}, subjectaltname: 'IP Address:::1' }),
+  ipv6Zone: check('fe80::1%en0', { subject: {}, subjectaltname: 'IP Address:FE80:0:0:0:0:0:0:1' }),
+  mapped: check('1.2.3.4', { subject: {}, subjectaltname: 'IP Address:0:0:0:0:0:FFFF:102:304' }),
+  quoted: check('a.example.com', { subject: {}, subjectaltname: 'DNS:"a.example.com", DNS:b.example.com' }),
+  quotedComma: check('b', { subject: {}, subjectaltname: 'DNS:"a\\u002c DNS:b"' }),
+  emptyCN: check('', { subject: { CN: '' } }),
+  noSubject: check('a.example.com', {}),
+  number: check(1234, { subject: { CN: '1234' } }),
+});`)
+	wantJSON(t, result, map[string]any{
+		"cnWildcard":  "ok",
+		"cnArray":     "ok",
+		"ipv6Long":    "ok",
+		"ipv6Short":   "ok",
+		"ipv6Zone":    "ok",
+		"mapped":      "IP: 1.2.3.4 is not in the cert's list: ::ffff:1.2.3.4",
+		"quoted":      "ok",
+		"quotedComma": `Host: b. is not in the cert's altnames: DNS:"a\u002c DNS:b"`,
+		"emptyCN":     "Cert does not contain a DNS name",
+		"noSubject":   "Cert does not contain a DNS name",
+		"number":      "ok",
 	})
 }

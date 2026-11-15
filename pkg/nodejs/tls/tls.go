@@ -143,6 +143,10 @@ type handshakeResult struct {
 	ScriptChecksIdentity bool   `json:"scriptChecksIdentity"`
 	ALPN                 string `json:"alpn,omitempty"`
 	Servername           string `json:"servername,omitempty"`
+	// Reason and Host describe a hostname that does not match the certificate, for the
+	// properties of Node's ERR_TLS_CERT_ALTNAME_INVALID.
+	Reason string `json:"reason,omitempty"`
+	Host   string `json:"host,omitempty"`
 }
 
 // clientOptions are tls.connect's options.
@@ -259,6 +263,11 @@ func (t *TLS) upgradeClientFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		result.ScriptChecksIdentity = verifier.ScriptChecksIdentity()
 		if authErr := verifier.AuthorizationError(); authErr != nil {
 			_, result.AuthorizationError = tlsclient.Describe(authErr, host, 0)
+			var identityErr *tlsclient.IdentityError
+			if errors.As(authErr, &identityErr) {
+				result.Reason = identityErr.Reason
+				result.Host = identityErr.Host
+			}
 		}
 		if err == nil {
 			result.ALPN = conn.ConnectionState().NegotiatedProtocol
@@ -665,27 +674,10 @@ func describeCertificate(cert *x509.Certificate) map[string]any {
 		"serialNumber":   strings.ToUpper(hex.EncodeToString(cert.SerialNumber.Bytes())),
 		"raw":            base64.StdEncoding.EncodeToString(cert.Raw),
 	}
-	if names := altNames(cert); len(names) > 0 {
-		out["subjectaltname"] = strings.Join(names, ", ")
+	if names := tlsclient.FormatAltNames(cert); names != "" {
+		out["subjectaltname"] = names
 	}
 	return out
-}
-
-func altNames(cert *x509.Certificate) []string {
-	var names []string
-	for _, name := range cert.DNSNames {
-		names = append(names, "DNS:"+name)
-	}
-	for _, ip := range cert.IPAddresses {
-		names = append(names, "IP Address:"+ip.String())
-	}
-	for _, uri := range cert.URIs {
-		names = append(names, "URI:"+uri.String())
-	}
-	for _, email := range cert.EmailAddresses {
-		names = append(names, "email:"+email)
-	}
-	return names
 }
 
 // describeName lists a field once as a string, or as an array if it repeats, as Node does.

@@ -48,6 +48,9 @@ connection with Node's error code, such as `DEPTH_ZERO_SELF_SIGNED_CERT` or
   `checkServerIdentity` or `NODE_TLS_REJECT_UNAUTHORIZED`. Set `Config.ClientTLSConfig`
   (`&tls.Config{}` for the system roots) to make your TLS configuration authoritative for
   `node:tls`, `node:https` and `node:http2`.
+- Without `Config.ClientTLSConfig`, hostnames are checked with Node's
+  `tls.checkServerIdentity` rules. With it, they are checked as `crypto/tls` does, against
+  its `ServerName` if set.
 - `VerifyPeerCertificate` and `VerifyConnection` in `Config.ClientTLSConfig` behave as they do
   in `crypto/tls`: they run after verification and receive its verified chains, and there are
   no chains if you set `InsecureSkipVerify`. `VerifyPeerCertificate` is not called on

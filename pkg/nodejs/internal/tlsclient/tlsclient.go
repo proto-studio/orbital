@@ -42,6 +42,9 @@ type Verifier struct {
 
 	reject               bool
 	scriptChecksIdentity bool
+	// nodeIdentity checks the hostname with Node's rules rather than Go's. The embedder's
+	// configuration keeps Go's.
+	nodeIdentity bool
 
 	mu      sync.Mutex
 	ran     bool
@@ -68,6 +71,7 @@ func New(base *tls.Config, host string, opts Options) (*Verifier, error) {
 		cfg = &tls.Config{}
 		v.reject = opts.RejectUnauthorized
 		v.scriptChecksIdentity = opts.ScriptChecksIdentity
+		v.nodeIdentity = true
 		if opts.Servername != "" {
 			name = opts.Servername
 		}
@@ -154,7 +158,11 @@ func (v *Verifier) verify(cfg *tls.Config, name string, cs tls.ConnectionState) 
 	}
 	chains, err := leaf.Verify(opts)
 	if err == nil && !v.scriptChecksIdentity {
-		err = leaf.VerifyHostname(name)
+		if v.nodeIdentity {
+			err = CheckServerIdentity(name, leaf)
+		} else {
+			err = leaf.VerifyHostname(name)
+		}
 	}
 	if err != nil {
 		return nil, &tls.CertificateVerificationError{UnverifiedCertificates: cs.PeerCertificates, Err: err}
@@ -207,7 +215,10 @@ func Describe(err error, host string, port int) (string, string) {
 		verify  *tls.CertificateVerificationError
 		errno   syscall.Errno
 	)
+	var identityErr *IdentityError
 	switch {
+	case errors.As(err, &identityErr):
+		return identityErr.Error(), "ERR_TLS_CERT_ALTNAME_INVALID"
 	case errors.As(err, &hostErr):
 		return altnameMessage(hostErr), "ERR_TLS_CERT_ALTNAME_INVALID"
 	case errors.As(err, &certErr):
