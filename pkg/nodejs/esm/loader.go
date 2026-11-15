@@ -169,6 +169,9 @@ func percentEncode(s, set string) string {
 	return b.String()
 }
 
+// urlWhitespace drops what the URL parser drops: tabs and newlines.
+var urlWhitespace = strings.NewReplacer("\t", "", "\n", "", "\r", "")
+
 // isURLSpecifier reports a specifier Node reads as a URL: relative, absolute or
 // file:.
 func isURLSpecifier(spec string) bool {
@@ -189,7 +192,8 @@ func hasEncodedSeparator(p string) bool {
 // holding "?", "#" or "%", it is the URL-encoded path plus the suffix, so a
 // query never looks like part of a file name.
 func (e *ESM) moduleKey(path, suffix string) string {
-	if suffix == "" && !strings.ContainsAny(path, "?#%") {
+	// \x01 is reserved as a separator inside module keys.
+	if suffix == "" && !strings.ContainsAny(path, "?#%\x01") {
 		return path
 	}
 	key := escapePath(path) + suffix
@@ -211,12 +215,28 @@ func (e *ESM) pathOf(key string) string {
 
 // hookURLKey is the module url for a url a resolve hook returned: a file: URL
 // becomes its path (keeping a query or fragment as a distinct module).
-func (e *ESM) hookURLKey(u string) string {
+func (e *ESM) hookURLKey(u string) (string, error) {
 	if !strings.HasPrefix(u, "file:") {
-		return u
+		return u, nil
+	}
+	if err := checkFileURLHost(u); err != nil {
+		return "", err
 	}
 	path, _, suffix, _ := urlPath(u, "/")
-	return e.moduleKey(path, suffix)
+	return e.moduleKey(path, suffix), nil
+}
+
+// checkFileURLHost is Node's error for a file: URL whose host is neither empty
+// nor localhost.
+func checkFileURLHost(u string) error {
+	if host := fileURLHost(u); host != "" && host != "localhost" {
+		return &moduleError{
+			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
+			code:      "ERR_INVALID_FILE_URL_HOST",
+			typeError: true,
+		}
+	}
+	return nil
 }
 
 func looksLikeESM(src string) bool {
@@ -319,16 +339,12 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	var attempted, encoded, suffix string
 	if isURLSpecifier(spec) {
 		// The URL parser drops tabs and newlines wherever they appear.
-		spec = strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(spec)
+		spec = urlWhitespace.Replace(spec)
 	}
 	switch {
 	case isURLSpecifier(spec):
-		if host := fileURLHost(spec); host != "" && host != "localhost" {
-			return "", &moduleError{
-				msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
-				code:      "ERR_INVALID_FILE_URL_HOST",
-				typeError: true,
-			}
+		if err := checkFileURLHost(spec); err != nil {
+			return "", err
 		}
 		var encodedSep bool
 		attempted, encoded, suffix, encodedSep = urlPath(spec, dir)
@@ -343,9 +359,15 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	case winAbs(spec):
 		attempted = spec
 	default:
-		// A query or fragment stays on the package file's url, as in Node.
-		if i := strings.IndexAny(spec, "?#"); i >= 0 {
-			spec, suffix = spec[:i], normalizeSuffix(spec[i:])
+		// In a package subpath, as in a URL, tabs and newlines are dropped and a
+		// query or fragment stays on the package file's url. Without a subpath
+		// they're part of the package name, as in Node.
+		if name, sub := splitBare(spec); sub != "." {
+			sub = urlWhitespace.Replace(sub)
+			if i := strings.IndexAny(sub, "?#"); i >= 0 {
+				sub, suffix = sub[:i], normalizeSuffix(sub[i:])
+			}
+			spec = name + strings.TrimPrefix(sub, ".")
 		}
 		abs, err := e.resolveBare(spec, dir, referrer)
 		if err != nil {

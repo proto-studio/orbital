@@ -304,7 +304,13 @@ func (e *ESM) Preload(specifier string) error {
 	}
 	source, url, err := e.resolveAndLoad(specifier, "")
 	if err != nil {
-		return e.endedOr(err)
+		if ended := e.rt.Ended(); ended != nil {
+			return ended
+		}
+		// Like Node, an --import that fails to resolve is an uncaught exception.
+		e.linkErr = nil
+		thrown := e.throwable(err)
+		return e.linkFailed(thrown)
 	}
 	_, err = e.RunModule(source, url)
 	return err

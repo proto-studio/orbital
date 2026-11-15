@@ -358,3 +358,54 @@ for (const s of ['file://tmp' + d + '/m.mjs', 'file://example.com' + d + '/m.mjs
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// More of Node's URL rules: a resolve hook's file: URL needs a local host too, a
+// bare import's subpath drops tabs and newlines while a suffix on a bare package
+// name is part of the name. Expected from Node 20.18.1. The error properties are
+// also own data properties even with a setter on Error.prototype (Node itself
+// aborts there, so that part is Orbital's own guarantee).
+func TestDynamicImport_HookHostsAndBareSuffixes(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/pkg/package.json":        `{"type":"module","main":"index.js"}`,
+		"node_modules/pkg/index.js":            `export const n = 0;`,
+		"node_modules/pkg/sub.js":              `export const n = Math.random(); export const u = import.meta.url.split('/').pop();`,
+		"node_modules/@scope/pkg/package.json": `{"type":"module","main":"index.js"}`,
+		"node_modules/@scope/pkg/index.js":     `export default 1;`,
+		"a\x01b.mjs":                           `export const u = import.meta.url.split('/').pop();`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'remote') return { url: 'file://example.com/tmp/x.mjs', shortCircuit: true };
+  return n(s, c);
+}`,
+		"entry.mjs": `const r = async (s) => { try { const ns = await import(s); return [ns.n, ns.u]; } catch (e) { return [e.name, e.code, e.message.split(' imported')[0]]; } };
+Object.defineProperty(Error.prototype, 'code', { set() { throw new Error('setter'); }, configurable: true });
+const a = await r('pkg/sub.js?q=ab'), b = await r('pkg/sub.js?q=a\tb'), c = await r('pkg/su\nb.js');
+log.push(a[0] === b[0], b[1], c[1], await r('pkg?variant'), await r('@scope/pkg#x'), (await r('./a%01b.mjs'))[1]);
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+log.push(await r('remote'));`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `[true,"sub.js?q=ab","sub.js",["Error","ERR_MODULE_NOT_FOUND","Cannot find package 'pkg?variant'"],` +
+		`["Error","ERR_MODULE_NOT_FOUND","Cannot find package '@scope/pkg#x'"],"a%01b.mjs",` +
+		`["TypeError","ERR_INVALID_FILE_URL_HOST","File URL host must be \"localhost\" or empty on ` + goruntime.GOOS + `"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// An --import that can't be resolved is an uncaught exception, as in Node.
+func TestPreload_NotFoundIsUncaught(t *testing.T) {
+	dir := t.TempDir()
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	err = inst.ESM.Preload(filepath.Join(dir, "nope.mjs"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) || !strings.Contains(uncaught.Message, "Error [ERR_MODULE_NOT_FOUND]: Cannot find module") ||
+		!strings.Contains(uncaught.Message, "url: 'file://") {
+		t.Fatalf("Preload: %v, want the uncaught ERR_MODULE_NOT_FOUND", err)
+	}
+}
