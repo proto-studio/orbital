@@ -255,6 +255,9 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	if err := regFn("fstatSync", f.fstatSyncFunc); err != nil {
 		return err
 	}
+	if err := regFn("lstatSync", f.lstatSyncFunc); err != nil {
+		return err
+	}
 	if err := regFn("__rmTargetSync", f.rmTargetSyncFunc); err != nil {
 		return err
 	}
@@ -262,10 +265,10 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	// Native async metadata ops. Node's stat/lstat/access are asynchronous; run
 	// the syscall on a goroutine and deliver a Node-shaped result (real Error
 	// with a `code`, or a Stats object with predicate methods) on the loop.
-	if err := regFn("stat", f.statFunc); err != nil {
+	if err := regFn("stat", func(info *v8.FunctionCallbackInfo) *v8.Value { return f.statFunc(info, "stat") }); err != nil {
 		return err
 	}
-	if err := regFn("lstat", f.statFunc); err != nil {
+	if err := regFn("lstat", func(info *v8.FunctionCallbackInfo) *v8.Value { return f.statFunc(info, "lstat") }); err != nil {
 		return err
 	}
 	if err := regFn("access", f.accessFunc); err != nil {
@@ -563,19 +566,30 @@ func (f *FS) readdirSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return arr
 }
 
-// statSyncFunc implements fs.statSync
+// statSyncFunc implements fs.statSync.
 func (f *FS) statSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	return f.statSync(info, "stat")
+}
+
+// lstatSyncFunc implements fs.lstatSync. Orbital's Stat follows symbolic links, so this
+// differs from statSyncFunc only in the call its errors name.
+func (f *FS) lstatSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	return f.statSync(info, "lstat")
+}
+
+// statSync describes a path, or returns an fsFailure naming syscallName that fs_setup.js
+// throws as Node's error.
+func (f *FS) statSync(info *v8.FunctionCallbackInfo, syscallName string) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
 	}
-
-	stat, err := f.fs().Stat(args[0].String())
+	path := args[0].String()
+	stat, err := f.fs().Stat(path)
 	if err != nil {
-		return nil
+		return fsFailure(ctx, err, syscallName, path)
 	}
-
 	return f.createStatObject(ctx, stat)
 }
 
@@ -1052,8 +1066,9 @@ func (f *FS) makeFsError(ctx *v8.Context, code, message, path, syscall string) *
 }
 
 // statFunc implements the async fs.stat / fs.lstat. Orbital's filesystem does
-// not track symlinks separately, so both resolve through the same Stat.
-func (f *FS) statFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// not track symlinks separately, so both resolve through the same Stat; syscallName is the
+// call an error names.
+func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Value {
 	args := info.Args()
 	if len(args) < 2 {
 		return nil
@@ -1075,12 +1090,7 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
-				code := "ENOENT"
-				if fsys.Exists(path) {
-					code = "EACCES"
-				}
-				errVal := f.makeFsError(ctx, code, err.Error(), path, "stat")
-				f.rt.MakeCallback(callback, nil, errVal, ctx.Null())
+				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, syscallName, path), ctx.Null())
 				return
 			}
 			statObj := f.createStatObject(ctx, stat)
