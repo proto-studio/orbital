@@ -5,9 +5,9 @@ package esm
 // This is the DEFAULT loader (the innermost `nextResolve`/`nextLoad` in Node's
 // hook terminology). It runs entirely in Go: filesystem access goes through the
 // runtime's (sandboxed) Filesystem, package.json is parsed with encoding/json,
-// and CJS/ESM classification is done here. The only time it calls into JS is to
-// enumerate a CommonJS module's live export names (which requires the runtime's
-// real `require`) so the synthesized ESM wrapper can re-export them by name.
+// and CJS/ESM classification is done here. It calls into JS to lex a CommonJS
+// module's source for its export names (cjs_exports.go), to resolve what it
+// re-exports, and to enumerate a builtin's exports.
 //
 // Registered loader hooks (module.register) wrap these defaults; see hooks.go.
 
@@ -437,7 +437,7 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 		bare = strings.TrimPrefix(bare, "native:")
 		return e.cjsWrapper(bare)
 	case "commonjs":
-		return e.cjsWrapper(url)
+		return e.cjsModuleWrapper(url, source), nil
 	case "json":
 		return "export default " + source + ";\n", nil
 	default: // "module"
@@ -445,8 +445,8 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 	}
 }
 
-// cjsWrapper builds a synthetic ESM module wrapping a CJS module or builtin.
-// reqArg is what require() receives (a builtin name or absolute path).
+// cjsWrapper builds a synthetic ESM module wrapping a builtin, whose named
+// exports are its exports object's keys. reqArg is its name.
 func (e *ESM) cjsWrapper(reqArg string) (string, error) {
 	keys, err := e.requireKeys(reqArg)
 	if err != nil {

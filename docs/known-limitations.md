@@ -38,10 +38,6 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   other Node options in the env var are ignored. (#109)
 - **[gap] `import()` of a missing module has no `code`.** Node rejects with
   `code: 'ERR_MODULE_NOT_FOUND'`; Orbital rejects with a plain `Error`. (#110)
-- **[approx] Named exports of an imported CommonJS module come from `module.exports`.** Node
-  finds them by scanning the source (cjs-module-lexer), so it misses exports added through a
-  reassigned object or a `defineProperty` getter; Orbital lists every key `module.exports`
-  ends up with. (#111)
 - **[approx] When an `import()`ed module runs relative to timers is not pinned down.** It runs
   after the importer's code, microtasks and `nextTick` callbacks, as in Node, but before a
   `setImmediate` or `setTimeout(…, 0)` the importer queued first. Node usually runs those
