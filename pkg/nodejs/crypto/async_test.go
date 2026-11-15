@@ -19,10 +19,18 @@ func TestCrypto_CallbackWorkRunsOffThread(t *testing.T) {
 		"generateKeyPair": `__crypto_module.generateKeyPair('ed25519', (err, pub, priv) => {
 			globalThis.result = String(err) + ' ' + pub.type + ' ' + priv.type;
 		});`,
+		"sign": `(() => {
+			const c = __crypto_module;
+			const { privateKey, publicKey } = c.generateKeyPairSync('ed25519');
+			c.sign(null, Buffer.from('x'), privateKey, (err, sig) => {
+				globalThis.result = String(err) + ' ' + sig.length;
+			});
+		})();`,
 	}
 	want := map[string]string{
 		"randomBytes":     "null 16",
 		"generateKeyPair": "null public private",
+		"sign":            "null 64",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {

@@ -103,7 +103,17 @@
         key = wantPrivate ? crypto.createPrivateKey(input) : crypto.createPublicKey(input);
       } catch (e) {
         if (e && e.code) throw e;
-        throw codedError(Error, 'ERR_OSSL_UNSUPPORTED', 'error:1E08010C:DECODER routines::unsupported');
+        // A private key verifies too: read it as one, then take its public half.
+        let fallback;
+        if (!wantPrivate) {
+          try {
+            fallback = crypto.createPrivateKey(input);
+          } catch (e2) {
+            // fall through to Node's error
+          }
+        }
+        if (!fallback) throw codedError(Error, 'ERR_OSSL_UNSUPPORTED', 'error:1E08010C:DECODER routines::unsupported');
+        key = fallback;
       }
     }
     if (wantPrivate && key.type !== 'private') {
@@ -232,26 +242,37 @@
     return algorithm;
   }
 
-  function later(callback, fn) {
-    if (callback === undefined) return fn();
-    if (typeof callback !== 'function') throw invalidArgType('callback', 'of type function', callback);
-    let result;
-    let error = null;
-    try {
-      result = fn();
-    } catch (e) {
-      error = e;
+  function checkCallback(callback) {
+    if (callback !== undefined && typeof callback !== 'function') {
+      throw invalidArgType('callback', 'of type function', callback);
     }
-    process.nextTick(() => (error ? callback(error) : callback(null, result)));
-    return undefined;
   }
 
+  // Delivers a native callback result as Node's callback(err, value).
+  function deliver(callback, toValue) {
+    return function (message, value) {
+      if (message !== undefined) {
+        const text = String(message);
+        const bar = text.indexOf('|');
+        callback(bar < 0 ? new Error(text) : codedError(Error, text.slice(0, bar), text.slice(bar + 1)));
+        return;
+      }
+      callback(null, toValue(value));
+    };
+  }
+
+  // The callback forms run the signature off the JS thread (sign.go).
   crypto.sign = function sign(algorithm, data, key, callback) {
     const digest = oneShotAlgorithm(algorithm);
     const bytes = bytesOf(data, 'data');
     const k = resolveKey(key, true);
-    return later(callback, () => Buffer.from(
-      native(crypto._sign, k.handle, bytes.toString('base64'), digest, false, k.padding, k.saltLength, k.p1363), 'base64'));
+    checkCallback(callback);
+    const args = [k.handle, bytes.toString('base64'), digest, false, k.padding, k.saltLength, k.p1363];
+    if (callback !== undefined) {
+      crypto._sign(...args, deliver(callback, (b64) => Buffer.from(b64, 'base64')));
+      return undefined;
+    }
+    return Buffer.from(native(crypto._sign, ...args), 'base64');
   };
 
   crypto.verify = function verify(algorithm, data, key, signature, callback) {
@@ -259,8 +280,13 @@
     const bytes = bytesOf(data, 'data');
     const k = resolveKey(key, false);
     const sig = bytesOf(signature, 'signature');
-    return later(callback, () => native(crypto._verify, k.handle, bytes.toString('base64'), sig.toString('base64'),
-      digest, false, k.padding, k.saltLength, k.p1363));
+    checkCallback(callback);
+    const args = [k.handle, bytes.toString('base64'), sig.toString('base64'), digest, false, k.padding, k.saltLength, k.p1363];
+    if (callback !== undefined) {
+      crypto._verify(...args, deliver(callback, (ok) => ok));
+      return undefined;
+    }
+    return native(crypto._verify, ...args);
   };
 
   Object.assign(crypto.constants, {
