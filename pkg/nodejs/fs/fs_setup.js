@@ -1192,21 +1192,7 @@
     const stat = opts.dereference ? 'stat' : 'lstat';
     const srcStat = yield [stat, src];
     const destStat = yield [stat + 'OrNothing', dest];
-    if (destStat) {
-      // The paths are compared too, for a filesystem that reports no inode numbers.
-      if (path.resolve(src) === path.resolve(dest) ||
-          (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev)) {
-        throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22, 'src and dest cannot be the same', dest);
-      }
-      if (srcStat.isDirectory() && !destStat.isDirectory()) {
-        throw cpError('ERR_FS_CP_DIR_TO_NON_DIR', 'Cannot overwrite non-directory with directory', 'EISDIR', 21,
-          'cannot overwrite non-directory ' + dest + ' with directory ' + src, dest);
-      }
-      if (!srcStat.isDirectory() && destStat.isDirectory()) {
-        throw cpError('ERR_FS_CP_NON_DIR_TO_DIR', 'Cannot overwrite directory with non-directory', 'ENOTDIR', 20,
-          'cannot overwrite directory ' + dest + ' with non-directory ' + src, dest);
-      }
-    }
+    checkPair(srcStat, destStat, src, dest);
     if (srcStat.isDirectory()) {
       const from = path.resolve(src);
       const to = path.resolve(dest);
@@ -1232,6 +1218,25 @@
     yield ['mkdirParents', path.dirname(dest)];
     yield* copyEntry(srcStat, destStat, src, dest, opts);
   }
+  // Refuses a copy onto the same file, or of a directory onto a non-directory or the other way
+  // round, as Node checks the top pair and each pair inside a directory.
+  function checkPair(srcStat, destStat, src, dest) {
+    if (!destStat) return;
+    const path = pathModule();
+    // The paths are compared too, for a filesystem that reports no inode numbers.
+    if (path.resolve(src) === path.resolve(dest) ||
+        (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev)) {
+      throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22, 'src and dest cannot be the same', dest);
+    }
+    if (srcStat.isDirectory() && !destStat.isDirectory()) {
+      throw cpError('ERR_FS_CP_DIR_TO_NON_DIR', 'Cannot overwrite non-directory with directory', 'EISDIR', 21,
+        'cannot overwrite non-directory ' + dest + ' with directory ' + src, dest);
+    }
+    if (!srcStat.isDirectory() && destStat.isDirectory()) {
+      throw cpError('ERR_FS_CP_NON_DIR_TO_DIR', 'Cannot overwrite directory with non-directory', 'ENOTDIR', 20,
+        'cannot overwrite directory ' + dest + ' with non-directory ' + src, dest);
+    }
+  }
   function* copyEntry(srcStat, destStat, src, dest, opts) {
     const stat = opts.dereference ? 'stat' : 'lstat';
     if (srcStat.isDirectory()) {
@@ -1247,7 +1252,10 @@
         const to = path.join(dest, name);
         // A rejected directory is skipped whole.
         if (opts.filter && !(yield ['filter', from, to])) continue;
-        yield* copyEntry(yield [stat, from], yield [stat + 'OrNothing', to], from, to, opts);
+        const fromStat = yield [stat, from];
+        const toStat = yield [stat + 'OrNothing', to];
+        checkPair(fromStat, toStat, from, to);
+        yield* copyEntry(fromStat, toStat, from, to, opts);
       }
       if (!destStat) yield ['chmod', dest, srcStat.mode & 0o7777];
       return;
@@ -1481,6 +1489,10 @@
       }
       throw e;
     }
+    // Filenames come in the encoding asked for: a string, or a Buffer for 'buffer'.
+    const encoding = encodingOf(opts.encoding || null);
+    const named = (name) => (encoding === 'buffer' ? Buffer.from(name)
+      : encoding && !isUtf8(encoding) ? Buffer.from(name).toString(encoding) : name);
     const EventEmitter = eventEmitter();
     const watcher = new EventEmitter();
     if (typeof listener === 'function') watcher.on('change', listener);
@@ -1493,11 +1505,11 @@
       }
       for (const [name, stat] of next) {
         const old = entries.get(name);
-        if (!old) watcher.emit('change', 'rename', name);
-        else if (!sameStats(old, stat)) watcher.emit('change', 'change', name);
+        if (!old) watcher.emit('change', 'rename', named(name));
+        else if (!sameStats(old, stat)) watcher.emit('change', 'change', named(name));
       }
       for (const name of entries.keys()) {
-        if (!next.has(name)) watcher.emit('change', 'rename', name);
+        if (!next.has(name)) watcher.emit('change', 'rename', named(name));
       }
       entries = next;
     }, 100);

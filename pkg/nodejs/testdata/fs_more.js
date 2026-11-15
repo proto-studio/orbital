@@ -297,6 +297,16 @@ async function testCp() {
   attempt('cp_bad_option', () => fs.cpSync(file('cp_file'), file('x'), { recursive: 'yes' }));
   attempt('cp_bad_filter', () => fs.cpSync(file('cp_file'), file('x'), { filter: 1 }));
   attempt('cp_dir', () => { fs.cpSync(file('cp_src'), file('cp_dst'), { recursive: true }); return [tree('cp_dst'), read('cp_dst/sub/b'), mode('cp_dst/a')]; });
+  attempt('cp_nested_file_onto_dir', () => {
+    fs.mkdirSync(file('cp_nest_src'));
+    fs.writeFileSync(file('cp_nest_src/f'), 'x');
+    fs.mkdirSync(file('cp_nest_dst/f'), { recursive: true });
+    try {
+      fs.cpSync(file('cp_nest_src'), file('cp_nest_dst'), { recursive: true });
+    } finally {
+      results.cp_nested_kept = { value: fs.statSync(file('cp_nest_dst/f')).isDirectory() };
+    }
+  });
   attempt('cp_exists_error', () => fs.cpSync(file('cp_file'), file('cp_dst/a'), { force: false, errorOnExist: true }));
   attempt('cp_exists_quiet', () => { fs.cpSync(file('cp_file'), file('cp_dst/a'), { force: false }); return read('cp_dst/a'); });
   attempt('cp_force', () => { fs.cpSync(file('cp_file'), file('cp_dst/a')); return read('cp_dst/a'); });
@@ -366,6 +376,15 @@ async function testWatch() {
     w.close();
     await tick();
     return [events.has('rename new'), closed];
+  });
+  await attemptAsync('watch_buffer_names', async () => {
+    const names = [];
+    const w = fs.watch(file('w'), { encoding: 'buffer' }, (type, name) => names.push(Buffer.isBuffer(name) ? 'buffer ' + name : name));
+    await tick(150);
+    fs.writeFileSync(file('w/named'), 'n');
+    for (let i = 0; i < 100 && !names.includes('buffer named'); i++) await tick(20);
+    w.close();
+    return names.includes('buffer named');
   });
   await attemptAsync('watch_file', async () => {
     const events = [];

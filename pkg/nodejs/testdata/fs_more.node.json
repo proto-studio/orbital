@@ -357,6 +357,26 @@
       ]
     ]
   },
+  "cp_nested_file_onto_dir": {
+    "error": {
+      "code": "ERR_FS_CP_NON_DIR_TO_DIR",
+      "errno": 20,
+      "info": {
+        "code": "ENOTDIR",
+        "errno": 20,
+        "message": "cannot overwrite directory \u003cdir\u003e/cp_nest_dst/f with non-directory \u003cdir\u003e/cp_nest_src/f",
+        "path": "\u003cdir\u003e/cp_nest_dst/f",
+        "syscall": "cp"
+      },
+      "message": "Cannot overwrite directory with non-directory: cp returned ENOTDIR (cannot overwrite directory \u003cdir\u003e/cp_nest_dst/f with non-directory \u003cdir\u003e/cp_nest_src/f) \u003cdir\u003e/cp_nest_dst/f",
+      "name": "SystemError",
+      "path": "\u003cdir\u003e/cp_nest_dst/f",
+      "syscall": "cp"
+    }
+  },
+  "cp_nested_kept": {
+    "value": true
+  },
   "cp_promise_filter": {
     "value": [
       "a"
@@ -976,6 +996,9 @@
       "message": "The \"listener\" argument must be of type function. Received undefined",
       "name": "TypeError"
     }
+  },
+  "watch_buffer_names": {
+    "value": true
   },
   "watch_directory": {
     "value": [
