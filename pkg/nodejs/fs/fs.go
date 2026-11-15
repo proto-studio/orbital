@@ -39,6 +39,8 @@ type FS struct {
 	// The calls on each descriptor, which run one at a time and in order (ops.go).
 	queueMu sync.Mutex
 	queues  map[int]*fdQueue
+	// The descriptors of pipes, sockets and devices, recorded when they are opened.
+	streams map[int]bool
 
 	// Read-stream table backing fs.createReadStream. The bulk file reads run in
 	// Go on a goroutine (off the JS thread) and hand chunks back through the
@@ -61,6 +63,7 @@ func New() *FS {
 	return &FS{
 		fds:         make(map[int]runtime.File),
 		queues:      make(map[int]*fdQueue),
+		streams:     make(map[int]bool),
 		nextFD:      3,
 		readStreams: make(map[int]*readStream),
 		nextRS:      1,

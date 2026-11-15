@@ -197,3 +197,17 @@ setTimeout(() => fs.writeSync(fd, 'x'), 50);
 `, fifo))
 	wantJSON(t, got, map[string]any{"err": nil, "n": 1.0, "data": "x"})
 }
+
+// A FileHandle closed twice while its close is under way gives the same promise both times.
+func TestFS_FileHandleCloseTwice(t *testing.T) {
+	got := runJS(t, &runtime.Config{Filesystem: slowFS{runtime.NewMemoryFilesystem(), 50 * time.Millisecond}}, `
+const fs = require('fs');
+(async () => {
+  const handle = await fs.promises.open('/f', 'w');
+  const first = handle.close();
+  const second = handle.close();
+  done({ same: first === second });
+})();
+`)
+	wantJSON(t, got, map[string]any{"same": true})
+}

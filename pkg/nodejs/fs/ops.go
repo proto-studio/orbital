@@ -380,10 +380,18 @@ func (f *FS) openOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 		if err != nil {
 			return failed(err, "open", path)
 		}
+		// A pipe, socket or device reads in a queue of its own (readLane).
+		streamLike := false
+		if info, err := file.Stat(); err == nil && !info.Mode.IsRegular() && !info.IsDir {
+			streamLike = true
+		}
 		f.fdMu.Lock()
 		fd := f.nextFD
 		f.nextFD++
 		f.fds[fd] = file
+		if streamLike {
+			f.streams[fd] = true
+		}
 		f.fdMu.Unlock()
 		return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(int64(fd)) }}
 	}, -1, nil
@@ -404,6 +412,9 @@ func (f *FS) closeOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *
 		f.queueMu.Lock()
 		delete(f.queues, fd)
 		delete(f.queues, fd+readLaneOffset)
+		f.fdMu.Lock()
+		delete(f.streams, fd)
+		f.fdMu.Unlock()
 		f.queueMu.Unlock()
 		return failed(file.Close(), "close", "")
 	}, fd, nil
@@ -587,12 +598,11 @@ const readLaneOffset = 1 << 30
 // so positioned calls don't move each other's offset. On a pipe, socket or device, a read
 // may wait for data a later write supplies, so reads queue on their own and a write isn't
 // held up behind them.
+// The open that made the descriptor records which kind it is, off the thread for fs.open.
 func (f *FS) readLane(fd int) int {
-	file, ok := f.fileForFD(fd)
-	if !ok {
-		return fd
-	}
-	if info, err := file.Stat(); err == nil && !info.Mode.IsRegular() && !info.IsDir {
+	f.fdMu.Lock()
+	defer f.fdMu.Unlock()
+	if f.streams[fd] {
 		return fd + readLaneOffset
 	}
 	return fd

@@ -65,6 +65,7 @@
       }
     };
     const encodingOf = (options) => (typeof options === 'string' ? options : options && options.encoding);
+    let closing = null;
     const handle = {
       fd,
       path,
@@ -92,10 +93,12 @@
         });
       },
 
+      // A second close while one is under way gets the same promise, so it waits too.
       close() {
-        if (handle.fd === -1) return Promise.resolve();
+        if (closing) return closing;
         handle.fd = -1;
-        return viaCallback('close', fd);
+        closing = viaCallback('close', fd);
+        return closing;
       },
 
       stat() {
