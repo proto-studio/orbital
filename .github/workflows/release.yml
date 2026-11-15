@@ -5,6 +5,10 @@ name: Release
 # (glue) and update-v8.yml (V8), and this runs by itself when either merges, as a patch
 # release. Run it by hand for a release with no new pin, or to choose the bump level.
 #
+# Put [skip release] in a merge commit's message to merge a pin without releasing it,
+# so several pins can ship in one release. Unlike [skip ci], it skips nothing else. The
+# next run, by hand or from a later merge, releases everything pinned by then.
+#
 # Runs the tests on main first, since main doesn't require them and a release can't be
 # taken back. Never rebuilds: it re-downloads the artifacts from the run the manifest
 # pins, re-verifies them, bumps the version through a pull request, then tags and
@@ -44,7 +48,9 @@ jobs:
   # Runs queue, so that commit may be behind by now.
   check:
     name: Check for a new pin
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch'
+      || !contains(github.event.head_commit.message, '[skip release]'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
