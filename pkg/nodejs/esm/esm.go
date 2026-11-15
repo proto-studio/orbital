@@ -35,6 +35,8 @@ type ESM struct {
 	// makeError is esm-loader.js's __esmModuleError, captured when the loader is
 	// installed so code replacing the global cannot change the errors imports throw.
 	makeError *v8.Value
+	// rejected is esm-loader.js's __esmRejected, captured like makeError.
+	rejected *v8.Value
 	// keyPaths maps a module url carrying a query or fragment to its file.
 	keyPaths map[string]string
 	// linkErr is the last error object a failed resolution threw, which is what
@@ -83,6 +85,7 @@ func (e *ESM) ensureLoader() error {
 	}
 	if existing, _ := global.Get("__esmFinishDynamicImport"); existing != nil && existing.IsFunction() {
 		e.makeError, _ = global.Get("__esmModuleError")
+		e.rejected, _ = global.Get("__esmRejected")
 		e.loaderReady = true
 		return nil
 	}
@@ -90,6 +93,7 @@ func (e *ESM) ensureLoader() error {
 		return err
 	}
 	e.makeError, _ = global.Get("__esmModuleError")
+	e.rejected, _ = global.Get("__esmRejected")
 	// Wire dynamic import() through the same JS resolver as static imports.
 	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
 		return e.resolveModule(specifier, referrer)
@@ -225,16 +229,12 @@ func (e *ESM) linkFailed(err error) error {
 	if exc == nil {
 		return err
 	}
-	global, gerr := e.rt.Context().Global()
-	if gerr != nil {
-		return err
-	}
-	rejected, _ := global.Get("__esmRejected")
+	rejected := e.rejected
 	if rejected == nil || !rejected.IsFunction() {
 		return err
 	}
 	p, perr := rejected.Call(nil, exc)
-	if perr != nil || p == nil {
+	if perr != nil || p == nil || !p.IsPromise() {
 		return err
 	}
 	e.rt.WatchModuleEvaluation(p)
