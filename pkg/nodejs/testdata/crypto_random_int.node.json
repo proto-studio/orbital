@@ -1,0 +1,157 @@
+{
+  "badCallback": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"callback\" argument must be of type function. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "bigint": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type bigint (10n)",
+    "name": "TypeError"
+  },
+  "boolean": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type boolean (true)",
+    "name": "TypeError"
+  },
+  "callbackMinMaxReturn": {
+    "value": "undefined"
+  },
+  "callbackOrder": [
+    "sync",
+    "max undefined true",
+    "minMax undefined 5"
+  ],
+  "callbackReturn": {
+    "value": "undefined"
+  },
+  "equal": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max\" is out of range. It must be greater than the value of \"min\" (5). Received 5",
+    "name": "RangeError"
+  },
+  "equalNegative": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max\" is out of range. It must be greater than the value of \"min\" (-1). Received -1",
+    "name": "RangeError"
+  },
+  "everyValue": {
+    "value": "3,4,5,6,7,8"
+  },
+  "fraction": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type number (1.5)",
+    "name": "TypeError"
+  },
+  "fractionMax": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type number (1.5)",
+    "name": "TypeError"
+  },
+  "infinity": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type number (Infinity)",
+    "name": "TypeError"
+  },
+  "largestRange": {
+    "value": true
+  },
+  "lowestSafe": {
+    "value": -9007199254740991
+  },
+  "maxTooLarge": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max\" is out of range. It must be \u003c= 281474976710655. Received 281_474_976_710_656",
+    "name": "RangeError"
+  },
+  "nan": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type number (NaN)",
+    "name": "TypeError"
+  },
+  "nearMaxSafe": {
+    "value": true
+  },
+  "negativeRange": {
+    "value": true
+  },
+  "negativeZero": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max\" is out of range. It must be greater than the value of \"min\" (0). Received 0",
+    "name": "RangeError"
+  },
+  "none": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received undefined",
+    "name": "TypeError"
+  },
+  "nullCallback": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"callback\" argument must be of type function. Received null",
+    "name": "TypeError"
+  },
+  "nullMax": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received null",
+    "name": "TypeError"
+  },
+  "object": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received an instance of Object",
+    "name": "TypeError"
+  },
+  "oneArg": {
+    "value": true
+  },
+  "onlySeven": {
+    "value": 7
+  },
+  "onlyZero": {
+    "value": 0
+  },
+  "rangeTooLarge": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max - min\" is out of range. It must be \u003c= 281474976710655. Received 281_474_976_710_656",
+    "name": "RangeError"
+  },
+  "rangeTooLargeNegative": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max - min\" is out of range. It must be \u003c= 281474976710655. Received 281_474_976_710_656",
+    "name": "RangeError"
+  },
+  "reversed": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"max\" is out of range. It must be greater than the value of \"min\" (5). Received 4",
+    "name": "RangeError"
+  },
+  "string": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type string ('5')",
+    "name": "TypeError"
+  },
+  "stringMax": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type string ('5')",
+    "name": "TypeError"
+  },
+  "stringSecond": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "undefinedMin": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"min\" argument must be a safe integer. Received undefined",
+    "name": "TypeError"
+  },
+  "unsafeMax": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"max\" argument must be a safe integer. Received type number (9007199254740992)",
+    "name": "TypeError"
+  },
+  "unsafeMin": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"min\" argument must be a safe integer. Received type number (-9007199254740992)",
+    "name": "TypeError"
+  }
+}

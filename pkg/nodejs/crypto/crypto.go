@@ -57,7 +57,7 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	funcs := map[string]v8.FunctionCallback{
 		"randomBytes":      c.randomBytesFunc,
 		"randomUUID":       c.randomUUIDFunc,
-		"randomInt":        c.randomIntFunc,
+		"_randomInt":       c.randomIntFunc,
 		"createHash":       c.createHashFunc,
 		"createHmac":       c.createHmacFunc,
 		"getHashes":        c.getHashesFunc,
@@ -262,6 +262,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		return err
 	}
 
+	// crypto.randomInt over the native _randomInt.
+	if _, err = rt.RunScript(randomIntJS, "crypto_randomint.js"); err != nil {
+		return err
+	}
+
 	// Add internal functions for Hash/Hmac digest
 	hashDigestFn, err := iso.NewFunctionTemplate(c.hashDigestFunc)
 	if err != nil {
@@ -315,40 +320,6 @@ func (c *Crypto) randomUUIDFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	id := uuid.New().String()
 	val, _ := ctx.NewString(id)
 	return val
-}
-
-func (c *Crypto) randomIntFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	ctx := info.Context()
-	args := info.Args()
-
-	var min, max int64
-	if len(args) == 1 {
-		min = 0
-		max = args[0].Integer()
-	} else if len(args) >= 2 {
-		min = args[0].Integer()
-		max = args[1].Integer()
-	} else {
-		return nil
-	}
-
-	if min >= max {
-		return nil
-	}
-
-	// Generate random number in range [min, max)
-	rangeSize := max - min
-	var randomBytes [8]byte
-	rand.Read(randomBytes[:])
-
-	// Convert to uint64 and scale to range
-	var n uint64
-	for i := 0; i < 8; i++ {
-		n = (n << 8) | uint64(randomBytes[i])
-	}
-
-	result := min + int64(n%uint64(rangeSize))
-	return ctx.NewNumber(float64(result))
 }
 
 func (c *Crypto) createHashFunc(info *v8.FunctionCallbackInfo) *v8.Value {
