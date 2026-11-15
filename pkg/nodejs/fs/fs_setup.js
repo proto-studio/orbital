@@ -601,6 +601,9 @@
         // Node opens asynchronously: the outcome arrives on a later tick, and writes and the
         // final flush wait for it, so a failed open reaches them too.
         this._opening = true;
+        // Node destroys a stream whose signal has already fired before it starts the open, so
+        // that destroy doesn't wait for the open.
+        this._destroyWaitsForOpen = !(options.signal && options.signal.aborted);
         this._openError = null;
         this._waiting = null;
         try {
@@ -626,8 +629,19 @@
             fail();
             return;
           }
-          // A good open that finishes after the stream was destroyed, by an abort signal say,
-          // is still announced, after the destroy's own events, as in Node.
+          // Destroyed while the open was under way: as in Node, the open is announced first,
+          // and then the destroy goes ahead and closes the descriptor.
+          const destroyAfterOpen = this._destroyAfterOpen;
+          if (destroyAfterOpen) {
+            this._destroyAfterOpen = null;
+            fail();
+            this.emit('open', this.fd);
+            this.emit('ready');
+            destroyAfterOpen();
+            return;
+          }
+          // Destroyed before the open began, by an abort signal that had already fired: the
+          // good open is still announced, after the destroy's own events, as in Node.
           const fd = this.fd === null ? this._openedFd : this.fd;
           const announce = () => {
             fail();
@@ -685,6 +699,11 @@
 
       // Destroying closes the descriptor whatever autoClose says, as in Node.
       _destroy(err, callback) {
+        if (this._opening && !this._openError && this._destroyWaitsForOpen) {
+          // Node waits for an open in progress, and closes the descriptor it gives.
+          this._destroyAfterOpen = () => this._destroy(err, callback);
+          return;
+        }
         if (this.fd === null) {
           // Destroyed before a failed open was reported: Node still reports it.
           callback(err || (this._openErrorReported ? null : this._openError));

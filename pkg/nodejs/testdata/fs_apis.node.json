@@ -188,6 +188,11 @@
   },
   "file:autoclose": "78",
   "file:autoclose_kept": "6b657074",
+  "file:destroy_early": "",
+  "file:destroy_early_end": "",
+  "file:destroy_early_error": "",
+  "file:destroy_early_no_close": "",
+  "file:destroy_early_write": "",
   "file:excl_dest": "6f6c64",
   "file:excl_new": "6e6577",
   "file:excl_src": "6e6577",
@@ -201,6 +206,7 @@
   "file:open_writes": "616263",
   "file:piped.bin": "4100ff7465787400656e64",
   "file:signal_aborted": "",
+  "file:signal_before_open": "",
   "file:signal_later": "",
   "file:start.txt": "616258595a66676821",
   "file:start_bad.txt": "6b656570",
@@ -316,6 +322,48 @@
     "string": "hey"
   },
   "ws_bytesWritten": 11,
+  "ws_destroy_before_open": {
+    "destroyed": true,
+    "events": [
+      "open number number",
+      "ready",
+      "close null"
+    ]
+  },
+  "ws_destroy_end_before_open": {
+    "destroyed": true,
+    "events": [
+      "end ERR_STREAM_DESTROYED",
+      "open number number",
+      "ready",
+      "close null"
+    ]
+  },
+  "ws_destroy_error_before_open": {
+    "destroyed": true,
+    "events": [
+      "open number number",
+      "ready",
+      "error boom",
+      "close null"
+    ]
+  },
+  "ws_destroy_no_close_before_open": {
+    "destroyed": true,
+    "events": [
+      "open number number",
+      "ready"
+    ]
+  },
+  "ws_destroy_write_before_open": {
+    "destroyed": true,
+    "events": [
+      "write1 ERR_STREAM_DESTROYED",
+      "open number number",
+      "ready",
+      "close null"
+    ]
+  },
   "ws_events": [
     "open",
     "ready",
@@ -443,6 +491,15 @@
       "ready"
     ],
     "pending": 0
+  },
+  "ws_signal_before_open": {
+    "destroyed": true,
+    "events": [
+      "open number number",
+      "ready",
+      "error ABORT_ERR",
+      "close null"
+    ]
   },
   "ws_signal_later": {
     "destroyed": true,
