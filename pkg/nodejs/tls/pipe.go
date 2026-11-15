@@ -6,17 +6,18 @@ import (
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
-// createPipe(onWrite, onEnd) returns the id of a socket that carries TLS over a JavaScript
+// createPipe(onWrite, onEnd, onDrain) returns the id of a socket that carries TLS over a JavaScript
 // stream. onWrite(base64, seq) receives the bytes to send and onEnd(seq) is called when no
 // more will come; the script reports each done with pipeWritten(id, seq, errorMessage).
-// pipePush and pipeEnd hand the socket what the stream receives.
+// pipePush and pipeEnd hand the socket what the stream receives; pipePush returns false
+// when the stream should pause, and onDrain() is called when it can resume.
 func (t *TLS) createPipeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 2 || !args[0].IsFunction() || !args[1].IsFunction() {
+	if len(args) < 3 || !args[0].IsFunction() || !args[1].IsFunction() || !args[2].IsFunction() {
 		return ctx.Throw("tls: invalid arguments")
 	}
-	onWrite, onEnd := args[0], args[1]
+	onWrite, onEnd, onDrain := args[0], args[1], args[2]
 	var id int64
 	id, pipe := t.net.NewPipe(func(data []byte, seq uint64) {
 		t.deliver(func(ctx *v8.Context) {
@@ -28,6 +29,9 @@ func (t *TLS) createPipeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		t.mu.Lock()
 		delete(t.pipes, id)
 		t.mu.Unlock()
+	})
+	pipe.SetOnDrain(func() {
+		t.deliver(func(ctx *v8.Context) { t.rt.MakeCallback(onDrain, ctx.Undefined()) })
 	})
 	t.mu.Lock()
 	t.pipes[id] = pipe
@@ -51,8 +55,7 @@ func (t *TLS) pipePushFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err != nil {
 		return info.Context().Throw("tls: invalid pipe data")
 	}
-	pipe.Push(data)
-	return nil
+	return info.Context().NewBoolean(pipe.Push(data))
 }
 
 // pipeEnd(id) tells the socket the stream has ended.

@@ -16,5 +16,10 @@
     ]
   },
   "overNetSocket": "[secure true remote=undefined]hello",
+  "pausedReader": {
+    "received": 1048576,
+    "streamBuffered": true,
+    "streamPaused": true
+  },
   "slowStream": 20000
 }

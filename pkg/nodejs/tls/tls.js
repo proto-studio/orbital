@@ -210,10 +210,13 @@
         }
         if (!stream.writableEnded) stream.end();
         stream.once('finish', () => done(seq)());
+      }, () => {
+        if (!stream.destroyed) stream.resume();
       });
       stream.on('data', (chunk) => {
         const buf = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        internal.pipePush(id, buf.toString('base64'));
+        // The pipe's queue is bounded: the stream pauses until it has been read down.
+        if (internal.pipePush(id, buf.toString('base64')) === false) stream.pause();
       });
       stream.on('end', () => internal.pipeEnd(id));
       stream.on('error', (err) => {
