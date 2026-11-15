@@ -938,3 +938,25 @@ try { process.emitWarning('old', 'DeprecationWarning'); note('sync after depreca
 		t.Errorf("notes = %q\nwant %q", notes, want)
 	}
 }
+
+// A worker that runs out of work emits 'exit' and exits with process.exitCode, which
+// --unhandled-rejections=warn-with-error-code sets. Expected values are Node 20.18.1's.
+func TestWorkerExitCodeFromProcessExitCode(t *testing.T) {
+	supportsRejections(t)
+	notes, err := runUncaughtWith(t, &runtime.Config{UnhandledRejections: "warn-with-error-code", NoWarnings: true}, `
+const { Worker } = require('worker_threads');
+const run = (src) => new Promise((resolve) => new Worker(src, { eval: true }).on('exit', resolve));
+(async () => {
+  note('set', await run('process.exitCode = 3'));
+  note('string', await run('process.exitCode = "7"'));
+  note('rejection', await run('Promise.reject(1)'));
+  note('listener', await run('process.on("exit", (c) => { process.exitCode = c + 5; }); process.exitCode = 1'));
+})();
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if want := []string{"set 3", "string 7", "rejection 1", "listener 6"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}

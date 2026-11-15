@@ -360,7 +360,13 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 
 	code := 0
 	var exit *goruntime.ExitError
-	if _, runErr := wrt.Run(source, origin); errors.As(runErr, &exit) {
+	_, runErr := wrt.Run(source, origin)
+	if runErr == nil && !wrt.IsKilled() {
+		// The worker ran out of work. As in Node, its 'exit' listeners run and it exits
+		// with process.exitCode, which --unhandled-rejections=warn-with-error-code sets.
+		code, runErr = finishWorker(wrt)
+	}
+	if errors.As(runErr, &exit) {
 		// process.exit() in a worker ends only the worker, with that code and no error.
 		code = exit.Code
 	} else if runErr != nil {
@@ -438,6 +444,27 @@ func serializeThrown(wrt *goruntime.Runtime, fn, thrown *v8.Value) (string, bool
 		return "", false
 	}
 	return result.String(), true
+}
+
+// finishWorker ends a worker that ran out of work: it emits 'exit' with process.exitCode
+// and returns the code, or what ended the runtime if a listener exited or threw.
+func finishWorker(wrt *goruntime.Runtime) (int, error) {
+	codeVal, err := wrt.RunScript(`(function () {
+		var p = globalThis.process;
+		if (!p || typeof p.emit !== 'function') return 0;
+		if (!p._exiting) {
+			p._exiting = true;
+			p.emit('exit', Number(p.exitCode) || 0);
+		}
+		return Number(p.exitCode) || 0;
+	})()`, "[worker exit]")
+	if ended := wrt.Ended(); ended != nil {
+		return 0, ended
+	}
+	if err != nil || codeVal == nil {
+		return 0, nil
+	}
+	return int(codeVal.Integer()), nil
 }
 
 func (w *WorkerThreads) setWorkerFunc(wrt *goruntime.Runtime, name string, cb v8.FunctionCallback) error {
