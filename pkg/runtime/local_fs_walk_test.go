@@ -455,3 +455,16 @@ func TestLocalFS_WalkMissingNamesRootAndSticky(t *testing.T) {
 		t.Errorf("sticky mode = %v, want the sticky bit", info.Mode())
 	}
 }
+
+// An absolute link target that is itself a link into the root is followed into it.
+func TestLocalFS_WalkTargetThatIsAnAlias(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	if err := os.Symlink(filepath.Join(base, "rootlink"), filepath.Join(root, "via-rootlink")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := l.ReadFile("/via-rootlink/a.txt"); err != nil || string(data) != "a" {
+		t.Errorf("ReadFile via-rootlink/a.txt = %q, %v", data, err)
+	}
+}

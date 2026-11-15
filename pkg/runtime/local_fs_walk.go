@@ -293,12 +293,17 @@ func resolvedPrefix(p string) string {
 	// The longest leading part that exists is resolved; filepath.Dir isn't used for it, since
 	// it would collapse a ".." before the links ahead of it are resolved.
 	names := strings.Split(p, string(filepath.Separator))
-	for k := len(names) - 1; k > 0; k-- {
+	// The whole target is tried first, since its last name may itself be a link into the
+	// root.
+	for k := len(names); k > 0; k-- {
 		dir := strings.Join(names[:k], string(filepath.Separator))
 		if dir == "" {
 			dir = string(filepath.Separator)
 		}
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			if k == len(names) {
+				return real
+			}
 			// The rest is appended as written: a missing name followed by ".." must still
 			// be looked up by the walk.
 			return strings.TrimSuffix(real, string(filepath.Separator)) + string(filepath.Separator) +
