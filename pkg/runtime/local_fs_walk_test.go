@@ -215,3 +215,95 @@ func TestLocalFS_WalkDetails(t *testing.T) {
 		}
 	}
 }
+
+// A link whose target ends in "/" must lead to a directory, O_NOFOLLOW asked for by the
+// caller refuses a final link, and RemoveAll removes an empty directory it can't open.
+func TestLocalFS_WalkFlags(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	for name, target := range map[string]string{"slash-file": "a.txt/", "slash-missing": "missing/", "dot-file": "a.txt/."} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := l.ReadFile("/slash-file"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("ReadFile through a link to file/ = %v, want ENOTDIR", err)
+	}
+	if _, err := l.ReadFile("/dot-file"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("ReadFile through a link to file/. = %v, want ENOTDIR", err)
+	}
+	if err := l.WriteFile("/slash-missing", []byte("x"), 0o644); err == nil {
+		t.Error("WriteFile through a link to missing/ succeeded")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing was made: %v", err)
+	}
+	if _, err := l.ReadDir("/near"); err != nil {
+		t.Errorf("ReadDir near: %v", err)
+	}
+
+	if _, err := l.OpenFile("/nearfile", os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0); !errors.Is(err, syscall.ELOOP) {
+		t.Errorf("O_NOFOLLOW open of a link = %v, want ELOOP", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(data) != "a" {
+		t.Errorf("a.txt = %q, want it kept", data)
+	}
+	if f, err := l.OpenFile("/a.txt", os.O_RDONLY|syscall.O_NOFOLLOW, 0); err != nil {
+		t.Errorf("O_NOFOLLOW open of a file: %v", err)
+	} else {
+		f.Close()
+	}
+
+	if os.Geteuid() != 0 {
+		if err := os.MkdirAll(filepath.Join(root, "rm2", "closed"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(filepath.Join(root, "rm2", "closed"), 0)
+		defer os.Chmod(filepath.Join(root, "rm2", "closed"), 0o755)
+		if err := l.RemoveAll("/rm2"); err != nil {
+			t.Errorf("RemoveAll with an empty mode-0 directory: %v", err)
+		}
+	}
+}
+
+// Stat follows a final link even when one replaces the file while the walk runs.
+func TestLocalFS_StatWhileNameChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("t"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			tmp := filepath.Join(root, "tmp")
+			os.Remove(tmp)
+			if i%2 == 0 {
+				os.Symlink("target", tmp)
+			} else {
+				os.WriteFile(tmp, []byte("file"), 0o644)
+			}
+			os.Rename(tmp, filepath.Join(root, "name"))
+		}
+	}()
+	l := NewLocalFilesystem(root)
+	links := 0
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		if info, err := l.Stat("/name"); err == nil && info.Mode&os.ModeSymlink != 0 {
+			links++
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if links > 0 {
+		t.Errorf("Stat described the link itself %d times", links)
+	}
+}
