@@ -148,3 +148,19 @@ setTimeout(() => { fs.unwatchFile(dir + '/one/f'); w.close(); done({ polled, wat
 `, dir))
 	wantJSON(t, got, map[string]any{"polled": []any{7.0}, "watched": true})
 }
+
+// cp refuses to copy the root directory into a directory under it.
+func TestFS_CpRootIntoItself(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	if err := memory.Mkdir("/", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: memory}, `
+const fs = require('fs');
+fs.writeFileSync('/f', 'x');
+let code = null;
+try { fs.cpSync('/', '/out', { recursive: true }); } catch (e) { code = e.code; }
+done({ code, made: fs.existsSync('/out') });
+`)
+	wantJSON(t, got, map[string]any{"code": "ERR_FS_CP_EINVAL", "made": false})
+}

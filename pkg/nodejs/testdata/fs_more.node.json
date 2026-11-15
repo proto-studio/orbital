@@ -713,6 +713,39 @@
       "gh"
     ]
   },
+  "stat_bigint": {
+    "value": [
+      "BigIntStats",
+      [
+        "dev",
+        "mode",
+        "nlink",
+        "uid",
+        "gid",
+        "rdev",
+        "blksize",
+        "ino",
+        "size",
+        "blocks",
+        "atimeMs",
+        "mtimeMs",
+        "ctimeMs",
+        "birthtimeMs",
+        "atimeNs",
+        "mtimeNs",
+        "ctimeNs",
+        "birthtimeNs",
+        "atime",
+        "mtime",
+        "ctime",
+        "birthtime"
+      ],
+      "bigint",
+      true,
+      "3",
+      true
+    ]
+  },
   "statfs": {
     "value": {
       "ctor": "StatFs",
@@ -998,6 +1031,15 @@
       ],
       "function",
       "function"
+    ]
+  },
+  "watchFile_bigint": {
+    "value": [
+      "bigint",
+      "bigint",
+      "bigint",
+      true,
+      "3"
     ]
   },
   "watchFile_missing": {

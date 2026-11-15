@@ -437,6 +437,21 @@ async function testWatch() {
     w.close();
     return names.includes('from_buffer');
   });
+  await attemptAsync('watchFile_bigint', async () => {
+    fs.writeFileSync(file('w/big'), 'a');
+    let seen = null;
+    const listener = (curr, prev) => { seen = seen || [typeof curr.size, typeof curr.mtimeNs, typeof prev.size, curr.isFile(), String(curr.size)]; };
+    fs.watchFile(file('w/big'), { interval: 20, bigint: true }, listener);
+    await tick(80);
+    fs.writeFileSync(file('w/big'), 'abc');
+    for (let i = 0; i < 100 && !seen; i++) await tick(20);
+    fs.unwatchFile(file('w/big'), listener);
+    return seen;
+  });
+  attempt('stat_bigint', () => {
+    const s = fs.statSync(file('w/big'), { bigint: true });
+    return [s.constructor.name, Object.keys(s), typeof s.mtimeNs, s.isFile(), String(s.size), s.mtimeNs / 1000000n === s.mtimeMs];
+  });
   attempt('watchFile_no_listener', () => fs.watchFile(file('w/polled')));
 }
 

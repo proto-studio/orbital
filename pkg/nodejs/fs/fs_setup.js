@@ -41,7 +41,7 @@
     this.birthtime = dateFromMs(birthtimeMs);
   }
   function isType(type) {
-    return function () { return (this.mode & S_IFMT) === type; };
+    return function () { return (Number(this.mode) & S_IFMT) === type; };
   }
   Object.assign(Stats.prototype, {
     isDirectory: isType(S_IFDIR),
@@ -73,6 +73,27 @@
     isSocket() { return this[kType] === UV_DIRENT_SOCKET; }
   }
   fs.Stats = Stats;
+
+  // The Stats that { bigint: true } asks for: BigInt fields, and times in nanoseconds too.
+  class BigIntStats {}
+  Object.assign(BigIntStats.prototype, Stats.prototype);
+  const NS_PER_MS = 1000000n;
+  function toBigIntStats(s) {
+    const b = new BigIntStats();
+    for (const key of ['dev', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'blksize', 'ino', 'size', 'blocks']) {
+      b[key] = BigInt(Math.trunc(s[key]));
+    }
+    for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
+      b[key + 'Ms'] = BigInt(Math.floor(s[key + 'Ms']));
+    }
+    for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) {
+      const ms = s[key + 'Ms'];
+      b[key + 'Ns'] = BigInt(Math.floor(ms)) * NS_PER_MS + BigInt(Math.round((ms - Math.floor(ms)) * 1e6));
+    }
+    for (const key of ['atime', 'mtime', 'ctime', 'birthtime']) b[key] = s[key];
+    return b;
+  }
+  fs.__toBigIntStats = toBigIntStats;
   fs.Dirent = Dirent;
 
   // An fs.Stats from the native layer's description, or the value itself if it is a failure
@@ -347,7 +368,8 @@
           options && typeof options === 'object' && options.throwIfNoEntry === false) {
         return undefined;
       }
-      return check(result);
+      const stats = check(result);
+      return options && typeof options === 'object' && options.bigint ? toBigIntStats(stats) : stats;
     };
   }
 
@@ -1139,7 +1161,10 @@
         const p = pathModule();
         for (let i = 0; i < entries.length; i++) {
           if (entries[i].isDirectory()) {
-            entries.push(...fs.readdirSync(p.join(entries[i].parentPath, entries[i].name), { withFileTypes: true }));
+            // One at a time, since a large directory has more entries than a call takes arguments.
+            for (const entry of fs.readdirSync(p.join(entries[i].parentPath, entries[i].name), { withFileTypes: true })) {
+              entries.push(entry);
+            }
           }
         }
       }
@@ -1196,7 +1221,8 @@
     if (srcStat.isDirectory()) {
       const from = path.resolve(src);
       const to = path.resolve(dest);
-      if (to === from || to.startsWith(from + path.sep)) {
+      // The separator is added only where from doesn't already end with one, as the root does.
+      if (to === from || to.startsWith(from.endsWith(path.sep) ? from : from + path.sep)) {
         throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22,
           'cannot copy ' + src + ' to a subdirectory of self ' + dest, dest);
       }
@@ -1387,12 +1413,15 @@
   function zeroStats() {
     return new Stats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   }
-  function statOrZero(path) {
+  const zeroFor = (bigint) => (bigint ? toBigIntStats(zeroStats()) : zeroStats());
+  function statOrZero(path, bigint) {
+    let s;
     try {
-      return fs.statSync(path);
+      s = fs.statSync(path);
     } catch (e) {
-      return zeroStats();
+      s = zeroStats();
     }
+    return bigint ? toBigIntStats(s) : s;
   }
   function sameStats(a, b) {
     return a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.size === b.size && a.mode === b.mode &&
@@ -1429,11 +1458,12 @@
     if (!watcher) {
       const EventEmitter = eventEmitter();
       watcher = new EventEmitter();
-      let prev = statOrZero(filename);
+      const bigint = !!opts.bigint;
+      let prev = statOrZero(filename, bigint);
       // Node calls the listeners once at the start for a path that doesn't exist.
-      if (!fs.existsSync(filename)) process.nextTick(() => watcher.emit('change', zeroStats(), zeroStats()));
+      if (!fs.existsSync(filename)) process.nextTick(() => watcher.emit('change', zeroFor(bigint), zeroFor(bigint)));
       watcher._timer = setInterval(() => {
-        const curr = statOrZero(filename);
+        const curr = statOrZero(filename, bigint);
         if (!sameStats(curr, prev)) {
           const old = prev;
           prev = curr;
