@@ -34,6 +34,10 @@ func New() *Process {
 }
 
 // Name returns the module name.
+// NodeVersion is the Node.js release Orbital emulates: process.version is "v" + NodeVersion
+// and process.versions.node is NodeVersion.
+const NodeVersion = "20.18.1"
+
 func (p *Process) Name() string {
 	return "process"
 }
@@ -50,15 +54,16 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// runtime.version
-	version, _ := ctx.NewString("v20.0.0") // Emulated Node version
+	// runtime.version: the Node release whose behavior Orbital matches, and which its
+	// comparison tests capture against.
+	version, _ := ctx.NewString("v" + NodeVersion)
 	if err := processObj.Set("version", version); err != nil {
 		return err
 	}
 
 	// runtime.versions
 	versions, _ := ctx.NewObject()
-	nodeVer, _ := ctx.NewString("20.0.0")
+	nodeVer, _ := ctx.NewString(NodeVersion)
 	v8Version := "unknown"
 	if manifest, err := v8dist.LoadManifest(); err == nil {
 		v8Version = manifest.V8Version
