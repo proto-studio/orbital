@@ -21,8 +21,9 @@ function outcome(f) {
 }
 
 // SPKACs made with OpenSSL: RSA signed with SHA-256, RSA with MD5 (OpenSSL's default),
-// and P-256 ECDSA with SHA-256.
+// P-256 ECDSA with SHA-256, and RSA-SHA256 with an empty challenge.
 const spkacs = {
+  emptyChallenge: 'MIIBOjCBpDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAxdC2wI/p1g22Iq16kXa+c8Fn/2/FVjH+e4q6gdbp4WqNJNiDPPVrQFWrMbFLFYkh28qvS/3d2fzfjdPEuBMiAUluCC/B146wB8QnWaqzODw1suDa4M6dirTMfNz+xWiaQyVKnjMssXmvwN8kgYAEXnZGeX8Tc8M8s/B4Bnd70RUCAwEAARYAMA0GCSqGSIb3DQEBCwUAA4GBAKVeJN3avDn0RXpV8pqaDWMSZyC8xTmhnSyKOwte/qkh2Df2mzP8HMfYG7Nj+wrurhRIclmhKV4PlGlt5+zNctCA7ZyolpOjoQU6ApkxpGuXkF+ysoZDJ4maOPUO8lGwEsNSYuHBhQZA18X6QQwYPjDCZm6AeCMTqDqfEfTjT1Z2',
   rsaSha256: 'MIIBPzCBqTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAxdC2wI/p1g22Iq16kXa+c8Fn/2/FVjH+e4q6gdbp4WqNJNiDPPVrQFWrMbFLFYkh28qvS/3d2fzfjdPEuBMiAUluCC/B146wB8QnWaqzODw1suDa4M6dirTMfNz+xWiaQyVKnjMssXmvwN8kgYAEXnZGeX8Tc8M8s/B4Bnd70RUCAwEAARYFaGVsbG8wDQYJKoZIhvcNAQELBQADgYEArVmgbbSvEUX5gfGUlU5+h6Sl+j9NEGSn+A8+dFJ4hv7F/py+DHcefKl61Z2wUAodPdTOVAjk1hIHINRPYhKsDTn6tqvq55OpyifWSrgRaxl+bqZ6+G/m9C107zIi64EJjJJpd2CmZoTcQm/mlfb55OQ6RtlYQtOioFlWCf2eLTU=',
   rsaMd5: 'MIIBPzCBqTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAxdC2wI/p1g22Iq16kXa+c8Fn/2/FVjH+e4q6gdbp4WqNJNiDPPVrQFWrMbFLFYkh28qvS/3d2fzfjdPEuBMiAUluCC/B146wB8QnWaqzODw1suDa4M6dirTMfNz+xWiaQyVKnjMssXmvwN8kgYAEXnZGeX8Tc8M8s/B4Bnd70RUCAwEAARYFaGVsbG8wDQYJKoZIhvcNAQEEBQADgYEAtJ2CeP+Cf/XAva6egjqw3p/kRp9fSyJC4DF8nzUKgfZoY6vEBXmmdwYcNa0wyPAIXmGjgFn5FMkYvV76bXC/Sz8NZ9EHnM/Y6n/EUlWGu8vhDOZ+mRqb3LUA8thcNsM94fKX37nG2ufzXxCy5/nndO+tcSgdFREQ53DR2y+FosA=',
   ecSha256: 'MIHAMGkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARo2AShbGfPN0/DO/zFMITnVQZRMavns067jOpsUzSj6mlpTH/p6YrZF3VzWr9S3jV91ycd/UbxDHYu2MDAvwjUFgxlYyBjaGFsbGVuZ2UwCgYIKoZIzj0EAwIDRwAwRAIgCLKpsl9kvp2nWl/sC+OEqIS36Cy0J2uZz1XrIg1epmkCIADzXbYx6Vt0NfBvjPojbStDMeVmWHw1/+WGfewT8mSY',
@@ -104,6 +105,9 @@ const primes = {
   zero: [0], one: [1], negative: [-1], string: ['8'], tooBig: [2 ** 31],
   bigintOption: [8, { bigint: 'x' }], safeOption: [8, { safe: 1 }], addString: [8, { add: '6' }],
   negativeAdd: [8, { add: -6n }],
+  zeroAdd: [8, { add: 0n, bigint: true }],
+  zeroAddBuffer: [8, { add: Buffer.alloc(2), bigint: true }],
+  zeroAddWithRem: [8, { add: 0n, rem: 1n, bigint: true }],
   // Few numbers near 32 bits are 2147483659 mod 2147483660; this must still finish.
   narrowProgression: [32, { add: 2147483660n, rem: 2147483659n, bigint: true }],
 };
@@ -202,7 +206,16 @@ async function main() {
   ].map((start, i) => new Promise((resolve) => {
     als.run('request ' + i, () => start(() => resolve(als.getStore())));
   })));
+  results.generatePrimeZeroAddCallback = await callback((cb) => crypto.generatePrime(8, { add: 0n }, (err, p) => cb(err && err.message, p)));
   results.generatePrimeErrorCallback = await callback((cb) => crypto.generatePrime(1, (err, p) => cb(err && err.message, p)));
+  // The exports keep working when a script deletes or replaces the global.
+  const saved = globalThis.crypto;
+  delete globalThis.crypto;
+  results.withoutGlobal = [crypto.webcrypto === saved, crypto.subtle === saved.subtle,
+    crypto.getRandomValues(new Uint8Array(2)).length];
+  globalThis.crypto = { replaced: true };
+  results.withReplacedGlobal = [crypto.webcrypto === saved, crypto.getRandomValues(new Uint8Array(3)).length];
+  globalThis.crypto = saved;
   return results;
 }
 

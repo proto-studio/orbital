@@ -152,7 +152,10 @@ func generatePrime(bits int, safe bool, add, rem *big.Int) (*big.Int, error) {
 		}
 		return !safe || half.Rsh(p, 1).ProbablyPrime(20)
 	}
-	if add == nil || add.Sign() == 0 {
+	if add != nil && add.Sign() == 0 {
+		return nil, errors.New("error:01800067:bignum routines::div by zero")
+	}
+	if add == nil {
 		// Unconstrained: always satisfiable, so search until found.
 		// rand.Prime sets the top two bits, so 2q+1 has exactly bits bits.
 		for {
@@ -313,8 +316,9 @@ func verifySPKAC(signed *spkacSigned, pub any) bool {
 }
 
 // spkacFunc backs _spkac(op, base64Input): op is "challenge", "publicKey" or
-// "verify". Input Node can't read gives "" for challenge and publicKey and
-// "false" for verify, as in Node; the result is base64 for the first two.
+// "verify". The challenge and public key come back as base64, with "!"
+// for a challenge and "" for a key that couldn't be read; verify gives
+// "true" or "false".
 func (c *Crypto) spkacFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -327,6 +331,8 @@ func (c *Crypto) spkacFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	signed, pkac, err := parseSPKAC(text)
 	switch op {
 	case "challenge":
+		// "!" marks input that couldn't be read; an empty challenge is "".
+		out = "!"
 		if err == nil {
 			out = base64.StdEncoding.EncodeToString([]byte(pkac.Challenge))
 		}

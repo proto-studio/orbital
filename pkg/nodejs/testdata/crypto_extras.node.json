@@ -204,6 +204,27 @@
     "message": "The value of \"size\" is out of range. It must be \u003e= 1 \u0026\u0026 \u003c= 2147483647. Received 0",
     "name": "RangeError"
   },
+  "generatePrimeSync_zeroAdd": {
+    "message": "error:01800067:bignum routines::div by zero",
+    "name": "Error"
+  },
+  "generatePrimeSync_zeroAddBuffer": {
+    "message": "error:01800067:bignum routines::div by zero",
+    "name": "Error"
+  },
+  "generatePrimeSync_zeroAddWithRem": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "invalid options.rem",
+    "name": "RangeError"
+  },
+  "generatePrimeZeroAddCallback": {
+    "err": "error:01800067:bignum routines::div by zero",
+    "order": [
+      "sync",
+      "callback"
+    ],
+    "value": "undefined undefined"
+  },
   "generatePrime_noCallback": {
     "code": "ERR_INVALID_ARG_TYPE",
     "message": "The \"callback\" argument must be of type function. Received undefined",
@@ -456,6 +477,17 @@
       "value": "boolean true"
     }
   ],
+  "spkac_emptyChallenge": [
+    {
+      "value": "Buffer "
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDF0LbAj+nWDbYirXqRdr5zwWf/\nb8VWMf57irqB1unhao0k2IM89WtAVasxsUsViSHbyq9L/d3Z/N+N08S4EyIBSW4I\nL8HXjrAHxCdZqrM4PDWy4Nrgzp2KtMx83P7FaJpDJUqeMyyxea/A3ySBgARedkZ5\nfxNzwzyz8HgGd3vRFQIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
   "spkac_encoding": {
     "value": "Buffer hello"
   },
@@ -499,5 +531,14 @@
     "constructor,exportChallenge,exportPublicKey,verifySpkac"
   ],
   "subtleIsGlobal": true,
-  "webcryptoIsGlobal": true
+  "webcryptoIsGlobal": true,
+  "withReplacedGlobal": [
+    true,
+    3
+  ],
+  "withoutGlobal": [
+    true,
+    true,
+    2
+  ]
 }
