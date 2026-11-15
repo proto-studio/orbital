@@ -415,3 +415,25 @@ JSON.stringify([__url_module.resolve('http://h/a/', 'https://other/a/../b'), __u
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// A same-scheme special reference continues as a relative one, a drive letter after file:
+// replaces the path, url.resolve() roots a slashless file: reference, and a special scheme
+// written without "//" has an authority (url.parse() keeps it as written). Expected values
+// are Node 20.18.1's.
+func TestURL_SchemeEdges(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+JSON.stringify([new URL('http:https://other/x', 'http://h/a/b').href, new URL('file:C:/x', 'file:///C:/a/b').href, __url_module.resolve('http://h/a', 'file:notes.txt'),
+  new URL('x', 'http:example.com/a/b').href, new URL('?q=1', 'https:example.com/a').href, new URL('#h', 'ftp:example.com/a').href, new URL('http:example.com/a').href,
+  new URL('https:\\\\x/y').href, new URL('https:x').href, new URL('http:/x').href, __url_module.parse('http:example.com/a').host, __url_module.parse('http:example.com/a').pathname, __url_module.parse('https:x').href]);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `["http://h/a/https://other/x","file:///C:/x","file:///notes.txt","http://example.com/a/x","https://example.com/a?q=1","ftp://example.com/a#h","http://example.com/a","https://x/y","https://x/","http://x/",null,"example.com/a","https:x"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}

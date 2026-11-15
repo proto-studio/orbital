@@ -112,9 +112,10 @@
 	}
 
 	// URL class
-	// How the URL class treats dot segments while the legacy API reads a URL through it:
-	// 'keep' for url.parse(), 'literal' for url.resolve() (only "." and ".." themselves,
-	// not their %2e spellings), and 'standard' otherwise.
+	// How the URL class reads a URL for the legacy API: 'parse' for url.parse(), which keeps
+	// the URL as written (dot segments, slashless file: paths, special schemes without
+	// "//"); 'keep' and 'literal' for url.resolve(), which keeps dot segments or removes only
+	// "." and ".." themselves (not their %2e spellings); and 'standard' otherwise.
 	let dotSegmentMode = 'standard';
 
 	function withDotSegmentMode(mode, fn) {
@@ -211,6 +212,12 @@
 			// google.com, not apple.com). Other schemes keep backslashes literal.
 			const special = /^(https?|wss?|ftp|file):$/.test(protocol);
 			const authorityEnd = special ? /[/\\?#]/ : /[/?#]/;
+			// A special scheme other than file: always has an authority, whatever slashes
+			// come before it (http:example.com is http://example.com/). url.parse() keeps
+			// the URL as written.
+			if (special && protocol !== 'file:' && !rest.startsWith('//') && dotSegmentMode !== 'parse') {
+				rest = '//' + rest.replace(/^[/\\]+/, '');
+			}
 			const slashes = rest.startsWith('//');
 
 			if (rest.startsWith('//')) {
@@ -279,33 +286,39 @@
 			// parser removes them. An opaque path, such as mailto:'s, is kept as is.
 			// A file: URL's path is always rooted: file:notes.txt is /notes.txt.
 			// url.parse() keeps it as written, as Node's legacy parser does.
-			if (protocol === 'file:' && !pathname.startsWith('/') && dotSegmentMode !== 'keep') {
+			if (protocol === 'file:' && !pathname.startsWith('/') && dotSegmentMode !== 'parse') {
 				pathname = '/' + pathname;
 			}
 			// url.parse() keeps the path as written, and url.resolve() only removes literal
 			// dot segments, as Node's legacy API does.
-			if (pathname.startsWith('/') && dotSegmentMode !== 'keep') {
+			if (pathname.startsWith('/') && dotSegmentMode !== 'keep' && dotSegmentMode !== 'parse') {
 				pathname = removeDotSegments(pathname, protocol === 'file:', dotSegmentMode === 'literal');
 			}
 
 			return { protocol, username, password, hostname, port, pathname, search, hash, slashes };
 		}
 
-		static _resolveRelative(base, relative) {
-			const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*:)/.exec(relative);
+		static _resolveRelative(base, relative, schemeConsumed) {
+			const scheme = schemeConsumed ? null : /^([a-zA-Z][a-zA-Z0-9+.-]*:)/.exec(relative);
 			if (scheme) {
 				// A special scheme that is the base's own, without "//", is relative to the
 				// base: http:../c against http://h/a/b is http://h/c.
 				const proto = scheme[1].toLowerCase();
 				const rest = relative.slice(proto.length);
 				if (proto === base.protocol && /^(https?|wss?|ftp|file):$/.test(proto) && !rest.startsWith('//')) {
-					return URL._resolveRelative(base, rest);
+					return URL._resolveRelative(base, rest, true);
 				}
 				return relative; // Already absolute
 			}
 
 			if (relative.startsWith('//')) {
 				return base.protocol + relative;
+			}
+
+			// Against a file: base, a path starting with a Windows drive letter replaces the
+			// whole path.
+			if (base.protocol === 'file:' && /^[A-Za-z][:|]([/\\?#]|$)/.test(relative)) {
+				return 'file:///' + relative;
 			}
 
 			// The base's scheme and, only if it has one, its authority with any user info:
@@ -502,7 +515,7 @@
 
 		try {
 			// Try to parse as full URL
-			const url = withDotSegmentMode('keep', () => new URL(urlString));
+			const url = withDotSegmentMode('parse', () => new URL(urlString));
 			result.protocol = url.protocol;
 			result.slashes = url._slashes || null;
 			// When an authority ("//") was present the host is a string even if
@@ -711,7 +724,7 @@
 	// written too; any other reference has its literal dot segments removed from the
 	// merged path.
 	function resolve(from, to) {
-		const base = withDotSegmentMode('keep', () => new URL(from));
+		const base = withDotSegmentMode('parse', () => new URL(from));
 		const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(to);
 		const otherScheme = scheme !== null && scheme[1].toLowerCase() + ':' !== base.protocol;
 		const keep = to === '' || to.startsWith('?') || to.startsWith('//') || otherScheme;
