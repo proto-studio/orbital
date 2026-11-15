@@ -94,6 +94,11 @@
     return flags;
   }
 
+  // Names cross to Go as C strings, which end at a NUL; Node refuses them.
+  function checkNoNul(name) {
+    if (name.includes('\0')) throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', 'Invalid name');
+  }
+
   function checkKeyObject(key, type) {
     if (!(key instanceof crypto.KeyObject)) throw invalidArgType('pkey', 'an instance of KeyObject', key);
     if (key.type !== type) throw invalidArgValue('pkey', key);
@@ -136,9 +141,9 @@
       this[kInfo] = info;
     }
 
-    get subject() { return this[kInfo].subject; }
+    get subject() { return this[kInfo].subject === '' ? undefined : this[kInfo].subject; }
     get subjectAltName() { return this[kInfo].subjectAltName === null ? undefined : this[kInfo].subjectAltName; }
-    get issuer() { return this[kInfo].issuer; }
+    get issuer() { return this[kInfo].issuer === '' ? undefined : this[kInfo].issuer; }
     get issuerCertificate() { return undefined; }
     get infoAccess() { return this[kInfo].infoAccess === null ? undefined : this[kInfo].infoAccess; }
     get validFrom() { return this[kInfo].validFrom; }
@@ -157,11 +162,13 @@
 
     checkHost(name, options) {
       validateString(name, 'name');
+      checkNoNul(name);
       return crypto._x509Check('host', this[kInfo].raw, name, getFlags(options)) || undefined;
     }
 
     checkEmail(email, options) {
       validateString(email, 'email');
+      checkNoNul(email);
       return crypto._x509Check('email', this[kInfo].raw, email, getFlags(options)) || undefined;
     }
 
@@ -173,7 +180,7 @@
       } catch (e) {
         throw codedError(TypeError, 'ERR_INVALID_ARG_VALUE', 'Invalid IP');
       }
-      return out || undefined;
+      return out ? ip : undefined;
     }
 
     checkIssued(otherCert) {
