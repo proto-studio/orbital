@@ -313,6 +313,11 @@
 				return prefix + relative;
 			}
 
+			// An empty reference is the base itself, less its fragment.
+			if (relative === '') {
+				return prefix + basePathname + base.search;
+			}
+
 			if (relative.startsWith('?')) {
 				return prefix + basePathname + relative;
 			}
@@ -693,11 +698,13 @@
 	}
 
 	// url.resolve function
-	// Node's legacy resolve takes the base as written and removes the literal dot segments
-	// only from the merged path.
+	// Node's legacy resolve takes the base as written. An empty, query-only or
+	// protocol-relative reference keeps the path as written too; any other reference has
+	// its literal dot segments removed from the merged path.
 	function resolve(from, to) {
 		const base = withDotSegmentMode('keep', () => new URL(from));
-		return withDotSegmentMode('literal', () => new URL(to, base).href);
+		const keep = to === '' || to.startsWith('?') || to.startsWith('//');
+		return withDotSegmentMode(keep ? 'keep' : 'literal', () => new URL(to, base).href);
 	}
 
 	// domainToASCII and domainToUnicode (simplified - no actual punycode)

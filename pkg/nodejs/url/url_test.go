@@ -376,3 +376,23 @@ JSON.stringify([new URL('b', 'foo:/.//host/a').href, new URL('?q=1', 'foo:/.//ho
 		t.Errorf("got  %s\nwant %s", result.String(), want)
 	}
 }
+
+// url.resolve() keeps the path as written for an empty, query-only or protocol-relative
+// reference and removes literal dot segments otherwise; an empty reference to new URL()
+// is the base less its fragment. Expected values are Node 20.18.1's.
+func TestURL_LegacyResolveBranches(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+const cases = [['http://h/a/../b', '?q=1'], ['http://h/a/', '//other/a/../b'], ['http://h/a/', '/x/../y'], ['http://h/a/', 'http://o/a/../b'], ['http://h/a/../b', '#f'], ['http://h/a/b', 'x/../y'], ['http://h/a/../b', ''], ['http://h/a/', './'], ['http://h/a/b/', '..'], ['http://h/a/', '/x/./y'], ['http://h/a/', 'mailto:a/../b'], ['http://h/a/b', '../../../x'], ['http://h/a/b', '.%2e/x']];
+JSON.stringify([cases.map(([a, b]) => __url_module.resolve(a, b)), new URL('', 'http://h/a/b?q=1#f').href, new URL('', 'foo:/a/b').href]);
+`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	want := `[["http://h/a/../b?q=1","http://other/a/../b","http://h/y","http://o/b","http://h/b#f","http://h/a/y","http://h/a/../b","http://h/a/","http://h/a/","http://h/x/y","mailto:a/../b","http://h/x","http://h/a/.%2e/x"],"http://h/a/b?q=1","foo:/a/b"]`
+	if result.String() != want {
+		t.Errorf("got  %s\nwant %s", result.String(), want)
+	}
+}
