@@ -33,9 +33,14 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[approx] One JS helper remains in the loader.** `esm-loader.js` still hosts
   `__esmFinishDynamicImport` (chains a module's evaluation promise to its
   namespace for `await import()`); everything else is Go.
-- **[gap] `NODE_OPTIONS` parsing is a subset.** Only `--import` / `--require`
-  (and their `=` forms) are honored (`cmd/orbital/main.go` `nodeOptionArgs`);
-  other Node options in the env var are ignored. (#109)
+- **[gap] Most `NODE_OPTIONS` flags have no effect.** `NODE_OPTIONS` is split and checked as
+  Node 20.18.1 does it (`cmd/orbital/node_options.go`): an option Node doesn't allow there, a
+  bad negation or a missing value stops the program with exit code 9 and Node's message.
+  Only `--require`/`-r`, `--import`, `--title`, `--input-type` and `--[no-]warnings` take
+  effect, because those are the Node options the `orbital` command implements. Other options
+  Node allows there (`--enable-source-maps`, `--max-old-space-size`, `--conditions`,
+  `--unhandled-rejections`, …) are accepted and ignored, and option values (ports, sizes) are
+  not validated. (#109)
 - **[gap] `import()` of a missing module has no `code`.** Node rejects with
   `code: 'ERR_MODULE_NOT_FOUND'`; Orbital rejects with a plain `Error`. (#110)
 - **[approx] When an `import()`ed module runs relative to timers is not pinned down.** It runs

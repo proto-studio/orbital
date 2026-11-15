@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,9 +46,9 @@ func main() {
 
 	args := os.Args[1:]
 
-	// NODE_OPTIONS: honor the subset that affects module preloading (--import,
-	// --require). These are injected before the user's args so the normal flag
-	// parser handles them, matching Node's "NODE_OPTIONS then argv" ordering.
+	// NODE_OPTIONS: checked as Node checks it; the options Orbital implements are
+	// injected before the user's args so the normal flag parser handles them,
+	// matching Node's "NODE_OPTIONS then argv" ordering.
 	args = append(nodeOptionArgs(), args...)
 
 	// Parse flags
@@ -417,6 +418,8 @@ Network Permission Examples (Deno-compatible):
   orbital -N script.js                             Short form: allow all network
 
 Environment Variables:
+  NODE_OPTIONS                      Options as Node reads them (-r, --import, --title,
+                                    --input-type and --no-warnings take effect)
   NODE_PATH                         Additional module search paths
   NODE_REPL_HISTORY                 Path to REPL history file
 `, orbitalVersion)
@@ -425,29 +428,22 @@ Environment Variables:
 // esmLoader is the global ESM module loader (initialized after runtime creation)
 var esmLoader *esm.ESM
 
-// nodeOptionArgs extracts the module-preloading flags Orbital supports from the
-// NODE_OPTIONS environment variable (--import / --require and their = forms),
-// returned as argv tokens. Other NODE_OPTIONS entries are ignored.
+// nodeOptionArgs reads NODE_OPTIONS the way Node 20.18.1 does and returns the
+// options Orbital implements (--require/-r, --import, --title, --input-type,
+// --[no-]warnings) as argv tokens. Like Node, it exits with code 9 for an option
+// Node doesn't allow there or a malformed value; other options Node allows are
+// accepted without effect.
 func nodeOptionArgs() []string {
-	opts := strings.TrimSpace(os.Getenv("NODE_OPTIONS"))
+	opts := os.Getenv("NODE_OPTIONS")
 	if opts == "" {
 		return nil
 	}
-	fields := strings.Fields(opts)
-	var out []string
-	for i := 0; i < len(fields); i++ {
-		f := fields[i]
-		switch {
-		case f == "--import" || f == "--require" || f == "-r":
-			if i+1 < len(fields) {
-				out = append(out, f, fields[i+1])
-				i++
-			}
-		case strings.HasPrefix(f, "--import=") || strings.HasPrefix(f, "--require="):
-			out = append(out, f)
-		}
+	parsed, err := parseNodeOptions(opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", filepath.Base(os.Args[0]), err)
+		os.Exit(9)
 	}
-	return out
+	return parsed.args()
 }
 
 func createRuntime() (*runtime.Runtime, error) {
@@ -508,6 +504,17 @@ func createRuntime() (*runtime.Runtime, error) {
 		return nil, err
 	}
 	esmLoader = inst.ESM
+
+	// --title, for every way of running code.
+	if processTitle != "" {
+		quoted, _ := json.Marshal(processTitle)
+		if _, err := inst.Runtime.RunScript("process.title = "+string(quoted)+";", "[title]"); err != nil {
+			// Non-fatal
+			if !silenceWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: failed to set process.title: %v\n", err)
+			}
+		}
+	}
 	return inst.Runtime, nil
 }
 
@@ -770,17 +777,6 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 		return err
 	}
 	defer rt.Dispose()
-
-	// Set runtime.title if specified
-	if processTitle != "" {
-		titleCode := fmt.Sprintf("runtime.title = %q;", processTitle)
-		if _, err := rt.RunScript(titleCode, "[title]"); err != nil {
-			// Non-fatal
-			if !silenceWarnings {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set runtime.title: %v\n", err)
-			}
-		}
-	}
 
 	// Set __filename and __dirname if provided
 	if filename != "" && dirname != "" {
