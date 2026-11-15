@@ -201,19 +201,6 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// runtime.nextTick()
-	nextTickFn, err := iso.NewFunctionTemplate(p.nextTickFunc)
-	if err != nil {
-		return err
-	}
-	nextTickVal, err := nextTickFn.GetFunction(ctx)
-	if err != nil {
-		return err
-	}
-	if err := processObj.Set("nextTick", nextTickVal); err != nil {
-		return err
-	}
-
 	// process.stdout / process.stderr as real writable streams backed by the
 	// OS file descriptors. Many npm packages write via process.stdout.write and
 	// Node's own console is built on these, so they must be present.
@@ -677,25 +664,6 @@ func (p *Process) memoryUsageFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	// separately yet, so report 0 rather than double-count external.
 	obj.Set("arrayBuffers", ctx.NewNumber(0))
 	return obj
-}
-
-func (p *Process) nextTickFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 || !args[0].IsFunction() {
-		return nil
-	}
-
-	callback := args[0]
-	var callArgs []*v8.Value
-	if len(args) > 1 {
-		callArgs = args[1:]
-	}
-
-	p.rt.EventLoop().EnqueueTick(func() {
-		p.rt.MakeCallback(callback, nil, callArgs...)
-	})
-
-	return nil
 }
 
 // goArchToNode converts Go architecture names to Node.js equivalents.

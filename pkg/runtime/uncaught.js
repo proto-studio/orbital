@@ -86,15 +86,127 @@
     die(err, exitCodeOf(p, kGenericUserError), origin);
   }
 
-  // callback enters JavaScript from the event loop. Go only sees an exception's text, so
-  // catching it here is what gives the handlers the thrown value itself.
-  function callback(fn, recv, ...args) {
+  // ---- process.nextTick ----------------------------------------------------------------
+  // Node's lib/internal/process/task_queues.js. When the outermost callback into JavaScript
+  // returns, the tick queue runs, then the microtask (promise) queue, and again until both are
+  // empty, so a tick runs ahead of promise reactions queued by the same code. V8 also runs its
+  // microtasks by itself once the stack empties, which is why the ticks run before that.
+
+  const tickQueue = [];
+  let tickHead = 0;
+  // depth counts the callbacks into JavaScript on the stack; only the outermost one runs
+  // the queues, as in Node's InternalCallbackScope.
+  let depth = 0;
+  let processingTicks = false;
+  // A tick queued with no callback on the stack, as by a script an embedder runs, has
+  // nothing to run it on return. The event loop does then.
+  let loopScheduled = false;
+
+  function nextTick(callback, ...args) {
+    if (typeof callback !== 'function') {
+      const err = new TypeError('The "callback" argument must be of type function. Received ' +
+        describeReceived(callback));
+      err.code = 'ERR_INVALID_ARG_TYPE';
+      throw err;
+    }
+    const p = getProcess();
+    if (dead || (p && p._exiting)) return;
+    tickQueue[tickQueue.length] = { callback, args };
+    if (!loopScheduled) {
+      loopScheduled = true;
+      native.scheduleTicks();
+    }
+  }
+
+  function describeReceived(value) {
+    if (value === null || value === undefined) return String(value);
+    if (typeof value === 'object') {
+      const ctor = value.constructor;
+      return ctor && ctor.name ? 'an instance of ' + ctor.name : inspect(value);
+    }
+    let shown = inspect(value);
+    if (shown.length > 28) shown = shown.slice(0, 25) + '...';
+    return 'type ' + typeof value + ' (' + shown + ')';
+  }
+
+  // processTicks is processTicksAndRejections, less the rejections, which the runtime
+  // reports once its queues have drained.
+  function processTicks() {
+    if (processingTicks) return;
+    processingTicks = true;
     try {
-      return apply(fn, recv, args);
+      do {
+        while (tickHead < tickQueue.length && !dead) {
+          const tick = tickQueue[tickHead];
+          tickQueue[tickHead++] = undefined;
+          try {
+            apply(tick.callback, undefined, tick.args);
+          } catch (err) {
+            trigger(err, false);
+          }
+        }
+        tickQueue.length = 0;
+        tickHead = 0;
+        if (dead) return;
+        native.runMicrotasks();
+      } while (tickQueue.length > 0 && !dead);
+    } finally {
+      processingTicks = false;
+    }
+  }
+
+  // runScheduledTicks is the event loop's turn for ticks no callback has run.
+  function runScheduledTicks() {
+    loopScheduled = false;
+    if (depth === 0) processTicks();
+  }
+
+  // runMain runs the main script as the outermost callback.
+  function runMain(body) {
+    depth++;
+    try {
+      body();
+    } finally {
+      depth--;
+    }
+    if (depth === 0 && !dead) processTicks();
+  }
+
+  // queueMicrotask queues a V8 microtask, as Node's does, so it runs in order with promise
+  // reactions. An exception goes to 'uncaughtException' rather than rejecting anything.
+  const resolved = Promise.resolve();
+  function queueMicrotask(callback) {
+    if (typeof callback !== 'function') {
+      const err = new TypeError('The "callback" argument must be of type function. Received ' +
+        describeReceived(callback));
+      err.code = 'ERR_INVALID_ARG_TYPE';
+      throw err;
+    }
+    apply(then, resolved, [function () {
+      try {
+        apply(callback, undefined, []);
+      } catch (err) {
+        trigger(err, false);
+      }
+    }]);
+  }
+
+  // callback enters JavaScript from the event loop. Go only sees an exception's text, so
+  // catching it here is what gives the handlers the thrown value itself. The outermost one
+  // runs the tick and microtask queues before returning, as node::MakeCallback does.
+  function callback(fn, recv, ...args) {
+    let result;
+    depth++;
+    try {
+      result = apply(fn, recv, args);
     } catch (err) {
       trigger(err, false);
-      return undefined;
+      result = undefined;
+    } finally {
+      depth--;
     }
+    if (depth === 0 && !dead) processTicks();
+    return result;
   }
 
   // rebuildThrown recovers a main-script exception from its text. It only runs when the
@@ -200,6 +312,7 @@
   }
 
   function bindProcess(process) {
+    process.nextTick = nextTick;
     process.setUncaughtExceptionCaptureCallback = setUncaughtExceptionCaptureCallback;
     process.hasUncaughtExceptionCaptureCallback = function hasUncaughtExceptionCaptureCallback() {
       return captureFn !== null;
@@ -216,5 +329,8 @@
     apply(then, promise, [undefined, function (err) { trigger(err, true); }]);
   }
 
-  return { callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled, watchModule };
+  return {
+    callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled,
+    watchModule, runMain, runScheduledTicks, queueMicrotask,
+  };
 })

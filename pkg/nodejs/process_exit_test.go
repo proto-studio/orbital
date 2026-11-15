@@ -52,6 +52,9 @@ func TestProcessExit_MatchesNode(t *testing.T) {
 		{"skips finally", `try { process.exit(12); } finally { log.push('finally'); }`, `[]`, 12},
 		{"string code", `process.on('exit', (c) => log.push(c + ' ' + process.exitCode)); process.exit('7');`, `["7 7"]`, 7},
 		{"zero", `process.on('exit', (c) => log.push('exit ' + c)); process.exit(0);`, `["exit 0"]`, 0},
+		{"tick in an exit listener", `process.on('exit', () => { process.nextTick(() => log.push('tick')); log.push('exit'); }); process.exit(2);`, `["exit"]`, 2},
+		{"from a tick", `process.nextTick(() => { log.push('t1'); process.exit(3); log.push('after'); }); process.nextTick(() => log.push('t2'));`, `["t1"]`, 3},
+		{"from a tick in a promise", `Promise.resolve().then(() => process.nextTick(() => { log.push('t1'); process.exit(5); })).then(() => log.push('next'));`, `["next","t1"]`, 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, log := runExit(t, tc.script)
