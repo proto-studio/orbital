@@ -7,8 +7,10 @@
 package esm
 
 import (
+	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -300,8 +302,10 @@ func (e *ESM) resolveAndLoad(specifier, referrer string) (source, url string, er
 // and returns its value, or a JS error for a rejection. It runs rt's microtasks
 // and event loop until the promise settles, waiting on timers and I/O as long
 // as they take, as Node waits on its hooks thread. It gives up only when rt
-// has nothing left that could settle the promise.
-func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value) (*v8.Value, error) {
+// has nothing left that could settle the promise, or when stop (the importing
+// runtime's execution context) ends: killing or timing out the application
+// kills the loader realm's wait with it.
+func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, stop context.Context) (*v8.Value, error) {
 	if p == nil {
 		return nil, errors.New("esm: nil promise")
 	}
@@ -317,7 +321,19 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value) (*v8.Value, error) {
 		return p.PromiseState() != v8.PromisePending
 	}
 	if !settled() {
+		finished := make(chan struct{})
+		go func() {
+			select {
+			case <-stop.Done():
+				rt.Kill("the importing runtime stopped")
+			case <-finished:
+			}
+		}()
 		rt.EventLoop().RunUntil(settled)
+		close(finished)
+		if err := stop.Err(); err != nil {
+			return nil, fmt.Errorf("esm: import stopped while a loader hook ran: %w", err)
+		}
 	}
 	switch p.PromiseState() {
 	case v8.PromiseFulfilled:

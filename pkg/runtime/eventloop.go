@@ -260,10 +260,15 @@ func (el *EventLoop) run(done func() bool) bool {
 	ctx := el.ctx
 	el.mu.Unlock()
 
-	// Start a goroutine to watch for context cancellation
+	// Start a goroutine to watch for context cancellation, for this call only.
+	returned := make(chan struct{})
+	defer close(returned)
 	go func() {
-		<-ctx.Done()
-		el.Stop()
+		select {
+		case <-ctx.Done():
+			el.Stop()
+		case <-returned:
+		}
 	}()
 
 	for {
