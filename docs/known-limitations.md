@@ -24,55 +24,64 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `awaitPromiseRT` pumps the isolated loader realm's microtask + event loop up to
   `maxHookTicks` (200000) iterations, then gives up with "hook promise did not
   settle" (`hooks.go`). This is a guard against a runaway hook, not a real
-  cooperative scheduler; a legitimately long-running async hook could be cut off.
-- **[gap] Import attributes are not supported.** `import x from './y.json' with
-  { type: 'json' }` (and the older `assert { … }`) is not parsed; JSON is
-  classified by extension instead. A fixture had to drop the `assert` clause.
+  cooperative scheduler; a legitimately long-running async hook could be cut off. (#107)
+- **[gap] Import attributes are not checked.** `with { type: 'json' }` is parsed but ignored,
+  and a module's type comes from its extension. Node throws `ERR_IMPORT_ASSERTION_TYPE_MISSING`
+  for a JSON import with no attribute and `ERR_IMPORT_ASSERTION_TYPE_FAILED` for `type: 'json'`
+  on a JavaScript module; Orbital loads both. The older `assert { … }` form, which Node 20
+  accepts, is a `SyntaxError`. (#108)
 - **[approx] One JS helper remains in the loader.** `esm-loader.js` still hosts
   `__esmFinishDynamicImport` (chains a module's evaluation promise to its
   namespace for `await import()`); everything else is Go.
 - **[gap] `NODE_OPTIONS` parsing is a subset.** Only `--import` / `--require`
   (and their `=` forms) are honored (`cmd/orbital/main.go` `nodeOptionArgs`);
-  other Node options in the env var are ignored.
+  other Node options in the env var are ignored. (#109)
+- **[gap] `import()` of a missing module has no `code`.** Node rejects with
+  `code: 'ERR_MODULE_NOT_FOUND'`; Orbital rejects with a plain `Error`. (#110)
+- **[approx] Named exports of an imported CommonJS module come from `module.exports`.** Node
+  finds them by scanning the source (cjs-module-lexer), so it misses exports added through a
+  reassigned object or a `defineProperty` getter; Orbital lists every key `module.exports`
+  ends up with. (#111)
+- **[approx] When an `import()`ed module runs relative to timers is not pinned down.** It runs
+  after the importer's code, microtasks and `nextTick` callbacks, as in Node, but before a
+  `setImmediate` or `setTimeout(…, 0)` the importer queued first. Node usually runs those
+  first; the order depends on file I/O timing and varies between runs.
 
 ## crypto — KeyObject API (`pkg/nodejs/crypto/keyobject.go`, `keyobject.js`)
 
 - **[gap] RSA `publicExponent` option is ignored.** `generateKeyPair('rsa', …)`
   always uses Go's fixed exponent 65537; a requested non-65537 exponent is
-  silently ignored (`doGenerateKeyPair`). jose only ever asks for 65537.
+  silently ignored (`doGenerateKeyPair`). jose only ever asks for 65537. (#112)
 - **[perf] Key generation is synchronous.** The async `generateKeyPair(…, cb)`
   and `promisify` forms run the actual keygen inside a microtask on the main
   thread (`keyobject.js`), so RSA-2048/4096 generation blocks the event loop.
   Node offloads to the libuv threadpool. Needs a Go goroutine + event-loop
-  completion to be truly async.
-- **[gap] Post-quantum (ML-DSA) keys are unimplemented.** `generateKeyPair`
-  rejects `ml-dsa-*`; Go's stdlib has no ML-DSA. (WebCrypto side correctly
-  reports it as unsupported — see below.)
+  completion to be truly async. (#113)
 - **[gap] No node:crypto one-shot sign/verify/encrypt with KeyObject.** The
   KeyObject surface covers generate / import / export / equals only. `crypto.sign`,
   `crypto.verify`, `privateEncrypt`, `publicDecrypt`, `createSign/createVerify`,
   and `diffieHellman` for KeyObjects are not implemented. jose's default suite
-  uses the WebCrypto path, so this was not needed there.
+  uses the WebCrypto path, so this was not needed there. (#141)
 - **[approx] `KeyObject.equals` for asymmetric keys compares canonical JWK JSON**
   rather than DER (`keyEqualsFunc`). Functionally correct for equal keys; not the
   byte-for-byte SPKI comparison Node does.
 - **[perf] `crypto.randomInt` has modulo bias.** `randomIntFunc` uses
   `n % rangeSize` (`crypto.go`); Node uses rejection sampling for a uniform
-  distribution. Pre-existing, noted here for completeness.
+  distribution. Pre-existing, noted here for completeness. (#114)
 - **[perf] `crypto.randomBytes(size, cb)` async form is synchronous.** It fills
   bytes immediately and calls back via a microtask (`crypto.go`), not the
-  threadpool.
+  threadpool. (#113)
 
 ## WebCrypto — SubtleCrypto (`pkg/nodejs/webcrypto/webcrypto.js`)
 
 - **[gap] `deriveBits`/`deriveKey` support PBKDF2, ECDH, X25519 only.** `HKDF`
   is accepted by `importKey` (it's in the import allowlist) but `deriveBits`
   throws `NotSupportedError` for it — an inconsistency to resolve when HKDF
-  derivation is implemented natively.
+  derivation is implemented natively. (#115)
 - **[approx] JWK validation is presence-only.** `assertValidJWK` checks that the
   required members exist for the `kty` (e.g. RSA needs `n`,`e`); it does not do
   full structural validation (coordinate lengths, on-curve checks, base64url
-  charset). Enough to reject the structurally-empty keys libraries probe with.
+  charset). Enough to reject the structurally-empty keys libraries probe with. (#116)
 - **[gap] ML-DSA and other non-allowlisted algorithms are rejected by design.**
   `SUPPORTED_IMPORT_ALGS` gates `importKey`; anything outside it throws
   `NotSupportedError` (matches Node). Expanding real algorithm support means
@@ -84,26 +93,26 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 
 - **[approx] `Buffer.byteLength(str, 'base64url')` is approximate.** Returns
   `(len*3)>>2` assuming no padding; exact decoded length can be 1–2 bytes less
-  for some inputs. The decode path itself (`fromString`) is exact.
+  for some inputs. The decode path itself (`fromString`) is exact. (#117)
 
 ---
 
 ## Uncaught exceptions and rejections (`pkg/runtime/uncaught.go`, `uncaught.js`)
 
 - **[approx] The printed error has no source-line header.** Node prints `file:line`, the source
-  line and a caret above the stack, and its version below it. Orbital prints the stack.
+  line and a caret above the stack, and its version below it. Orbital prints the stack. (#118)
 - **[gap] Only the default `throw` rejection mode.** There is no `--unhandled-rejections` flag,
-  and no `PromiseRejectionHandledWarning`.
+  and no `PromiseRejectionHandledWarning`. (#119)
 - **[gap] `domain` does not follow async work.** Only a throw inside the synchronous `run()`
-  reaches a domain's `'error'` listener. A throw from a timer started in one is uncaught.
+  reaches a domain's `'error'` listener. A throw from a timer started in one is uncaught. (#120)
 - **[approx] A worker's `'error'` event carries text.** The parent gets an `Error` whose message
-  is the worker's whole printed exception, not a copy of the thrown value.
+  is the worker's whole printed exception, not a copy of the thrown value. (#121)
 - **[approx] `process.nextTick` runs after promise reactions.** Node runs the tick queue first.
   Orbital's ticks are event-loop work, so a promise reaction queued by the same code runs ahead
-  of them.
+  of them. (#122)
 - **[approx] A `_write` that throws before calling back becomes a stream error.** `doWrite` in
   `stream.js` gives it to the stream's `'error'` event, where Node lets it propagate to the caller
-  of `write` and on to `uncaughtException`.
+  of `write` and on to `uncaughtException`. (#123)
 - **[approx] Native modules must use `Runtime.MakeCallback`.** A Go module that calls a function
   with `Value.Call` from the event loop and ignores the error still loses the exception.
 
@@ -114,12 +123,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **Hostname checks follow Go, not Node, unless a script passes `checkServerIdentity`.** A
   certificate with only a Common Name and no SAN fails where Node accepts it. Only a
   whole-label `*.` wildcard matches, not `f*.example.com`, and Go accepts `*.com` from a
-  trusted CA where Node rejects it. `tls.checkServerIdentity` itself follows Node.
+  trusted CA where Node rejects it. `tls.checkServerIdentity` itself follows Node. (#124)
 - **TLS options with no effect.** `ciphers`, `honorCipherOrder`, `ecdhCurve`, `dhparam` and
   `sigalgs` are ignored. `pfx` and encrypted keys are not supported and throw. Session
   resumption is not exposed: `getSession` and `getTLSTicket` return `undefined`, and no
-  `session` event fires. `tls.rootCertificates` is empty.
-- **`TLSSocket` can only wrap a `net.Socket`,** not an arbitrary stream.
+  `session` event fires. `tls.rootCertificates` is empty. (#125)
+- **`TLSSocket` can only wrap a `net.Socket`,** not an arbitrary stream. (#126)
 - **The HTTP parser is stricter than Node in places.** All of these are refused, because
   another hop could read the same bytes differently:
   - a non-chunked final `Transfer-Encoding`, before the handler runs, where Node runs the
@@ -140,32 +149,66 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **A 204 or 304 response never has a body,** as the HTTP spec says. Node reads one if it
   has a `Content-Length`.
 - **`'finish'` on a response can come after the request's `'end'`,** because it waits for
-  the write to complete on another thread.
+  the write to complete on another thread. (#127)
 - **Sockets cannot be made from file descriptors,** and `server.listen` cannot take a handle.
+  (#128)
 - **`net.connect` with an IPv6 zone** (`fe80::1%en0`) fails with `ENOTFOUND`, because a zone
   is free-form text a policy could be made to match on. `net.isIP` still accepts it.
 - **Happy-eyeballs is sequential.** Addresses are tried in order, and `'lookup'` fires once
-  rather than per address.
+  rather than per address. (#129)
 - **`dgram.getRecvBufferSize` and `getSendBufferSize`** report the size last set, or a default,
-  rather than asking the OS.
-- **`fs` callback calls run synchronously.** `fs.appendFile`, `open`, `write`, `read`, `mkdir`
-  and the other callback forms, and `fs.createWriteStream`'s writes, do their work on the
-  JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a path,
-  `stat`, `access` and read streams run off the thread.
-- **Some `fs` calls are still missing,** including `accessSync`, `truncate`,
-  `ftruncate`, `fsync`, `chmod`, `utimes`, `mkdtemp`, and the `fs.Stats` and `fs.Dirent` classes.
+  rather than asking the OS. (#130)
+
+## fs (`pkg/nodejs/fs`)
+
+- **[perf] `fs` callback calls run synchronously.** `fs.appendFile`, `open`, `write`, `read`,
+  `mkdir` and the other callback forms, and `fs.createWriteStream`'s writes, do their work on
+  the JavaScript thread and call back on the next tick. Only `readFile`, `writeFile` given a
+  path, `stat`, `access` and read streams run off the thread. (#131)
+- **[gap] Some `fs` calls are still missing,** including `accessSync`, `exists`, `truncate`,
+  `ftruncate`, `fsync`, `fdatasync`, `chmod`, `fchmod`, `chown`, `fchown`, `utimes`, `futimes`,
+  `mkdtemp`, `opendir`, `cp`, `statfs`, `readv`, `writev`, `watch`, `watchFile`, `openAsBlob`,
+  and the `fs.Stats`, `fs.Dirent` and `fs.Dir` classes. (#132)
+- **[gap] `statSync` and `lstatSync` of a missing path return `undefined`.** Node throws
+  `ENOENT` unless `throwIfNoEntry: false` is passed. The other sync calls throw Node's errors.
+  (#133)
+- **[approx] A write stream destroyed before it opens emits `'close'` before `'open'`.** Node
+  waits for the open, emits `'open'` with `ws.fd` set, then closes. In Orbital `ws.fd` is
+  already `null` when `'open'` fires. (#134)
+
+## os and child_process (`pkg/nodejs/os`, `child_process`, `internal/sysconst`)
+
+- **[gap] `os.constants` has no `dlopen` or `UV_UDP_REUSEADDR`.** It has `errno`, `signals`
+  and `priority`, which match Node's values for the host. (#135)
+- **[approx] An unknown signal name doesn't throw.** Node's `child.kill('SIGFOO')` and
+  `process.kill(pid, 'SIGFOO')` throw `ERR_UNKNOWN_SIGNAL`. Orbital's `child.kill` sends
+  `SIGTERM` instead, and `process.kill` throws an error with no `code`. (#136)
+
+## V8 embedding (`pkg/v8`)
+
+- **[approx] V8's memory protection keys are turned off, on purpose.** On x64 Linux CPUs with
+  PKU, V8 write-protects code pages with a key that only threads descended from the one that
+  initialized V8 can use. Go runs isolates on any OS thread, so `v8go_init` passes
+  `--no-memory-protection-keys` and code pages fall back to plain `mprotect` permissions. Other
+  platforms are unaffected.
 
 ## util.inspect and console.log (`pkg/nodejs/internal/inspectjs`, `console`, `util`)
 
 - **[gap] Self-references aren't labeled.** Node prints `<ref *1> { self: [Circular *1] }`.
   `util.inspect` prints a plain `[Circular]` without the `<ref *1>` marker, and `console.log`
   doesn't detect the cycle at all: it repeats the object until the depth limit and prints
-  `[Object]`.
+  `[Object]`. (#138)
 - **[gap] Symbol keys aren't listed.** `{ x: 2, [Symbol(k)]: 1 }` prints as `{ x: 2 }` in both.
+  (#139)
 - **[approx] `%i` of a number too large for an integer** clamps to the 64-bit limit
-  (`9223372036854775807`). Node parses the number's text, so `2 ** 70` prints `1`.
+  (`9223372036854775807`). Node parses the number's text, so `2 ** 70` prints `1`. (#140)
 - **[approx] `%d` of a numeric string** prints `NaN`. Node converts the string, so `'42'`
-  prints `42`.
+  prints `42`. (#140)
+- **[approx] `util.format`'s `%d` of a BigInt drops the `n`,** so `42n` prints `42`. Node and
+  `console.log` print `42n`. (#140)
+- **[approx] String widths come from Node's no-ICU table.** Node 20 measures them with ICU,
+  which counts more characters as wide, such as emoji outside the table's ranges (U+1F680).
+  Arrays laid out in columns are padded differently when they hold them. (#137)
 
 ## Node features found missing during development
 
@@ -180,14 +223,17 @@ traceability.
   `createDecipheriv`, `createSign` / `createVerify` and one-shot `sign` /
   `verify`, `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
-  passes, but native `node:crypto` consumers of them will not work.
+  passes, but native `node:crypto` consumers of them will not work. (#141)
 - **[gap] `node:crypto` KDFs.** `pbkdf2` / `pbkdf2Sync`, `scrypt` / `scryptSync`,
   and `hkdf` / `hkdfSync` are absent from `node:crypto`. (WebCrypto has a native
-  PBKDF2 for `deriveBits`; it is not surfaced on `node:crypto`.)
+  PBKDF2 for `deriveBits`; it is not surfaced on `node:crypto`.) (#142)
 - **[gap] `node:crypto` introspection is partial.** `getHashes()` returns only
   `md5, sha1, sha256, sha384, sha512` (`crypto.go`); Node lists far more. There
-  is no `getCiphers()` / `getCurves()` / `X509Certificate`.
-- **[gap] `SubtleCrypto` HKDF derivation** — see the WebCrypto section above.
+  is no `getCiphers()` / `getCurves()` / `X509Certificate`. (#143)
+- **[gap] Other `node:crypto` exports are missing.** `randomFill` / `randomFillSync`,
+  `getRandomValues`, `webcrypto`, `subtle`, `checkPrime` / `generatePrime`, `getFips` and
+  `Certificate` are `undefined`. `globalThis.crypto` has the WebCrypto object. (#144)
+- **[gap] `SubtleCrypto` HKDF derivation** — see the WebCrypto section above. (#115)
 
 ### Closed during this cycle
 
