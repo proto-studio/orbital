@@ -426,3 +426,32 @@ func TestLocalFS_WalkDotDotAfterLinkAndWriteOnlyCopy(t *testing.T) {
 		}
 	}
 }
+
+// A missing name before ".." in an absolute link target is still looked up, MkdirAll makes
+// a root that doesn't exist yet, and Mkdir keeps the sticky bit.
+func TestLocalFS_WalkMissingNamesRootAndSticky(t *testing.T) {
+	base := linkLayout(t)
+	root := filepath.Join(base, "root")
+	l := NewLocalFilesystem(root)
+	if err := os.Symlink(base+"/rootlink/missing/../a.txt", filepath.Join(root, "through-missing")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ReadFile("/through-missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ReadFile through a missing name and .. = %v, want ENOENT", err)
+	}
+
+	fresh := NewLocalFilesystem(filepath.Join(base, "new-root"))
+	if err := fresh.MkdirAll("/sub", 0o755); err != nil {
+		t.Errorf("MkdirAll with a missing root: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(base, "new-root", "sub")); err != nil || !info.IsDir() {
+		t.Errorf("new-root/sub = %v, %v", info, err)
+	}
+
+	if err := l.Mkdir("/sticky", 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(filepath.Join(root, "sticky")); info.Mode()&os.ModeSticky == 0 {
+		t.Errorf("sticky mode = %v, want the sticky bit", info.Mode())
+	}
+}
