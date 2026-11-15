@@ -262,7 +262,7 @@ func (e *ESM) registerHook(specifier, parentURL string) error {
 	// settles it (and the module's own async top-level work, e.g. loading
 	// typescript).
 	boot := "import * as __h from " + jsQuote(hookURL) + ";\n" +
-		"globalThis.__addHook(__h);\n" +
+		"globalThis.__addHook(__h, " + jsQuote(specifier) + ");\n" +
 		"if (typeof __h.initialize === 'function') { globalThis.__hookInitResult = __h.initialize(); }\n"
 	if _, err := le.RunModule(boot, "<register:"+specifier+">"); err != nil {
 		return err

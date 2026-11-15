@@ -15,9 +15,10 @@
 
   // Called (from Go) once per module.register(), after the hooks module has been
   // imported into this realm.
-  globalThis.__addHook = function (mod) {
+  // url is the specifier the hooks module was registered with.
+  globalThis.__addHook = function (mod, url) {
     if (mod && (typeof mod.resolve === 'function' || typeof mod.load === 'function')) {
-      hooks.push({ resolve: mod.resolve, load: mod.load });
+      hooks.push({ resolve: mod.resolve, load: mod.load, url: url });
     }
   };
 
@@ -361,17 +362,35 @@
   // Whether the load in progress checks import attributes (not for an entry point).
   let checkAttributes = false;
 
+  // The hook the chain called last, named the way Node names it in errors
+  // about a hook's result: the specifier given to register(), then the kind.
+  let lastHook = '';
+
   function buildChain(kind, terminal) {
-    let next = terminal;
+    let next = function (a, b) {
+      lastHook = "node:internal/modules/esm/" + kind + " '" + kind + "'";
+      return terminal(a, b);
+    };
     for (let i = hooks.length - 1; i >= 0; i--) {
       const hook = hooks[i][kind];
       if (typeof hook !== 'function') continue;
       const downstream = next;
+      const id = hooks[i].url + " '" + kind + "'";
       next = function (a, b) {
+        lastHook = id;
         return hook(a, b, downstream);
       };
     }
     return next;
+  }
+
+  // How Node describes an unexpected value in an error (determineSpecificType).
+  function describe(value) {
+    if (value == null) return '' + value;
+    if (typeof value === 'function' && value.name) return 'function ' + value.name;
+    let shown = typeof value === 'string' ? "'" + value + "'" : String(value);
+    if (shown.length > 28) shown = shown.slice(0, 25) + '...';
+    return 'type ' + typeof value + ' (' + shown + ')';
   }
 
   globalThis.__runResolve = async function (specifier, parentURL, attrsJSON) {
@@ -383,7 +402,14 @@
       importAttributes,
     };
     const res = await chain(specifier, ctx);
-    // A resolve hook may replace the attributes the module is loaded with.
+    // A resolve hook may replace the attributes the module is loaded with, with
+    // an object (Node's check of a resolve hook's result).
+    if (res.importAttributes != null && typeof res.importAttributes !== 'object') {
+      const err = new TypeError('Expected an object to be returned for the "importAttributes" from the "' +
+        lastHook + '" hook but got ' + describe(res.importAttributes) + '.');
+      err.code = 'ERR_INVALID_RETURN_PROPERTY_VALUE';
+      throw err;
+    }
     const resolvedAttributes = res.importAttributes != null ? res.importAttributes : importAttributes;
     return {
       url: res.url,
