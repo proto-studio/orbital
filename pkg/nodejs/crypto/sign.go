@@ -102,8 +102,9 @@ func pssSalt(n int) int {
 }
 
 // Go's PSS takes a salt length of 0 to mean "automatic", so a PSS
-// signature with an empty salt (RFC 8017 EMSA-PSS with sLen 0) is made and
-// checked here.
+// signature with an empty salt (RFC 8017 EMSA-PSS with sLen 0) is checked
+// here. Only verification: it uses the public key, so needs no constant-time
+// arithmetic.
 func mgf1XOR(out []byte, h func() hash.Hash, seed []byte) {
 	var counter [4]byte
 	done := 0
@@ -132,25 +133,6 @@ func pssNoSaltHash(h func() hash.Hash, mHash []byte) []byte {
 	return d.Sum(nil)
 }
 
-func signPSSNoSalt(k *rsa.PrivateKey, h func() hash.Hash, mHash []byte) ([]byte, error) {
-	emBits := k.N.BitLen() - 1
-	emLen := (emBits + 7) / 8
-	hLen := len(mHash)
-	if emLen < hLen+2 {
-		return nil, errDigestTooBig
-	}
-	H := pssNoSaltHash(h, mHash)
-	db := make([]byte, emLen-hLen-1)
-	db[len(db)-1] = 0x01
-	mgf1XOR(db, h, H)
-	db[0] &= 0xff >> (8*emLen - emBits)
-	em := append(append(db, H...), 0xbc)
-	k.Precompute()
-	m := new(big.Int).SetBytes(em)
-	sig := new(big.Int).Exp(m, k.D, k.N)
-	return sig.FillBytes(make([]byte, (k.N.BitLen()+7)/8)), nil
-}
-
 func verifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bool {
 	size := (k.N.BitLen() + 7) / 8
 	if len(sig) != size {
@@ -162,7 +144,11 @@ func verifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bo
 	}
 	emBits := k.N.BitLen() - 1
 	emLen := (emBits + 7) / 8
-	em := new(big.Int).Exp(s, big.NewInt(int64(k.E)), k.N).FillBytes(make([]byte, emLen))
+	m := new(big.Int).Exp(s, big.NewInt(int64(k.E)), k.N)
+	if m.BitLen() > emBits {
+		return false
+	}
+	em := m.FillBytes(make([]byte, emLen))
 	hLen := len(mHash)
 	if emLen < hLen+2 || em[emLen-1] != 0xbc {
 		return false
@@ -214,7 +200,10 @@ func signWith(priv any, data []byte, p signParams) ([]byte, error) {
 			return sig, nil
 		case rsaPSSPadding:
 			if p.saltLength == 0 {
-				return signPSSNoSalt(k, h, sum)
+				// Go's RSA can't sign PSS with an empty salt, and doing the
+				// private-key operation with math/big wouldn't be constant
+				// time, so this isn't offered.
+				return nil, errUnsupportedOp
 			}
 			sig, err := rsa.SignPSS(rand.Reader, k, id, sum, &rsa.PSSOptions{SaltLength: pssSalt(p.saltLength)})
 			if err != nil {

@@ -232,7 +232,10 @@ traceability.
   passes, but native `node:crypto` consumers of them will not work. (#141)
 - **[approx] Signatures cover RSA (PKCS#1 v1.5 and PSS), ECDSA and Ed25519.** DSA,
   Ed448 and RSA with `RSA_X931_PADDING` aren't supported, and a `Sign` or `Verify`
-  keeps the data written to it until `sign()` or `verify()`.
+  keeps the data written to it until `sign()` or `verify()`. Signing RSA-PSS with
+  `saltLength: 0` throws `ERR_CRYPTO_UNSUPPORTED_OPERATION`: Go's RSA can't make an
+  empty salt, and the private-key step done by hand wouldn't be constant time.
+  Verifying such signatures works.
 - **[gap] The `sm3` digest is unknown.** `pbkdf2` and `hkdf` take Node's other digests
   (MD5, SHA-1, SHA-2, SHA-3, SHAKE, RIPEMD-160, BLAKE2b-512, BLAKE2s-256 and MD5-SHA1)
   under Node's names and aliases, matched without regard to case (`digests.go`). Neither

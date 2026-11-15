@@ -1,4 +1,8 @@
 {
+  "asyncContext": [
+    "request 0",
+    "request 1"
+  ],
   "callback": [
     "null",
     "null",
@@ -58,6 +62,16 @@
       "message": "Unsupported crypto operation",
       "name": "Error"
     },
+    "emptyAlgorithm": {
+      "code": "ERR_CRYPTO_INVALID_DIGEST",
+      "message": "Invalid digest: ",
+      "name": "TypeError"
+    },
+    "emptyAlgorithmVerify": {
+      "code": "ERR_CRYPTO_INVALID_DIGEST",
+      "message": "Invalid digest: ",
+      "name": "TypeError"
+    },
     "numberAlgorithm": {
       "code": "ERR_INVALID_ARG_TYPE",
       "message": "The \"algorithm\" argument must be of type string. Received type number (5)",
@@ -88,6 +102,11 @@
       "message": "Invalid key object type secret, expected private.",
       "name": "TypeError"
     },
+    "unknownAlgorithm": {
+      "code": "ERR_CRYPTO_INVALID_DIGEST",
+      "message": "Invalid digest: nope",
+      "name": "TypeError"
+    },
     "unknownDigest": {
       "code": "ERR_CRYPTO_INVALID_DIGEST",
       "message": "Invalid digest",
@@ -108,7 +127,6 @@
   },
   "pssZeroSalt": {
     "value": [
-      "2e53c675022f6a95dc743054dc3265a57a111dad26428414b67bc2099728e4cfd3be4f1917a36b0f25bdeb8c130681f835a8828ac3626f094652aabb3c68da075996a92f860b991111c1df26bf3fd1b821df76c79a5d5ecdcda5be03f23c79eb6fba57923e65e35eb7973cfe20aebfdbc9aedb1f5b7f63b6aa579135e32849d7",
       true,
       false,
       true,

@@ -77,12 +77,12 @@ results.pss = outcome(() => {
     verifies('sha256', k.rsaPub, Buffer.from(nodeSigs.pssMax, 'base64'))];
 });
 
-// PSS with an explicitly empty salt is deterministic, so it's compared byte for byte.
+// PSS with an explicitly empty salt, made by Node (Orbital doesn't sign with one).
+const pssZeroSaltSig = Buffer.from('LlPGdQIvapXcdDBU3DJlpXoRHa0mQoQUtnvCCZco5M/Tvk8ZF6NrDyW964wTBoH4NaiCisNibwlGUqq7PGjaB1mWqS+GC5kREcHfJr8/0bgh33bHml1ezc2lvgPyPHnrb7pXkj5l4163lzz+IK6/28mu2x9bf2O2qleRNeMoSdc=', 'base64');
 results.pssZeroSalt = outcome(() => {
   const pss0 = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 0 };
-  const sig = crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss0 });
-  return [sig.toString('hex'), verifies('sha256', k.rsaPub, sig, pss0),
-    verifies('sha256', k.rsaPub, sig, { padding: 6, saltLength: 32 }), verifies('sha256', k.rsaPub, sig, { padding: 6 }),
+  return [verifies('sha256', k.rsaPub, pssZeroSaltSig, pss0),
+    verifies('sha256', k.rsaPub, pssZeroSaltSig, { padding: 6, saltLength: 32 }), verifies('sha256', k.rsaPub, pssZeroSaltSig, { padding: 6 }),
     verifies('sha256', k.rsaPub, crypto.sign('sha256', msg, { key: k.rsaPriv, padding: 6 }), pss0),
     verifies('sha256', k.rsaPub, Buffer.from(nodeSigs.pss, 'base64'), pss0)];
 });
@@ -118,6 +118,9 @@ results.errors = {
   badSaltLength: outcome(() => crypto.sign('sha256', msg, { key: k.rsaPriv, padding: 6, saltLength: 1.5 })),
   numberData: outcome(() => crypto.sign('sha256', 5, k.rsaPriv)),
   numberAlgorithm: outcome(() => crypto.sign(5, msg, k.rsaPriv)),
+  emptyAlgorithm: outcome(() => crypto.sign('', msg, k.rsaPriv)),
+  emptyAlgorithmVerify: outcome(() => crypto.verify('', msg, k.rsaPub, Buffer.alloc(128))),
+  unknownAlgorithm: outcome(() => crypto.sign('nope', msg, k.rsaPriv)),
   numberUpdate: outcome(() => crypto.createSign('sha256').update(5)),
   secretKey: outcome(() => crypto.sign('sha256', msg, crypto.createSecretKey(Buffer.alloc(16)))),
 };
@@ -146,6 +149,14 @@ async function main() {
   });
   // (Node 20 aborts when the callback form fails, as with an Ed25519 key and a digest,
   // so that case isn't run here.)
+  const { AsyncLocalStorage } = require('async_hooks');
+  const als = new AsyncLocalStorage();
+  results.asyncContext = await Promise.all([
+    (cb) => crypto.sign('sha256', msg, k.rsaPriv, cb),
+    (cb) => crypto.verify('sha256', msg, k.rsaPub, good, cb),
+  ].map((start, i) => new Promise((resolve) => {
+    als.run('request ' + i, () => start(() => resolve(als.getStore())));
+  })));
   results.stream = await new Promise((resolve) => {
     const s = crypto.createSign('sha256');
     s.write('message ');
