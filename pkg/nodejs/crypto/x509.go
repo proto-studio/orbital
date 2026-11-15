@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -487,6 +488,12 @@ func describeCertificate(cert *x509.Certificate) (*x509Info, error) {
 	s1 := sha1.Sum(cert.Raw)
 	s256 := sha256.Sum256(cert.Raw)
 	s512 := sha512.Sum512(cert.Raw)
+	if subj == nil {
+		subj = []nameAttr{}
+	}
+	if iss == nil {
+		iss = []nameAttr{}
+	}
 	info := &x509Info{
 		Subject: formatNameMultiline(subj), Issuer: formatNameMultiline(iss),
 		SubjectAttrs: subj, IssuerAttrs: iss,
@@ -760,6 +767,9 @@ func checkName(cert *x509.Certificate, chk string, dns bool, flags int) string {
 				}
 				sanPresent = true
 				if equal(string(n.Bytes), chk) {
+					if !dns {
+						return chk
+					}
 					return string(n.Bytes)
 				}
 			}
@@ -774,6 +784,9 @@ func checkName(cert *x509.Certificate, chk string, dns bool, flags int) string {
 	}
 	for _, a := range attrs {
 		if a.Key == attr && equal(a.Value, chk) {
+			if !dns {
+				return chk
+			}
 			return a.Value
 		}
 	}
@@ -806,15 +819,75 @@ func checkIssued(issuer, subject *x509.Certificate) bool {
 	if !bytes.Equal(issuer.RawSubject, subject.RawIssuer) {
 		a, err1 := parseName(issuer.RawSubject)
 		b, err2 := parseName(subject.RawIssuer)
-		if err1 != nil || err2 != nil || formatNameMultiline(a) != formatNameMultiline(b) {
+		if err1 != nil || err2 != nil || canonicalName(a) != canonicalName(b) {
 			return false
 		}
+	}
+	// The issuer's key must be of a type that makes the subject's signature.
+	if !keyFitsSignature(issuer.PublicKey, subject.SignatureAlgorithm) {
+		return false
 	}
 	if len(subject.AuthorityKeyId) > 0 && len(issuer.SubjectKeyId) > 0 && !bytes.Equal(subject.AuthorityKeyId, issuer.SubjectKeyId) {
 		return false
 	}
 	if findExtension(issuer, "2.5.29.15") != nil && issuer.KeyUsage&x509.KeyUsageCertSign == 0 {
 		return false
+	}
+	return true
+}
+
+// canonicalName is a name as OpenSSL compares names: each value trimmed,
+// with runs of whitespace collapsed and ASCII letters lowercased, and the
+// values of each RDN in a fixed order.
+func canonicalName(attrs []nameAttr) string {
+	var rdns []string
+	for i := 0; i < len(attrs); {
+		j := i
+		var vals []string
+		for ; j < len(attrs) && attrs[j].rdn == attrs[i].rdn; j++ {
+			vals = append(vals, attrs[j].Key+"="+canonicalValue(attrs[j].Value))
+		}
+		sort.Strings(vals)
+		rdns = append(rdns, strings.Join(vals, "\x00"))
+		i = j
+	}
+	return strings.Join(rdns, "\x01")
+}
+
+func canonicalValue(v string) string {
+	if strings.HasPrefix(v, "#") {
+		return v
+	}
+	isSpace := func(c byte) bool { return c == ' ' || (c >= '\t' && c <= '\r') }
+	var sb strings.Builder
+	space := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if isSpace(c) {
+			space = true
+			continue
+		}
+		if space && sb.Len() > 0 {
+			sb.WriteByte(' ')
+		}
+		space = false
+		sb.WriteByte(lowerASCII(c))
+	}
+	return sb.String()
+}
+
+func keyFitsSignature(pub any, alg x509.SignatureAlgorithm) bool {
+	switch alg {
+	case x509.MD5WithRSA, x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA,
+		x509.SHA256WithRSAPSS, x509.SHA384WithRSAPSS, x509.SHA512WithRSAPSS:
+		_, ok := pub.(*rsa.PublicKey)
+		return ok
+	case x509.ECDSAWithSHA1, x509.ECDSAWithSHA256, x509.ECDSAWithSHA384, x509.ECDSAWithSHA512:
+		_, ok := pub.(*ecdsa.PublicKey)
+		return ok
+	case x509.PureEd25519:
+		_, ok := pub.(ed25519.PublicKey)
+		return ok
 	}
 	return true
 }
@@ -844,7 +917,7 @@ func verifyCertSignature(cert *x509.Certificate, pub any) bool {
 	case *rsa.PublicKey:
 		switch cert.SignatureAlgorithm {
 		case x509.SHA256WithRSAPSS, x509.SHA384WithRSAPSS, x509.SHA512WithRSAPSS:
-			return rsa.VerifyPSS(k, h, sum, cert.Signature, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto}) == nil
+			return rsa.VerifyPSS(k, h, sum, cert.Signature, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}) == nil
 		case x509.ECDSAWithSHA1, x509.ECDSAWithSHA256, x509.ECDSAWithSHA384, x509.ECDSAWithSHA512:
 			return false
 		}
