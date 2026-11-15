@@ -367,13 +367,15 @@ func statInfo(name string, st *unix.Stat_t) *FileInfo {
 	if st.Mode&unix.S_ISVTX != 0 {
 		mode |= fs.ModeSticky
 	}
-	return &FileInfo{
+	fi := &FileInfo{
 		Name:    name,
 		Size:    st.Size,
 		Mode:    mode,
 		ModTime: time.Unix(st.Mtim.Unix()),
 		IsDir:   mode.IsDir(),
 	}
+	addStatDetails(fi, st)
+	return fi
 }
 
 // statAt describes the walk's final name, without following a link there.

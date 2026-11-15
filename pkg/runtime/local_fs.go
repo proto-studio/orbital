@@ -310,6 +310,9 @@ func fileInfoOf(info fs.FileInfo) *FileInfo {
 
 // Truncate sets the size of a file, cutting it or padding it with zeros.
 func (l *LocalFilesystem) Truncate(path string, size int64) error {
+	if l.Root != "" {
+		return l.rootedTruncate(path, size)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return err
@@ -319,6 +322,9 @@ func (l *LocalFilesystem) Truncate(path string, size int64) error {
 
 // Chmod sets the mode of a file.
 func (l *LocalFilesystem) Chmod(path string, mode fs.FileMode) error {
+	if l.Root != "" {
+		return l.rootedChmod(path, mode)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return err
@@ -328,6 +334,9 @@ func (l *LocalFilesystem) Chmod(path string, mode fs.FileMode) error {
 
 // Chown sets the owner and group of a file.
 func (l *LocalFilesystem) Chown(path string, uid, gid int) error {
+	if l.Root != "" {
+		return l.rootedChown(path, uid, gid)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return err
@@ -337,6 +346,9 @@ func (l *LocalFilesystem) Chown(path string, uid, gid int) error {
 
 // Chtimes sets the access and modification times of a file.
 func (l *LocalFilesystem) Chtimes(path string, atime, mtime time.Time) error {
+	if l.Root != "" {
+		return l.rootedChtimes(path, atime, mtime)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return err
@@ -349,6 +361,9 @@ func (l *LocalFilesystem) Chtimes(path string, atime, mtime time.Time) error {
 
 // Access checks that a path exists and may be used as mode asks, as access(2) does.
 func (l *LocalFilesystem) Access(path string, mode uint32) error {
+	if l.Root != "" {
+		return l.rootedAccess(path, mode)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return err
@@ -358,6 +373,9 @@ func (l *LocalFilesystem) Access(path string, mode uint32) error {
 
 // Statfs describes the filesystem a path is on.
 func (l *LocalFilesystem) Statfs(path string) (*FsStats, error) {
+	if l.Root != "" {
+		return l.rootedStatfs(path)
+	}
 	resolved, err := l.resolvePath(path)
 	if err != nil {
 		return nil, err
