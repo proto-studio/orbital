@@ -210,3 +210,10 @@ console.log(u.inspect(new Map([[2, 1], [1, 2]]), { sorted: true }), u.inspect(ne
   const itself = { a: 1, [u.inspect.custom]() { return this; } };
   console.log(u.inspect(wrapper), u.inspect(itself));
 }
+// Columns are padded by how many columns each entry takes on screen, which Node measures with
+// ICU's East Asian Width data: wide and full-width characters and emoji take two, and marks,
+// controls and format characters none.
+show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
+  range(10, (i) => ['\u{1FA70}', '⌚', '☔', '\u{1F004}', '　', 'Ａ', '±', '́e', '­', '​'][i] + 'x'.repeat(i)),
+  range(9, (i) => ['\u{1F3FB}', 'é', 'ᅠ', '\u{E0001}', '\u{20000}', '\u{30000}', '⺀', '\u{1F1E6}', '\u{16FE4}'][i] + 'yy'.repeat(i % 3)),
+  range(8, (i) => '\u{1F468}‍\u{1F469}'.repeat(i % 2) + '-'.repeat(i)));

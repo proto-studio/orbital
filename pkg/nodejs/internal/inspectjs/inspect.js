@@ -353,23 +353,69 @@
   const COLORS = /\u001b\[\d\d?m/g;
   const colorless = (s) => s.replace(COLORS, '');
 
-  // Characters that take no columns: control characters, combining marks, zero-width spaces and
-  // joiners, and variation selectors.
-  const zeroWidth = (code) => code <= 0x1f || (code >= 0x7f && code <= 0x9f) ||
-    (code >= 0x300 && code <= 0x36f) || (code >= 0x200b && code <= 0x200f) ||
-    (code >= 0x20d0 && code <= 0x20ff) || (code >= 0xfe00 && code <= 0xfe0f) ||
-    (code >= 0xfe20 && code <= 0xfe2f) || (code >= 0xe0100 && code <= 0xe01ef);
-  // Characters that take two columns, from Unicode's East Asian Width data: Hangul, CJK, kana,
-  // full-width forms and most emoji.
-  const fullWidth = (code) => code >= 0x1100 && (code <= 0x115f || code === 0x2329 ||
-    code === 0x232a || (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
-    (code >= 0x3250 && code <= 0x4dbf) || (code >= 0x4e00 && code <= 0xa4c6) ||
-    (code >= 0xa960 && code <= 0xa97c) || (code >= 0xac00 && code <= 0xd7a3) ||
-    (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe10 && code <= 0xfe19) ||
-    (code >= 0xfe30 && code <= 0xfe6b) || (code >= 0xff01 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x1b000 && code <= 0x1b001) ||
-    (code >= 0x1f200 && code <= 0x1f251) || (code >= 0x1f300 && code <= 0x1f64f) ||
-    (code >= 0x20000 && code <= 0x3fffd));
+  // How many columns each code point takes, as ICU's getStringWidth, which Node uses, counts
+  // them. WIDTHS lists where the width changes: each entry is how far on from the last one the
+  // change is, in base 36, followed by the width from there.
+  // BEGIN generated widths
+  // From ICU 75.1 (Unicode 15.1) in Node v20.18.1, by gen_widths.js.
+  const WIDTHS =
+    '00,w1,2n0,x1,gw0,341,7n0,71,7b0,191,10,11,10,21,10,21,10,11,1k0,61,a0,b1,10,11,1a0,l1,g0,' +
+    '11,2t0,81,10,61,20,21,10,41,x0,11,10,11,u0,r1,2j0,b1,1m0,91,90,11,o0,41,10,91,10,31,10,51,' +
+    '170,31,1g0,21,60,81,160,1l1,1j0,11,10,11,40,81,40,11,30,71,a0,21,t0,11,1m0,11,40,41,80,11,' +
+    'k0,21,q0,11,20,21,1l0,11,40,21,40,21,20,31,30,11,u0,21,30,11,b0,21,1l0,11,40,51,10,21,40,' +
+    '11,k0,21,m0,61,10,11,1m0,11,20,11,10,41,80,11,70,21,b0,21,u0,11,1p0,11,c0,11,1e0,11,30,11,' +
+    '1j0,11,10,31,50,31,10,41,70,21,b0,21,t0,11,1m0,11,20,11,60,11,50,21,k0,21,s0,21,1l0,21,40,' +
+    '41,80,11,k0,21,t0,11,200,11,70,31,10,11,2i0,11,20,71,c0,81,2q0,11,20,91,b0,71,210,21,r0,11,' +
+    '10,11,10,11,1j0,e1,10,51,10,21,50,b1,10,101,90,11,2u0,41,10,61,10,21,20,21,p0,21,40,31,g0,' +
+    '41,d0,11,20,21,60,11,f0,11,2q2,2o1,e50,31,qa0,31,t0,21,u0,21,u0,21,1s0,21,10,71,80,11,20,' +
+    'b1,90,11,190,51,390,21,y0,11,3a0,31,40,21,90,11,60,31,630,21,20,11,1m0,11,10,71,10,11,10,' +
+    '11,20,81,60,a1,20,11,1c0,v1,1d0,41,1c0,11,10,51,10,11,50,11,140,91,c0,21,w0,41,20,21,10,31,' +
+    '1k0,11,10,21,30,11,10,31,1m0,81,20,21,480,31,10,d1,10,71,40,11,60,11,30,21,5i0,1s1,ej0,51,' +
+    'q0,51,1d0,51,10,a1,2o0,x1,fd2,21,d2,21,5a2,41,32,11,22,11,eh2,21,l2,21,1e2,c1,172,11,j2,11,' +
+    'd2,11,82,21,h2,21,52,21,82,11,52,11,l2,11,72,21,12,11,42,11,22,11,72,11,42,21,s2,11,z2,11,' +
+    '12,11,42,31,12,11,1p2,31,o2,11,e2,11,nv2,21,1f2,11,42,11,bd0,31,3x0,11,2o0,w1,3k2,q1,12,' +
+    '2h1,c2,5y1,q2,271,22,2e1,22,2v1,52,171,12,2m1,12,2c1,b2,1c1,12,141,82,5f41,1s2,h3h1,32,1j1,' +
+    'bs0,41,10,a1,w0,21,280,21,7k0,11,30,11,40,11,p0,21,50,11,470,21,q0,i1,d0,11,120,81,p0,b1,' +
+    'e2,t1,30,31,1c0,11,20,41,20,21,130,11,1v0,61,20,21,20,21,c0,11,80,11,1b0,11,1f0,11,10,31,' +
+    '20,21,50,21,10,11,160,21,80,11,6m0,11,20,11,40,11,i2,8mc1,6l82,e81,u0,11,kh0,g2,a1,60,g2,' +
+    'z1,12,j1,12,41,430,11,12,2o1,3j2,71,i0,31,e90,11,6a0,11,450,51,1ae0,31,10,21,50,41,140,31,' +
+    '40,11,4l0,21,fx0,41,ar0,21,280,31,1y0,b1,1d0,41,3f0,11,1i0,f1,150,11,20,21,a0,31,1d0,41,20,' +
+    '21,20,11,40,11,a0,11,1e0,31,100,51,10,81,1q0,11,c0,21,1g0,91,a0,41,20,11,2n0,31,20,11,10,' +
+    '21,60,11,20,11,4d0,11,30,81,l0,21,1l0,21,30,11,110,71,30,51,5f0,81,20,31,10,11,n0,11,2c0,' +
+    '61,10,11,40,21,10,21,6m0,41,60,21,10,21,r0,21,2d0,81,20,11,10,21,2y0,11,10,11,20,61,10,11,' +
+    '2t0,31,20,41,10,51,770,91,10,21,740,21,10,11,40,11,400,41,20,21,40,11,w0,a1,140,61,20,41,' +
+    '80,11,90,61,20,31,1a0,d1,10,21,ba0,71,10,61,10,11,2a0,m1,20,71,10,21,10,21,3e0,61,30,11,10,' +
+    '21,10,71,10,11,200,21,30,11,10,11,9n0,21,b0,21,1g0,51,50,11,10,11,44t0,h1,60,f1,asa0,51,' +
+    '1n0,71,t40,11,1r0,41,252,51,b2,21,e2,4qg1,82,ye1,162,91,6w72,41,12,71,12,21,12,831,f2,11,' +
+    't2,31,22,11,e2,41,82,b01,1wh0,21,10,41,3mk0,1a1,20,n1,f40,31,90,g1,20,71,u0,41,440,31,1iz0,' +
+    '1j1,40,1e1,80,11,e0,11,m0,51,10,f1,11s0,71,10,h1,20,71,10,21,10,51,2s0,11,4g0,71,af0,11,' +
+    '1p0,41,e40,41,rk0,71,310,71,1bt2,11,5m2,11,5a2,11,22,a1,232,t1,d2,181,42,91,72,21,e2,61,' +
+    '4a2,x1,c2,91,12,1y1,12,m1,c2,171,42,51,c2,h1,32,11,32,1z1,12,11,12,571,22,1r1,d2,41,12,o1,' +
+    'i2,11,q2,21,d2,11,2e2,2d1,1c2,1y1,62,11,32,31,22,31,42,41,b2,21,72,91,6b2,c1,42,11,7v2,1b1,' +
+    '12,a1,12,551,342,d1,32,91,72,1a1,12,71,82,e1,42,91,72,91,zr2,1eke1,22,1eke1,e1oj0,11,u0,' +
+    '2o1,3k0,6o1';
+  // END generated widths
+  const widthStarts = [];
+  const widthValues = [];
+  {
+    let point = 0;
+    for (const change of WIDTHS.split(',')) {
+      point += parseInt(change.slice(0, -1), 36);
+      widthStarts.push(point);
+      widthValues.push(Number(change.slice(-1)));
+    }
+  }
+  // columns is how many columns code point takes: the width of the last change at or before it.
+  function columns(point) {
+    let lo = 0;
+    let hi = widthStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (widthStarts[mid] <= point) lo = mid;
+      else hi = mid - 1;
+    }
+    return widthValues[lo];
+  }
 
   // width is how many columns s takes on screen.
   function width(s) {
@@ -382,8 +428,7 @@
         continue;
       }
       for (const char of s.slice(i).normalize('NFC')) {
-        const point = char.codePointAt(0);
-        n += fullWidth(point) ? 2 : zeroWidth(point) ? 0 : 1;
+        n += columns(char.codePointAt(0));
       }
       break;
     }
