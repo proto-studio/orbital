@@ -127,6 +127,7 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			if errors.As(rerr, &me) {
 				cv, _ := c.NewString(me.code)
 				obj.Set("code", cv)
+				obj.Set("typeError", c.NewBoolean(me.typeError))
 				if me.url != "" {
 					uv, _ := c.NewString(me.url)
 					obj.Set("url", uv)
