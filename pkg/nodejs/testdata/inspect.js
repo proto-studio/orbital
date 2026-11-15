@@ -98,3 +98,59 @@ dated.self = dated;
 show({ a: { b: { c: dated } } });
 console.log(u.inspect({ a: { b: { c: /x/ } } }));
 console.log('%j', range(101, () => 0));
+
+// Maps, Sets, Dates, RegExps, BigInts, negative zero and symbols, at the top level and nested.
+class MyMap extends Map {}
+class MySet extends Set {}
+class MyDate extends Date {}
+class MyRegExp extends RegExp {}
+const keyed = new Map([['a', 1]]);
+keyed.extra = true;
+const marked = /x/g;
+marked.note = 'n';
+const stamped = new Date(86400000);
+stamped.tz = 'UTC';
+const bareMap = Object.setPrototypeOf(new Map([[1, 2]]), null);
+const bareSet = Object.setPrototypeOf(new Set(), null);
+// Without a prototype a RegExp has no source or flags properties; with an own source, that's shown.
+const bareRegExp = Object.setPrototypeOf(/hi\/x/g, null);
+const ownSource = /x/m;
+Object.defineProperty(ownSource, 'source', { value: 'own' });
+show(new Map([['a', 1], ['b', { c: [1, 2] }]]), new Set([1, 'two', [3]]), new Map(), new Set(),
+  new Date(Date.UTC(2024, 0, 1)), new Date(NaN), /a\/b/gi, new RegExp(''), 1n, -12345678901234567890n, -0, 0,
+  Symbol('sym'), Symbol(), new MyMap([[1, 2]]), new MySet([1]), new MyDate(0), new MyRegExp('r', 'y'),
+  keyed, marked, stamped, bareMap, bareSet, bareRegExp, ownSource,
+  { map: new Map([[{ k: 1 }, new Set([2])]]), set: new Set([new Map()]), date: new Date(0), re: /z/m },
+  [1n, -0, 0, Symbol.iterator, new Date(0), /q/], { big: 2n, neg: -0, sym: Symbol('s') },
+  new Map([[1n, -0]]), new Set([-0, 3n]), { a: { b: { c: new Map([[1, 2]]), d: new Set([1]), e: new Map() } } },
+  { a: { b: { c: marked, d: stamped, e: /plain/, f: new Date(0) } } },
+  new Map(range(120, (i) => [i, 'v'])), new Set(range(30)),
+  new Map([['long', 'l'.repeat(60)], ['other', 'o'.repeat(30)]]));
+console.log('%s %d %i %f', 5n, 5n, 5n, 5n);
+// %f rounds a BigInt to the nearest number, which may be Infinity.
+console.log('%f %f %f', 9007199254740993n, 10n ** 400n, -(10n ** 400n));
+console.log('%s %d %i %f %o %O', -0, -0, -0, -0, -0, -0);
+console.log('%d %i %i %s', -1.5, -0.5, 2.7, Symbol('fmt'));
+console.log(u.inspect(new Map([[1, 2], [3, 4]]), { maxArrayLength: 1 }), u.inspect(new Map([[1, { a: 1 }]]), { depth: 0 }));
+console.log(u.inspect(new Map([['k', 'v']]), { sorted: true }), u.format('%o', new Set([1])));
+// Past the depth limit, an empty Set with properties, even one that holds itself, and a RegExp
+// with properties are named.
+const emptySet = new Set();
+emptySet.self = emptySet;
+show({ a: { b: { emptySet, marked } } });
+// compact: true indents a nested value three spaces in from its key, and starts it on its own line
+// when it's wider than breakLength.
+const wide = { aaaaaaaaaa: 'x'.repeat(30), bbbbbbbbbb: { cccccccccc: 'y'.repeat(30), dddddddddd: 'z'.repeat(30),
+  e: { ffffffffff: 'w'.repeat(40), g: [1, 2] } } };
+console.log(u.inspect(wide, { compact: true }));
+console.log(u.inspect([wide, 'q'.repeat(60)], { compact: true }));
+console.log(u.inspect(new Map([['k'.repeat(40), wide]]), { compact: true }));
+console.log(u.inspect({ a: 1, b: { c: 2 } }, { compact: true }), u.inspect({ k: 'v'.repeat(90) }, { compact: true }));
+// getters: accessors print as labels, and with getters: true (or 'get' or 'set', for those
+// without and with a setter) also show what the getter returns.
+const accessors = {
+  get a() { return 1; }, get b() { return { x: 1 }; }, set c(v) {}, get d() { return 'str'; }, set d(v) {},
+  get e() { throw new Error('boom'); }, get f() { return null; }
+};
+for (const getters of [false, true, 'get', 'set']) console.log(u.inspect(accessors, { getters }));
+console.log(accessors);

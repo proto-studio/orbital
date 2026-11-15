@@ -1,6 +1,6 @@
 // The parts of Node's util.inspect that console.log needs from JavaScript: quoting strings and
-// keys, printing Buffers, typed arrays, ArrayBuffers and DataViews, and laying entries out on
-// lines. Keys are read here too, because a key holding a NUL can't cross into Go as a string.
+// keys, printing BigInts, symbols, Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets,
+// Dates and RegExps, and laying entries out on lines. Keys are read here too, because a key holding a NUL can't cross into Go as a string.
 // The formatting itself is inspectjs's, which console.go passes in as inspectShared. Levels
 // count how many objects a value sits inside. Evaluates to an object of functions.
 (function () {
@@ -17,14 +17,22 @@
   const ctx = inspectShared.context();
   return {
     quote: inspectShared.quote,
-    key: inspectShared.key,
-    get: (obj, k) => obj[k],
     string: (str, level) => inspectShared.string(ctx, str, level),
     more: inspectShared.more,
     // shown is how many of length items to print.
     shown: (length) => Math.min(length, ctx.maxArrayLength),
     view: (value, level) => inspectShared.view(value, ctx, level),
     binary: (value) => inspectShared.binary(value, ctx.maxArrayLength),
+    collection: (value) => inspectShared.collection(value, ctx.maxArrayLength),
+    // scalar answers { text, date } for a Date or RegExp, date telling them apart for coloring.
+    scalar: (value) => {
+      const text = inspectShared.scalar(value);
+      return text === null ? null : { text, date: inspectShared.isDate(value) };
+    },
+    primitive: inspectShared.primitive,
+    type: (value) => typeof value,
+    // float is printf's %f for a BigInt: parseFloat of its text.
+    float: (value) => String(Number.parseFloat(String(value))),
     field: inspectShared.field,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
     // other error JSON.stringify throws leaves it answering nothing.

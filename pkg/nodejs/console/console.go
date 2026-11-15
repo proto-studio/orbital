@@ -4,6 +4,7 @@ package console
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -496,7 +497,7 @@ func (c *Console) formatLog(args []*v8.Value) string {
 					}
 				case 'd', 'i':
 					if argi < len(args) {
-						b.WriteString(c.specInt(args[argi]))
+						b.WriteString(c.specInt(args[argi], spec))
 						argi++
 					} else {
 						b.WriteByte('%')
@@ -573,23 +574,58 @@ func (c *Console) specString(v *v8.Value) string {
 	if v.IsObject() && !v.IsFunction() {
 		return c.formatValue(v)
 	}
+	if v.IsNumber() {
+		return number(v)
+	}
+	if !v.IsObject() && !v.IsBoolean() && !v.IsNull() {
+		return c.primitive(v)
+	}
 	return v.String()
 }
 
-// specInt renders a value for %d / %i (integer, truncated toward zero).
-func (c *Console) specInt(v *v8.Value) string {
+// specInt renders a value for %d, which prints a number as it is, or %i, which truncates it
+// toward zero. A BigInt keeps its n for both.
+func (c *Console) specInt(v *v8.Value, spec byte) string {
 	if v != nil && v.IsNumber() {
+		if spec == 'd' {
+			return number(v)
+		}
+		// Like parseInt, %i keeps the sign of a negative number that truncates to zero.
+		if n := v.Number(); n < 0 && n > -1 {
+			return "-0"
+		}
 		return strconv.FormatInt(int64(v.Number()), 10)
+	}
+	if c.isBigInt(v) {
+		return c.primitive(v)
 	}
 	return "NaN"
 }
 
-// specFloat renders a value for %f.
+// specFloat renders a value for %f, which is parseFloat of the value's text: negative zero
+// becomes 0, and a BigInt becomes the nearest number.
 func (c *Console) specFloat(v *v8.Value) string {
 	if v != nil && v.IsNumber() {
-		return strconv.FormatFloat(v.Number(), 'g', -1, 64)
+		if v.Number() == 0 {
+			return "0"
+		}
+		return v.String()
+	}
+	if c.isBigInt(v) {
+		if s, ok := c.inspectCall("float", v); ok {
+			return s
+		}
 	}
 	return "NaN"
+}
+
+// isBigInt reports whether v is a BigInt.
+func (c *Console) isBigInt(v *v8.Value) bool {
+	if v == nil || v.IsUndefined() || v.IsNull() || v.IsBoolean() || v.IsNumber() || v.IsString() || v.IsObject() {
+		return false
+	}
+	t, _ := c.inspectCall("type", v)
+	return t == "bigint"
 }
 
 // formatValue formats a v8.Value with type-based coloring.
@@ -607,7 +643,7 @@ func (c *Console) formatValue(v *v8.Value) string {
 		return c.formatter.FormatValue(v.String(), runtime.TypeBoolean)
 	}
 	if v.IsNumber() {
-		return c.formatter.FormatValue(v.String(), runtime.TypeNumber)
+		return c.formatter.FormatValue(number(v), runtime.TypeNumber)
 	}
 	if v.IsString() {
 		// For runtime.log, strings are printed without quotes and without color
@@ -623,7 +659,7 @@ func (c *Console) formatValue(v *v8.Value) string {
 	if v.IsObject() {
 		return c.formatObject(v)
 	}
-	return v.String()
+	return c.formatOther(v)
 }
 
 // formatValueQuoted formats a value with quotes for strings (used in arrays/objects).
@@ -647,7 +683,7 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 		return c.formatter.FormatValue(v.String(), runtime.TypeBoolean)
 	}
 	if v.IsNumber() {
-		return c.formatter.FormatValue(v.String(), runtime.TypeNumber)
+		return c.formatter.FormatValue(number(v), runtime.TypeNumber)
 	}
 	if v.IsString() {
 		// In arrays/objects, strings are quoted and colored
@@ -663,7 +699,32 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 	if v.IsObject() {
 		return c.formatObjectWithDepth(v, depth-1)
 	}
+	return c.formatOther(v)
+}
+
+// number is the text of a number, with negative zero as -0 like Node.
+func number(v *v8.Value) string {
+	if n := v.Number(); n == 0 && math.Signbit(n) {
+		return "-0"
+	}
 	return v.String()
+}
+
+// primitive is how inspect prints a primitive that isn't a string, like a BigInt with its n.
+func (c *Console) primitive(v *v8.Value) string {
+	if s, ok := c.inspectCall("primitive", v); ok {
+		return s
+	}
+	return v.String()
+}
+
+// formatOther formats a BigInt or a symbol, the primitives the cases above don't cover.
+func (c *Console) formatOther(v *v8.Value) string {
+	if t, _ := c.inspectCall("type", v); t == "symbol" {
+		return c.formatter.FormatValue(c.primitive(v), runtime.TypeSymbol)
+	}
+	// A BigInt is colored as a number.
+	return c.formatter.FormatValue(c.primitive(v), runtime.TypeNumber)
 }
 
 // topDepth is the depth a top-level value is formatted at. Depth counts down as values nest,
@@ -743,15 +804,15 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if s, ok := c.formatBinary(v, depth); ok {
 		return s
 	}
-
-	// Get property names
-	names, err := v.GetPropertyNames()
-	if err != nil || names == nil {
-		return "{}"
+	if s, ok := c.formatCollection(v, depth); ok {
+		return s
+	}
+	if scalar := c.inspectValue("scalar", v); scalar != nil && scalar.IsObject() {
+		return c.formatScalar(v, scalar, depth)
 	}
 
-	length := names.ArrayLength()
-	if length == 0 {
+	names := c.propertyNames(v)
+	if len(names) == 0 {
 		return "{}"
 	}
 	// Past the depth limit, a value with properties is never expanded, which also bounds the
@@ -761,34 +822,116 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	}
 
 	c.enter(depth)
-	parts := make([]string, 0, length)
-	for i := 0; i < length; i++ {
-		keyVal, err := names.GetIndex(i)
-		if err != nil || keyVal == nil {
-			continue
-		}
-		if part, ok := c.formatProperty(v, keyVal, depth); ok {
-			parts = append(parts, part)
-		}
-	}
-
+	parts := c.formatProperties(v, names, depth)
 	if len(parts) == 0 {
 		return "{}"
 	}
 	return c.reduce(parts, "{", "}", depth, "")
 }
 
-// formatProperty formats the property key of an object at depth as key: value.
-func (c *Console) formatProperty(v, keyVal *v8.Value, depth int) (string, bool) {
-	key, ok := c.inspectCall("key", keyVal)
-	if !ok {
-		key = keyVal.String()
+// formatScalar formats a Date or RegExp, which inspect's scalar describes as { text, date }, as
+// its text followed by any properties of its own. A Date past the depth limit with properties
+// never gets here, as cut names it.
+func (c *Console) formatScalar(v, scalar *v8.Value, depth int) string {
+	textVal, err := scalar.Get("text")
+	if err != nil || textVal == nil {
+		return "{}"
 	}
-	val := c.inspectValue("get", v, keyVal)
-	if val == nil {
+	kind := runtime.TypeRegExp
+	if date, err := scalar.Get("date"); err == nil && date != nil && date.Boolean() {
+		kind = runtime.TypeDate
+	}
+	text := c.formatter.FormatValue(textVal.String(), kind)
+	// Past the depth limit, a RegExp leaves its properties out.
+	names := c.propertyNames(v)
+	if len(names) == 0 || depth <= 0 {
+		return text
+	}
+	c.enter(depth)
+	return c.reduce(c.formatProperties(v, names, depth), "{", "}", depth, text)
+}
+
+// formatCollection prints a Map or Set: the entries inspect's collection gives for it, then its
+// own properties. It reports false for anything else.
+func (c *Console) formatCollection(v *v8.Value, depth int) (string, bool) {
+	coll := c.inspectValue("collection", v)
+	if coll == nil || !coll.IsObject() {
 		return "", false
 	}
-	return key + ": " + c.formatValueQuotedWithDepth(val, depth), true
+	nameVal, err := coll.Get("name")
+	if err != nil || nameVal == nil {
+		return "", false
+	}
+	name := nameVal.String()
+	isMap := false
+	if m, err := coll.Get("map"); err == nil && m != nil {
+		isMap = m.Boolean()
+	}
+	entries, err := coll.Get("entries")
+	if err != nil || entries == nil || !entries.IsArray() {
+		return "", false
+	}
+	more, err := coll.Get("more")
+	if err != nil || more == nil || !more.IsNumber() {
+		return "", false
+	}
+	names := c.propertyNames(v)
+	n := entries.ArrayLength()
+	if n == 0 && more.Number() == 0 && len(names) == 0 {
+		return name + " {}", true
+	}
+
+	c.enter(depth)
+	var parts []string
+	for i := 0; i < n; i++ {
+		entry, err := entries.GetIndex(i)
+		if err != nil || entry == nil {
+			continue
+		}
+		s := c.formatValueQuotedWithDepth(entry, depth)
+		// A Map's keys and values take turns.
+		if isMap && i+1 < n {
+			i++
+			if value, err := entries.GetIndex(i); err == nil && value != nil {
+				s += " => " + c.formatValueQuotedWithDepth(value, depth)
+			}
+		}
+		parts = append(parts, s)
+	}
+	if more.Number() > 0 {
+		if s, ok := c.inspectCall("more", more); ok {
+			parts = append(parts, s)
+		}
+	}
+	parts = append(parts, c.formatProperties(v, names, depth)...)
+	return c.reduce(parts, name+" {", "}", depth, ""), true
+}
+
+// propertyNames lists the enumerable property keys of v.
+func (c *Console) propertyNames(v *v8.Value) []*v8.Value {
+	names, err := v.GetPropertyNames()
+	if err != nil || names == nil || !names.IsArray() {
+		return nil
+	}
+	keys := make([]*v8.Value, 0, names.ArrayLength())
+	for i := 0; i < names.ArrayLength(); i++ {
+		if keyVal, err := names.GetIndex(i); err == nil && keyVal != nil {
+			keys = append(keys, keyVal)
+		}
+	}
+	return keys
+}
+
+// formatProperties formats the properties names of v, an object at depth, as key: value.
+// Accessors aren't called.
+func (c *Console) formatProperties(v *v8.Value, names []*v8.Value, depth int) []string {
+	parts := make([]string, 0, len(names))
+	for _, keyVal := range names {
+		if part, ok := c.formatField(v, keyVal, depth); ok {
+			parts = append(parts, part)
+		}
+	}
+	return parts
 }
 
 // formatBinary prints an ArrayBuffer or DataView: the entries and keys inspect's binary
@@ -816,27 +959,21 @@ func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
 			}
 		}
 	}
-	for _, list := range []func() (*v8.Value, error){
-		func() (*v8.Value, error) { return bin.Get("keys") },
-		v.GetPropertyNames,
-	} {
-		names, err := list()
-		if err != nil || names == nil || !names.IsArray() {
-			continue
-		}
-		for i := 0; i < names.ArrayLength(); i++ {
-			if keyVal, err := names.GetIndex(i); err == nil && keyVal != nil {
+	if keys, err := bin.Get("keys"); err == nil && keys != nil && keys.IsArray() {
+		for i := 0; i < keys.ArrayLength(); i++ {
+			if keyVal, err := keys.GetIndex(i); err == nil && keyVal != nil {
 				if part, ok := c.formatField(v, keyVal, depth); ok {
 					parts = append(parts, part)
 				}
 			}
 		}
 	}
+	parts = append(parts, c.formatProperties(v, c.propertyNames(v), depth)...)
 	return c.reduce(parts, name+" {", "}", depth, ""), true
 }
 
-// formatField formats one of the keys of an ArrayBuffer or DataView at depth as inspect's field
-// describes it, which leaves accessors uncalled and gives a label for them instead.
+// formatField formats the key keyVal of v, an object at depth, as inspect's field describes it,
+// which leaves accessors uncalled and gives a label for them instead.
 func (c *Console) formatField(v, keyVal *v8.Value, depth int) (string, bool) {
 	f := c.inspectValue("field", v, keyVal)
 	if f == nil || !f.IsObject() {
