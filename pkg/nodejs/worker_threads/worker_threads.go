@@ -364,7 +364,11 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	if runErr == nil && !wrt.IsKilled() {
 		// The worker ran out of work. As in Node, its 'exit' listeners run and it exits
 		// with process.exitCode, which --unhandled-rejections=warn-with-error-code sets.
-		code, runErr = finishWorker(wrt)
+		var thrown string
+		code, thrown, runErr = finishWorker(wrt)
+		if thrown != "" {
+			wk.fromWorker <- wtEvent{kind: "error", data: thrown}
+		}
 	}
 	if errors.As(runErr, &exit) {
 		// process.exit() in a worker ends only the worker, with that code and no error.
@@ -447,24 +451,42 @@ func serializeThrown(wrt *goruntime.Runtime, fn, thrown *v8.Value) (string, bool
 }
 
 // finishWorker ends a worker that ran out of work: it emits 'exit' with process.exitCode
-// and returns the code, or what ended the runtime if a listener exited or threw.
-func finishWorker(wrt *goruntime.Runtime) (int, error) {
-	codeVal, err := wrt.RunScript(`(function () {
+// and returns the code, or what ended the runtime if a listener called process.exit. As in
+// Node, an exception from an 'exit' listener is reported to the parent and the exit code
+// stays what it was; thrown holds the exception's text.
+func finishWorker(wrt *goruntime.Runtime) (code int, thrown string, err error) {
+	result, runErr := wrt.RunScript(`(function () {
 		var p = globalThis.process;
-		if (!p || typeof p.emit !== 'function') return 0;
+		if (!p || typeof p.emit !== 'function') return [0];
+		var thrown;
 		if (!p._exiting) {
 			p._exiting = true;
-			p.emit('exit', Number(p.exitCode) || 0);
+			try {
+				p.emit('exit', Number(p.exitCode) || 0);
+			} catch (e) {
+				try {
+					thrown = e && typeof e.stack === 'string' ? e.stack : String(e);
+				} catch (e2) {
+					thrown = 'Error: an exit listener threw';
+				}
+			}
 		}
-		return Number(p.exitCode) || 0;
+		var code = Number(p.exitCode) || 0;
+		return thrown === undefined ? [code] : [code, thrown];
 	})()`, "[worker exit]")
 	if ended := wrt.Ended(); ended != nil {
-		return 0, ended
+		return 0, "", ended
 	}
-	if err != nil || codeVal == nil {
-		return 0, nil
+	if runErr != nil || result == nil {
+		return 0, "", nil
 	}
-	return int(codeVal.Integer()), nil
+	if v, e := result.GetIndex(0); e == nil && v != nil {
+		code = int(v.Integer())
+	}
+	if v, e := result.GetIndex(1); e == nil && v != nil && v.IsString() {
+		thrown = v.String()
+	}
+	return code, thrown, nil
 }
 
 func (w *WorkerThreads) setWorkerFunc(wrt *goruntime.Runtime, name string, cb v8.FunctionCallback) error {
