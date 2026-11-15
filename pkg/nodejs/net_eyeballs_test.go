@@ -213,3 +213,37 @@ s.on('close', () => done({ log }));`, port, port))
 		"error ECONNREFUSED connect ECONNREFUSED 127.0.0.1:PORT",
 	}})
 }
+
+// A connectionAttemptFailed listener that reconnects keeps the new connection intact.
+func TestNet_RetryFromAttemptFailedListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := closed.Addr().(*net.TCPAddr).Port
+	closed.Close()
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const net = require('net');
+const s = net.connect(%d, '127.0.0.1');
+const log = [];
+s.on('error', (e) => log.push('error ' + e.code));
+s.once('connectionAttemptFailed', () => {
+  s.destroy();
+  s.connect(%d, '127.0.0.1', () => { log.push('connect'); s.destroy(); setImmediate(() => done({ log })); });
+});`, refused, ln.Addr().(*net.TCPAddr).Port))
+	wantJSON(t, got, map[string]any{"log": []any{"connect"}})
+}
