@@ -19,6 +19,19 @@
 #include <unordered_map>
 #include <vector>
 
+// untypedName is a module cache key without the type a typed import adds
+// ("\x01<type>\x01<url>" is <url>): the module's url, for its script origin
+// (stack frames, errors) and import.meta.url.
+static std::string untypedName(const char* key) {
+    std::string name(key ? key : "");
+    if (!name.empty() && name[0] == '\x01') {
+        size_t end = name.find('\x01', 1);
+        name = end == std::string::npos ? std::string() : name.substr(end + 1);
+    }
+    return name;
+}
+
+
 using namespace v8;
 
 // Global platform instance
@@ -447,11 +460,7 @@ static void hostInitializeImportMeta(Local<Context> context,
     }
     // A module imported with a type is cached under "\x01<type>\x01<url>";
     // the type isn't part of its url.
-    std::string href = url;
-    if (!href.empty() && href[0] == '\x01') {
-        size_t end = href.find('\x01', 1);
-        href = end == std::string::npos ? std::string() : href.substr(end + 1);
-    }
+    std::string href = untypedName(url.c_str());
     if (!href.empty() && href.rfind("node:", 0) != 0 &&
         href.rfind("file://", 0) != 0 && href[0] == '/') {
         href = "file://" + href;
@@ -1952,7 +1961,8 @@ static MaybeLocal<Module> moduleResolveCallback(
     
     // Compile the module
     Local<String> source_str = String::NewFromUtf8(isolate, resolved_source).ToLocalChecked();
-    Local<String> name_str = String::NewFromUtf8(isolate, resolved_name).ToLocalChecked();
+    Local<String> name_str =
+        String::NewFromUtf8(isolate, untypedName(resolved_name).c_str()).ToLocalChecked();
     
     ScriptOrigin origin(name_str,
                         0,                      // line offset
@@ -2017,7 +2027,7 @@ static MaybeLocal<Module> compileInstantiateEvaluate(
         Local<String> source_str =
             String::NewFromUtf8(isolate, resolved_source).ToLocalChecked();
         Local<String> name_str =
-            String::NewFromUtf8(isolate, resolved_name).ToLocalChecked();
+            String::NewFromUtf8(isolate, untypedName(resolved_name).c_str()).ToLocalChecked();
         ScriptOrigin origin(name_str, 0, 0, false, -1, Local<Value>(),
                             false, false, true);
         ScriptCompiler::Source source(source_str, origin);
@@ -2446,7 +2456,8 @@ void* v8go_compile_module(void* context_ptr, const char* source, const char* nam
     TryCatch try_catch(isolate);
     
     Local<String> source_str = String::NewFromUtf8(isolate, source).ToLocalChecked();
-    Local<String> name_str = String::NewFromUtf8(isolate, name).ToLocalChecked();
+    Local<String> name_str =
+        String::NewFromUtf8(isolate, untypedName(name).c_str()).ToLocalChecked();
     
     ScriptOrigin origin(name_str,
                         0,                      // line offset

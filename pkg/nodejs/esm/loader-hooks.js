@@ -443,14 +443,25 @@
     let value = attrs;
     let cloned = false;
     if (clone && attrs !== null && typeof attrs === 'object') {
-      const copy = clone(attrs);
-      value = copy;
-      cloned = true;
       const keys = ObjectKeys(attrs);
       // Only a plain object or array is rebuilt; a built-in container (a Map,
       // say) keeps its clone, which drops expandos as Node's does.
       const proto = ObjectGetPrototypeOf(attrs);
-      const plain = ArrayIsArray(attrs) || proto === ObjectPrototype || proto === null;
+      const isArray = ArrayIsArray(attrs);
+      const plain = isArray || proto === ObjectPrototype || proto === null;
+      // A plain container's values are read once, into own data properties,
+      // and both the clone and any rebuild below use that copy.
+      let source = attrs;
+      if (plain) {
+        source = isArray ? [] : {};
+        for (let i = 0; i < keys.length; i++) {
+          ObjectDefineProperty(source, keys[i], { value: attrs[keys[i]], writable: true, enumerable: true, configurable: true });
+        }
+        if (isArray) source.length = attrs.length;
+      }
+      const copy = clone(source);
+      value = copy;
+      cloned = true;
       if (plain && ObjectKeys(copy).length !== keys.length) {
         // A clone can't keep an own "__proto__" key, and may fill an array's
         // holes: rebuild the container from the original's keys, taking each
@@ -458,10 +469,10 @@
         const rebuilt = ArrayIsArray(attrs) ? [] : {};
         for (let i = 0; i < keys.length; i++) {
           const k = keys[i];
-          const v = reflectApply(hasOwn, copy, [k]) ? copy[k] : attrs[k];
+          const v = reflectApply(hasOwn, copy, [k]) ? copy[k] : source[k];
           ObjectDefineProperty(rebuilt, k, { value: v, writable: true, enumerable: true, configurable: true });
         }
-        if (ArrayIsArray(attrs)) rebuilt.length = attrs.length;
+        if (isArray) rebuilt.length = source.length;
         value = rebuilt;
       }
     }
@@ -518,11 +529,19 @@
   }
 
   // A value as Node's error messages print it (util.format's %s).
+  // util.format, captured now, so a hook replacing require can't change it.
+  const utilFormat = (function () {
+    try {
+      const util = typeof require === 'function' ? require('util') : null;
+      return util && typeof util.format === 'function' ? util.format : null;
+    } catch (e) {
+      return null;
+    }
+  })();
   function formatted(v) {
     if (typeof v === 'bigint') return v + 'n';
     try {
-      const util = typeof require === 'function' ? require('util') : null;
-      if (util && typeof util.format === 'function') return util.format('%s', v);
+      if (utilFormat) return utilFormat('%s', v);
     } catch (e) { /* fall back */ }
     return safeString(v);
   }

@@ -866,3 +866,41 @@ log.push(a === b, b.default, x === y, x.default === y.default, y.default, q.defa
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// An enumerable __proto__ getter on returned attributes runs once, a module
+// loaded under a custom type shows its url (not the cache key) in stack
+// frames, and a hook replacing require doesn't change the loader's attribute
+// messages. Expected from Node 20.18.1.
+func TestImportAttributes_ProtoGetterOriginAndFormatter(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 'd';`,
+		"thr.mjs": `throw new Error('boom');`,
+		"hooks.mjs": `let reads = 0;
+export async function initialize() { globalThis.require = () => ({ format: () => 'spoof' }); }
+export async function resolve(s, c, n) {
+  if (s === 'proto') {
+    const r = await n('./dep.mjs?p', c);
+    const attrs = {};
+    Object.defineProperty(attrs, '__proto__', { enumerable: true, configurable: true, get() { reads++; if (reads > 1) throw new Error('read twice'); return 'v1'; } });
+    return { ...r, importAttributes: attrs };
+  }
+  if (s === 'num') { const r = await n('./dep.mjs?n', c); return { ...r, importAttributes: { foo: 42 } }; }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('?p')) return { format: 'module', source: 'export default ' + JSON.stringify(String(Object.getOwnPropertyDescriptor(c.importAttributes, '__proto__')?.value)), shortCircuit: true };
+  if (u.endsWith('thr.mjs') && c.importAttributes.type === 'a') { const r = await n(u, { ...c, importAttributes: {} }); return { ...r, shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { log.push((await import('proto')).default); } catch (e) { log.push('err ' + e.message); }
+try { await import('./thr.mjs', { with: { type: 'a' } }); } catch (e) { const f = e.stack.split('\n')[1]; log.push(f.includes('\x01') ? 'typed key' : f.slice(f.lastIndexOf('/') + 1)); }
+try { await import('num'); } catch (e) { log.push(e.message); }`,
+	})
+	want := `["v1","thr.mjs:1:7","Import attribute \"foo\" with value \"42\" is not supported"]`
+	if got := runLogModuleIn(t, dir); got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
