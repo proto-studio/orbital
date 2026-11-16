@@ -21,7 +21,7 @@ import (
 var kdfJS string
 
 // deriveKey runs work now, returning the key as base64, or, when callback is
-// a function, on a goroutine, calling callback(undefined, base64) or
+// a function, on the runtime's thread pool, calling callback(undefined, base64) or
 // callback(message) on the JS thread later, as Node runs these on its
 // threadpool.
 func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]byte, error)) *v8.Value {
@@ -36,11 +36,9 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 	loop := c.rt.EventLoop()
 	jsCtx := c.rt.Context()
 	loop.AddPendingWork()
-	go func() {
+	c.rt.RunInThreadPool(func() {
 		defer loop.DonePendingWork()
-		kdfSlots <- struct{}{}
 		key, err := work()
-		<-kdfSlots
 		loop.EnqueueMicrotask(func() {
 			if err != nil {
 				msg, _ := jsCtx.NewString(err.Error())
@@ -50,18 +48,13 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 			data, _ := jsCtx.NewString(base64.StdEncoding.EncodeToString(key))
 			c.rt.MakeCallback(callback, nil, jsCtx.Undefined(), data)
 		})
-	}()
+	})
 	return ctx.Undefined()
 }
 
 // errDerivingBits is Node's error when OpenSSL's PBKDF2 or HKDF fails, as it
 // does for a SHAKE digest.
 var errDerivingBits = errors.New("Deriving bits failed")
-
-// kdfSlots bounds how many derivations run at once, as Node's threadpool
-// (four threads by default) does, so a burst of scrypt calls queues instead
-// of allocating every call's memory at the same time.
-var kdfSlots = make(chan struct{}, 4)
 
 func argBytes(args []*v8.Value, i int) []byte {
 	if i >= len(args) {

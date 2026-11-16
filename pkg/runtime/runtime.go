@@ -16,6 +16,7 @@ import (
 type Runtime struct {
 	unhandledRejections string // Config.UnhandledRejections
 	noWarnings          bool   // Config.NoWarnings
+	threadPool          *threadPool
 
 	isolate           *v8.Isolate
 	context           *v8.Context
@@ -111,6 +112,12 @@ type Config struct {
 	// NoWarnings stops process warnings from being printed, as Node's --no-warnings does.
 	// The 'warning' event is still emitted.
 	NoWarnings bool
+	// ThreadPoolSize is how many tasks run at once on the runtime's thread pool,
+	// which runs the callback forms of node:crypto functions (randomBytes,
+	// generateKeyPair, pbkdf2, scrypt, sign and the rest), as Node runs them on
+	// libuv's threadpool. Further tasks wait their turn. 0 means
+	// DefaultThreadPoolSize (4), Node's default UV_THREADPOOL_SIZE.
+	ThreadPoolSize int
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -234,6 +241,7 @@ func New(cfg *Config) (*Runtime, error) {
 
 		unhandledRejections: cfg.UnhandledRejections,
 		noWarnings:          cfg.NoWarnings,
+		threadPool:          newThreadPool(cfg.ThreadPoolSize),
 	}
 
 	// Set up kill callback to stop the event loop, cancel tasks, and terminate

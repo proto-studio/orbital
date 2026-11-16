@@ -27,7 +27,7 @@ import (
 var extrasJS string
 
 // offThread runs work now and returns its result, or, when callback is a
-// function, runs it on a goroutine and calls callback(undefined, result) or
+// function, runs it on the runtime's thread pool and calls callback(undefined, result) or
 // callback(message) on the JS thread, as Node runs these on its threadpool.
 // result builds the JS value on the JS thread.
 func (c *Crypto) offThread(ctx *v8.Context, callback *v8.Value, work func() (string, error)) *v8.Value {
@@ -42,11 +42,9 @@ func (c *Crypto) offThread(ctx *v8.Context, callback *v8.Value, work func() (str
 	loop := c.rt.EventLoop()
 	jsCtx := c.rt.Context()
 	loop.AddPendingWork()
-	go func() {
+	c.rt.RunInThreadPool(func() {
 		defer loop.DonePendingWork()
-		offThreadSlots <- struct{}{}
 		out, err := work()
-		<-offThreadSlots
 		loop.EnqueueMicrotask(func() {
 			if err != nil {
 				msg, _ := jsCtx.NewString(err.Error())
@@ -56,13 +54,9 @@ func (c *Crypto) offThread(ctx *v8.Context, callback *v8.Value, work func() (str
 			v, _ := jsCtx.NewString(out)
 			c.rt.MakeCallback(callback, nil, jsCtx.Undefined(), v)
 		})
-	}()
+	})
 	return ctx.Undefined()
 }
-
-// offThreadSlots bounds how much of this work runs at once, as Node's
-// threadpool (four threads by default) does.
-var offThreadSlots = make(chan struct{}, 4)
 
 func optionalCallback(args []*v8.Value, i int) *v8.Value {
 	if i < len(args) {
