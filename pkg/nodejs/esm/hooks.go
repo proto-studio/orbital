@@ -349,9 +349,10 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		return "", "", err
 	}
 	loaded, err := awaitPromiseRT(lrt, loadP, e.rt.ExecutionContext())
-	if attrs == nil && err == nil {
+	if typ, typed := attrType(keyList); attrs == nil && err == nil && (!typed || typ == implicitType) {
 		// An entry point: its module's implicit-type job, reused by later
-		// imports of it, as in Node.
+		// imports of it, as in Node. (An entry the hooks gave another type
+		// is that type's job.)
 		if k := attrCheckKey(url, nil); e.attrChecks[k] == nil {
 			if _, seen := e.attrChecks[k]; !seen {
 				e.recordAttrCheck(k, nil)
