@@ -524,3 +524,29 @@ try { await import('./x.mjs', { with: { x: 'y' } }); log.push('loaded'); } catch
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Attributes that can't be cloned to the load hooks fail the import, as Node's hooks
+// thread boundary does, and a hook's custom URL holding \x01 can't alias a typed key.
+func TestImportAttributes_UncloneableAndCustomURLSeparator(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 1;`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './fn') return { ...(await n('./dep.mjs', c)), importAttributes: { f: () => 1 } };
+  if (s === 'm1') return { url: 'mem:a\x01b', shortCircuit: true };
+  if (s === 'm2') return { url: 'mem:a', shortCircuit: true };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.startsWith('mem:')) return { format: 'module', source: 'export default ' + JSON.stringify(u + '|' + (c.importAttributes.type || '')), shortCircuit: true };
+  return { format: 'module', source: 'export default "short"', shortCircuit: true };
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('./fn'); log.push('loaded'); } catch (e) { log.push('rejected'); }
+log.push((await import('m1')).default, (await import('m2', { with: { type: 'b' } })).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["rejected","mem:a%01b|","mem:a|b"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

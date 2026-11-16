@@ -524,7 +524,9 @@ func (e *ESM) pathOf(key string) string {
 func (e *ESM) hookURLKey(raw string) (string, error) {
 	u, isFile := canonicalFileURL(raw)
 	if !isFile {
-		return raw, nil
+		// Serialized as the URL parser would (controls and non-ASCII escaped),
+		// which also keeps the \x01 typed keys use out of it.
+		return encodeOpaque(urlWhitespace.Replace(raw)), nil
 	}
 	if err := checkFileURLHost(u, raw, ""); err != nil {
 		return "", err
@@ -543,6 +545,20 @@ func (e *ESM) hookURLKey(raw string) (string, error) {
 		}
 	}
 	return e.moduleKey(path, suffix), nil
+}
+
+// encodeOpaque percent-encodes controls and non-ASCII bytes, as the URL parser
+// does in a URL with an opaque path (mem:a b stays mem:a b).
+func encodeOpaque(u string) string {
+	var b strings.Builder
+	for i := 0; i < len(u); i++ {
+		if c := u[i]; c < 0x20 || c >= 0x7f {
+			fmt.Fprintf(&b, "%%%02X", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // checkFileURLHost is Node's error for a file: URL whose host is neither empty
