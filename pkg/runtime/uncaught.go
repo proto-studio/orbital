@@ -58,6 +58,7 @@ type uncaughtHandlers struct {
 	runMain           *v8.Value
 	runScheduledTicks *v8.Value
 	queueMicrotask    *v8.Value
+	beforeExit        *v8.Value
 	// mainBody is the native function runMain calls to run the main script.
 	mainBody *v8.Value
 }
@@ -110,6 +111,7 @@ func (rt *Runtime) installUncaught() error {
 		"runMain":           &rt.uncaught.runMain,
 		"runScheduledTicks": &rt.uncaught.runScheduledTicks,
 		"queueMicrotask":    &rt.uncaught.queueMicrotask,
+		"beforeExit":        &rt.uncaught.beforeExit,
 	} {
 		if *dst, err = api.Get(name); err != nil {
 			return err

@@ -419,12 +419,34 @@ func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
 	}
 
 	// Run the event loop to process any pending async operations
-	rt.eventLoop.Run()
+	rt.RunEventLoop()
 
 	if ended := rt.Ended(); ended != nil {
 		return nil, ended
 	}
 	return result, nil
+}
+
+// RunEventLoop runs the event loop until it has no work left, as Node does at the end of a
+// program: each time the loop empties, process emits 'beforeExit', and if a listener
+// scheduled more work the loop runs again. It returns early if the runtime ends (an
+// uncaught exception or process.exit(), neither of which emits 'beforeExit') or is killed.
+func (rt *Runtime) RunEventLoop() {
+	for {
+		rt.eventLoop.Run()
+		if rt.Ended() != nil || rt.execController.IsDone() {
+			return
+		}
+		rt.MakeCallback(rt.uncaught.beforeExit, nil)
+		if rt.Ended() != nil {
+			return
+		}
+		if !rt.eventLoop.isAlive() {
+			// The listeners' ticks have run; this only clears what is left in Go's queues.
+			rt.eventLoop.Run()
+			return
+		}
+	}
 }
 
 // Kill immediately stops execution with the given reason.

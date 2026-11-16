@@ -1,0 +1,38 @@
+{
+  "basic.js": [
+    "main",
+    "timer",
+    "beforeExit 0"
+  ],
+  "exit_code.js": [
+    "beforeExit 3 3"
+  ],
+  "exit_in_listener.js": [
+    "beforeExit 0",
+    "exit 5"
+  ],
+  "exit_in_main.js": [
+    "exit 0"
+  ],
+  "handled_exception.js": [
+    "caught in timer",
+    "beforeExit"
+  ],
+  "reschedule.js": [
+    "beforeExit 0 0",
+    "timer 1",
+    "beforeExit 0 1",
+    "timer 2",
+    "beforeExit 0 2",
+    "immediate",
+    "beforeExit 0 4"
+  ],
+  "ticks_only.js": [
+    "beforeExit",
+    "tick",
+    "promise"
+  ],
+  "unrefed.js": [
+    "beforeExit"
+  ]
+}

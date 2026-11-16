@@ -160,8 +160,9 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 		e.rt.WatchModuleEvaluation(result)
 	}
 
-	// Run any pending async operations (timers, microtasks, top-level await).
-	e.rt.EventLoop().Run()
+	// Run any pending async operations (timers, microtasks, top-level await), and emit
+	// 'beforeExit' when they run out.
+	e.rt.RunEventLoop()
 	if ended := e.rt.Ended(); ended != nil {
 		return nil, ended
 	}
