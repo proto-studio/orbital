@@ -19,8 +19,34 @@
       "hi"
     ]
   },
+  "cp_link_onto_its_target": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/cporig",
+      "errno": -17,
+      "message": "EEXIST: file already exists, symlink '\u003cdir\u003e/cporig' -\u003e '\u003cdir\u003e/cporig'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cporig",
+      "syscall": "symlink"
+    }
+  },
+  "cp_link_onto_its_target_kept": {
+    "value": "keep"
+  },
   "dirents": {
     "value": [
+      [
+        "cpalias",
+        true,
+        false,
+        false
+      ],
+      [
+        "cporig",
+        false,
+        true,
+        false
+      ],
       [
         "d",
         false,
@@ -135,6 +161,12 @@
       "message": "The \"prefix\" argument must be of type string or an instance of Buffer or URL. Received type number (1)",
       "name": "TypeError"
     }
+  },
+  "mkdtemp_bad_encoding": {
+    "value": [
+      "ERR_INVALID_ARG_VALUE",
+      0
+    ]
   },
   "mkdtemp_callback": {
     "value": 9

@@ -2,6 +2,7 @@ package fs
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"syscall"
@@ -55,7 +56,8 @@ func (f *FS) readlinkOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int
 		if err != nil {
 			return failed(err, "readlink", path)
 		}
-		return opResult{value: stringValue(target)}
+		// As base64, since a target need not be UTF-8 and a string would lose its bytes.
+		return opResult{value: stringValue(base64.StdEncoding.EncodeToString([]byte(target)))}
 	}, -1, nil
 }
 
