@@ -37,6 +37,7 @@ var (
 	errInvalidOAEPDigest  = rsaErr("ERR_OSSL_EVP_INVALID_DIGEST", "Invalid digest used")
 	errNotForKeyType      = rsaErr("ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE", "error:03000096:digital envelope routines::operation not supported for this keytype")
 	errUnknownPadding     = rsaErr("", "error:00000000:lib(0)::reason(0)")
+	errBadEValue          = rsaErr("ERR_OSSL_RSA_BAD_E_VALUE", "error:02000065:rsa routines::bad e value")
 	// Unpadded private-key operations would need the RSA step done with
 	// math/big, which isn't constant time, so they aren't offered.
 	errNoPaddingPrivate = rsaErr("ERR_CRYPTO_UNSUPPORTED_OPERATION", "Unsupported crypto operation")
@@ -52,6 +53,11 @@ func rawRSA(in []byte, exp, n *big.Int, k int) ([]byte, error) {
 	m := new(big.Int).SetBytes(in)
 	if m.Cmp(n) >= 0 {
 		return nil, errTooLargeForModulus
+	}
+	// Key import keeps exponents positive; Exp would give nil for a negative
+	// one with no inverse.
+	if exp.Sign() < 0 || n.Sign() <= 0 {
+		return nil, errBadEValue
 	}
 	return new(big.Int).Exp(m, exp, n).FillBytes(make([]byte, k)), nil
 }

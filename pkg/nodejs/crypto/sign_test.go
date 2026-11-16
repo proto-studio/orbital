@@ -102,3 +102,11 @@ func TestPKE_NoPaddingPrivateRefused(t *testing.T) {
 		}
 	}
 }
+
+// The unpadded public operation refuses a negative exponent instead of
+// dereferencing Exp's nil result.
+func TestPKE_RawRSANegativeExponent(t *testing.T) {
+	if _, err := rawRSA([]byte{0}, big.NewInt(-1), big.NewInt(15), 1); err != errBadEValue {
+		t.Errorf("got %v, want %v", err, errBadEValue)
+	}
+}
