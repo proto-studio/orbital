@@ -131,3 +131,25 @@ setTimeout(() => {
 	}
 	wantJSON(t, got, want)
 }
+
+// A rejection a cleanup task leaves unhandled is reported before the next
+// registry's cleanup runs, as in Node 20 (run with --expose-gc).
+func TestFinalizationRegistry_RejectionsBetweenTasks(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const order = [];
+process.on('unhandledRejection', (r) => order.push('unhandled ' + r));
+const mk = (name) => new FinalizationRegistry(() => { order.push('cleanup ' + name); Promise.reject(name); });
+const r1 = mk('A'), r2 = mk('B');
+(() => { r1.register({}, 1); r2.register({}, 2); })();
+setTimeout(() => {
+  gc();
+  setTimeout(() => {
+    const x = order[0].slice(-1), y = x === 'A' ? 'B' : 'A';
+    done({ ok: order.join() === ['cleanup ' + x, 'unhandled ' + x, 'cleanup ' + y, 'unhandled ' + y].join(), order });
+  }, 30);
+}, 10);
+`)
+	if got["ok"] != true {
+		t.Errorf("order = %v, want each cleanup followed by its unhandledRejection", got["order"])
+	}
+}

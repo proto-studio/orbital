@@ -57,3 +57,33 @@ func TestRuntime_FinalizationRegistryRunsBetweenCallbacks(t *testing.T) {
 		t.Errorf("cleaned, during callback = %s, want [50,0]", v.String())
 	}
 }
+
+// An embedder driving the loop with RunOnce runs FinalizationRegistry
+// cleanup too, and RunOnce reports the call that ran it as work done.
+func TestRuntime_RunOnceRunsPlatformTasks(t *testing.T) {
+	rt, err := New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if _, err := rt.RunScript(`
+		globalThis.cleaned = 0;
+		const reg = new FinalizationRegistry(() => { cleaned++; });
+		(() => { for (let i = 0; i < 20; i++) reg.register({}, i); })();
+		gc();
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.EventLoop().RunOnce() {
+		t.Error("RunOnce reported no work although it ran cleanup")
+	}
+	for i := 0; i < 10 && rt.EventLoop().RunOnce(); i++ {
+	}
+	v, err := rt.RunScript(`cleaned`, "result.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Integer() != 20 {
+		t.Errorf("%d of 20 cleanup callbacks ran through RunOnce", v.Integer())
+	}
+}

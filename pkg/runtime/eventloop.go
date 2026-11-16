@@ -609,6 +609,10 @@ func (el *EventLoop) wake() {
 
 // RunOnce processes one iteration of the event loop.
 func (el *EventLoop) RunOnce() bool {
+	// The tasks V8 has queued for the isolate, such as FinalizationRegistry cleanup,
+	// as the loop's poll phase runs them.
+	platformRan := el.platform != nil && el.platform()
+
 	el.mu.Lock()
 
 	// Process queued callbacks
@@ -659,7 +663,7 @@ func (el *EventLoop) RunOnce() bool {
 		el.mu.Lock()
 		ran = true
 	}
-	if ran {
+	if ran || platformRan {
 		el.mu.Unlock()
 		return true
 	}
