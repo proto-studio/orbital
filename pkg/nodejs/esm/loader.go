@@ -1301,6 +1301,10 @@ func (e *ESM) resolveAndLoadDefault(specifier, referrer string, attrs []v8.Impor
 		if err := e.checkAttributesOnce(url, format, attrs); err != nil {
 			return "", "", err
 		}
+	} else if _, seen := e.attrChecks[attrCheckKey(url, nil)]; !seen {
+		// An entry point is its module's implicit-type job, which a later
+		// import of it (even with type 'javascript') reuses, as in Node.
+		e.recordAttrCheck(attrCheckKey(url, nil), nil)
 	}
 	final, err := e.finalize(url, src, format)
 	if err != nil {

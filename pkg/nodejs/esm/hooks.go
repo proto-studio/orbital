@@ -347,6 +347,15 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		return "", "", err
 	}
 	loaded, err := awaitPromiseRT(lrt, loadP, e.rt.ExecutionContext())
+	if attrs == nil && err == nil {
+		// An entry point: its module's implicit-type job, reused by later
+		// imports of it, as in Node.
+		if k := attrCheckKey(url, nil); e.attrChecks[k] == nil {
+			if _, seen := e.attrChecks[k]; !seen {
+				e.recordAttrCheck(k, nil)
+			}
+		}
+	}
 	if check != "" {
 		var me *moduleError
 		if err == nil {
