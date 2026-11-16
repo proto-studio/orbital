@@ -487,3 +487,22 @@ for (const s of ['./u1', './u2']) { try { log.push((await import(s)).default); }
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// The default load's refusal of an undefined type is that module job's outcome, so a
+// later import of the same module with no type gets it too. Expected from Node 20.18.1.
+func TestImportAttributes_UndefinedTypeFailureIsCached(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 1;`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'undef') return { ...(await n('./dep.mjs', c)), importAttributes: { type: undefined } };
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['undef', './dep.mjs']) { try { log.push((await import(s)).default); } catch (e) { log.push(e.code); } }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["ERR_INVALID_ARG_TYPE","ERR_INVALID_ARG_TYPE"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

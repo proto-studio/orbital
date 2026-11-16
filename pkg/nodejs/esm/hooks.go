@@ -344,7 +344,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		var me *moduleError
 		if err == nil {
 			e.recordAttrCheck(key, nil)
-		} else if errors.As(err, &me) && strings.HasPrefix(me.code, "ERR_IMPORT_") {
+		} else if errors.As(err, &me) && (strings.HasPrefix(me.code, "ERR_IMPORT_") || me.code == "ERR_INVALID_ARG_TYPE") {
 			e.recordAttrCheck(key, me)
 		}
 	}
