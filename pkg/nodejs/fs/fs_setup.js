@@ -1106,10 +1106,19 @@
     checkPath(text, name);
     return text;
   }
+  // A path given as a string, a Buffer or a file: URL, as a string. A URL is checked as
+  // Node's fileURLToPath checks it.
   function pathString(p) {
     if (typeof p === 'string') return p;
     if (ArrayBuffer.isView(p)) return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
-    if (p && typeof p === 'object' && typeof p.href === 'string' && p.protocol === 'file:') {
+    if (p && typeof p === 'object' && typeof p.href === 'string' && typeof p.protocol === 'string') {
+      if (p.protocol !== 'file:') throw codedError(TypeError, 'ERR_INVALID_URL_SCHEME', 'The URL must be of scheme file');
+      if (p.hostname !== '' && p.hostname !== 'localhost') {
+        throw codedError(TypeError, 'ERR_INVALID_FILE_URL_HOST', 'File URL host must be "localhost" or empty on ' + process.platform);
+      }
+      if (/%2f/i.test(p.pathname)) {
+        throw codedError(TypeError, 'ERR_INVALID_FILE_URL_PATH', 'File URL path must not include encoded / characters');
+      }
       return decodeURIComponent(p.pathname);
     }
     return p;
@@ -1650,11 +1659,6 @@
     const p = pathString(filename);
     return cwdRelative && typeof p === 'string' && pathModule() ? pathModule().resolve(p) : p;
   };
-  function pathString(p) {
-    if (ArrayBuffer.isView(p)) return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
-    if (p && typeof p === 'object' && typeof p.href === 'string' && p.protocol === 'file:') return decodeURIComponent(p.pathname);
-    return p;
-  }
   fs.watchFile = function (filename, options, listener) {
     if (typeof options === 'function') {
       listener = options;
@@ -1862,22 +1866,36 @@
     const original = fs[name];
     if (typeof original !== 'function') continue;
     const names = PATH_ARGUMENTS[name];
+    // Buffer and file: URL paths become strings here, checked as Node checks them, so every
+    // call below takes them.
+    const asPaths = (args) => {
+      args = Array.prototype.slice.call(args);
+      names.forEach((argName, i) => {
+        if (typeof args[i] === 'number') return; // a descriptor
+        args[i] = pathString(args[i]);
+        checkPath(args[i], argName);
+      });
+      return args;
+    };
     fs[name] = function () {
-      names.forEach((argName, i) => checkPath(arguments[i], argName));
-      return original.apply(this, arguments);
+      return original.apply(this, asPaths(arguments));
     };
     // realpath.native and realpathSync.native are checked the same way.
     if (typeof original.native === 'function') {
       const native = original.native;
       fs[name].native = function () {
-        names.forEach((argName, i) => checkPath(arguments[i], argName));
-        return native.apply(this, arguments);
+        return native.apply(this, asPaths(arguments));
       };
     }
   }
   const _existsSync = fs.existsSync;
   fs.existsSync = function (path) {
+    try {
+      path = pathString(path);
+    } catch (e) {
+      return false;
+    }
     if (typeof path === 'string' && path.includes('\0')) return false;
-    return _existsSync.apply(this, arguments);
+    return _existsSync.call(this, path);
   };
 })();

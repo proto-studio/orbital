@@ -341,11 +341,37 @@
   "unlink_link": {
     "value": false
   },
+  "url_encoded_slash": {
+    "error": {
+      "code": "ERR_INVALID_FILE_URL_PATH",
+      "message": "File URL path must not include encoded / characters",
+      "name": "TypeError"
+    }
+  },
   "url_paths": {
     "value": [
       "f",
       "hi",
       "\u003cdir\u003e/f"
     ]
+  },
+  "url_paths_everywhere": {
+    "value": [
+      "hi",
+      "640",
+      2000000,
+      true,
+      [
+        "inner"
+      ],
+      false
+    ]
+  },
+  "url_wrong_scheme": {
+    "error": {
+      "code": "ERR_INVALID_URL_SCHEME",
+      "message": "The URL must be of scheme file",
+      "name": "TypeError"
+    }
   }
 }
