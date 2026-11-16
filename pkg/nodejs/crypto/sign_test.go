@@ -66,3 +66,24 @@ func TestSign_RSAJWKExponentTooLarge(t *testing.T) {
 		t.Error("verified with e = -1")
 	}
 }
+
+// A CryptoKey is converted to a KeyObject once and reused, so signing with
+// it again doesn't add registry entries.
+func TestSign_CryptoKeyConvertedOnce(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	result, err := rt.RunScript(`(() => {
+		const c = __crypto_module;
+		const { privateKey } = c.generateKeyPairSync('ed25519');
+		class CryptoKey { get [Symbol.toStringTag]() { return 'CryptoKey'; } get type() { return 'private'; } }
+		const ck = new CryptoKey();
+		ck._jwk = privateKey.export({ format: 'jwk' });
+		return c._fromCryptoKey(ck) === c._fromCryptoKey(ck) && c.sign(null, Buffer.from('x'), ck).length === 64;
+	})()`, "test.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Boolean() {
+		t.Error("CryptoKey converted more than once")
+	}
+}
