@@ -422,6 +422,10 @@ func (el *EventLoop) run(done func() bool) bool {
 				el.runTicks(ctx)
 				hooked = true
 				if finished() {
+					// The rest of the batch runs ahead of anything queued since, next time.
+					el.mu.Lock()
+					el.immediates = append(batch[i+1:], el.immediates...)
+					el.mu.Unlock()
 					return true
 				}
 			}
@@ -503,6 +507,13 @@ func (el *EventLoop) run(done func() bool) bool {
 	}
 }
 
+// contextForTicks is the loop's context, for runTicks outside run.
+func (el *EventLoop) contextForTicks() context.Context {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	return el.ctx
+}
+
 // runTicks runs the queued process.nextTick callbacks, and then the drained hook, which
 // reports rejections, as Node does after each timer and immediate. I/O completions stay
 // queued for the poll phase. It stops early, reporting false, if the loop is stopped or
@@ -569,6 +580,7 @@ func (el *EventLoop) RunOnce() bool {
 					heap.Push(&el.timers, task)
 					el.mu.Unlock()
 				}
+				el.runTicks(el.contextForTicks())
 			}
 			el.mu.Lock()
 			ran = true
@@ -584,6 +596,8 @@ func (el *EventLoop) RunOnce() bool {
 		for _, task := range batch {
 			if !task.cancelled.Load() {
 				task.fn()
+				// As between any two callbacks, the ticks the immediate queued run first.
+				el.runTicks(el.contextForTicks())
 			}
 		}
 		el.mu.Lock()
