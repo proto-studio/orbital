@@ -21,8 +21,13 @@ const winPaths = ['C:\\foo\\test', 'C:\\foo\\test\\bar\\package.json', 'c:/a/b/.
   '\\\\server\\share\\dir\\file.txt', '\\\\server\\share', '//server/share/x', '\\\\?\\C:\\x\\y',
   '\\\\.\\device', 'a\\b\\..\\..\\..\\c', '', '.', '..\\x', 'foo.tar.gz', '\\foo\\', 'C:\\x\\.hidden',
   'file:stream', 'a/b\\c', 'C:\\x\\y.', '\\\\', '\\\\a', 'D:\\x\\\\y\\\\'];
+// toNamespacedPath resolves relative paths against the working directory, which
+// differs between machines, so it is shown as <cwd>.
+const cwdWin = process.cwd().replace(/\//g, '\\');
+const cwdParentWin = cwdWin.slice(0, cwdWin.lastIndexOf('\\'));
+const hideCwd = (v) => (typeof v === 'string' ? v.split(cwdWin).join('<cwd>').split(cwdParentWin).join('<cwd>\\..') : v);
 for (const fn of ['normalize', 'isAbsolute', 'dirname', 'basename', 'extname', 'parse', 'toNamespacedPath']) {
-  out['win32.' + fn] = winPaths.map((p) => attempt(() => win32[fn](p)));
+  out['win32.' + fn] = winPaths.map((p) => hideCwd(attempt(() => win32[fn](p))));
 }
 out['win32.basename suffix'] = [win32.basename('C:\\a\\b.TXT', '.TXT'), win32.basename('C:\\a\\b.txt', 'b.txt'),
   win32.basename('aaa\\', 'a'), win32.basename('C:file.js', '.js')];
