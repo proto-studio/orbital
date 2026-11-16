@@ -687,13 +687,12 @@ func (el *EventLoop) ClearAllMicrotasks() {
 	el.microtasks = nil
 }
 
-// isAlive reports whether anything that keeps a program running is left: a referenced
-// timer or immediate, or pending I/O. It is libuv's uv_loop_alive; queued ticks and
-// microtasks don't count, since they run as part of whatever queued them.
+// isAlive reports whether anything that keeps a program running is left: see aliveLocked.
+// Queued ticks don't count, since they run as part of whatever queued them.
 func (el *EventLoop) isAlive() bool {
 	el.mu.Lock()
 	defer el.mu.Unlock()
-	return el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
+	return el.aliveLocked()
 }
 
 // HasPendingWork returns true if there's still work to be done.
