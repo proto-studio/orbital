@@ -118,11 +118,11 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `TLS_` names in `ciphers` are accepted without effect, and the suite negotiated can differ
   from Node's. `honorCipherOrder`, `dhparam` and `sigalgs` have no effect, and `X448` in
   `ecdhCurve` is skipped. `ciphers` is read over the TLS 1.2 suites Go has, so a list that
-  only names suites Go lacks, such as DHE ones, allows only TLS 1.3. Sessions are opaque buffers that only Orbital reads, a TLS 1.3 server issues
-  one ticket where Node issues two, and `getSession()` is `undefined` until the first
-  `'session'` event. Servers resume sessions only from tickets, so `'newSession'` and
-  `'resumeSession'` never fire. CA certificates in a `pfx` are sent as the chain but not
-  trusted for verifying peers.
+  only names suites Go lacks, such as DHE ones, allows only TLS 1.3. Sessions are opaque
+  buffers that only Orbital reads, a TLS 1.3 server issues one ticket where Node issues two,
+  and `getSession()` is `undefined` until the first `'session'` event. Servers resume
+  sessions only from tickets, so `'newSession'` and `'resumeSession'` never fire. CA
+  certificates in a `pfx` are sent as the chain but not trusted for verifying peers.
 - **A TLS handshake over a stream that isn't a socket keeps the process running** until it
   finishes, even if nothing else would. In Node only the stream decides that.
 - **The HTTP parser is stricter than Node in places.** All of these are refused, because
