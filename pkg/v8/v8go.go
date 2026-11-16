@@ -59,18 +59,34 @@ type Isolate struct {
 	// starts, or when the isolate is disposed.
 	unused struct {
 		sync.Mutex
-		ptrs []unsafe.Pointer
+		contexts []unsafe.Pointer
+		values   []unsafe.Pointer
 	}
 }
 
-// freeUnused frees the callback context wrappers nothing uses any more. It runs on the thread
-// using the isolate.
+// queueUnused hands ptr, a context wrapper (or a value's handle) nothing uses any more, to the
+// isolate to free on its own thread.
+func (i *Isolate) queueUnused(ptr unsafe.Pointer, context bool) {
+	i.unused.Lock()
+	if context {
+		i.unused.contexts = append(i.unused.contexts, ptr)
+	} else {
+		i.unused.values = append(i.unused.values, ptr)
+	}
+	i.unused.Unlock()
+}
+
+// freeUnused frees the callback context wrappers and value handles nothing uses any more. It
+// runs on the thread using the isolate.
 func (i *Isolate) freeUnused() {
 	i.unused.Lock()
-	ptrs := i.unused.ptrs
-	i.unused.ptrs = nil
+	contexts, values := i.unused.contexts, i.unused.values
+	i.unused.contexts, i.unused.values = nil, nil
 	i.unused.Unlock()
-	for _, ptr := range ptrs {
+	for _, ptr := range values {
+		C.v8go_value_release(ptr)
+	}
+	for _, ptr := range contexts {
 		C.v8go_context_dispose(ptr)
 	}
 }
@@ -139,9 +155,7 @@ func (c *Context) releaseLater() {
 	if c.ptr == nil || c.iso == nil {
 		return
 	}
-	c.iso.unused.Lock()
-	c.iso.unused.ptrs = append(c.iso.unused.ptrs, c.ptr)
-	c.iso.unused.Unlock()
+	c.iso.queueUnused(c.ptr, true)
 	c.ptr = nil
 }
 
@@ -174,7 +188,6 @@ func (c *Context) release() {
 	}
 	C.v8go_context_dispose(ptr)
 }
-
 
 // RunScript compiles and runs a JavaScript script in this context.
 func (c *Context) RunScript(source, origin string) (*Value, error) {
