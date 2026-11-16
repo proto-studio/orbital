@@ -51,7 +51,7 @@
 
   // Replaces err's stack accessor with one that formats through the original
   // on first read and puts the code in the header ("Error [CODE]: ...").
-  function lazyCodedStack(err, desc, name, code) {
+  function lazyCodedStack(err, desc, code) {
     var done = false;
     var value;
     defineProperty(err, 'stack', {
@@ -61,8 +61,10 @@
           var custom = typeof NativeError.prepareStackTrace === 'function';
           value = apply(desc.get, err, []);
           done = true;
-          if (!custom && typeof value === 'string' && value.indexOf(name + ': ') === 0) {
-            value = name + ' [' + code + ']: ' + value.slice(name.length + 2);
+          // The header uses the name the error has now, as V8's does.
+          var current = String(err.name);
+          if (!custom && typeof value === 'string' && value.indexOf(current + ': ') === 0) {
+            value = current + ' [' + code + ']: ' + value.slice(current.length + 2);
           }
         }
         return value;
@@ -82,13 +84,12 @@
     var err = isTypeError ? new NativeTypeError(message)
       : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
     if (code) {
-      var name = isTypeError ? 'TypeError' : 'Error';
       // The "[CODE]" header is added when the stack is first read, from the
       // engine's own accessor, so formatting (and an Error.prepareStackTrace the
       // program installs, even later) happens at that read, as in Node.
       var desc = getOwnPropertyDescriptor(err, 'stack');
       if (desc && typeof desc.get === 'function') {
-        lazyCodedStack(err, desc, name, code);
+        lazyCodedStack(err, desc, code);
       }
       own(err, 'code', code, true);
       setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);
