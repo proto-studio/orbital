@@ -5,9 +5,11 @@ import (
 	"crypto/pbkdf2"
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"hash"
 	"math"
 
+	"golang.org/x/crypto/scrypt"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
@@ -51,6 +53,10 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 	}()
 	return ctx.Undefined()
 }
+
+// errDerivingBits is Node's error when OpenSSL's PBKDF2 or HKDF fails, as it
+// does for a SHAKE digest.
+var errDerivingBits = errors.New("Deriving bits failed")
 
 // kdfSlots bounds how many derivations run at once, as Node's threadpool
 // (four threads by default) does, so a burst of scrypt calls queues instead
@@ -101,12 +107,58 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	if h == nil || iter < 1 || iter > math.MaxInt32 || keyLen < 0 || keyLen > math.MaxInt32 {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
+	xof := isXOF(args[4].String())
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
+		if xof {
+			return nil, errDerivingBits
+		}
 		if keyLen == 0 {
 			return []byte{}, nil
 		}
 		return pbkdf2.Key(h, string(password), salt, int(iter), int(keyLen))
 	})
+}
+
+// OpenSSL checks scrypt's parameters before deriving and reports a memory
+// limit as below; Node shows its message. golang.org/x/crypto/scrypt derives.
+const scryptMemoryError = "error:030000AC:digital envelope routines::memory limit exceeded"
+
+// errScryptParams is a parameter set OpenSSL refuses without a reason.
+var errScryptParams = errors.New("")
+
+// scryptCheck applies OpenSSL's checks to scrypt's parameters, in its order.
+// It returns errScryptParams, an error with OpenSSL's memory message, or nil.
+// maxmem 0 means OpenSSL's default of 32 MiB, which Node never passes.
+func scryptCheck(n, r, p, maxmem uint64) error {
+	if r == 0 || p == 0 || n < 2 || n&(n-1) != 0 {
+		return errScryptParams
+	}
+	memErr := errors.New(scryptMemoryError)
+	if 16*r <= 63 && n >= uint64(1)<<(16*r) {
+		return memErr
+	}
+	const prMax = 1<<30 - 1
+	if p > prMax/r {
+		return memErr
+	}
+	blen := p * 128 * r
+	if blen > math.MaxInt32 {
+		return memErr
+	}
+	if n+2 > (math.MaxUint64/(32*4))/r {
+		return memErr
+	}
+	vlen := 32 * r * (n + 2) * 4
+	if blen > math.MaxUint64-vlen {
+		return memErr
+	}
+	if maxmem == 0 {
+		maxmem = 32 * 1024 * 1024
+	}
+	if blen+vlen > maxmem {
+		return memErr
+	}
+	return nil
 }
 
 // scryptCheckFunc backs _scryptCheck(N, r, p, maxmem): "" when OpenSSL would
@@ -142,7 +194,10 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
 	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
-		return scryptKey(password, salt, int(n), int(r), int(p), int(keyLen))
+		if keyLen == 0 {
+			return []byte{}, nil
+		}
+		return scrypt.Key(password, salt, int(n), int(r), int(p), int(keyLen))
 	})
 }
 
@@ -159,7 +214,11 @@ func (c *Crypto) hkdfFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if h == nil || keyLen < 0 || keyLen > 255*h().Size() {
 		return ctx.Throw("hkdf: invalid arguments")
 	}
+	xof := isXOF(args[0].String())
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
+		if xof {
+			return nil, errDerivingBits
+		}
 		if keyLen == 0 {
 			return []byte{}, nil
 		}

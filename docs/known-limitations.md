@@ -208,11 +208,10 @@ traceability.
   `verify`, `createDiffieHellman` / `createECDH`, and symmetric `generateKey` /
   `generateKeySync`. jose exercises these through WebCrypto instead, so its suite
   passes, but native `node:crypto` consumers of them will not work. (#141)
-- **[gap] Some digest names Node accepts are unknown.** `pbkdf2` and `hkdf` take the
-  digests Go's standard library has (MD5, SHA-1, SHA-2 including SHA-512/224 and /256,
-  SHA-3) under Node's names and aliases (`RSA-SHA256`, `sha256WithRSAEncryption`,
-  `sha-256`, …), matched without regard to case (`digests.go`). `ripemd160`, `blake2b512`,
-  `blake2s256`, `sm3`, `md5-sha1` and the `shake` functions throw
+- **[gap] The `sm3` digest is unknown.** `pbkdf2` and `hkdf` take Node's other digests
+  (MD5, SHA-1, SHA-2, SHA-3, SHAKE, RIPEMD-160, BLAKE2b-512, BLAKE2s-256 and MD5-SHA1)
+  under Node's names and aliases, matched without regard to case (`digests.go`). Neither
+  Go's standard library nor `golang.org/x/crypto` has SM3, so `sm3` throws
   `ERR_CRYPTO_INVALID_DIGEST`.
 - **[approx] scrypt parameter errors don't carry over an earlier OpenSSL error.** Once
   one scrypt call fails the memory limit, Node adds that message to later
