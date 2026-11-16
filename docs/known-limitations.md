@@ -235,11 +235,14 @@ traceability.
 - **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
   `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
   so a GCM context holds it in memory.
+- **[gap] No finite-field Diffie-Hellman.** `createDiffieHellman`, `getDiffieHellman`,
+  `createDiffieHellmanGroup`, `DiffieHellman`, `DiffieHellmanGroup` and `diffieHellman`
+  with `dh` keys throw `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. Go's standard library has
+  no finite-field DH, and doing the private-key exponentiation with `math/big` wouldn't
+  be constant time. (#242)
 - **[gap] `createECDH` and `diffieHellman` support P-256, P-384, P-521 and X25519.**
   Go's standard library has no other curves, so `secp256k1`, Brainpool and the rest
-  are `ERR_CRYPTO_INVALID_CURVE`, and X448 and finite-field `dh` KeyObjects can't
-  agree keys. `DiffieHellman#verifyError` checks primality, safety, size and the
-  generator's range, not every condition OpenSSL's `DH_check` covers.
+  are `ERR_CRYPTO_INVALID_CURVE`, and X448 keys can't be used for key agreement.
 - **[gap] No unpadded RSA private-key operations.** `privateDecrypt` and
   `privateEncrypt` with `RSA_NO_PADDING` throw `ERR_CRYPTO_UNSUPPORTED_OPERATION`: Go's
   RSA has no raw private-key operation, and doing it with `math/big` wouldn't be

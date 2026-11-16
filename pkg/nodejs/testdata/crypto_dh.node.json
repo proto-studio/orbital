@@ -1,56 +1,4 @@
 {
-  "dhErrors": {
-    "badGenerator": {
-      "code": "ERR_INVALID_ARG_TYPE",
-      "message": "The \"generator\" argument must be one of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received an instance of Object",
-      "name": "TypeError"
-    },
-    "badSize": {
-      "code": "ERR_INVALID_ARG_TYPE",
-      "message": "The \"sizeOrKey\" argument must be one of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type boolean (true)",
-      "name": "TypeError"
-    },
-    "noPrivateKey": {
-      "code": "ERR_CRYPTO_INVALID_STATE",
-      "message": "No private key - did you forget to generate one?",
-      "name": "Error"
-    },
-    "noPublicKey": {
-      "code": "ERR_CRYPTO_INVALID_STATE",
-      "message": "No public key - did you forget to generate one?",
-      "name": "Error"
-    },
-    "otherKeyOne": {
-      "code": "ERR_CRYPTO_INVALID_KEYLEN",
-      "message": "Supplied key is too small",
-      "name": "RangeError"
-    },
-    "otherKeyTooLarge": {
-      "code": "ERR_CRYPTO_INVALID_KEYLEN",
-      "message": "Supplied key is too large",
-      "name": "RangeError"
-    },
-    "otherKeyZero": {
-      "code": "ERR_CRYPTO_INVALID_KEYLEN",
-      "message": "Supplied key is too small",
-      "name": "RangeError"
-    },
-    "sizeTooSmall": {
-      "code": "ERR_OSSL_DH_MODULUS_TOO_SMALL",
-      "message": "error:0280007E:Diffie-Hellman routines::modulus too small",
-      "name": "Error"
-    },
-    "smallModulusKeys": {
-      "code": "ERR_OSSL_DH_MODULUS_TOO_SMALL",
-      "message": "error:0280007E:Diffie-Hellman routines::modulus too small",
-      "name": "Error"
-    },
-    "unknownGroup": {
-      "code": "ERR_CRYPTO_UNKNOWN_DH_GROUP",
-      "message": "Unknown DH group",
-      "name": "Error"
-    }
-  },
   "ecdh": {
     "prime256v1": {
       "value": [
@@ -146,6 +94,29 @@
       "name": "RangeError"
     }
   },
+  "ecdhKeyPair": {
+    "mismatched": {
+      "code": "ERR_CRYPTO_INVALID_KEYPAIR",
+      "message": "Invalid key pair",
+      "name": "RangeError"
+    },
+    "ownAgain": {
+      "value": "aab80471e6c4b18c8dbad2771efbfc57dcf5decdda46760b8a4be3bdf5f73159"
+    },
+    "publicOnly": {
+      "code": "ERR_CRYPTO_OPERATION_FAILED",
+      "message": "Failed to compute ECDH key",
+      "name": "Error"
+    },
+    "publicOnlyBadOther": {
+      "code": "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY",
+      "message": "Public key is not valid for specified curve",
+      "name": "Error"
+    },
+    "regenerated": {
+      "value": 32
+    }
+  },
   "ecdhRandom": {
     "value": [
       65,
@@ -158,27 +129,16 @@
   },
   "ecdhShape": [
     "computeSecret,generateKeys,getPrivateKey,getPublicKey,setPrivateKey,setPublicKey",
-    "computeSecret,generateKeys,getGenerator,getPrime,getPrivateKey,getPublicKey,setPrivateKey,setPublicKey",
     true
   ],
-  "fixedKeys": {
-    "value": [
-      "120da7d7859fac24efbaba7115105d507d5d32ac6c482a07f4bc5ddeb4e771f9aea65fa808d11393856738311d331ee58e9cdc1253f06ac0733a50cd0e640d66ad127728cf32c487e10a802a4eaa64555fada4124dfe9cc33ecda4d32ac35358b93ca45ed4217cfd3d4aadfeab01b768259b2446d28ed3f0ba8344c05cb70385",
-      "32c41e08ca373b73f02fcc1edb5f7a95b4a8106ceba512019b516099f0105a8b3c465fef7f39450865d735797e5d0f4cf4fb6cbae23712a8a94ef2fa6988a53973b43f3f5fef7ca38cf769f8dc0b9e5c6017dc5c0b363cf75853c644faae7cb3aa469ccc473d10ffbbb18be1327703c294e600c2e7b497e9cbd9818bd6911a31",
-      "d0aab383a91ef2b965d26aae2ad9e53a6b2dab2ffc6e844bea46f376ee750a8423f1ec2836526c94d842f2e1f8720b6695868adfd20e7d5295e8aa8f4d5cca27a7d5992245508c314f5cbddbdbe3719577ae26927479d1b5088706a5020624f80ca81fd9786307398f794ac08aa1b118d3bf63cd755b3cef431500042907d4e1",
-      "0Kqzg6ke8rll0mquKtnlOmstqy/8boRL6kbzdu51CoQj8ewoNlJslNhC8uH4cgtmlYaK39IOfVKV6KqPTVzKJ6fVmSJFUIwxT1y929vjcZV3riaSdHnRtQiHBqUCBiT4DKgf2XhjBzmPeUrAiqGxGNO/Y811WzzvQxUABCkH1OE=",
-      "0102030405060708",
-      128,
-      0
-    ]
-  },
   "generateKey": [
     "null",
     32,
     [
       "sync",
       "callback"
-    ]
+    ],
+    "request"
   ],
   "generateKeySync": {
     "aes100": {
@@ -234,61 +194,6 @@
       "name": "TypeError"
     }
   },
-  "generated": {
-    "value": [
-      64,
-      "02",
-      0,
-      true
-    ]
-  },
-  "groupShape": [
-    "undefined",
-    "undefined",
-    96
-  ],
-  "groups": [
-    [
-      96,
-      "02",
-      0
-    ],
-    [
-      128,
-      "02",
-      0
-    ],
-    [
-      192,
-      "02",
-      0
-    ],
-    [
-      256,
-      "02",
-      0
-    ],
-    [
-      384,
-      "02",
-      0
-    ],
-    [
-      512,
-      "02",
-      0
-    ],
-    [
-      768,
-      "02",
-      0
-    ],
-    [
-      1024,
-      "02",
-      0
-    ]
-  ],
   "keyAgreement": {
     "ec": {
       "value": "242e2d3434e2414120d8b231b5edc16f124292fa1982b14fc875d2c4d3560b957f395cb0fa98a413431bb18e91f243ea"
@@ -322,28 +227,5 @@
     "x25519PrivateAsPublic": {
       "value": "812c6a70d905808d75da725188687ced81fd38886cad9beb6154b4f4ae4c6657"
     }
-  },
-  "randomKeys": {
-    "value": [
-      true,
-      256,
-      true
-    ]
-  },
-  "verifyErrors": [
-    {
-      "value": 128
-    },
-    {
-      "value": 129
-    },
-    {
-      "code": "ERR_OSSL_DH_BAD_GENERATOR",
-      "message": "error:02800065:Diffie-Hellman routines::bad generator",
-      "name": "Error"
-    },
-    {
-      "value": 1
-    }
-  ]
+  }
 }
