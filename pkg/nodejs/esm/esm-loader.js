@@ -54,11 +54,16 @@
       : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
     if (code) {
       var name = isTypeError ? 'TypeError' : 'Error';
+      // Reading the stack formats it, which would run an Error.prepareStackTrace
+      // the program installed now rather than when it reads the stack, as in
+      // Node; then the header keeps its plain form.
       var stack;
-      try {
-        stack = err.stack;
-      } catch (e) {
-        // A throwing Error.prepareStackTrace: keep the error, as Node does.
+      if (typeof NativeError.prepareStackTrace !== 'function') {
+        try {
+          stack = err.stack;
+        } catch (e) {
+          // Keep the error whatever formatting does.
+        }
       }
       if (typeof stack === 'string' && stack.indexOf(name + ': ') === 0) {
         own(err, 'stack', name + ' [' + code + ']: ' + stack.slice(name.length + 2), false);

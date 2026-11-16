@@ -464,7 +464,12 @@ func validPackageTarget(target string) bool {
 	if !strings.HasPrefix(target, "./") {
 		return false
 	}
-	for _, seg := range strings.Split(strings.ReplaceAll(target[2:], "\\", "/"), "/") {
+	// The path only: a query or fragment isn't part of it.
+	path := target[2:]
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	for _, seg := range strings.Split(strings.ReplaceAll(path, "\\", "/"), "/") {
 		if d, err := url.PathUnescape(seg); err == nil {
 			seg = d
 		}
@@ -690,11 +695,18 @@ func resolveExportsTarget(exp interface{}) string {
 		return v
 	case []interface{}:
 		// Alternatives: an invalid target is skipped for the next one, as in Node.
+		// With no valid one left, the last invalid one is returned, for its error.
+		last := ""
 		for _, e := range v {
-			if r := resolveExportsTarget(e); r != "" && validPackageTarget(r) {
+			r := resolveExportsTarget(e)
+			if r != "" && validPackageTarget(r) {
 				return r
 			}
+			if r != "" {
+				last = r
+			}
 		}
+		return last
 	case map[string]interface{}:
 		for _, c := range exportConditions {
 			if sub, ok := v[c]; ok {
