@@ -1,0 +1,19 @@
+{
+  "async_function.js": [
+    "after await"
+  ],
+  "main_script.js": [
+    "before exit",
+    "exit 0"
+  ],
+  "nested_call.js": [],
+  "reaction.js": [
+    "first"
+  ],
+  "timer.js": [
+    "timer"
+  ],
+  "uncaught_handler.js": [
+    "caught boom"
+  ]
+}
