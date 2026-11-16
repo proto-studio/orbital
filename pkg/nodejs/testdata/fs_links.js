@@ -62,6 +62,26 @@ async function main() {
   });
   attempt('url_encoded_slash', () => fs.symlinkSync('/x', new URL('file://' + file('a%2Fb'))));
   attempt('url_wrong_scheme', () => fs.readFileSync(new URL('http://example.com/f')));
+  attempt('cp_link_onto_its_target', () => {
+    fs.writeFileSync(file('cporig'), 'keep');
+    fs.symlinkSync('cporig', file('cpalias'));
+    try {
+      fs.cpSync(file('cpalias'), file('cporig'));
+    } finally {
+      results.cp_link_onto_its_target_kept = { value: fs.readFileSync(file('cporig'), 'utf8') };
+    }
+  });
+  attempt('mkdtemp_bad_encoding', () => {
+    const before = fs.readdirSync(dir).length;
+    // Only the code is compared: Node 20.18.1's message swaps the name and the value here.
+    let code = null;
+    try {
+      fs.mkdtempSync(file('enc-'), { encoding: 'bogus' });
+    } catch (e) {
+      code = e.code;
+    }
+    return [code, fs.readdirSync(dir).length - before];
+  });
   attempt('readlink_file', () => fs.readlinkSync(file('f')));
   attempt('readlink_missing', () => fs.readlinkSync(file('nope')));
   attempt('lstat_link', () => kind(fs.lstatSync(file('l'))));

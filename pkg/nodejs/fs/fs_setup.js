@@ -1125,6 +1125,18 @@
   }
   // A path the native layer gives, in the encoding options ask for: a string, or a Buffer for
   // 'buffer'.
+  // The options, after checking their encoding, so a bad one fails before anything is done.
+  function checkedEncoding(options) {
+    encodingOf(options);
+    return options;
+  }
+  // Bytes the native layer gives as a name, in the encoding options ask for.
+  function bytesNamedIn(bytes, options) {
+    const encoding = encodingOf(options);
+    const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (encoding === 'buffer') return buffer;
+    return buffer.toString(encoding || 'utf8');
+  }
   function namedIn(name, options) {
     const encoding = encodingOf(options);
     if (encoding === 'buffer') return Buffer.from(name);
@@ -1133,7 +1145,9 @@
   }
   defineCall('symlink', symlinkArgs, 'symlink');
   // file: URLs and Buffers become paths before they reach the native layer.
-  defineCall('readlink', (path, options) => [checkedPath(path, 'path'), options], 'readlink', (target, [, options]) => namedIn(target, options));
+  // The native readlink gives the target's bytes as base64, since they need not be UTF-8.
+  defineCall('readlink', (path, options) => [checkedPath(path, 'path'), checkedEncoding(options)], 'readlink',
+    (target, [, options]) => bytesNamedIn(bytesOf(target), options));
   defineCall('link', (existingPath, newPath) => [checkedPath(existingPath, 'existingPath'), checkedPath(newPath, 'newPath')], 'link');
   // mkdtemp(prefix[, options]) makes prefix followed by six random characters, mode 0o700.
   function prefixArg(prefix) {
@@ -1143,12 +1157,12 @@
     }
     return checkedPath(prefix, 'prefix');
   }
-  defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), options], 'mkdtemp', (path, [, options]) => namedIn(path, options));
+  defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), checkedEncoding(options)], 'mkdtemp', (path, [, options]) => namedIn(path, options));
 
   // realpath.native names realpath in its errors, as the C call does. Plain realpath, like
   // Node's JavaScript one, reports a missing path from lstat, or a link to one from stat, by
   // its absolute path.
-  defineCall('realpath', (path, options) => [checkedPath(path, 'path'), options], 'realpath', (real, [, options]) => namedIn(real, options));
+  defineCall('realpath', (path, options) => [checkedPath(path, 'path'), checkedEncoding(options)], 'realpath', (real, [, options]) => namedIn(real, options));
   const realpathNativeSync = fs.realpathSync;
   const realpathNative = fs.realpath;
   function asJsRealpathError(e, path) {
@@ -1470,7 +1484,9 @@
         const dir = cwdRelative || path.isAbsolute(src) ? path.dirname(src) : path.join(path.sep, path.dirname(src));
         target = path.resolve(dir, target);
       }
-      if (destStat) yield ['unlink', dest];
+      // Only a link in the way is replaced. Anything else stays, and the symlink fails with
+      // EEXIST, as in Node, so copying a link onto its own target can't remove that target.
+      if (destStat && destStat.isSymbolicLink()) yield ['unlink', dest];
       yield ['symlink', target, dest];
       return;
     }

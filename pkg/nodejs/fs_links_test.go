@@ -160,3 +160,16 @@ done({
 `, dir))
 	wantJSON(t, got, map[string]any{"symlink": "ERR_INVALID_ARG_VALUE", "link": "ERR_INVALID_ARG_VALUE", "readlink": "ERR_INVALID_ARG_VALUE", "mkdtemp": "ERR_INVALID_ARG_VALUE", "made": false})
 }
+
+// readlink gives a target's bytes as they are, though they aren't UTF-8.
+func TestFSLinks_ReadlinkRawBytes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("a\xffb", filepath.Join(dir, "l")); err != nil {
+		t.Skipf("the filesystem refuses the name: %v", err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+done({ hex: fs.readlinkSync(%q, { encoding: 'buffer' }).toString('hex'), latin1: fs.readlinkSync(%q, 'latin1') });
+`, filepath.Join(dir, "l"), filepath.Join(dir, "l")))
+	wantJSON(t, got, map[string]any{"hex": "61ff62", "latin1": "a\u00ffb"})
+}
