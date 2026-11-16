@@ -210,6 +210,14 @@ func (rt *Runtime) stopRunning() {
 	// as soon as the stack empties, and JavaScript that called into Go may still be on the
 	// stack. Terminating stops both before they run any more of the program.
 	rt.isolate.TerminateExecution()
+	// Termination alone doesn't stop the queued reactions: once it has unwound to the
+	// outermost call V8 clears it, and its automatic checkpoint then runs them all. A
+	// checkpoint run now, with termination requested, lands the termination on the first
+	// reaction before any of its body runs, and V8 then discards the whole queue. Inside a
+	// reaction this does nothing, and V8 discards the rest of the queue as it unwinds.
+	rt.context.PerformMicrotaskCheckpoint()
+	// Whatever is still on the stack must keep unwinding.
+	rt.isolate.TerminateExecution()
 }
 
 // MakeCallback calls a JavaScript function from the event loop, the way node::MakeCallback
