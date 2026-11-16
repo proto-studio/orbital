@@ -60,3 +60,31 @@ import('./entry.mjs').then((self) => console.log(JSON.stringify([globalThis.__ru
 		t.Fatalf("exit %d, output %q", code, out)
 	}
 }
+
+// An entry the hooks gave another type doesn't stand for its implicit-type job:
+// importing it untyped with an unsupported attribute is still checked.
+// Expected from Node 20.18.1.
+func TestEntry_HookTypedEntryLeavesImplicitJobUnchecked(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s.endsWith('entry.mjs') && !c.importAttributes.foo) { const r = await n(s, c); return { ...r, importAttributes: { type: 'a' } }; }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('entry.mjs') && c.importAttributes.type === 'a') { const r = await n(u, { ...c, importAttributes: {} }); return { ...r, shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"reg.mjs":   `import { register } from 'node:module'; register('./hooks.mjs', import.meta.url);`,
+		"entry.mjs": `if (!globalThis.__ran) { globalThis.__ran = true; import('./entry.mjs', { with: { foo: 'x' } }).then(() => console.log('accepted'), (e) => console.log(e.code)); }`,
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, code := runOrbital(t, "", "--import", filepath.Join(dir, "reg.mjs"), filepath.Join(dir, "entry.mjs"))
+	if code != 0 || out != "ERR_IMPORT_ATTRIBUTE_UNSUPPORTED\n" {
+		t.Fatalf("exit %d, output %q", code, out)
+	}
+}

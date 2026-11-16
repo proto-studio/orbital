@@ -841,7 +841,7 @@ log.push((await import('./f.mjs', { with: { type: 'a' } })).default, (await impo
 
 // Each (url, type) is one module job, so a hook switching its answer later
 // changes nothing; a file's JSON imported with two types gives two namespaces
-// sharing one value. Expected from Node 20.18.1.
+// sharing one value, and with a query another value. Expected from Node 20.18.1.
 func TestImportAttributes_JobsPerTypeShareFileJSONValue(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
@@ -859,9 +859,10 @@ const a = await import('./f.mjs', { with: { type: 'a' } });
 const b = await import('./f.mjs', { with: { type: 'a' } });
 const x = await import('./d.json', { with: { type: 'json' } });
 const y = await import('./d.json', { with: { type: 'b' } });
-log.push(a === b, b.default, x === y, x.default === y.default, y.default);`,
+const q = await import('./d.json?q', { with: { type: 'json' } });
+log.push(a === b, b.default, x === y, x.default === y.default, y.default, q.default === x.default);`,
 	})
-	if got, want := runLogModuleIn(t, dir), `[true,{"j":1},false,true,{"k":2}]`; got != want {
+	if got, want := runLogModuleIn(t, dir), `[true,{"j":1},false,true,{"k":2},false]`; got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
