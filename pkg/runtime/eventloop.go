@@ -81,6 +81,7 @@ type EventLoop struct {
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
 	drained     func() // runs once both queues empty; see setDrainedHook
+	platform    func() // runs at the start of each poll phase; see setPlatformHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -128,6 +129,13 @@ func (el *EventLoop) SetContext(ctx context.Context) {
 // microtask queues have emptied, before the loop looks for more work. Call it before the loop starts.
 func (el *EventLoop) setDrainedHook(fn func()) {
 	el.drained = fn
+}
+
+// setPlatformHook sets a function to run on the loop's goroutine once per turn, at the
+// start of the poll phase, after the timers phase has run its whole batch. Call it before
+// the loop starts.
+func (el *EventLoop) setPlatformHook(fn func()) {
+	el.platform = fn
 }
 
 // runDrainedLocked runs the drained hook, and reports whether that queued more callbacks.
@@ -365,7 +373,15 @@ func (el *EventLoop) run(done func() bool) bool {
 			}
 		}
 
-		// Poll phase, without waiting: the I/O completions and ticks queued so far.
+		// Poll phase, without waiting: the tasks V8 has queued for the isolate, then the
+		// I/O completions and ticks queued so far.
+		if el.platform != nil {
+			if cancelled() {
+				return false
+			}
+			el.platform()
+			hooked = false
+		}
 		el.mu.Lock()
 		for {
 			for fn := el.nextQueuedLocked(); fn != nil; fn = el.nextQueuedLocked() {

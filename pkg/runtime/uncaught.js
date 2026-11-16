@@ -8,6 +8,7 @@
   'use strict';
 
   const apply = Reflect.apply;
+  const construct = Reflect.construct;
   const hasOwn = Object.prototype.hasOwnProperty;
   const shift = Array.prototype.shift;
   const NewWeakMap = WeakMap;
@@ -223,19 +224,43 @@
     return result;
   }
 
-  // FinalizationRegistry cleanup callbacks run from the event loop between
-  // callbacks (Runtime.runPlatformTasks). Each one is entered like any other
-  // callback, so an exception reaches 'uncaughtException' and the ticks it
-  // queues run before its promise jobs, as in Node.
+  // FinalizationRegistry cleanup callbacks run from the event loop's poll phase
+  // (Runtime.runPlatformTasks). V8's cleanup task only records each callback
+  // and its held value here; runCleanups then calls them all, then runs the
+  // ticks they queued, then their promise jobs, as Node does for a batch. An
+  // exception reaches 'uncaughtException' as from any other callback.
+  const pendingCleanups = [];
+  Object.setPrototypeOf(pendingCleanups, null);
+
+  function runCleanups() {
+    if (pendingCleanups.length === 0) return;
+    depth++;
+    try {
+      for (let i = 0; i < pendingCleanups.length && !dead; i += 2) {
+        try {
+          apply(pendingCleanups[i], undefined, [pendingCleanups[i + 1]]);
+        } catch (err) {
+          trigger(err, false);
+        }
+      }
+    } finally {
+      pendingCleanups.length = 0;
+      depth--;
+    }
+    if (depth === 0 && !dead) processTicks();
+  }
   const NativeFinalizationRegistry = globalThis.FinalizationRegistry;
   if (typeof NativeFinalizationRegistry === 'function') {
     const FinalizationRegistry = function FinalizationRegistry(cleanup) {
       // Called without new: the native constructor throws its own TypeError.
       if (new.target === undefined) return NativeFinalizationRegistry(cleanup);
       const wrapped = typeof cleanup === 'function'
-        ? function (held) { callback(cleanup, undefined, held); }
+        ? function (held) {
+          pendingCleanups[pendingCleanups.length] = cleanup;
+          pendingCleanups[pendingCleanups.length] = held;
+        }
         : cleanup;
-      return Reflect.construct(NativeFinalizationRegistry, [wrapped],
+      return construct(NativeFinalizationRegistry, [wrapped],
         new.target === FinalizationRegistry ? NativeFinalizationRegistry : new.target);
     };
     FinalizationRegistry.prototype = NativeFinalizationRegistry.prototype;
@@ -513,5 +538,6 @@
   return {
     callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled,
     watchModule, runMain, runScheduledTicks, queueMicrotask, beforeExit,
+    runCleanups,
   };
 })

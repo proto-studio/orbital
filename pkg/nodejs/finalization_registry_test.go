@@ -7,9 +7,10 @@ import (
 )
 
 // FinalizationRegistry cleanup callbacks behave as in Node 20 (run there
-// with --expose-gc): the ticks a callback queues run before its promise
-// jobs, an exception reaches 'uncaughtException', and the constructor keeps
-// Node's shape and errors. KeyObject can't be constructed from outside.
+// with --expose-gc): a batch of callbacks runs, then their ticks, then their
+// promise jobs; they run after the current phase's callbacks; an exception
+// reaches 'uncaughtException'; and the constructor keeps Node's shape and
+// errors. KeyObject can't be constructed from outside.
 func TestFinalizationRegistry_MatchesNode(t *testing.T) {
 	got := runJS(t, &runtime.Config{}, `
 const order = [];
@@ -33,10 +34,27 @@ const { KeyObject } = require('crypto');
 for (const args of [['secret', 1], [1]]) {
   try { new KeyObject(...args); shape.push('constructed'); } catch (e) { shape.push(e.code + ' ' + e.message); }
 }
+// A batch: every cleanup callback runs, then their ticks, then their promise jobs.
+const batch = [];
+const reg2 = new FinalizationRegistry((held) => {
+  batch.push('cleanup');
+  process.nextTick(() => batch.push('tick'));
+  Promise.resolve().then(() => batch.push('promise'));
+});
+(() => { for (let i = 0; i < 3; i++) reg2.register({}, i); })();
+// The phase finishes first: an immediate that collects runs before the cleanup, and so
+// does the next immediate in the same batch.
+const phase = [];
+const reg3 = new FinalizationRegistry((held) => phase.push('cleanup ' + held));
 setTimeout(() => {
   gc();
   setTimeout(() => {
-    done({ order: order.filter((s) => s.endsWith(' a')), errors, shape });
+    (() => { reg3.register({}, 'x'); })();
+    setImmediate(() => { phase.push('i1'); gc(); });
+    setImmediate(() => phase.push('i2'));
+    setTimeout(() => {
+      done({ order: order.filter((s) => s.endsWith(' a')), errors, shape, batch, phase });
+    }, 30);
   }, 20);
 }, 10);
 `)
@@ -51,5 +69,7 @@ setTimeout(() => {
 			"ERR_INVALID_ARG_VALUE The argument 'type' is invalid. Received 1",
 		},
 	}
+	want["batch"] = []any{"cleanup", "cleanup", "cleanup", "tick", "tick", "tick", "promise", "promise", "promise"}
+	want["phase"] = []any{"i1", "i2", "cleanup x"}
 	wantJSON(t, got, want)
 }

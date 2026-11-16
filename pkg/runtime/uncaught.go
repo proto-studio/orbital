@@ -78,6 +78,8 @@ type uncaughtHandlers struct {
 	runScheduledTicks *v8.Value
 	queueMicrotask    *v8.Value
 	beforeExit        *v8.Value
+	// runCleanups calls the FinalizationRegistry callbacks a platform task recorded.
+	runCleanups *v8.Value
 	// mainBody is the native function runMain calls to run the main script.
 	mainBody *v8.Value
 }
@@ -138,6 +140,7 @@ func (rt *Runtime) installUncaught() error {
 		"runScheduledTicks": &rt.uncaught.runScheduledTicks,
 		"queueMicrotask":    &rt.uncaught.queueMicrotask,
 		"beforeExit":        &rt.uncaught.beforeExit,
+		"runCleanups":       &rt.uncaught.runCleanups,
 	} {
 		if *dst, err = api.Get(name); err != nil {
 			return err
@@ -165,10 +168,8 @@ func (rt *Runtime) installUncaught() error {
 		return err
 	}
 
-	rt.eventLoop.setDrainedHook(func() {
-		rt.runPlatformTasks()
-		rt.reportRejections()
-	})
+	rt.eventLoop.setDrainedHook(rt.reportRejections)
+	rt.eventLoop.setPlatformHook(rt.runPlatformTasks)
 	return nil
 }
 
@@ -385,15 +386,20 @@ func (rt *Runtime) BindProcess(process *v8.Value) error {
 // reportRejections runs once the microtask queues are empty, which is the point where a
 // promise rejected with no handler has had its chance to get one.
 // runPlatformTasks runs the tasks V8 has queued for the isolate, such as
-// FinalizationRegistry cleanup callbacks, then the promise jobs they queued.
-// The loop calls it between callbacks, on its own goroutine, as Node runs
-// these tasks between turns of its loop.
+// FinalizationRegistry cleanup callbacks, then the ticks and promise jobs
+// they queued. The loop calls it once per turn, at the start of its poll
+// phase, on its own goroutine and never inside a callback, as Node runs
+// these tasks from libuv's poll phase.
 func (rt *Runtime) runPlatformTasks() {
 	if rt.ended() || rt.execController.IsDone() {
 		return
 	}
 	rt.context.PumpMessageLoop()
-	rt.context.PerformMicrotaskCheckpoint()
+	// Cleanup tasks only record the callbacks to run; they run here, as callbacks.
+	_, _ = rt.uncaught.runCleanups.Call(nil)
+	if rt.ended() {
+		rt.keepTerminating()
+	}
 }
 
 func (rt *Runtime) reportRejections() {

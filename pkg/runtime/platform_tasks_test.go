@@ -1,9 +1,12 @@
 package runtime
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-// FinalizationRegistry callbacks run once the loop is between callbacks, not
-// inside the callback that dropped the objects, as in Node.
+// FinalizationRegistry callbacks run in a later poll phase, not inside the
+// callback that dropped the objects, as in Node.
 func TestRuntime_FinalizationRegistryRunsBetweenCallbacks(t *testing.T) {
 	rt, err := New(nil)
 	if err != nil {
@@ -38,6 +41,9 @@ func TestRuntime_FinalizationRegistryRunsBetweenCallbacks(t *testing.T) {
 		}
 		cleanedInside = v.Integer()
 	})
+	// A later turn, as a pending timer gives in Node: cleanup runs in a poll phase,
+	// and the loop ends without one when nothing keeps it alive.
+	rt.EventLoop().SetTimeout(func() {}, 10*time.Millisecond)
 	rt.EventLoop().Run()
 
 	if cleanedInside != 0 {
