@@ -502,7 +502,9 @@ func (l *LocalFilesystem) hostTarget(target string) (string, error) {
 	if clean == absRoot || strings.HasPrefix(clean, absRoot+string(filepath.Separator)) {
 		return target, nil
 	}
-	return filepath.Join(absRoot, target), nil
+	// The root is put in front as written: Join would clean the target, collapsing a ".."
+	// before the links ahead of it are followed and dropping a trailing "/".
+	return strings.TrimSuffix(absRoot, string(filepath.Separator)) + target, nil
 }
 
 // scriptPath gives a host path as the script names it: with a root, a path under the root
@@ -579,9 +581,14 @@ func (l *LocalFilesystem) Realpath(p string) (string, error) {
 	if l.Root != "" {
 		return l.rootedRealpath(p)
 	}
-	resolved, err := l.resolvePath(p)
-	if err != nil {
-		return "", err
+	// The path goes to EvalSymlinks as written, made absolute without cleaning, so a ".."
+	// after a link applies to where the link leads, as realpath(3) has it.
+	if !filepath.IsAbs(p) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		p = wd + string(filepath.Separator) + p
 	}
-	return filepath.EvalSymlinks(resolved)
+	return filepath.EvalSymlinks(p)
 }
