@@ -136,25 +136,38 @@ func (rt *Runtime) installUncaught() error {
 	if err := native.Set("callRecording", callRecording); err != nil {
 		return err
 	}
-	// takeSite gives the header for where callRecording's function threw, and headerOf the
-	// one for a value nothing threw, as a rejection: for an error, where it was made.
-	if err := rt.setNative(native, "takeSite", func(*v8.FunctionCallbackInfo) *v8.Value {
-		return rt.headerValue(rt.context.TakeExceptionPlace())
+	// keepSite keeps where callRecording's function threw for the exception the handlers
+	// are about to get, and dropSite forgets it once they're done. Neither takes or returns
+	// a value, so a handled exception leaves nothing behind.
+	if err := rt.setNative(native, "keepSite", func(*v8.FunctionCallbackInfo) *v8.Value {
+		rt.sites = append(rt.sites, rt.context.TakeExceptionPlace())
+		return nil
 	}); err != nil {
 		return err
 	}
-	if err := rt.setNative(native, "headerOf", func(info *v8.FunctionCallbackInfo) *v8.Value {
-		args := info.Args()
-		if len(args) < 1 {
-			return rt.headerValue(nil)
+	// placeOf keeps where an error was made, for a fatal exception nothing threw where it
+	// is known, as a rejection. It must run before the error's stack is read: V8 then
+	// no longer has the frames to place it with.
+	if err := rt.setNative(native, "placeOf", func(info *v8.FunctionCallbackInfo) *v8.Value {
+		rt.madePlace = nil
+		if args := info.Args(); len(args) >= 1 {
+			place := rt.context.PlaceOf(args[0])
+			// Where JavaScript is running now, for a value with no place of its own: the
+			// runtime's own code, which is no place to show.
+			if place != nil && place.ResourceName != uncaughtScriptName {
+				rt.madePlace = place
+			}
 		}
-		place := rt.context.PlaceOf(args[0])
-		// Where JavaScript is running now, for a value with no place of its own: the
-		// runtime's own code, which is no place to show.
-		if place != nil && place.ResourceName == uncaughtScriptName {
-			place = nil
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "dropSite", func(*v8.FunctionCallbackInfo) *v8.Value {
+		if n := len(rt.sites); n > 0 {
+			rt.sites[n-1] = nil
+			rt.sites = rt.sites[:n-1]
 		}
-		return rt.headerValue(place)
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -249,17 +262,11 @@ func (rt *Runtime) setNative(obj *v8.Value, name string, cb v8.FunctionCallback)
 	return obj.Set(name, fn)
 }
 
-// headerValue is sourceHeader as a JavaScript string.
-func (rt *Runtime) headerValue(place *v8.ExceptionPlace) *v8.Value {
-	header, err := rt.context.NewString(rt.sourceHeader(place))
-	if err != nil {
-		return rt.context.Undefined()
-	}
-	return header
-}
-
-// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew, thrown, source,
-// sourceInline): no handler took an exception.
+// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew, thrown, hasSite,
+// isError): no handler took an exception. With hasSite, the header shows where the runtime
+// kept that the exception was thrown; otherwise an error nothing threw where it is known, as
+// a rejection, is shown where it was made (see placeOf), as Node does. A handler's own exception gets none.
+// A value that isn't an error gets its header inline, right above it.
 func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
@@ -279,10 +286,18 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		HandlerThrew: args[3].Boolean(),
 		Thrown:       thrown,
 	}
-	if len(args) > 6 {
-		uncaught.Source = args[5].String()
-		uncaught.SourceInline = args[6].Boolean()
+	if len(args) > 6 && !uncaught.HandlerThrew {
+		var place *v8.ExceptionPlace
+		if args[5].Boolean() && len(rt.sites) > 0 {
+			place = rt.sites[len(rt.sites)-1]
+		}
+		uncaught.Source = rt.sourceHeader(place)
+		if uncaught.Source == "" {
+			uncaught.Source = rt.sourceHeader(rt.madePlace)
+		}
+		uncaught.SourceInline = uncaught.Source != "" && !args[6].Boolean()
 	}
+	rt.madePlace = nil
 	rt.fatal.Store(uncaught)
 	rt.stopRunning()
 	return nil
@@ -362,16 +377,15 @@ func (rt *Runtime) keepTerminating() {
 }
 
 // handleUncaught treats a value as an exception nothing caught, as if it had been thrown
-// from a callback. It reports whether the runtime survived.
-// header is the source header for where it was thrown, or "".
-func (rt *Runtime) handleUncaught(thrown *v8.Value, header string) bool {
+// from a callback. It reports whether the runtime survived. place is where it was thrown,
+// or nil.
+func (rt *Runtime) handleUncaught(thrown *v8.Value, place *v8.ExceptionPlace) bool {
 	if !rt.ended() {
-		site, err := rt.context.NewString(header)
-		if err != nil {
-			site = rt.context.Undefined()
-		}
+		rt.sites = append(rt.sites, place)
 		// trigger reports a handler's exception itself, so this call cannot fail with one.
-		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false), site)
+		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false), rt.context.NewBoolean(place != nil))
+		rt.sites[len(rt.sites)-1] = nil
+		rt.sites = rt.sites[:len(rt.sites)-1]
 	}
 	if rt.ended() {
 		rt.keepTerminating()
@@ -535,7 +549,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 		return scriptErr
 	}
 	thrown := rt.context.TakeLastScriptException()
-	header := rt.sourceHeader(rt.context.TakeExceptionPlace())
+	place := rt.context.TakeExceptionPlace()
 	if thrown == nil {
 		// The V8 glue predates TakeLastScriptException, so only the text survived. Node
 		// would hand over the object: its name, message and stack come through here, and
@@ -548,7 +562,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 			return scriptErr
 		}
 	}
-	if rt.handleUncaught(thrown, header) {
+	if rt.handleUncaught(thrown, place) {
 		return nil
 	}
 	if rt.ended() {

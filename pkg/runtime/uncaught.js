@@ -11,8 +11,8 @@
   const construct = Reflect.construct;
   const setPrototypeOf = Object.setPrototypeOf;
   // callRecording(fn, recv, ...args) calls fn natively. When fn throws, it keeps where V8's
-  // message places the throw, which a catch here would lose, and takeSite then gives the
-  // fatal exception header for that place. Only a throw costs a call into Go.
+  // message places the throw, which a catch here would lose, and triggerThrown has the
+  // runtime keep that place. Only a throw costs a call into Go.
   const callRecording = native.callRecording;
   const isError = Error.isError;
   const hasOwn = Object.prototype.hasOwnProperty;
@@ -58,13 +58,15 @@
     return Number.isNaN(code) ? fallback : code;
   }
 
-  // takeSite is the header for where the function callRecording last called threw.
-  function takeSite() {
+  // triggerThrown is trigger for an exception that left callRecording: the runtime keeps
+  // where it was thrown for the fatal exception header while the handlers run. Nothing
+  // passes between here and Go but the calls themselves.
+  function triggerThrown(err) {
+    native.keepSite();
     try {
-      const site = native.takeSite();
-      return typeof site === 'string' ? site : '';
-    } catch (_) {
-      return '';
+      trigger(err, false, true);
+    } finally {
+      native.dropSite();
     }
   }
 
@@ -85,35 +87,27 @@
     }
   }
 
-  // die stops the runtime. site is the header Node prints above the report, for where the
-  // exception was thrown; without one, an error that nothing threw where it is known, as a
-  // rejection, is shown where it was made, as Node does. A value that isn't an error gets
-  // its header inline, right above it.
-  function die(err, code, origin, handlerThrew, site) {
+  // die stops the runtime. hasSite says the runtime kept where the exception was thrown,
+  // for the header Node prints above the report (see Runtime.fatalFunc).
+  function die(err, code, origin, handlerThrew, hasSite) {
     dead = true;
-    let source = '';
-    let inline = false;
-    if (!handlerThrew) {
-      // The header is only a help: nothing here may stop the report.
-      try {
-        source = typeof site === 'string' ? site : '';
-        if (source === '' && ((typeof err === 'object' && err !== null) || typeof err === 'function')) {
-          const made = native.headerOf(err);
-          source = typeof made === 'string' ? made : '';
-        }
-        inline = source !== '' && !(typeof isError === 'function' && isError(err));
-      } catch (_) {
-        source = '';
-        inline = false;
+    let errorValue = false;
+    try {
+      errorValue = typeof isError === 'function' && isError(err);
+      // Before format reads its stack.
+      if (!hasSite && !handlerThrew && ((typeof err === 'object' && err !== null) || typeof err === 'function')) {
+        native.placeOf(err);
       }
+    } catch (_) {
+      // Only the header depends on these.
     }
-    native.fatal(format(err), code, origin, !!handlerThrew, err, source, inline);
+    native.fatal(format(err), code, origin, !!handlerThrew, err, !!hasSite, errorValue);
   }
 
   // trigger is process._fatalException plus its native caller: run the handlers, and if
-  // none takes the exception, stop the runtime. site is the header for where it was thrown,
-  // if known.
-  function trigger(err, fromPromise, site) {
+  // none takes the exception, stop the runtime. hasSite says the runtime kept where it was
+  // thrown.
+  function trigger(err, fromPromise, hasSite) {
     if (dead) return;
     const p = getProcess();
     const origin = fromPromise ? 'unhandledRejection' : 'uncaughtException';
@@ -138,7 +132,7 @@
     } catch (_) {
       // Nothing can be done about an 'exit' listener that throws at this point.
     }
-    die(err, exitCodeOf(p, kGenericUserError), origin, false, site);
+    die(err, exitCodeOf(p, kGenericUserError), origin, false, hasSite);
   }
 
   // ---- process.nextTick ----------------------------------------------------------------
@@ -217,7 +211,7 @@
           try {
             callRecording(runTicks, undefined);
           } catch (err) {
-            trigger(err, false, takeSite());
+            triggerThrown(err);
           }
         }
         tickQueue.length = 0;
@@ -279,7 +273,7 @@
     try {
       result = callWith(fn, recv, args);
     } catch (err) {
-      trigger(err, false, takeSite());
+      triggerThrown(err);
       result = undefined;
     } finally {
       depth--;

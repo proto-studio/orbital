@@ -40,6 +40,8 @@ type Runtime struct {
 	mu                sync.Mutex
 	uncaught          uncaughtHandlers
 	fatal             atomic.Pointer[UncaughtError]
+	sites             []*v8.ExceptionPlace // same goroutine: where the exceptions the handlers have were thrown
+	madePlace         *v8.ExceptionPlace   // same goroutine: see placeOf in installUncaught
 	exited            atomic.Pointer[ExitError]
 	tracksRejections  bool
 	rejectionsPending bool     // only touched on the goroutine running JavaScript
