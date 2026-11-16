@@ -862,6 +862,33 @@ for (const s of ['/\\localhost' + dir + 'tmp/x.mjs', '/\\example.com/tmp/x.mjs',
 	}
 }
 
+// A hook error is told by its brand even when its cause can't be cloned (the
+// cause then arrives inspected), crosses as its first built-in class, and
+// keeps shared property values shared. Expected from Node 20.18.1.
+func TestDynamicImport_HookErrorBrandsClassesAndSharing(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `class CustomTypeError extends TypeError { constructor(m) { super(m); this.extra = 1; } }
+export async function resolve(s, c, n) {
+  if (s === 'fncause') throw new TypeError('x', { cause: () => {} });
+  if (s === 'fnprop') throw Object.assign(new RangeError('y'), { f() {}, k: 1 });
+  if (s === 'shared') { const v = { z: 1 }; throw Object.assign(new Error('x'), { a: v, b: v }); }
+  if (s === 'sub') throw new CustomTypeError('sub');
+  if (s === 'proto') { const e = new Error('p'); Object.setPrototypeOf(e, RangeError.prototype); throw e; }
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['fncause', 'fnprop', 'sub', 'proto']) {
+  try { await import(s); } catch (e) { log.push([e.constructor.name, e.message, typeof e.cause, String(e.cause), Object.getOwnPropertyNames(e).join()]); }
+}
+try { await import('shared'); } catch (e) { log.push(e.a === e.b, e.a.z); }`,
+	})
+	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.
