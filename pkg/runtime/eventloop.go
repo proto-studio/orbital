@@ -292,6 +292,29 @@ func (el *EventLoop) run(done func() bool) bool {
 		}
 	}
 
+	// finished reports whether RunUntil's predicate is satisfied; it is checked after each
+	// callback.
+	finished := func() bool {
+		if done == nil || !done() {
+			return false
+		}
+		el.mu.Lock()
+		el.running = false
+		el.mu.Unlock()
+		return true
+	}
+
+	// What the code that ran before the loop queued comes first: its ticks, and then the
+	// drained hook, which reports the promises it left rejected, as Node does once a
+	// script has run.
+	el.runTicks(ctx)
+	if finished() {
+		return true
+	}
+	// hooked records that the drained hook has run since the last callback, so the poll
+	// phase needn't run it again when it finds nothing to do.
+	hooked := true
+
 	// Each turn follows libuv's phases as far as Node can tell them apart: timers that are
 	// due, then I/O callbacks (the queued native completions), then immediates. Between
 	// two timers or two immediates only process.nextTick callbacks run, as in Node.
@@ -300,9 +323,9 @@ func (el *EventLoop) run(done func() bool) bool {
 			return false
 		}
 
-		// As in libuv, a loop with nothing to keep it alive runs no more timers or
-		// immediates, unreferenced ones included. Queued callbacks and the drained hook
-		// still run below, and the loop ends after them.
+		// As in libuv, a turn runs only while something keeps the loop alive; then it runs
+		// all its phases, unreferenced timers and immediates included. Queued callbacks
+		// and the drained hook still run below, and the loop ends after them.
 		el.mu.Lock()
 		alive := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
 		el.mu.Unlock()
@@ -332,7 +355,11 @@ func (el *EventLoop) run(done func() bool) bool {
 				heap.Push(&el.timers, task)
 				el.mu.Unlock()
 			}
-			el.runTicks()
+			el.runTicks(ctx)
+			hooked = true
+			if finished() {
+				return true
+			}
 		}
 
 		// Poll phase, without waiting: the I/O completions and ticks queued so far.
@@ -344,50 +371,33 @@ func (el *EventLoop) run(done func() bool) bool {
 					return false
 				}
 				fn()
+				hooked = false
 				el.mu.Lock()
 			}
+			if hooked {
+				break
+			}
+			hooked = true
 			if !el.runDrainedLocked() {
 				break
 			}
+			hooked = false
 		}
-
-		if done != nil {
-			el.mu.Unlock()
-			finished := done()
-			el.mu.Lock()
-			if finished {
-				el.running = false
-				el.mu.Unlock()
-				return true
-			}
+		el.mu.Unlock()
+		if finished() {
+			return true
 		}
 
 		// Check if we should stop
+		el.mu.Lock()
 		if el.shouldStop {
 			el.running = false
 			el.mu.Unlock()
 			return false
 		}
 
-		// Cancelled timers are not work: they must not keep the loop alive until
-		// their deadline. Once the earliest timer is live, one live timer exists.
-		for el.timers.Len() > 0 && el.timers[0].cancelled.Load() {
-			heap.Pop(&el.timers)
-		}
-
-		// Check if there's any work left. Unreferenced timers run while something else
-		// keeps the loop alive, but do not count as work themselves.
-		hasTimers := el.timers.Len() > 0
-		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
-
-		if !el.hasReferencedTimerLocked() && !hasPending {
-			el.running = false
-			el.mu.Unlock()
-			return false
-		}
-
 		// Check phase: the immediates queued before it started.
-		if len(el.immediates) > 0 {
+		if alive && len(el.immediates) > 0 {
 			batch := el.immediates
 			el.immediates = nil
 			el.mu.Unlock()
@@ -409,9 +419,30 @@ func (el *EventLoop) run(done func() bool) bool {
 					break
 				}
 				task.fn()
-				el.runTicks()
+				el.runTicks(ctx)
+				hooked = true
+				if finished() {
+					return true
+				}
 			}
 			continue
+		}
+
+		// Cancelled timers are not work: they must not keep the loop alive until
+		// their deadline. Once the earliest timer is live, one live timer exists.
+		for el.timers.Len() > 0 && el.timers[0].cancelled.Load() {
+			heap.Pop(&el.timers)
+		}
+
+		// Check if there's any work left. Unreferenced timers run while something else
+		// keeps the loop alive, but do not count as work themselves.
+		hasTimers := el.timers.Len() > 0
+		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
+
+		if !el.hasReferencedTimerLocked() && !hasPending {
+			el.running = false
+			el.mu.Unlock()
+			return false
 		}
 
 		// Anything queued since the poll, or a timer already due, is handled by the next
@@ -474,11 +505,16 @@ func (el *EventLoop) run(done func() bool) bool {
 
 // runTicks runs the queued process.nextTick callbacks, and then the drained hook, which
 // reports rejections, as Node does after each timer and immediate. I/O completions stay
-// queued for the poll phase.
-func (el *EventLoop) runTicks() {
+// queued for the poll phase. It stops early, reporting false, if the loop is stopped or
+// ctx is cancelled.
+func (el *EventLoop) runTicks(ctx context.Context) bool {
 	el.mu.Lock()
+	defer el.mu.Unlock()
 	for {
 		for len(el.ticks) > 0 {
+			if el.shouldStop || ctx.Err() != nil {
+				return false
+			}
 			fn := el.ticks[0]
 			el.ticks[0] = nil
 			el.ticks = el.ticks[1:]
@@ -486,12 +522,14 @@ func (el *EventLoop) runTicks() {
 			fn()
 			el.mu.Lock()
 		}
+		if el.shouldStop || ctx.Err() != nil {
+			return false
+		}
 		el.runDrainedLocked()
 		if len(el.ticks) == 0 {
-			break
+			return true
 		}
 	}
-	el.mu.Unlock()
 }
 
 // wake signals a parked Run. Run holds el.mu until cond.Wait releases it, so taking the lock
@@ -515,29 +553,30 @@ func (el *EventLoop) RunOnce() bool {
 
 	el.runDrainedLocked()
 
+	ran := false
+
 	// Process one ready timer
 	if el.timers.Len() > 0 {
 		nextTask := el.timers[0]
-		if time.Now().After(nextTask.scheduled) || time.Now().Equal(nextTask.scheduled) {
+		if !time.Now().Before(nextTask.scheduled) {
 			task := heap.Pop(&el.timers).(*Task)
 			el.mu.Unlock()
-
 			if !task.cancelled.Load() {
 				task.fn()
-
 				if task.interval > 0 && !task.cancelled.Load() {
 					el.mu.Lock()
 					task.scheduled = time.Now().Add(task.interval)
 					heap.Push(&el.timers, task)
 					el.mu.Unlock()
-					return true
 				}
 			}
-			return true
+			el.mu.Lock()
+			ran = true
 		}
 	}
 
-	// Then the immediates queued so far.
+	// Then the immediates queued so far, timer or not, so that a timer due on every call
+	// can't hold them back.
 	if len(el.immediates) > 0 {
 		batch := el.immediates
 		el.immediates = nil
@@ -547,6 +586,11 @@ func (el *EventLoop) RunOnce() bool {
 				task.fn()
 			}
 		}
+		el.mu.Lock()
+		ran = true
+	}
+	if ran {
+		el.mu.Unlock()
 		return true
 	}
 

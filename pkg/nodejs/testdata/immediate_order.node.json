@@ -17,6 +17,10 @@
     "a",
     "c"
   ],
+  "rejection_before_timers.js": [
+    "unhandledRejection rej",
+    "timer"
+  ],
   "ticks_between.js": [
     "immediate a",
     "tick a",
@@ -31,6 +35,10 @@
   ],
   "unref.js": [
     "main"
+  ],
+  "unref_after_timer.js": [
+    "timeout",
+    "unref immediate"
   ],
   "unref_with_timer.js": [
     "unref immediate",
