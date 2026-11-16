@@ -596,7 +596,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 				if raw, ok := pkg["exports"]; ok {
 					var exp interface{}
 					if json.Unmarshal(raw, &exp) == nil {
-						if target := resolveExports(exp, sub); target != "" {
+						if target, found := resolveExports(exp, sub); found {
 							if !validPackageTarget(target) {
 								return "", "", e.invalidPackageTarget(target, sub, pkgJSON, referrer)
 							}
@@ -688,38 +688,43 @@ func jsonString(raw json.RawMessage) string {
 }
 
 // resolveExportsTarget picks a concrete target string from an "exports" value,
-// honoring condition objects and arrays of alternatives.
-func resolveExportsTarget(exp interface{}) string {
+// honoring condition objects and arrays of alternatives. ok reports that a
+// target was found, which may be invalid (even ""), for resolvePackage to
+// refuse as Node does.
+func resolveExportsTarget(exp interface{}) (target string, ok bool) {
 	switch v := exp.(type) {
 	case string:
-		return v
+		return v, true
 	case []interface{}:
 		// Alternatives: an invalid target is skipped for the next one, as in Node.
 		// With no valid one left, the last invalid one is returned, for its error.
-		last := ""
+		last, sawInvalid := "", false
 		for _, e := range v {
-			r := resolveExportsTarget(e)
-			if r != "" && validPackageTarget(r) {
-				return r
+			r, ok := resolveExportsTarget(e)
+			if !ok {
+				continue
 			}
-			if r != "" {
-				last = r
+			if validPackageTarget(r) {
+				return r, true
 			}
+			last, sawInvalid = r, true
 		}
-		return last
+		return last, sawInvalid
 	case map[string]interface{}:
 		for _, c := range exportConditions {
 			if sub, ok := v[c]; ok {
-				if r := resolveExportsTarget(sub); r != "" {
-					return r
+				if r, ok := resolveExportsTarget(sub); ok {
+					return r, true
 				}
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
-func resolveExports(exports interface{}, sub string) string {
+// resolveExports finds the target the "exports" value maps sub to; ok as in
+// resolveExportsTarget.
+func resolveExports(exports interface{}, sub string) (target string, ok bool) {
 	// exports may be the "." target directly (string/array/conditions with no
 	// subpath keys), or a subpath map.
 	if m, ok := exports.(map[string]interface{}); ok && hasSubpathKeys(m) {
@@ -733,18 +738,18 @@ func resolveExports(exports interface{}, sub string) string {
 				pre, post := parts[0], parts[1]
 				if strings.HasPrefix(sub, pre) && strings.HasSuffix(sub, post) {
 					mid := sub[len(pre) : len(sub)-len(post)]
-					if tgt := resolveExportsTarget(val); tgt != "" {
-						return strings.Replace(tgt, "*", mid, 1)
+					if tgt, ok := resolveExportsTarget(val); ok {
+						return strings.Replace(tgt, "*", mid, 1), true
 					}
 				}
 			}
 		}
-		return ""
+		return "", false
 	}
 	if sub == "." {
 		return resolveExportsTarget(exports)
 	}
-	return ""
+	return "", false
 }
 
 func hasSubpathKeys(m map[string]interface{}) bool {

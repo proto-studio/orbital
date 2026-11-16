@@ -46,6 +46,33 @@
   own(CodedError, 'toString', codedToString, false);
   own(CodedTypeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
+  var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  var apply = Reflect.apply;
+
+  // Replaces err's stack accessor with one that formats through the original
+  // on first read and puts the code in the header ("Error [CODE]: ...").
+  function lazyCodedStack(err, desc, name, code) {
+    var done = false;
+    var value;
+    defineProperty(err, 'stack', {
+      get: function () {
+        if (!done) {
+          value = apply(desc.get, err, []);
+          done = true;
+          if (typeof value === 'string' && value.indexOf(name + ': ') === 0) {
+            value = name + ' [' + code + ']: ' + value.slice(name.length + 2);
+          }
+        }
+        return value;
+      },
+      set: function (v) {
+        done = true;
+        value = v;
+      },
+      enumerable: desc.enumerable,
+      configurable: true,
+    });
+  }
 
   // kind is the error's class: "Error", "TypeError" or "URIError".
   globalThis.__esmModuleError = function (message, code, url, kind) {
@@ -54,19 +81,12 @@
       : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
     if (code) {
       var name = isTypeError ? 'TypeError' : 'Error';
-      // Reading the stack formats it, which would run an Error.prepareStackTrace
-      // the program installed now rather than when it reads the stack, as in
-      // Node; then the header keeps its plain form.
-      var stack;
-      if (typeof NativeError.prepareStackTrace !== 'function') {
-        try {
-          stack = err.stack;
-        } catch (e) {
-          // Keep the error whatever formatting does.
-        }
-      }
-      if (typeof stack === 'string' && stack.indexOf(name + ': ') === 0) {
-        own(err, 'stack', name + ' [' + code + ']: ' + stack.slice(name.length + 2), false);
+      // The "[CODE]" header is added when the stack is first read, from the
+      // engine's own accessor, so formatting (and an Error.prepareStackTrace the
+      // program installs, even later) happens at that read, as in Node.
+      var desc = getOwnPropertyDescriptor(err, 'stack');
+      if (desc && typeof desc.get === 'function') {
+        lazyCodedStack(err, desc, name, code);
       }
       own(err, 'code', code, true);
       setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);

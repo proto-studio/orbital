@@ -591,3 +591,26 @@ delete Error.prepareStackTrace;`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// An exports array of only "" is an invalid target, and a coded error's stack is
+// formatted when first read, by an Error.prepareStackTrace installed after the
+// failure. Expected from Node 20.18.1.
+func TestDynamicImport_EmptyTargetAndStackFormattedOnRead(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/q4/package.json": `{"type":"module","exports":[""]}`,
+		"node_modules/q4/index.js":     `export default 'q4idx';`,
+		"entry.mjs": `try { await import('q4'); log.push('loaded'); } catch (e) { log.push(e.code); }
+let err; try { await import('./nope.mjs'); } catch (e) { err = e; }
+Error.prepareStackTrace = () => 'custom';
+log.push(err.stack, String(err).slice(0, 30));
+delete Error.prepareStackTrace;
+let err2; try { await import('./nope2.mjs'); } catch (e) { err2 = e; }
+log.push(err2.stack.split('\n')[0].slice(0, 40));`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["ERR_INVALID_PACKAGE_TARGET","custom","Error [ERR_MODULE_NOT_FOUND]: ","Error [ERR_MODULE_NOT_FOUND]: Cannot fin"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

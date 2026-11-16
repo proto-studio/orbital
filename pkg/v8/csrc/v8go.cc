@@ -1576,7 +1576,8 @@ static Local<Value> resolveFailure(Isolate* isolate, void* error_value,
                                    const std::string& fallback) {
     if (error_value) {
         ValueWrapper* w = static_cast<ValueWrapper*>(error_value);
-        if (!w->value.IsEmpty()) return w->value.Get(isolate);
+        // Only a value of this isolate can be thrown here.
+        if (w->isolate == isolate && !w->value.IsEmpty()) return w->value.Get(isolate);
     }
     return Exception::Error(
         String::NewFromUtf8(isolate, fallback.c_str()).ToLocalChecked());
