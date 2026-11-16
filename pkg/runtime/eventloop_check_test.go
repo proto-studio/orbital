@@ -136,6 +136,23 @@ func TestRun_StopKeepsTheRestOfTheBatch(t *testing.T) {
 	}
 }
 
+// A Run stopped from a callback leaves nothing behind that stops or cancels a later Run:
+// the goroutine that watched its context can still be running after it returns.
+func TestRun_StopDoesNotReachTheNextRun(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		el := NewEventLoop()
+		el.SetImmediate(func() { el.Stop() })
+		el.Run()
+		el.SetContext(context.Background())
+		ran := false
+		el.SetImmediate(func() { ran = true })
+		el.Run()
+		if !ran {
+			t.Fatalf("run %d: the second Run stopped before its immediate", i)
+		}
+	}
+}
+
 // A tick that panics leaves the loop's lock as it found it, so an embedder's recover gets
 // the panic rather than the runtime failing on the lock.
 func TestRunTicks_PanicKeepsTheLock(t *testing.T) {
