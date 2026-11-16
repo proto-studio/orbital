@@ -368,7 +368,8 @@
   const JSONParse = JSON.parse;
   const ArrayIsArray = Array.isArray;
   const NativeBigInt = BigInt;
-  const clone = typeof structuredClone === 'function' ? structuredClone : null;
+  // V8's structured clone, as Node's transfer of the attributes uses.
+  const clone = cloneValue;
   const EMPTY = '{"array":false,"pairs":[]}';
   const isWellFormed = String.prototype.isWellFormed;
   const charCodeAt = String.prototype.charCodeAt;
