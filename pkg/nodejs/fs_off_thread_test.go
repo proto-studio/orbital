@@ -239,3 +239,18 @@ const dir = %q;
 `, dir))
 	wantJSON(t, got, map[string]any{"read": "x", "encoding": "ERR_INVALID_ARG_VALUE"})
 }
+
+// readFile with encoding 'buffer' fails with ERR_UNKNOWN_ENCODING, as in Node, through the
+// callback and the promise rather than escaping them.
+func TestFS_ReadFileBufferEncoding(t *testing.T) {
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewMemoryFilesystem()}, `
+const fs = require('fs');
+fs.writeFileSync('/f', 'abc');
+(async () => {
+  let promised = null;
+  await fs.promises.readFile('/f', { encoding: 'buffer' }).catch((e) => { promised = e.code; });
+  fs.readFile('/f', 'buffer', (err) => done({ promised, callback: err && err.code }));
+})().catch((e) => done({ failed: String(e) }));
+`)
+	wantJSON(t, got, map[string]any{"promised": "ERR_UNKNOWN_ENCODING", "callback": "ERR_UNKNOWN_ENCODING"})
+}
