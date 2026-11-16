@@ -417,11 +417,11 @@
       const attrs = stashed[encoded.id];
       delete stashed[encoded.id];
       if (clone && attrs !== null && typeof attrs === 'object') {
-        try {
-          const copy = clone(attrs);
-          // A clone can't keep an own "__proto__" key; rebuild then instead.
-          if (ObjectKeys(copy).length === ObjectKeys(attrs).length) return copy;
-        } catch (e) { /* not cloneable: rebuild below */ }
+        // A value that can't be cloned (a function, say) fails the import, as
+        // it does crossing Node's hooks thread.
+        const copy = clone(attrs);
+        // A clone can't keep an own "__proto__" key; rebuild then instead.
+        if (ObjectKeys(copy).length === ObjectKeys(attrs).length) return copy;
       }
     }
     return decodeAttrs(text);
