@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -69,5 +70,31 @@ func TestLocalFS_MetadataThroughLinks(t *testing.T) {
 	}
 	if after.Mode() != before.Mode() || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("other/f.txt changed: %v %d %v", after.Mode(), after.Size(), after.ModTime())
+	}
+}
+
+// Truncate refuses a FIFO with EINVAL and a directory with EISDIR at once, without waiting
+// for a reader.
+func TestLocalFS_TruncateNonRegular(t *testing.T) {
+	root := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo"), 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l := NewLocalFilesystem(root)
+	done := make(chan error, 1)
+	go func() { done <- l.Truncate("/fifo", 0) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, syscall.EINVAL) {
+			t.Errorf("Truncate fifo = %v, want EINVAL", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Truncate of a FIFO waited for a reader")
+	}
+	if err := l.Truncate("/dir", 0); !errors.Is(err, syscall.EISDIR) {
+		t.Errorf("Truncate dir = %v, want EISDIR", err)
 	}
 }
