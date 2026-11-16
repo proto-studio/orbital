@@ -11,22 +11,22 @@ import (
 //go:embed randombytes.js
 var randomBytesJS string
 
-// Work for the callback forms of randomBytes and generateKeyPair runs on its
-// own goroutine, as Node runs it on the libuv threadpool, so timers and I/O
+// Work for the callback forms of the crypto functions runs on the runtime's
+// thread pool, as Node runs it on the libuv threadpool, so timers and I/O
 // keep going while it does. The result comes back to the JS thread through
 // the event loop's queue, and the loop stays alive until it has.
 
-// beforeOffThreadWork, when set by a test, runs on the goroutine before the
-// work does.
+// beforeOffThreadWork, when set by a test, runs on the pool before the work
+// does.
 var beforeOffThreadWork func()
 
-// runOffThread runs work on a goroutine, then calls callback on the JS thread
-// with the values deliver builds from work's result.
+// runOffThread runs work on the runtime's thread pool, then calls callback
+// on the JS thread with the values deliver builds from work's result.
 func (c *Crypto) runOffThread(callback *v8.Value, work func() func(ctx *v8.Context) []*v8.Value) {
 	loop := c.rt.EventLoop()
 	ctx := c.rt.Context()
 	loop.AddPendingWork()
-	go func() {
+	c.rt.RunInThreadPool(func() {
 		defer loop.DonePendingWork()
 		if beforeOffThreadWork != nil {
 			beforeOffThreadWork()
@@ -35,7 +35,7 @@ func (c *Crypto) runOffThread(callback *v8.Value, work func() func(ctx *v8.Conte
 		loop.EnqueueMicrotask(func() {
 			c.rt.MakeCallback(callback, nil, deliver(ctx)...)
 		})
-	}()
+	})
 }
 
 // errorArgs is the callback arguments for a failure: the message, for the JS

@@ -1,12 +1,16 @@
 package crypto
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"proto.zip/studio/orbital/pkg/nodejs/buffer"
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 // The callback forms of randomBytes and generateKeyPair return before their
-// work runs: the work waits here on a goroutine until the script has returned.
+// work runs: the work waits here on the thread pool until the script has returned.
 func TestCrypto_CallbackWorkRunsOffThread(t *testing.T) {
 	scripts := map[string]string{
 		"randomBytes": `__crypto_module.randomBytes(16, (err, buf) => {
@@ -58,5 +62,60 @@ func TestCrypto_CallbackWorkRunsOffThread(t *testing.T) {
 				t.Errorf("callback got %q, want %q", got.String(), want[name])
 			}
 		})
+	}
+}
+
+// Callback work shares the runtime's thread pool: with ThreadPoolSize 2, no
+// more than two tasks run at once, however many are started, and every
+// callback still runs.
+func TestCrypto_CallbackWorkUsesBoundedPool(t *testing.T) {
+	rt, err := runtime.New(&runtime.Config{ThreadPoolSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if err := buffer.New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+
+	var running, peak int32
+	beforeOffThreadWork = func() {
+		n := atomic.AddInt32(&running, 1)
+		for {
+			old := atomic.LoadInt32(&peak)
+			if n <= old || atomic.CompareAndSwapInt32(&peak, old, n) {
+				break
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+		atomic.AddInt32(&running, -1)
+	}
+	defer func() { beforeOffThreadWork = nil }()
+
+	if _, err := rt.RunScript(`
+		globalThis.done = 0;
+		const c = __crypto_module;
+		for (let i = 0; i < 40; i++) c.randomBytes(8, (err) => { if (!err) done++; });
+		for (let i = 0; i < 10; i++) c.generateKeyPair('ed25519', (err) => { if (!err) done++; });
+		for (let i = 0; i < 10; i++) c.pbkdf2('pw', 'salt', 1, 16, 'sha256', (err) => { if (!err) done++; });
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	rt.EventLoop().Run()
+	got, err := rt.RunScript("done", "result.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Integer() != 60 {
+		t.Errorf("%d of 60 callbacks ran", got.Integer())
+	}
+	if peak > 2 {
+		t.Errorf("%d tasks ran at once with ThreadPoolSize 2", peak)
+	}
+	if peak < 1 {
+		t.Error("no task ran on the pool")
 	}
 }
