@@ -872,6 +872,7 @@ export async function resolve(s, c, n) {
   if (s === 'fncause') throw new TypeError('x', { cause: () => {} });
   if (s === 'fnprop') throw Object.assign(new RangeError('y'), { f() {}, k: 1 });
   if (s === 'shared') { const v = { z: 1 }; throw Object.assign(new Error('x'), { a: v, b: v }); }
+  if (s === 'getfn') { let reads = 0; throw Object.assign(new Error('x'), { extra: { get n() { return ++reads; } }, f() {}, k: 1 }); }
   if (s === 'sub') throw new CustomTypeError('sub');
   if (s === 'proto') { const e = new Error('p'); Object.setPrototypeOf(e, RangeError.prototype); throw e; }
   return n(s, c);
@@ -881,9 +882,10 @@ register('./hooks.mjs', import.meta.url);
 for (const s of ['fncause', 'fnprop', 'sub', 'proto']) {
   try { await import(s); } catch (e) { log.push([e.constructor.name, e.message, typeof e.cause, String(e.cause), Object.getOwnPropertyNames(e).join()]); }
 }
-try { await import('shared'); } catch (e) { log.push(e.a === e.b, e.a.z); }`,
+try { await import('shared'); } catch (e) { log.push(e.a === e.b, e.a.z); }
+try { await import('getfn'); } catch (e) { log.push(e.extra.n, typeof e.f, e.k); }`,
 	})
-	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1]`
+	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1,1,"undefined",1]`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
