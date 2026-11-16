@@ -577,3 +577,30 @@ for (const s of ['./g', './sp', './s1', './s2']) { try { log.push((await import(
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A lone-surrogate type keeps its own module (apart from the literal 'ud800') and
+// reaches hooks intact from an import() too, and an entry point's job is reused by
+// a self-import with type 'javascript'. Expected from Node 20.18.1.
+func TestImportAttributes_SurrogateKeysAndEntryJob(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"v.js": ``,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './a') return { ...(await n('./v.js', c)), importAttributes: { type: '\uD800' } };
+  if (s === './b') return { ...(await n('./v.js', c)), importAttributes: { type: 'ud800' } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('v.js')) return { format: 'module', source: 'export default ' + JSON.stringify([...String(c.importAttributes.type)].map(ch => ch.charCodeAt(0))), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import './entry.mjs' with { type: 'javascript' };
+import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['./a', './b']) log.push((await import(s)).default);
+log.push((await import('./v.js', { with: { type: '\uDC00' } })).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[[55296],[117,100,56,48,48],[56320]]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

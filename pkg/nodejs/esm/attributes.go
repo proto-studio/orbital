@@ -7,9 +7,11 @@ package esm
 
 import (
 	"encoding/json"
+	"fmt"
 	neturl "net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -156,7 +158,8 @@ func attrCheckKey(url string, attrs []v8.ImportAttribute) string {
 	if !ok {
 		typ = implicitType
 	}
-	return url + "\x00" + typ
+	// Escaped, so no type can spell keyAttrs's tagged form.
+	return url + "\x00" + neturl.QueryEscape(typ)
 }
 
 func (e *ESM) recordAttrCheck(key string, err error) {
@@ -179,7 +182,9 @@ func keyAttrs(attrs []v8.ImportAttribute, encoded string) []v8.ImportAttribute {
 	out := make([]v8.ImportAttribute, len(attrs))
 	for i, a := range attrs {
 		if a.Key == "type" {
-			a.Value = "u" + *e.TypeKey
+			// Tagged with \x02, which the keys' escaping of an ordinary type
+			// never leaves in it.
+			a.Value = "\x02" + *e.TypeKey
 		}
 		out[i] = a
 	}
@@ -205,11 +210,34 @@ func attrsJSON(attrs []v8.ImportAttribute) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(jsQuote(a.Key))
+		b.WriteString(wtf8Quote(a.Key))
 		b.WriteByte(':')
-		b.WriteString(jsQuote(a.Value))
+		b.WriteString(wtf8Quote(a.Value))
 	}
 	b.WriteByte('}')
+	return b.String()
+}
+
+// wtf8Quote is a JSON string for s, which may hold WTF-8 (a lone surrogate as
+// its own three bytes, as the glue passes attributes): such a surrogate becomes
+// its \uXXXX escape, so JavaScript gets the same string back.
+func wtf8Quote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == 0xED && i+2 < len(s) && s[i+1] >= 0xA0 && s[i+1] <= 0xBF && s[i+2] >= 0x80 && s[i+2] <= 0xBF {
+			unit := 0xD000 | rune(s[i+1]&0x3F)<<6 | rune(s[i+2]&0x3F)
+			fmt.Fprintf(&b, "\\u%04x", unit)
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		q := jsQuote(string(r))
+		b.WriteString(q[1 : len(q)-1])
+		i += size
+	}
+	b.WriteByte('"')
 	return b.String()
 }
 
