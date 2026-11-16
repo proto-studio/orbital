@@ -201,8 +201,9 @@
 
     checkPrivateKey(pkey) {
       checkKeyObject(pkey, 'private');
-      const spki = crypto.createPublicKey(pkey).export({ format: 'der', type: 'spki' }).toString('base64');
-      return crypto._x509Check('privateKey', this[kInfo].raw, spki, 0) === 'true';
+      // Sent as PKCS#8 and compared in Go, so no public KeyObject is made.
+      const pkcs8 = pkey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
+      return crypto._x509Check('privateKey', this[kInfo].raw, pkcs8, 0) === 'true';
     }
 
     verify(pkey) {

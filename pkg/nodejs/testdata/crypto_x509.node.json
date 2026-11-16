@@ -896,6 +896,26 @@
       true
     ]
   },
+  "unnamedSigAlgs": [
+    [
+      true,
+      true,
+      true,
+      false
+    ],
+    [
+      true,
+      true,
+      true,
+      false
+    ],
+    [
+      true,
+      true,
+      true,
+      false
+    ]
+  ],
   "verify": [
     true,
     false,

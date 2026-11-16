@@ -845,7 +845,7 @@ func checkIssued(issuer, subject *x509.Certificate) bool {
 		}
 	}
 	// The issuer's key must be of a type that makes the subject's signature.
-	if !keyFitsSignature(issuer.PublicKey, subject.SignatureAlgorithm) {
+	if !keyFitsSignature(issuer.PublicKey, subject) {
 		return false
 	}
 	if len(subject.AuthorityKeyId) > 0 && len(issuer.SubjectKeyId) > 0 && !bytes.Equal(subject.AuthorityKeyId, issuer.SubjectKeyId) {
@@ -905,8 +905,8 @@ func canonicalValue(a nameAttr) string {
 	return sb.String()
 }
 
-func keyFitsSignature(pub any, alg x509.SignatureAlgorithm) bool {
-	switch alg {
+func keyFitsSignature(pub any, subject *x509.Certificate) bool {
+	switch subject.SignatureAlgorithm {
 	case x509.MD5WithRSA, x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA,
 		x509.SHA256WithRSAPSS, x509.SHA384WithRSAPSS, x509.SHA512WithRSAPSS:
 		_, ok := pub.(*rsa.PublicKey)
@@ -917,6 +917,15 @@ func keyFitsSignature(pub any, alg x509.SignatureAlgorithm) bool {
 	case x509.PureEd25519:
 		_, ok := pub.(ed25519.PublicKey)
 		return ok
+	case x509.UnknownSignatureAlgorithm:
+		if alg, ok := unnamedSigAlgs[sigAlgOID(subject)]; ok {
+			if alg.rsa {
+				_, ok := pub.(*rsa.PublicKey)
+				return ok
+			}
+			_, ok := pub.(*ecdsa.PublicKey)
+			return ok
+		}
 	}
 	return true
 }
@@ -929,11 +938,65 @@ var sigHashes = map[x509.SignatureAlgorithm]gocrypto.Hash{
 	x509.SHA256WithRSAPSS: gocrypto.SHA256, x509.SHA384WithRSAPSS: gocrypto.SHA384, x509.SHA512WithRSAPSS: gocrypto.SHA512,
 }
 
+// unnamedSigAlgs are signature algorithms OpenSSL verifies that crypto/x509
+// parses as UnknownSignatureAlgorithm, by OID: the hash, and whether the key
+// is RSA (PKCS#1 v1.5) rather than ECDSA.
+var unnamedSigAlgs = map[string]struct {
+	hash gocrypto.Hash
+	rsa  bool
+}{
+	"1.2.840.113549.1.1.14":   {gocrypto.SHA224, true},
+	"1.2.840.113549.1.1.15":   {gocrypto.SHA512_224, true},
+	"1.2.840.113549.1.1.16":   {gocrypto.SHA512_256, true},
+	"2.16.840.1.101.3.4.3.13": {gocrypto.SHA3_224, true},
+	"2.16.840.1.101.3.4.3.14": {gocrypto.SHA3_256, true},
+	"2.16.840.1.101.3.4.3.15": {gocrypto.SHA3_384, true},
+	"2.16.840.1.101.3.4.3.16": {gocrypto.SHA3_512, true},
+	"1.2.840.10045.4.3.1":     {gocrypto.SHA224, false},
+	"2.16.840.1.101.3.4.3.9":  {gocrypto.SHA3_224, false},
+	"2.16.840.1.101.3.4.3.10": {gocrypto.SHA3_256, false},
+	"2.16.840.1.101.3.4.3.11": {gocrypto.SHA3_384, false},
+	"2.16.840.1.101.3.4.3.12": {gocrypto.SHA3_512, false},
+}
+
+// sigAlgOID reads the certificate's outer signatureAlgorithm OID.
+func sigAlgOID(cert *x509.Certificate) string {
+	var c struct {
+		TBS asn1.RawValue
+		Alg struct {
+			Algorithm asn1.ObjectIdentifier
+			Params    asn1.RawValue `asn1:"optional"`
+		}
+		Sig asn1.BitString
+	}
+	if _, err := asn1.Unmarshal(cert.Raw, &c); err != nil {
+		return ""
+	}
+	return c.Alg.Algorithm.String()
+}
+
 // verifyCertSignature reports whether pub signed cert. Unlike Go's
-// CheckSignature it accepts SHA-1 and MD5 signatures, as OpenSSL does.
+// CheckSignature it accepts SHA-1 and MD5 signatures, as OpenSSL does, and
+// the SHA-224, SHA-512/t and SHA-3 algorithms crypto/x509 doesn't name.
 func verifyCertSignature(cert *x509.Certificate, pub any) bool {
 	if k, ok := pub.(ed25519.PublicKey); ok {
 		return cert.SignatureAlgorithm == x509.PureEd25519 && ed25519.Verify(k, cert.RawTBSCertificate, cert.Signature)
+	}
+	if cert.SignatureAlgorithm == x509.UnknownSignatureAlgorithm {
+		alg, ok := unnamedSigAlgs[sigAlgOID(cert)]
+		if !ok || !alg.hash.Available() {
+			return false
+		}
+		d := alg.hash.New()
+		d.Write(cert.RawTBSCertificate)
+		sum := d.Sum(nil)
+		switch k := pub.(type) {
+		case *rsa.PublicKey:
+			return alg.rsa && rsa.VerifyPKCS1v15(k, alg.hash, sum, cert.Signature) == nil
+		case *ecdsa.PublicKey:
+			return !alg.rsa && ecdsa.VerifyASN1(k, sum, cert.Signature)
+		}
+		return false
 	}
 	h, ok := sigHashes[cert.SignatureAlgorithm]
 	if !ok || !h.Available() {
@@ -964,7 +1027,8 @@ type publicKeyEqual interface{ Equal(gocrypto.PublicKey) bool }
 
 // x509CheckFunc backs _x509Check(op, certB64, arg, flags). op is "host",
 // "email", "ip", "issued" (arg: the other certificate's DER as base64),
-// "verify" or "privateKey" (arg: an SPKI as base64). It returns the match or
+// "verify" (arg: an SPKI as base64) or "privateKey" (arg: a PKCS#8 private
+// key as base64). It returns the match or
 // "" for host, email and ip, and "true" or "false" for the rest; an invalid
 // IP throws "Invalid IP".
 func (c *Crypto) x509CheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -1001,17 +1065,16 @@ func (c *Crypto) x509CheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		otherDER, _ := base64.StdEncoding.DecodeString(arg)
 		other, perr := x509.ParseCertificate(otherDER)
 		out = boolStr(perr == nil && checkIssued(other, cert))
-	case "verify", "privateKey":
+	case "verify":
 		spki, _ := base64.StdEncoding.DecodeString(arg)
 		pub, perr := x509.ParsePKIXPublicKey(spki)
-		if perr != nil {
-			out = "false"
-		} else if op == "verify" {
-			out = boolStr(verifyCertSignature(cert, pub))
-		} else {
-			k, ok := cert.PublicKey.(publicKeyEqual)
-			out = boolStr(ok && k.Equal(pub))
-		}
+		out = boolStr(perr == nil && verifyCertSignature(cert, pub))
+	case "privateKey":
+		pkcs8, _ := base64.StdEncoding.DecodeString(arg)
+		priv, perr := x509.ParsePKCS8PrivateKey(pkcs8)
+		signer, isSigner := priv.(interface{ Public() gocrypto.PublicKey })
+		k, ok := cert.PublicKey.(publicKeyEqual)
+		out = boolStr(perr == nil && isSigner && ok && k.Equal(signer.Public()))
 	default:
 		return ctx.Throw("x509: unknown check " + op)
 	}
