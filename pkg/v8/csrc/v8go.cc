@@ -43,6 +43,17 @@ struct ContextWrapper {
     Global<Function> promise_reject_handler;
     // What the last failed v8go_context_run_script threw, until it is taken.
     Global<Value> last_script_exception;
+    // Where V8's message for the exception last caught by v8go_context_run_script or
+    // callRecording places it, until it is taken: see v8go_context_take_exception_place.
+    struct {
+        bool has = false;
+        std::string resource;
+        int line = 0;
+        std::string source_line;
+        bool has_source_line = false; // false if V8 gave none or it was too long
+        int start = -1;
+        int end = -1;
+    } exception_place;
 };
 
 // Embedder-data slot in which each Context stores its ContextWrapper*.
@@ -62,6 +73,70 @@ struct ValueWrapper {
     Isolate* isolate;
     Global<Value> value;
 };
+
+// A message's name and line longer than these are left out: the header shows one line,
+// and copying a huge one out of V8 would be memory V8's heap limit doesn't cover.
+static const int kMaxPlaceResource = 4096;
+static const int kMaxPlaceLine = 16384;
+
+// recordPlace keeps where message places an exception, for
+// v8go_context_take_exception_place. An empty message clears what was kept.
+static void recordPlace(ContextWrapper* wrapper, Isolate* isolate, Local<Context> context,
+                        Local<Message> message) {
+    auto& p = wrapper->exception_place;
+    p = {};
+    if (message.IsEmpty()) return;
+    Local<Value> resource_value = message->GetScriptResourceName();
+    if (resource_value->IsString() && resource_value.As<String>()->Length() > kMaxPlaceResource) return;
+    String::Utf8Value resource(isolate, resource_value);
+    p.resource = *resource ? *resource : "";
+    p.line = message->GetLineNumber(context).FromMaybe(0);
+    Local<String> source_line;
+    if (message->GetSourceLine(context).ToLocal(&source_line) && source_line->Length() <= kMaxPlaceLine) {
+        String::Utf8Value text(isolate, source_line);
+        // With its length: a NUL character doesn't end it.
+        if (*text) p.source_line.assign(*text, text.length());
+        p.has_source_line = true;
+    }
+    p.start = message->GetStartColumn(context).FromMaybe(-1);
+    p.end = message->GetEndColumn(context).FromMaybe(-1);
+    p.has = true;
+}
+
+// callRecording is callRecording(fn, recv, ...args): it calls fn with recv and args and
+// returns what fn returns. If fn throws, it keeps where V8's message places the throw
+// before throwing the exception on: once JavaScript catches an exception, V8 no longer
+// has that place.
+static void callRecording(const FunctionCallbackInfo<Value>& info) {
+    Isolate* isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    ContextWrapper* wrapper = wrapperFromContext(context);
+    if (info.Length() < 2 || !info[0]->IsFunction()) {
+        if (wrapper) wrapper->exception_place = {};
+        isolate->ThrowException(Exception::TypeError(
+            String::NewFromUtf8Literal(isolate, "callRecording(fn, recv, ...args)")));
+        return;
+    }
+    int argc = info.Length() - 2;
+    Local<Value> inline_args[4];
+    std::vector<Local<Value>> more;
+    Local<Value>* args = inline_args;
+    if (argc > 4) {
+        more.resize(argc);
+        args = more.data();
+    }
+    for (int i = 0; i < argc; i++) args[i] = info[i + 2];
+    TryCatch try_catch(isolate);
+    MaybeLocal<Value> result = info[0].As<Function>()->Call(context, info[1], argc, argc > 0 ? args : nullptr);
+    if (result.IsEmpty()) {
+        if (try_catch.HasCaught() && !try_catch.HasTerminated() && wrapper) {
+            recordPlace(wrapper, isolate, context, try_catch.Message());
+        }
+        if (try_catch.CanContinue()) try_catch.ReThrow();
+        return;
+    }
+    info.GetReturnValue().Set(result.ToLocalChecked());
+}
 
 struct FunctionTemplateWrapper {
     Isolate* isolate;
@@ -430,6 +505,33 @@ void v8go_context_dispose(void* ptr) {
     delete wrapper;
 }
 
+void* v8go_context_run_script_rethrowing(void* context_ptr, const char* source, const char* origin) {
+    if (!context_ptr || !source) return nullptr;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    TryCatch try_catch(isolate);
+    ScriptOrigin script_origin(String::NewFromUtf8(isolate, origin ? origin : "").ToLocalChecked());
+    Local<String> source_str = String::NewFromUtf8(isolate, source).ToLocalChecked();
+    Local<Script> script;
+    Local<Value> result;
+    if (!Script::Compile(context, source_str, &script_origin).ToLocal(&script) ||
+        !script->Run(context).ToLocal(&result)) {
+        // Left pending for the JavaScript that called the native function, with V8's
+        // message for it as it was.
+        if (try_catch.HasCaught() && try_catch.CanContinue()) try_catch.ReThrow();
+        return nullptr;
+    }
+    ValueWrapper* value = new ValueWrapper();
+    value->isolate = isolate;
+    value->value.Reset(isolate, result);
+    return value;
+}
+
 void* v8go_context_run_script(void* context_ptr, const char* source, const char* origin, char** error) {
     if (!context_ptr || !source) return nullptr;
     
@@ -458,6 +560,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
         }
         if (try_catch.HasCaught()) {
             wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
+            recordPlace(wrapper, isolate, context, try_catch.Message());
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
         }
@@ -473,6 +576,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
         }
         if (try_catch.HasCaught()) {
             wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
+            recordPlace(wrapper, isolate, context, try_catch.Message());
             String::Utf8Value exception(isolate, try_catch.Exception());
             String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
             
@@ -2087,6 +2191,67 @@ int v8go_isolate_pump_message_loop(void* isolate_ptr) {
                                              v8::platform::MessageLoopBehavior::kDoNotWait);
     isolate->SetMicrotasksPolicy(policy);
     return ran ? 1 : 0;
+}
+
+int v8go_context_take_exception_place(void* context_ptr, char** resource, int* line,
+                                      char** source_line, int* source_line_length, int* start, int* end) {
+    if (!context_ptr) return 0;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    // The same lock as the calls that record it.
+    Locker locker(wrapper->isolate);
+    auto& p = wrapper->exception_place;
+    if (!p.has) return 0;
+    *resource = strdup(p.resource.c_str());
+    *line = p.line;
+    *source_line = nullptr;
+    *source_line_length = 0;
+    if (p.has_source_line) {
+        *source_line = static_cast<char*>(malloc(p.source_line.size() + 1));
+        memcpy(*source_line, p.source_line.data(), p.source_line.size());
+        (*source_line)[p.source_line.size()] = '\0';
+        *source_line_length = static_cast<int>(p.source_line.size());
+    }
+    *start = p.start;
+    *end = p.end;
+    p = {};
+    return 1;
+}
+
+int v8go_context_place_of(void* context_ptr, void* value_ptr, char** resource, int* line,
+                          char** source_line, int* source_line_length, int* start, int* end) {
+    if (!context_ptr || !value_ptr) return 0;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* value = static_cast<ValueWrapper*>(value_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    // Kept apart from a recorded place, which this must not replace.
+    auto saved = wrapper->exception_place;
+    recordPlace(wrapper, isolate, context, Exception::CreateMessage(isolate, value->value.Get(isolate)));
+    int has = v8go_context_take_exception_place(context_ptr, resource, line, source_line,
+                                                source_line_length, start, end);
+    wrapper->exception_place = saved;
+    return has;
+}
+
+void* v8go_context_call_recording_function(void* context_ptr) {
+    if (!context_ptr) return nullptr;
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    Local<Function> func;
+    if (!FunctionTemplate::New(isolate, callRecording)->GetFunction(context).ToLocal(&func)) return nullptr;
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, func);
+    return wrapper;
 }
 
 void v8go_perform_microtask_checkpoint(void* isolate_ptr) {

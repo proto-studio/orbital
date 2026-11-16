@@ -34,6 +34,7 @@ func (m *Module) Name() string {
 // Register sets up the CommonJS module runtime.
 func (m *Module) Register(rt *runtime.Runtime) error {
 	m.rt = rt
+	rt.SetWrapperPrefix(moduleWrapperPrefix)
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
@@ -108,23 +109,24 @@ func (m *Module) requireFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 // filename) as a script whose name is the module's filename and returns the
 // function. V8 hands that name to import() as the referrer, so a module's import()
 // calls resolve relative to its own file; code compiled by eval would report the
-// script that called eval instead. It returns undefined when the wrapper does not
-// compile, leaving the caller to compile it another way and throw the real error.
+// script that called eval instead. A wrapper that doesn't compile throws its SyntaxError to
+// the caller, placed in the module, as Node places it.
 func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
 		return ctx.Undefined()
 	}
-	fn, err := ctx.RunScript(args[0].String(), args[1].String())
-	if err != nil || fn == nil || !fn.IsFunction() {
-		// RunScript keeps what a failed script threw for reporting an uncaught error
-		// from the main script. This failure is not one: the caller throws it again.
-		ctx.TakeLastScriptException()
+	fn := ctx.RunScriptRethrowing(args[0].String(), args[1].String())
+	if fn == nil || !fn.IsFunction() {
 		return ctx.Undefined()
 	}
 	return fn
 }
+
+// moduleWrapperPrefix is how module.js opens the function a CommonJS module runs in, on
+// the module's first line.
+const moduleWrapperPrefix = "(function(exports, require, module, __filename, __dirname) {"
 
 // resolveFunc resolves a module path.
 func (m *Module) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {
