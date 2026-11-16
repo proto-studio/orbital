@@ -1133,7 +1133,16 @@
       throw codedError(Error, 'ERR_FS_INVALID_SYMLINK_TYPE',
         'Symlink type must be one of "dir", "file", or "junction". Received ' + JSON.stringify(type));
     }
-    return [checkedPath(target, 'target'), checkedPath(path, 'path')];
+    // The target goes to the native layer as base64 of its bytes, so a Buffer target that
+    // isn't UTF-8 keeps its bytes.
+    let bytes;
+    if (ArrayBuffer.isView(target)) {
+      checkPath(target, 'target');
+      bytes = viewBytes(target);
+    } else {
+      bytes = dataBytes(checkedPath(target, 'target'));
+    }
+    return [base64Of(bytes), checkedPath(path, 'path')];
   }
   // pathString, refusing a path with a NUL, which a file: URL can hold as %00, as the other
   // calls refuse it.
@@ -1908,7 +1917,8 @@
     access: ['path'], open: ['path'], createReadStream: ['path'], createWriteStream: ['path'],
     mkdir: ['path'], rmdir: ['path'], rm: ['path'], unlink: ['path'], readdir: ['path'], realpath: ['path'],
     rename: ['oldPath', 'newPath'], copyFile: ['src', 'dest'],
-    symlinkSync: ['target', 'path'], symlink: ['target', 'path'], readlinkSync: ['path'], readlink: ['path'],
+    // symlink's target is left for symlinkArgs, which keeps a Buffer's bytes.
+    symlinkSync: [null, 'path'], symlink: [null, 'path'], readlinkSync: ['path'], readlink: ['path'],
     linkSync: ['existingPath', 'newPath'], link: ['existingPath', 'newPath'], mkdtempSync: ['prefix'], mkdtemp: ['prefix'],
     truncateSync: ['path'], truncate: ['path'], chmodSync: ['path'], chmod: ['path'],
     chownSync: ['path'], chown: ['path'], utimesSync: ['path'], utimes: ['path'],
@@ -1925,7 +1935,7 @@
     const asPaths = (args) => {
       args = Array.prototype.slice.call(args);
       names.forEach((argName, i) => {
-        if (typeof args[i] === 'number') return; // a descriptor
+        if (argName === null || typeof args[i] === 'number') return; // left as is, or a descriptor
         args[i] = pathString(args[i]);
         checkPath(args[i], argName);
       });

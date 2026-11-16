@@ -206,3 +206,20 @@ done({ isLink: fs.lstatSync(%q + '/copy').isSymbolicLink(), data: fs.readFileSyn
 		wantJSON(t, got, map[string]any{"isLink": goruntime.GOOS == "linux", "data": "f"})
 	}
 }
+
+// A Buffer target keeps its bytes, though they aren't UTF-8, and one with a NUL is refused.
+func TestFSLinks_BufferTargetBytes(t *testing.T) {
+	dir := t.TempDir()
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+let code = null;
+try { fs.symlinkSync(Buffer.from([0x61, 0x00, 0x62]), dir + '/nul'); } catch (e) { code = e.code; }
+fs.symlinkSync(Buffer.from([0x61, 0xff, 0x62]), dir + '/l');
+done({ code, hex: fs.readlinkSync(dir + '/l', 'buffer').toString('hex') });
+`, dir))
+	wantJSON(t, got, map[string]any{"code": "ERR_INVALID_ARG_VALUE", "hex": "61ff62"})
+	if target, err := os.Readlink(filepath.Join(dir, "l")); err != nil || target != "a\xffb" {
+		t.Errorf("link target = %q, %v", target, err)
+	}
+}
