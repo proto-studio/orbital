@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"proto.zip/studio/orbital/internal/v8dist"
 )
 
 // When an --import can't be resolved and an 'uncaughtException' listener handles the
@@ -106,6 +108,9 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		}
 	}
 	p := func(n string) string { return filepath.Join(dir, n) }
+	// What Node 20.18.1 prints for throws.cjs's exception, less its stack frames, with
+	// Orbital's version line in place of Node's.
+	boom := p("throws.cjs") + ":1\n" + files["throws.cjs"] + "\n" + strings.Repeat(" ", 52) + "^\n\nError: boom\n\nOrbital " + v8dist.ModuleVersion + "\n"
 	cases := []struct {
 		args []string
 		out  string
@@ -123,9 +128,9 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		{[]string{"--import", p("waits.mjs"), p("entry.mjs")}, "beforeExit\npreloaded\nentry\nbeforeExit\n", 0},
 		// An 'exit' listener that throws stops the others and is an uncaught
 		// exception: reported (exit 1, or the exitCode set), or handled (exit 0).
-		{[]string{"-r", p("throws.cjs"), p("tla.mjs")}, "exit 0\nError: boom\n", 1},
+		{[]string{"-r", p("throws.cjs"), p("tla.mjs")}, "exit 0\n" + boom, 1},
 		{[]string{"-r", p("handled.cjs"), p("tla.mjs")}, "caught boom\n", 0},
-		{[]string{"-r", p("throws.cjs"), p("ok.mjs")}, "ok\nexit 0\nError: boom\n", 1},
+		{[]string{"-r", p("throws.cjs"), p("ok.mjs")}, "ok\nexit 0\n" + boom, 1},
 		{[]string{"-r", p("handled.cjs"), p("ok.mjs")}, "ok\ncaught boom\n", 0},
 		// A negative exitCode is still one the program set: -1 exits 255.
 		{[]string{"-r", p("neg.cjs"), p("ok.mjs")}, "ok\n", 255},
