@@ -796,7 +796,7 @@ func emitExit(rt *runtime.Runtime) (code int, set, threw bool) {
 	emit, err := rt.RunScript(`(function () {
 		if (typeof process === 'undefined' || typeof process.emit !== 'function' || process._exiting) return true;
 		process._exiting = true;
-		process.emit('exit', process.exitCode || 0);
+		process.emit('exit', Number(process.exitCode) || 0);
 		return true;
 	})`, "[exit]")
 	if err == nil && emit != nil && emit.IsFunction() {
