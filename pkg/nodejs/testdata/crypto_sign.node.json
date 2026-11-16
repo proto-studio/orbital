@@ -334,6 +334,29 @@
       false
     ]
   },
+  "pssSaltLimits": {
+    "huge": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "hugeStream": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "longest": {
+      "value": true
+    },
+    "oneTooLong": {
+      "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+      "message": "error:0200006E:rsa routines::data too large for key size",
+      "name": "Error"
+    },
+    "verifyHuge": {
+      "value": false
+    }
+  },
   "pssZeroSalt": {
     "value": [
       true,
