@@ -70,6 +70,7 @@ type EventLoop struct {
 	mu          sync.Mutex
 	cond        *sync.Cond
 	timers      taskHeap
+	immediates  []*Task  // setImmediate: run in the check phase, after I/O
 	ticks       []func() // scheduled by running JS: run ahead of everything else
 	microtasks  []func() // native completions: run once no tick is waiting
 	nextID      uint64
@@ -157,9 +158,17 @@ func (el *EventLoop) SetInterval(fn func(), interval time.Duration) *Task {
 	return el.scheduleTimer(fn, interval, interval)
 }
 
-// SetImmediate schedules a function to run as soon as possible.
+// SetImmediate schedules a function for the loop's check phase, as Node's setImmediate
+// does: after the I/O callbacks that are ready, and before timers that come due later. An
+// immediate scheduled by another immediate waits for the next turn of the loop.
 func (el *EventLoop) SetImmediate(fn func()) *Task {
-	return el.scheduleTimer(fn, 0, 0)
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	el.nextID++
+	task := &Task{id: el.nextID, fn: fn, index: -1}
+	el.immediates = append(el.immediates, task)
+	el.cond.Signal()
+	return task
 }
 
 // scheduleTimer adds a timer task to the event loop.
@@ -271,40 +280,75 @@ func (el *EventLoop) run(done func() bool) bool {
 		}
 	}()
 
-	for {
-		// Check for context cancellation
+	cancelled := func() bool {
 		select {
 		case <-ctx.Done():
 			el.mu.Lock()
 			el.running = false
 			el.mu.Unlock()
-			return false
+			return true
 		default:
+			return false
+		}
+	}
+
+	// Each turn follows libuv's phases as far as Node can tell them apart: timers that are
+	// due, then I/O callbacks (the queued native completions), then immediates. Between
+	// two timers or two immediates only process.nextTick callbacks run, as in Node.
+	for {
+		if cancelled() {
+			return false
 		}
 
+		// As in libuv, a loop with nothing to keep it alive runs no more timers or
+		// immediates, unreferenced ones included. Queued callbacks and the drained hook
+		// still run below, and the loop ends after them.
 		el.mu.Lock()
+		alive := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
+		el.mu.Unlock()
 
-		// Process all queued callbacks first
-		for fn := el.nextQueuedLocked(); fn != nil; fn = el.nextQueuedLocked() {
-			el.mu.Unlock()
-
-			// Check for context cancellation before each callback
-			select {
-			case <-ctx.Done():
-				el.mu.Lock()
-				el.running = false
-				el.mu.Unlock()
-				return false
-			default:
-			}
-			fn()
-
+		// Timers phase: every timer due when the phase starts. Timers scheduled while it
+		// runs wait for the next turn, even with no delay.
+		now := time.Now()
+		for alive {
 			el.mu.Lock()
+			for el.timers.Len() > 0 && el.timers[0].cancelled.Load() {
+				heap.Pop(&el.timers)
+			}
+			if el.timers.Len() == 0 || el.timers[0].scheduled.After(now) || el.shouldStop {
+				el.mu.Unlock()
+				break
+			}
+			task := heap.Pop(&el.timers).(*Task)
+			el.mu.Unlock()
+			if cancelled() {
+				return false
+			}
+			task.fn()
+			// Reschedule if it's an interval timer
+			if task.interval > 0 && !task.cancelled.Load() {
+				el.mu.Lock()
+				task.scheduled = time.Now().Add(task.interval)
+				heap.Push(&el.timers, task)
+				el.mu.Unlock()
+			}
+			el.runTicks()
 		}
 
-		if el.runDrainedLocked() {
-			el.mu.Unlock()
-			continue
+		// Poll phase, without waiting: the I/O completions and ticks queued so far.
+		el.mu.Lock()
+		for {
+			for fn := el.nextQueuedLocked(); fn != nil; fn = el.nextQueuedLocked() {
+				el.mu.Unlock()
+				if cancelled() {
+					return false
+				}
+				fn()
+				el.mu.Lock()
+			}
+			if !el.runDrainedLocked() {
+				break
+			}
 		}
 
 		if done != nil {
@@ -342,38 +386,45 @@ func (el *EventLoop) run(done func() bool) bool {
 			return false
 		}
 
-		// Get the next timer
+		// Check phase: the immediates queued before it started.
+		if len(el.immediates) > 0 {
+			batch := el.immediates
+			el.immediates = nil
+			el.mu.Unlock()
+			for i, task := range batch {
+				if task.cancelled.Load() {
+					continue
+				}
+				if cancelled() {
+					return false
+				}
+				el.mu.Lock()
+				stop := el.shouldStop
+				el.mu.Unlock()
+				if stop {
+					// Keep the rest for a later Run, as the timers stay in their heap.
+					el.mu.Lock()
+					el.immediates = append(batch[i:], el.immediates...)
+					el.mu.Unlock()
+					break
+				}
+				task.fn()
+				el.runTicks()
+			}
+			continue
+		}
+
+		// Anything queued since the poll, or a timer already due, is handled by the next
+		// turn without waiting.
+		if len(el.ticks) > 0 || len(el.microtasks) > 0 || len(el.immediates) > 0 {
+			el.mu.Unlock()
+			continue
+		}
 		var waitDuration time.Duration
 		if hasTimers {
-			nextTask := el.timers[0]
-			waitDuration = time.Until(nextTask.scheduled)
-
+			waitDuration = time.Until(el.timers[0].scheduled)
 			if waitDuration <= 0 {
-				// Timer is ready, execute it
-				task := heap.Pop(&el.timers).(*Task)
 				el.mu.Unlock()
-
-				if !task.cancelled.Load() {
-					// Check for context cancellation before executing
-					select {
-					case <-ctx.Done():
-						el.mu.Lock()
-						el.running = false
-						el.mu.Unlock()
-						return false
-					default:
-					}
-
-					task.fn()
-
-					// Reschedule if it's an interval timer
-					if task.interval > 0 && !task.cancelled.Load() {
-						el.mu.Lock()
-						task.scheduled = time.Now().Add(task.interval)
-						heap.Push(&el.timers, task)
-						el.mu.Unlock()
-					}
-				}
 				continue
 			}
 		}
@@ -386,10 +437,7 @@ func (el *EventLoop) run(done func() bool) bool {
 		if hasTimers {
 			// Bound the wait by the next timer deadline. Use a stoppable timer plus
 			// a stop channel so an *early* wakeup (e.g. an inbound socket read/accept
-			// completing) returns immediately. The previous implementation blocked
-			// on the timer goroutine finishing (<-done), which forced every early
-			// wakeup to wait out the full timer duration and stalled all async I/O
-			// whenever a timer was pending.
+			// completing) returns immediately.
 			timer := time.NewTimer(waitDuration)
 			stop := make(chan struct{})
 			go func() {
@@ -422,6 +470,28 @@ func (el *EventLoop) run(done func() bool) bool {
 			close(stop)
 		}
 	}
+}
+
+// runTicks runs the queued process.nextTick callbacks, and then the drained hook, which
+// reports rejections, as Node does after each timer and immediate. I/O completions stay
+// queued for the poll phase.
+func (el *EventLoop) runTicks() {
+	el.mu.Lock()
+	for {
+		for len(el.ticks) > 0 {
+			fn := el.ticks[0]
+			el.ticks[0] = nil
+			el.ticks = el.ticks[1:]
+			el.mu.Unlock()
+			fn()
+			el.mu.Lock()
+		}
+		el.runDrainedLocked()
+		if len(el.ticks) == 0 {
+			break
+		}
+	}
+	el.mu.Unlock()
 }
 
 // wake signals a parked Run. Run holds el.mu until cond.Wait releases it, so taking the lock
@@ -467,6 +537,19 @@ func (el *EventLoop) RunOnce() bool {
 		}
 	}
 
+	// Then the immediates queued so far.
+	if len(el.immediates) > 0 {
+		batch := el.immediates
+		el.immediates = nil
+		el.mu.Unlock()
+		for _, task := range batch {
+			if !task.cancelled.Load() {
+				task.fn()
+			}
+		}
+		return true
+	}
+
 	hasWork := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
 	el.mu.Unlock()
 	return hasWork
@@ -475,6 +558,11 @@ func (el *EventLoop) RunOnce() bool {
 // hasReferencedTimerLocked reports whether a live timer keeps the loop alive.
 func (el *EventLoop) hasReferencedTimerLocked() bool {
 	for _, task := range el.timers {
+		if !task.cancelled.Load() && !task.unref.Load() {
+			return true
+		}
+	}
+	for _, task := range el.immediates {
 		if !task.cancelled.Load() && !task.unref.Load() {
 			return true
 		}
@@ -502,6 +590,10 @@ func (el *EventLoop) CancelAllTimers() {
 		task := heap.Pop(&el.timers).(*Task)
 		task.Cancel()
 	}
+	for _, task := range el.immediates {
+		task.Cancel()
+	}
+	el.immediates = nil
 }
 
 // ClearAllMicrotasks clears all pending microtasks.

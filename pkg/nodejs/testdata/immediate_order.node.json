@@ -1,0 +1,39 @@
+{
+  "after_io.js": [
+    "immediate 1",
+    "immediate 2",
+    "timeout",
+    "immediate 3, next turn"
+  ],
+  "chain.js": [
+    "interval",
+    "immediate 0",
+    "interval",
+    "immediate 1",
+    "interval",
+    "immediate 2"
+  ],
+  "clear_in_batch.js": [
+    "a",
+    "c"
+  ],
+  "ticks_between.js": [
+    "immediate a",
+    "tick a",
+    "promise a",
+    "immediate b"
+  ],
+  "timers_first.js": [
+    "timer a",
+    "timer b",
+    "immediate from main",
+    "immediate from a"
+  ],
+  "unref.js": [
+    "main"
+  ],
+  "unref_with_timer.js": [
+    "unref immediate",
+    "timer"
+  ]
+}
