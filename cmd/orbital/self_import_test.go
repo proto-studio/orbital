@@ -4,13 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // import() of a module whose evaluation hasn't finished waits for it, so a module that
 // awaits an import of itself, or of a module waiting on it, never settles and exits 13; an
 // import of a module whose evaluation threw rejects every time. The expected results are
-// Node 20.18.1's, which the test also checks against node when it is installed.
+// Node 20.18.1's, which the test also checks against node when that version is installed.
 func TestDynamicImport_WaitsForEvaluation(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
@@ -39,10 +40,15 @@ func TestDynamicImport_WaitsForEvaluation(t *testing.T) {
 		{"twice.mjs", "true 1\n", 0},
 		{"later.mjs", "body done\nlater true\n", 0},
 	}
-	_, nodeErr := exec.LookPath("node")
+	// The results are Node 20.18.1's; another Node version may print more (later ones warn
+	// about an unsettled await), so only that version is checked.
+	checkNode := false
+	if version, err := exec.Command("node", "--version").Output(); err == nil && strings.TrimSpace(string(version)) == "v20.18.1" {
+		checkNode = true
+	}
 	for _, tc := range cases {
 		entry := filepath.Join(dir, tc.entry)
-		if nodeErr == nil {
+		if checkNode {
 			cmd := exec.Command("node", entry)
 			out, _ := cmd.CombinedOutput()
 			if code := cmd.ProcessState.ExitCode(); string(out) != tc.out || code != tc.code {
