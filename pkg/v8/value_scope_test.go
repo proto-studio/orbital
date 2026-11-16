@@ -359,3 +359,37 @@ func TestNativeCallsKeepHandlesBounded(t *testing.T) {
 		t.Errorf("persistent handles take %d bytes after 1M native calls", stats.UsedGlobalHandlesSize)
 	}
 }
+
+// The proxy helpers' values fall in release scopes like any other, so formatting many proxies
+// inside ReleaseAfter doesn't keep their targets' handles.
+func TestProxyHelpersFallInReleaseScope(t *testing.T) {
+	iso, err := v8.NewIsolate()
+	if err != nil {
+		t.Fatalf("NewIsolate: %v", err)
+	}
+	defer iso.Dispose()
+	ctx, err := iso.NewContext()
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	defer ctx.Dispose()
+
+	proxy, err := ctx.RunScript("new Proxy({}, {})", "proxy.js")
+	if err != nil {
+		t.Fatalf("RunScript: %v", err)
+	}
+	var target, nameFn, targetFn *v8.Value
+	ctx.ReleaseAfter(func() {
+		var ok bool
+		if target, ok = proxy.ProxyTarget(); !ok || !target.IsObject() {
+			t.Fatal("ProxyTarget didn't answer the target")
+		}
+		nameFn, _ = ctx.ConstructorNameFunction()
+		targetFn, _ = ctx.ProxyTargetFunction()
+	})
+	for name, v := range map[string]*v8.Value{"ProxyTarget": target, "ConstructorNameFunction": nameFn, "ProxyTargetFunction": targetFn} {
+		if v.IsObject() {
+			t.Errorf("%s's value outlived its scope", name)
+		}
+	}
+}

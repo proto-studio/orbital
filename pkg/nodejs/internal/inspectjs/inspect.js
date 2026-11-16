@@ -326,7 +326,6 @@
 
   // tagOf is value's toStringTag as util.inspect shows it next to the constructor's name: a
   // string, unless it's an own enumerable property, which is printed among the keys instead.
-  // One that throws is left out.
   function tagOf(value) {
     // As in Node, a getter that throws throws out of inspect. Proxies, whose traps could, are
     // printed as their targets, so they don't get here.

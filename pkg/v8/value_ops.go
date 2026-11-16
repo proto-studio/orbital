@@ -151,7 +151,7 @@ func (c *Context) ConstructorNameFunction() (*Value, error) {
 	if ptr == nil {
 		return nil, errors.New("v8: could not make the constructor name function")
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // ProxyTargetFunction returns a JavaScript function that answers its argument's target when
@@ -165,7 +165,7 @@ func (c *Context) ProxyTargetFunction() (*Value, error) {
 	if ptr == nil {
 		return nil, errors.New("v8: could not make the proxy target function")
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // ProxyTarget reports whether v is a proxy and, if so, returns its target, following proxies of
@@ -179,7 +179,7 @@ func (v *Value) ProxyTarget() (*Value, bool) {
 	if isProxy == 0 || ptr == nil {
 		return nil, false
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}, true
+	return newValue(ptr, v.ctx), true
 }
 
 // Release frees the native handle behind v, which must not be used afterwards. Values Go reads
