@@ -1059,6 +1059,20 @@ func TestUncaughtSourceLine(t *testing.T) {
 		},
 		"syntax error":              {main: "let x = ;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 8)},
 		"syntax error over a token": {main: "let x = foo barbaz;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 12), carets: 6},
+		// The error layout, not the inline one; the place is where the error was made
+		// until V8's throw site is used for errors.
+		"error with its own toStringTag": {
+			main: "const e = new Error('tagged'); e[Symbol.toStringTag] = 'Other';\nthrow e;\n",
+			file: "main.js", line: 1, caret: strings.Repeat(" ", 10),
+		},
+		"object posing as an error": {
+			main: "throw { [Symbol.toStringTag]: 'Error' };\n",
+			file: "main.js", line: 1, inline: true,
+		},
+		"string methods replaced before the throw": {
+			main: "for (const m of ['slice', 'split', 'startsWith', 'search', 'indexOf', 'charCodeAt']) String.prototype[m] = () => { throw new Error('replaced'); };\nthrow 'boom';\n",
+			file: "main.js", line: 2, inline: true,
+		},
 		"globals replaced before the throw": {
 			main: "globalThis.String = () => ''; globalThis.require = null; globalThis.Error = null; throw 'boom';\n",
 			file: "main.js", line: 1, caret: strings.Repeat(" ", 82), inline: true,
