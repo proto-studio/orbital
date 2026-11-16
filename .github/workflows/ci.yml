@@ -110,17 +110,28 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Report on the commit CI added
-        if: needs.glue.outputs.sha != ''
+      # Skipped when this run was cancelled, which happens when the run for the commit CI
+      # added starts and takes its place: that run tests the commit itself, and a
+      # "cancelled" failure posted here would outlast its result.
+      - name: Report the tests on the commit CI added
+        if: ${{ !cancelled() && needs.glue.outputs.sha != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PINNED: ${{ needs.glue.outputs.sha }}
           TEST_RESULT: ${{ needs.test.result }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
           [ "$TEST_RESULT" = success ] && state=success || state=failure
           gh api "repos/$REPOSITORY/statuses/$PINNED" -f state="$state" -f context="Tests" -f description="Tests of the rebuilt glue: $TEST_RESULT" > /dev/null
+
+      - name: Report the change link on the commit CI added
+        if: ${{ always() && needs.glue.outputs.sha != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ needs.glue.outputs.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
           node .github/scripts/change-link.mjs && state=success || state=failure
           gh api "repos/$REPOSITORY/statuses/$PINNED" -f state="$state" -f context="Change link" -f description="Checked after CI pinned the rebuilt glue" > /dev/null
 
