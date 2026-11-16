@@ -33,13 +33,12 @@
 		}
 	}
 
-	// Node's %s inspects objects (so an Error keeps its stack). null stays
-	// "null"; primitives use String().
+	// %s prints what inspectjs's stringSpec gives, and inspects any other object with a depth
+	// of 0, as Node does (so an Error keeps its stack).
 	function formatStringSpecifier(arg, inspectOptions) {
-		if (typeof arg === 'object' && arg !== null) {
-			return inspect(arg, inspectOptions);
-		}
-		return String(arg);
+		const text = inspectShared.stringSpec(arg);
+		if (text !== null) return text;
+		return inspect(arg, Object.assign({}, inspectOptions, { compact: 3, colors: false, depth: 0 }));
 	}
 
 	// util.format - printf-like string formatting

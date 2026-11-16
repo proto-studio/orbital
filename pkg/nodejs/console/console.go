@@ -33,6 +33,8 @@ type Console struct {
 	// tracked counts the objects being printed, one inside another, that inspect's tracker
 	// follows; see track.
 	tracked int
+	// shallow is set while %s prints an object, which it does with a depth of 0.
+	shallow bool
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
@@ -561,8 +563,8 @@ func (c *Console) formatLog(args []*v8.Value) string {
 	return strings.Join(parts, " ")
 }
 
-// specString renders a value for %s: strings pass through unquoted, objects are
-// inspected, everything else uses its string form.
+// specString renders a value for %s: strings pass through unquoted, other values as inspect's
+// text gives them, and other objects inspected with a depth of 0.
 func (c *Console) specString(v *v8.Value) string {
 	if v == nil || v.IsUndefined() {
 		return "undefined"
@@ -570,16 +572,24 @@ func (c *Console) specString(v *v8.Value) string {
 	if v.IsString() {
 		return c.text(v)
 	}
-	if v.IsObject() && !v.IsFunction() {
-		return c.formatValue(v)
-	}
 	if v.IsNumber() {
 		return number(v)
 	}
-	if !v.IsObject() && !v.IsBoolean() && !v.IsNull() {
-		return c.primitive(v)
+	// Through c.text, which keeps a NUL that a custom toString may return.
+	if text := c.inspectValue("text", v); text != nil && text.IsString() {
+		return c.text(text)
 	}
-	return v.String()
+	if !v.IsObject() || v.IsFunction() {
+		return v.String()
+	}
+	// Any other object is inspected with a depth of 0.
+	saved := c.shallow
+	c.shallow = true
+	defer func() { c.shallow = saved }()
+	if v.IsArray() {
+		return c.fresh(func() string { return c.formatArrayWithDepth(v, 1) })
+	}
+	return c.fresh(func() string { return c.formatObjectWithDepth(v, 1) })
 }
 
 // specInt renders a value for %d, which prints Number(value), or %i, which prints parseInt of
@@ -690,7 +700,7 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 	}
 	if v.IsString() {
 		// In arrays/objects, strings are quoted and colored
-		quoted := c.quoted(v, level(depth-1))
+		quoted := c.quoted(v, c.level(depth-1))
 		return c.formatter.FormatValue(quoted, runtime.TypeString)
 	}
 	if v.IsFunction() {
@@ -736,8 +746,17 @@ func (c *Console) formatOther(v *v8.Value) string {
 const topDepth = 3
 
 // level is how many objects a value formatted at depth sits inside.
-func level(depth int) int {
-	return topDepth - depth
+func (c *Console) level(depth int) int {
+	return c.top() - depth
+}
+
+// top is the depth the value being printed started at: topDepth, or 1 for %s, which inspects
+// objects with a depth of 0.
+func (c *Console) top() int {
+	if c.shallow {
+		return 1
+	}
+	return topDepth
 }
 
 // formatArray formats an array value with colored elements.
@@ -750,7 +769,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	length := v.ArrayLength()
 	if length == 0 {
 		// What goes before the bracket: a subclass's name, say. reduceArray adds it otherwise.
-		prefix, _ := c.inspectCall("arrayPrefix", v, c.integer(level(depth)))
+		prefix, _ := c.inspectCall("arrayPrefix", v, c.integer(c.level(depth)))
 		return prefix + "[]"
 	}
 	circular, done := c.track(v)
@@ -790,7 +809,7 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	}
 	parts = append(parts, c.formatProperties(v, c.keyList(c.inspectValue("symbols", v)), depth)...)
 	ref := c.leave()
-	if s, ok := c.reduceJS("reduceArray", parts, c.integer(level(depth)), c.boolean(numbers), c.refArg(ref), v); ok {
+	if s, ok := c.reduceJS("reduceArray", parts, c.integer(c.level(depth)), c.boolean(numbers), c.refArg(ref), v); ok {
 		return s
 	}
 	return withRef(ref, multilineBraces("[", "]", parts))
@@ -818,7 +837,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 			return s
 		}
 	}
-	if s, ok := c.inspectCall("view", v, c.integer(level(depth))); ok {
+	if s, ok := c.inspectCall("view", v, c.integer(c.level(depth))); ok {
 		return s
 	}
 	if s, ok := c.formatBinary(v, depth); ok {
@@ -827,7 +846,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if s, ok := c.formatCollection(v, depth); ok {
 		return s
 	}
-	if scalar := c.inspectValue("scalar", v, c.integer(level(depth))); scalar != nil && scalar.IsObject() {
+	if scalar := c.inspectValue("scalar", v, c.integer(c.level(depth))); scalar != nil && scalar.IsObject() {
 		return c.formatScalar(v, scalar, depth)
 	}
 
@@ -835,7 +854,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	if len(names) == 0 {
 		// What goes before the brace: a class's name, or [Object: null prototype]. reduceObject
 		// adds it otherwise.
-		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(level(depth)))
+		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(c.level(depth)))
 		return prefix + "{}"
 	}
 	// Past the depth limit, a value with properties is never expanded, which also bounds the
@@ -847,11 +866,11 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 	c.enter(depth)
 	parts := c.formatProperties(v, names, depth)
 	if len(parts) == 0 {
-		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(level(depth)))
+		prefix, _ := c.inspectCall("objectPrefix", v, c.integer(c.level(depth)))
 		return prefix + "{}"
 	}
 	ref := c.leave()
-	if s, ok := c.reduceJS("reduceObject", parts, c.integer(level(depth)), v, c.refArg(ref)); ok {
+	if s, ok := c.reduceJS("reduceObject", parts, c.integer(c.level(depth)), v, c.refArg(ref)); ok {
 		return s
 	}
 	return withRef(ref, multilineBraces("{", "}", parts))
@@ -882,7 +901,7 @@ func (c *Console) formatScalar(v, scalar *v8.Value, depth int) string {
 // formatCollection prints a Map or Set: the entries inspect's collection gives for it, then its
 // own properties. It reports false for anything else.
 func (c *Console) formatCollection(v *v8.Value, depth int) (string, bool) {
-	coll := c.inspectValue("collection", v, c.integer(level(depth)))
+	coll := c.inspectValue("collection", v, c.integer(c.level(depth)))
 	if coll == nil || !coll.IsObject() {
 		return "", false
 	}
@@ -970,7 +989,7 @@ func (c *Console) formatProperties(v *v8.Value, names []*v8.Value, depth int) []
 // formatBinary prints an ArrayBuffer or DataView: the entries and keys inspect's binary
 // describes for it, then its own keys. It reports false for anything else.
 func (c *Console) formatBinary(v *v8.Value, depth int) (string, bool) {
-	bin := c.inspectValue("binary", v, c.integer(level(depth)))
+	bin := c.inspectValue("binary", v, c.integer(c.level(depth)))
 	if bin == nil || !bin.IsObject() {
 		return "", false
 	}
@@ -1045,7 +1064,7 @@ func (c *Console) boolean(b bool) *v8.Value {
 // enter tells inspect that the entries of an object at depth are about to be formatted, so
 // that reduce knows how many levels of objects the values holding it hold.
 func (c *Console) enter(depth int) {
-	if lvl := c.integer(level(depth)); lvl != nil {
+	if lvl := c.integer(c.level(depth)); lvl != nil {
 		c.inspectValue("enter", lvl)
 	}
 }
@@ -1061,7 +1080,7 @@ func (c *Console) reduce(parts []string, open, close string, depth int, base str
 		closeVal, err2 := c.ctx.NewString(close)
 		baseVal, err3 := c.ctx.NewString(base)
 		if err1 == nil && err2 == nil && err3 == nil {
-			if s, ok := c.reduceJS("reduce", parts, openVal, closeVal, c.integer(level(depth)), baseVal, c.refArg(ref)); ok {
+			if s, ok := c.reduceJS("reduce", parts, openVal, closeVal, c.integer(c.level(depth)), baseVal, c.refArg(ref)); ok {
 				return s
 			}
 		}
