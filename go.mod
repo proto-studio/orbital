@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	golang.org/x/crypto v0.47.0
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0
 	golang.org/x/term v0.39.0 // indirect

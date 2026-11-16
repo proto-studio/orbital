@@ -29,6 +29,13 @@ const pbkdf2 = {
   sha512_256: ['pw', 'salt', 1, 32, 'sha512-256'],
   sha3_256: ['pw', 'salt', 1, 32, 'sha3-256'],
   md5: ['pw', 'salt', 1, 16, 'md5'],
+  ripemd160: ['pw', 'salt', 2, 20, 'ripemd160'],
+  rmd160Alias: ['pw', 'salt', 1, 20, 'RMD160'],
+  blake2b512: ['pw', 'salt', 2, 70, 'blake2b512'],
+  blake2s256: ['pw', 'salt', 2, 40, 'BLAKE2S-256'],
+  md5Sha1: ['pw', 'salt', 2, 40, 'md5-sha1'],
+  shake128: ['pw', 'salt', 1, 16, 'shake128'],
+  shake256ZeroKeylen: ['pw', 'salt', 1, 0, 'SHAKE256'],
   zeroKeylen: ['pw', 'salt', 1, 0, 'sha256'],
   longKey: ['pw', 'salt', 3, 100, 'sha512'],
   nulBytes: [Buffer.from([0, 1, 0]), new Uint8Array([0, 0]), 2, 16, 'sha1'],
@@ -49,6 +56,8 @@ for (const [name, args] of Object.entries(pbkdf2)) results['pbkdf2Sync_' + name]
 results.pbkdf2_noCallback = outcome(() => crypto.pbkdf2('pw', 'salt', 1, 32, 'sha256'));
 results.pbkdf2_callbackAsDigest = outcome(() => crypto.pbkdf2('pw', 'salt', 1, 32, () => {}));
 results.pbkdf2_unknownDigestThrows = outcome(() => crypto.pbkdf2('pw', 'salt', 1, 32, 'nope', () => {}));
+// Before the scrypt cases below, which leave an OpenSSL error that Node would add here.
+results.hkdfSync_shake128 = outcome(() => crypto.hkdfSync('shake128', 'key', 'salt', 'info', 16));
 
 // Node leaves OpenSSL's last error queued, so after a memory-limit failure it adds that
 // message to later parameter errors too. These run first so that doesn't show.
@@ -91,6 +100,11 @@ const hkdf = {
   longest: ['sha256', 'key', 'salt', 'info', 255 * 32],
   tooLong: ['sha256', 'key', 'salt', 'info', 255 * 32 + 1],
   upperDigest: ['SHA512', 'key', 'salt', 'info', 16],
+  ripemd160: ['ripemd160', 'key', 'salt', 'info', 30],
+  blake2b512: ['blake2b512', 'key', 'salt', 'info', 70],
+  blake2s256: ['blake2s256', 'key', 'salt', 'info', 40],
+  md5Sha1: ['MD5-SHA1', 'key', 'salt', 'info', 40],
+  shake128TooLong: ['shake128', 'key', 'salt', 'info', 255 * 16 + 1],
   emptyInputs: ['sha256', '', '', '', 16],
   rfc5869Case1: ['sha256', Buffer.from('0b'.repeat(22), 'hex'), Buffer.from('000102030405060708090a0b0c', 'hex'), Buffer.from('f0f1f2f3f4f5f6f7f8f9', 'hex'), 42],
   info1024: ['sha256', 'key', 'salt', 'x'.repeat(1024), 16],
@@ -124,6 +138,8 @@ async function main() {
   results.scryptCallback = await callback((cb) => crypto.scrypt('pw', 'salt', 16, cb));
   results.scryptOptionsCallback = await callback((cb) => crypto.scrypt('pw', 'salt', 16, { N: 1024 }, cb));
   results.hkdfCallback = await callback((cb) => crypto.hkdf('sha256', 'key', 'salt', 'info', 16, cb));
+  results.pbkdf2ShakeCallback = await callback((cb) => crypto.pbkdf2('pw', 'salt', 1, 16, 'shake256', cb));
+  results.hkdfShakeCallback = await callback((cb) => crypto.hkdf('shake128', 'key', 'salt', 'info', 16, cb));
 
   // Callbacks run in the AsyncLocalStorage context they were started in.
   const { AsyncLocalStorage } = require('async_hooks');
