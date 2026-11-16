@@ -427,3 +427,35 @@ log.push((await import('./virt.js')).default);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A null-prototype type from a hook is refused before loading, hook-made JSON
+// imported with custom types shares its first value (Node keeps JSON per file), and
+// a hook replacing the error globals in its realm doesn't change the loader's
+// errors. Expected from Node 20.18.1.
+func TestImportAttributes_HookEdgeTypesAndCapturedErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"virt.json": `{}`,
+		"dep.mjs":   `export default 1;`,
+		"hooks.mjs": `export function initialize() { globalThis.Error = function () { throw new RangeError('replaced'); }; globalThis.TypeError = globalThis.Error; }
+export async function resolve(s, c, n) {
+  if (s === './np') return { ...(await n('./dep.mjs', c)), importAttributes: { type: Object.create(null) } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('virt.json')) return { format: 'json', source: JSON.stringify({ t: c.importAttributes.type }), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('./virt.json', { with: { type: 'a' } }), b = await import('./virt.json', { with: { type: 'b' } });
+log.push(a.default, b.default);
+try { await import('./np'); log.push('loaded'); } catch (e) { log.push(e.code, e.message); }
+try { await import('./nope.mjs'); } catch (e) { log.push(e instanceof Error, e.code); }`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `[{"t":"a"},{"t":"a"},"ERR_INVALID_ARG_TYPE","The \"type\" argument must be of type string. Received an instance of Object",true,"ERR_MODULE_NOT_FOUND"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

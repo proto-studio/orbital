@@ -209,7 +209,11 @@ func parseAttrsJSON(s string) (attrs []v8.ImportAttribute, typeReceived string) 
 			_ = json.Unmarshal(p[1], &other)
 			val = other.Text
 			if key == "type" {
+				// Any non-string marks it, even one JS couldn't describe.
 				typeReceived = other.Received
+				if typeReceived == "" {
+					typeReceived = "a value of another type"
+				}
 			}
 		}
 		attrs = append(attrs, v8.ImportAttribute{Key: key, Value: val})
