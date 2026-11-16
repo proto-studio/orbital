@@ -21,7 +21,8 @@ const ciphers = {
   'aes-128-cfb': [16, 16], 'aes-256-cfb': [32, 16], 'aes-128-cfb8': [16, 16], 'aes-192-cfb8': [24, 16],
   'aes-128-ofb': [16, 16], 'aes-256-ofb': [32, 16], 'aes-128-gcm': [16, 12], 'aes-192-gcm': [24, 12],
   'aes-256-gcm': [32, 12], 'id-aes128-GCM': [16, 12], 'des-ede3-cbc': [24, 8], des3: [24, 8], 'des-ede3': [24, 0],
-  'des-ede-cbc': [16, 8], 'des-ede': [16, 0],
+  'des-ede-cbc': [16, 8], 'des-ede': [16, 0], chacha20: [32, 16], 'CHACHA20': [32, 16], 'chacha20-poly1305': [32, 12],
+  'ChaCha20-Poly1305': [32, 12],
 };
 for (const [name, [keyLen, ivLen]] of Object.entries(ciphers)) {
   const key = bytes(keyLen, 1);
@@ -32,7 +33,7 @@ for (const [name, [keyLen, ivLen]] of Object.entries(ciphers)) {
       const plain = bytes(n, 3);
       const c = crypto.createCipheriv(name, key, iv);
       const ct = Buffer.concat([c.update(plain), c.final()]);
-      const tag = name.toLowerCase().includes('gcm') ? c.getAuthTag() : null;
+      const tag = /gcm|poly1305/i.test(name) ? c.getAuthTag() : null;
       // Decrypt in uneven pieces.
       const d = crypto.createDecipheriv(name, key, iv);
       if (tag) d.setAuthTag(tag);
@@ -123,6 +124,82 @@ gcm.encodedTagAndAAD = outcome(() => {
   return [tag.toString('hex'), Buffer.concat([d.update(ct), d.final()]).toString()];
 });
 results.gcm = gcm;
+
+// ChaCha20 and ChaCha20-Poly1305.
+const ck = bytes(32, 4);
+const civ = bytes(12, 5);
+const chacha = {};
+// The 32-bit block counter wraps into the nonce's words, in one update or across several.
+for (const [label, ivHex] of [['wrap', 'ffffffff' + '00'.repeat(12)], ['carry', 'ffffffff' + 'ff'.repeat(8) + '01000000'],
+  ['carryAll', 'ff'.repeat(16)], ['middle', '05000000' + '03'.repeat(12)]]) {
+  chacha[label] = outcome(() => {
+    const iv = Buffer.from(ivHex, 'hex');
+    const whole = crypto.createCipheriv('chacha20', ck, iv).update(bytes(150, 6));
+    const c = crypto.createCipheriv('chacha20', ck, iv);
+    const parts = [];
+    for (let i = 0; i < 150; i += 37) parts.push(c.update(bytes(150, 6).subarray(i, i + 37)));
+    parts.push(c.final());
+    return [whole.toString('hex'), Buffer.concat(parts).equals(whole)];
+  });
+}
+const seal = (f, opts) => {
+  const c = crypto.createCipheriv('chacha20-poly1305', ck, civ, opts);
+  const out = Buffer.concat([...f(c), c.final()]);
+  return [out.toString('hex'), c.getAuthTag().toString('hex')];
+};
+const msg = bytes(40, 7);
+chacha.aadBefore = outcome(() => seal((c) => { c.setAAD(bytes(5, 1)); return [c.update(msg)]; }));
+chacha.aadTwice = outcome(() => seal((c) => { c.setAAD(bytes(3, 1)); c.setAAD(bytes(20, 2)); return [c.update(msg)]; }));
+chacha.aadAfterData = outcome(() => seal((c) => { const a = c.update(msg.subarray(0, 7)); c.setAAD(bytes(5, 1)); return [a, c.update(msg.subarray(7))]; }));
+chacha.aadAtEnd = outcome(() => seal((c) => { const a = c.update(msg); c.setAAD(bytes(17, 1)); return [a]; }));
+chacha.aadAfterEmptyUpdate = outcome(() => seal((c) => { c.update(Buffer.alloc(0)); c.setAAD(bytes(5, 1)); return [c.update(msg)]; }));
+chacha.noData = outcome(() => seal((c) => { c.setAAD(bytes(5, 1)); return []; }));
+chacha.plaintextLength = outcome(() => seal((c) => { c.setAAD(bytes(5, 1), { plaintextLength: 40 }); return [c.update(msg)]; }));
+for (const n of [1, 4, 12, 16]) chacha['tag' + n] = outcome(() => seal((c) => [c.update(msg)], { authTagLength: n }));
+const open = (ct, tag, opts, aad) => {
+  const d = crypto.createDecipheriv('chacha20-poly1305', ck, civ, opts);
+  if (aad) d.setAAD(aad);
+  if (tag) d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]);
+};
+const [sealedHex, tagHex] = seal((c) => { c.setAAD(bytes(5, 1)); return [c.update(msg)]; });
+const sealed = Buffer.from(sealedHex, 'hex'), sealedTag = Buffer.from(tagHex, 'hex');
+chacha.open = outcome(() => open(sealed, sealedTag, undefined, bytes(5, 1)).equals(msg));
+chacha.openShortTag = outcome(() => open(sealed, sealedTag.subarray(0, 8), { authTagLength: 8 }, bytes(5, 1)).equals(msg));
+chacha.openWrongAAD = outcome(() => open(sealed, sealedTag, undefined, bytes(5, 2)));
+chacha.openBadTag = outcome(() => open(sealed, Buffer.alloc(16), undefined, bytes(5, 1)));
+chacha.openNoTag = outcome(() => open(sealed, null, undefined, bytes(5, 1)));
+chacha.openTagAfterData = outcome(() => {
+  const d = crypto.createDecipheriv('chacha20-poly1305', ck, civ);
+  d.setAAD(bytes(5, 1));
+  const out = d.update(sealed);
+  d.setAuthTag(sealedTag);
+  return Buffer.concat([out, d.final()]).equals(msg);
+});
+chacha.setAuthTag8 = outcome(() => crypto.createDecipheriv('chacha20-poly1305', ck, civ).setAuthTag(Buffer.alloc(8)));
+chacha.setAuthTag8With16 = outcome(() => crypto.createDecipheriv('chacha20-poly1305', ck, civ, { authTagLength: 16 }).setAuthTag(Buffer.alloc(8)));
+chacha.setAuthTagTwice = outcome(() => { const d = crypto.createDecipheriv('chacha20-poly1305', ck, civ); d.setAuthTag(sealedTag); d.setAuthTag(sealedTag); });
+chacha.tag0 = outcome(() => crypto.createCipheriv('chacha20-poly1305', ck, civ, { authTagLength: 0 }));
+chacha.tag17 = outcome(() => crypto.createCipheriv('chacha20-poly1305', ck, civ, { authTagLength: 17 }));
+chacha.badIvAndTag = outcome(() => crypto.createCipheriv('chacha20-poly1305', ck, bytes(5, 1), { authTagLength: 17 }));
+chacha.badKeyAndTag = outcome(() => crypto.createCipheriv('chacha20-poly1305', bytes(5, 1), civ, { authTagLength: 17 }));
+for (const n of [0, 8, 11, 13, 16]) chacha['polyIv' + n] = outcome(() => crypto.createCipheriv('chacha20-poly1305', ck, bytes(n, 1)));
+for (const n of [0, 12, 17]) chacha['iv' + n] = outcome(() => crypto.createCipheriv('chacha20', ck, bytes(n, 1)));
+chacha.nullIv = outcome(() => crypto.createCipheriv('chacha20', ck, null));
+chacha.polyNullIv = outcome(() => crypto.createCipheriv('chacha20-poly1305', ck, null));
+chacha.key16 = outcome(() => crypto.createCipheriv('chacha20-poly1305', bytes(16, 1), civ));
+chacha.streamSetAAD = outcome(() => crypto.createCipheriv('chacha20', ck, bytes(16, 1)).setAAD(Buffer.alloc(1)));
+chacha.streamGetAuthTag = outcome(() => { const c = crypto.createCipheriv('chacha20', ck, bytes(16, 1)); c.final(); return c.getAuthTag(); });
+chacha.streamTagOption = outcome(() => crypto.createCipheriv('chacha20', ck, bytes(16, 1), { authTagLength: 5 }).final());
+chacha.noPadding = outcome(() => { const c = crypto.createCipheriv('chacha20-poly1305', ck, civ); c.setAutoPadding(false); return Buffer.concat([c.update(msg), c.final()]); });
+chacha.setAADAfterFinal = outcome(() => { const c = crypto.createCipheriv('chacha20-poly1305', ck, civ); c.final(); c.setAAD(Buffer.alloc(1)); });
+results.chacha = chacha;
+
+// Output encodings in any case, as Node takes them.
+results.upperEncodings = ['BASE64', 'BASE64URL', 'Base64', 'UCS2', 'LATIN1', 'HEX'].map((e) => {
+  const c = crypto.createCipheriv('aes-128-cbc', bytes(16, 1), bytes(16, 2));
+  return c.update('hello world hello world!', 'utf8', e) + '|' + c.final(e);
+});
 
 // State errors.
 results.states = (() => {
@@ -221,6 +298,11 @@ function argumentErrors() {
     keyLengthMatch: crypto.getCipherInfo('aes-128-cbc', { keyLength: 16 }),
     keyLengthMismatch: String(crypto.getCipherInfo('aes-128-cbc', { keyLength: 32 })),
     gcmIvLength: crypto.getCipherInfo('aes-128-gcm', { ivLength: 16 }),
+    chacha20: crypto.getCipherInfo('chacha20'),
+    chachaPoly: crypto.getCipherInfo('ChaCha20-Poly1305'),
+    chachaNids: [crypto.getCipherInfo(1018), crypto.getCipherInfo(1019)],
+    chachaIvLengths: [12, 8, 16].map((n) => String(crypto.getCipherInfo('chacha20-poly1305', { ivLength: n }) && n)),
+    ctr: crypto.getCipherInfo('aes-128-ctr'),
     unknown: String(crypto.getCipherInfo('nope')),
     badName: outcome(() => crypto.getCipherInfo(true)),
   };
@@ -235,6 +317,7 @@ const k16 = bytes(16, 1), iv16 = bytes(16, 2), iv12 = bytes(12, 2);
   ecbIv: outcome(() => crypto.createCipheriv('aes-128-ecb', k16, iv16)),
   ecbEmptyIv: outcome(() => crypto.createCipheriv('aes-128-ecb', k16, Buffer.alloc(0)).constructor.name),
   gcmEmptyIv: outcome(() => crypto.createCipheriv('aes-128-gcm', k16, Buffer.alloc(0))),
+  gcmEmptyIvBadTag: outcome(() => crypto.createCipheriv('aes-128-gcm', k16, Buffer.alloc(0), { authTagLength: 5 })),
   gcmTag3: outcome(() => crypto.createCipheriv('aes-128-gcm', k16, iv12, { authTagLength: 3 })),
   gcmTag5: outcome(() => crypto.createCipheriv('aes-128-gcm', k16, iv12, { authTagLength: 5 })),
   gcmTagString: outcome(() => crypto.createCipheriv('aes-128-gcm', k16, iv12, { authTagLength: 'x' })),

@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"golang.org/x/crypto/chacha20"
+	"golang.org/x/crypto/poly1305" //nolint:staticcheck // the building block of OpenSSL's streaming ChaCha20-Poly1305
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
@@ -31,6 +33,7 @@ type cipherSpec struct {
 	BlockSize int    `json:"blockSize"`
 	NID       int    `json:"nid"`
 	des       bool
+	chacha    bool
 }
 
 // cipherSpecs maps Node's (lowercased) cipher names to what Orbital
@@ -50,18 +53,20 @@ func init() {
 	for i, bits := range []int{128, 192, 256} {
 		size := bits / 8
 		b := []string{"128", "192", "256"}[i]
-		add(cipherSpec{"aes-" + b + "-cbc", "cbc", size, 16, 16, nids["cbc"][i], false}, "aes-"+b+"-cbc", "aes"+b)
-		add(cipherSpec{"aes-" + b + "-ecb", "ecb", size, 0, 16, nids["ecb"][i], false}, "aes-"+b+"-ecb")
-		add(cipherSpec{"aes-" + b + "-ctr", "ctr", size, 16, 1, nids["ctr"][i], false}, "aes-"+b+"-ctr")
-		add(cipherSpec{"aes-" + b + "-cfb", "cfb", size, 16, 1, nids["cfb"][i], false}, "aes-"+b+"-cfb")
-		add(cipherSpec{"aes-" + b + "-cfb8", "cfb8", size, 16, 1, nids["cfb8"][i], false}, "aes-"+b+"-cfb8")
-		add(cipherSpec{"aes-" + b + "-ofb", "ofb", size, 16, 1, nids["ofb"][i], false}, "aes-"+b+"-ofb")
-		add(cipherSpec{"id-aes" + b + "-gcm", "gcm", size, 12, 1, nids["gcm"][i], false}, "aes-"+b+"-gcm", "id-aes"+b+"-gcm")
+		add(cipherSpec{"aes-" + b + "-cbc", "cbc", size, 16, 16, nids["cbc"][i], false, false}, "aes-"+b+"-cbc", "aes"+b)
+		add(cipherSpec{"aes-" + b + "-ecb", "ecb", size, 0, 16, nids["ecb"][i], false, false}, "aes-"+b+"-ecb")
+		add(cipherSpec{"aes-" + b + "-ctr", "ctr", size, 16, 1, nids["ctr"][i], false, false}, "aes-"+b+"-ctr")
+		add(cipherSpec{"aes-" + b + "-cfb", "cfb", size, 16, 1, nids["cfb"][i], false, false}, "aes-"+b+"-cfb")
+		add(cipherSpec{"aes-" + b + "-cfb8", "cfb8", size, 16, 1, nids["cfb8"][i], false, false}, "aes-"+b+"-cfb8")
+		add(cipherSpec{"aes-" + b + "-ofb", "ofb", size, 16, 1, nids["ofb"][i], false, false}, "aes-"+b+"-ofb")
+		add(cipherSpec{"id-aes" + b + "-gcm", "gcm", size, 12, 1, nids["gcm"][i], false, false}, "aes-"+b+"-gcm", "id-aes"+b+"-gcm")
 	}
-	add(cipherSpec{"des-ede3-cbc", "cbc", 24, 8, 8, 44, true}, "des-ede3-cbc", "des3")
-	add(cipherSpec{"des-ede3", "ecb", 24, 0, 8, 33, true}, "des-ede3", "des-ede3-ecb")
-	add(cipherSpec{"des-ede-cbc", "cbc", 16, 8, 8, 43, true}, "des-ede-cbc")
-	add(cipherSpec{"des-ede", "ecb", 16, 0, 8, 32, true}, "des-ede", "des-ede-ecb")
+	add(cipherSpec{"des-ede3-cbc", "cbc", 24, 8, 8, 44, true, false}, "des-ede3-cbc", "des3")
+	add(cipherSpec{"des-ede3", "ecb", 24, 0, 8, 33, true, false}, "des-ede3", "des-ede3-ecb")
+	add(cipherSpec{"des-ede-cbc", "cbc", 16, 8, 8, 43, true, false}, "des-ede-cbc")
+	add(cipherSpec{"des-ede", "ecb", 16, 0, 8, 32, true, false}, "des-ede", "des-ede-ecb")
+	add(cipherSpec{"chacha20", "stream", 32, 16, 1, 1019, false, true}, "chacha20")
+	add(cipherSpec{"chacha20-poly1305", "stream", 32, 12, 1, 1018, false, true}, "chacha20-poly1305")
 }
 
 type cipherCtx struct {
@@ -74,6 +79,12 @@ type cipherCtx struct {
 	padding bool
 	updated bool
 	done    bool
+
+	// chacha20-poly1305: the MAC runs alongside, as in OpenSSL
+	mac     *poly1305.MAC
+	aadLen  uint64
+	textLen uint64
+	inAAD   bool // AAD written since the last data, not yet padded
 
 	// gcm
 	aead   cipher.AEAD
@@ -176,6 +187,84 @@ func (g *gcmCTR) XORKeyStream(dst, src []byte) {
 	}
 }
 
+// chachaStream is OpenSSL's ChaCha20 over golang.org/x/crypto/chacha20: a
+// 16-byte IV of a little-endian 32-bit block counter and a 96-bit nonce.
+// When the counter wraps, OpenSSL carries into the nonce's first word (a
+// 64-bit counter in effect); x/crypto stops there, so the cipher is remade
+// with that word incremented.
+type chachaStream struct {
+	key   []byte
+	words [4]uint32 // counter, then the nonce's words
+	c     *chacha20.Cipher
+	left  uint64 // bytes until the counter wraps
+}
+
+func newChaChaStream(key, iv []byte) *chachaStream {
+	s := &chachaStream{key: key}
+	for i := range s.words {
+		s.words[i] = binary.LittleEndian.Uint32(iv[4*i:])
+	}
+	s.reset()
+	return s
+}
+
+func (s *chachaStream) reset() {
+	nonce := make([]byte, 12)
+	for i := 1; i < 4; i++ {
+		binary.LittleEndian.PutUint32(nonce[4*(i-1):], s.words[i])
+	}
+	s.c, _ = chacha20.NewUnauthenticatedCipher(s.key, nonce)
+	s.c.SetCounter(s.words[0])
+	s.left = (1<<32 - uint64(s.words[0])) * 64
+}
+
+func (s *chachaStream) XORKeyStream(dst, src []byte) {
+	for len(src) > 0 {
+		n := uint64(len(src))
+		if n > s.left {
+			n = s.left
+		}
+		s.c.XORKeyStream(dst[:n], src[:n])
+		dst, src, s.left = dst[n:], src[n:], s.left-n
+		if s.left == 0 {
+			s.words[0] = 0
+			s.words[1]++
+			s.reset()
+		}
+	}
+}
+
+// newChaChaCtx sets up chacha20, or chacha20-poly1305 as RFC 8439 and
+// OpenSSL do: the Poly1305 key is the first 32 bytes of keystream block 0,
+// the data starts at block 1, and the MAC is fed as the data goes by.
+func newChaChaCtx(spec cipherSpec, key, iv []byte, decrypt bool, tagLen int) *cipherCtx {
+	c := &cipherCtx{spec: spec, decrypt: decrypt, padding: true}
+	if spec.Name == "chacha20" {
+		c.stream = newChaChaStream(key, iv)
+		return c
+	}
+	stream := newChaChaStream(key, append(make([]byte, 4), iv...))
+	var macKey [32]byte
+	block := make([]byte, 64)
+	stream.XORKeyStream(block, block)
+	copy(macKey[:], block)
+	c.stream, c.mac = stream, poly1305.New(&macKey)
+	if tagLen == -1 {
+		tagLen = 16
+	}
+	c.tagLen = tagLen
+	return c
+}
+
+// padAAD ends a run of AAD with zeros to a 16-byte boundary, as OpenSSL
+// does before the next data or at the end.
+func (c *cipherCtx) padAAD() {
+	if c.inAAD {
+		c.mac.Write(make([]byte, (16-c.aadLen%16)%16))
+		c.inAAD = false
+	}
+}
+
 // newCipherCtx sets up a context as Node's CipherBase::Init does: the
 // cipher, then the IV, then the key length.
 func newCipherCtx(name string, key, iv []byte, hasIV, decrypt bool, tagLen int) (*cipherCtx, error) {
@@ -184,11 +273,18 @@ func newCipherCtx(name string, key, iv []byte, hasIV, decrypt bool, tagLen int) 
 		return nil, errUnknownCipher
 	}
 	if spec.Mode == "gcm" {
+		if !hasIV || len(iv) == 0 {
+			return nil, errInvalidIV
+		}
 		if tagLen != -1 && !validGCMTagLen(tagLen) {
 			return nil, errInvalidAuthTag(tagLen)
 		}
-		if !hasIV || len(iv) == 0 {
+	} else if spec.Name == "chacha20-poly1305" {
+		if !hasIV || len(iv) != spec.IVLength {
 			return nil, errInvalidIV
+		}
+		if tagLen != -1 && (tagLen < 1 || tagLen > 16) {
+			return nil, errInvalidAuthTag(tagLen)
 		}
 	} else if spec.IVLength == 0 {
 		if hasIV && len(iv) != 0 {
@@ -199,6 +295,9 @@ func newCipherCtx(name string, key, iv []byte, hasIV, decrypt bool, tagLen int) 
 	}
 	if len(key) != spec.KeyLength {
 		return nil, errInvalidKeyLen
+	}
+	if spec.chacha {
+		return newChaChaCtx(spec, key, iv, decrypt, tagLen), nil
 	}
 	var block cipher.Block
 	var err error
@@ -268,6 +367,15 @@ func (c *cipherCtx) update(data []byte) ([]byte, error) {
 	if c.stream != nil {
 		out := make([]byte, len(data))
 		c.stream.XORKeyStream(out, data)
+		if c.mac != nil && len(data) > 0 {
+			c.padAAD()
+			if c.decrypt {
+				c.mac.Write(data)
+			} else {
+				c.mac.Write(out)
+			}
+			c.textLen += uint64(len(data))
+		}
 		if c.aead != nil {
 			if c.decrypt {
 				c.plain = append(c.plain, out...)
@@ -295,6 +403,23 @@ func (c *cipherCtx) final() ([]byte, error) {
 		return nil, errInvalidState
 	}
 	c.done = true
+	if c.mac != nil {
+		c.padAAD()
+		c.mac.Write(make([]byte, (16-c.textLen%16)%16))
+		var lens [16]byte
+		binary.LittleEndian.PutUint64(lens[:8], c.aadLen)
+		binary.LittleEndian.PutUint64(lens[8:], c.textLen)
+		c.mac.Write(lens[:])
+		full := c.mac.Sum(nil)
+		if !c.decrypt {
+			c.tag = full[:c.tagLen]
+			return []byte{}, nil
+		}
+		if c.tag == nil || subtle.ConstantTimeCompare(c.tag, full[:len(c.tag)]) != 1 {
+			return nil, errAuthenticate
+		}
+		return []byte{}, nil
+	}
 	if c.aead != nil {
 		sealed := c.aead.Seal(nil, c.nonce, c.plain, c.aad)
 		full := sealed[len(sealed)-16:]
@@ -447,6 +572,14 @@ func (c *Crypto) cipherSetAADFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if throw != nil {
 		return throw
 	}
+	if cc.mac != nil && !cc.done {
+		// OpenSSL takes AAD at any point, padding it when data follows.
+		aad := argB64(info.Args(), 1)
+		cc.mac.Write(aad)
+		cc.aadLen += uint64(len(aad))
+		cc.inAAD = true
+		return info.Context().Undefined()
+	}
 	if cc.aead == nil || cc.done || cc.updated {
 		return throwCipherError(info.Context(), errStateFor("setAAD"))
 	}
@@ -459,7 +592,7 @@ func (c *Crypto) cipherGetAuthTagFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if throw != nil {
 		return throw
 	}
-	if cc.aead == nil || cc.decrypt || !cc.done || cc.tag == nil {
+	if (cc.aead == nil && cc.mac == nil) || cc.decrypt || !cc.done || cc.tag == nil {
 		return throwCipherError(info.Context(), errStateFor("getAuthTag"))
 	}
 	return b64Result(info.Context(), cc.tag)
@@ -471,10 +604,14 @@ func (c *Crypto) cipherSetAuthTagFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return throw
 	}
 	tag := argB64(info.Args(), 1)
-	if cc.aead == nil || !cc.decrypt || cc.done || cc.tag != nil {
+	if (cc.aead == nil && cc.mac == nil) || !cc.decrypt || cc.done || cc.tag != nil {
 		return throwCipherError(info.Context(), errStateFor("setAuthTag"))
 	}
-	if !validGCMTagLen(len(tag)) {
+	if cc.mac != nil {
+		if len(tag) != cc.tagLen {
+			return throwCipherError(info.Context(), errInvalidAuthTag(len(tag)))
+		}
+	} else if !validGCMTagLen(len(tag)) {
 		return throwCipherError(info.Context(), errInvalidAuthTag(len(tag)))
 	}
 	cc.tag = tag

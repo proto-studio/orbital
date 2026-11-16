@@ -194,8 +194,8 @@
       const canonical = canonicalEncoding(outputEncoding);
       if (!self[kDecoder] || self[kDecoderEncoding] !== canonical) {
         self[kDecoderEncoding] = canonical;
-        if (outputEncoding === 'base64' || outputEncoding === 'base64url') {
-          self[kDecoder] = new Base64Decoder(outputEncoding);
+        if (canonical === 'base64' || canonical === 'base64url') {
+          self[kDecoder] = new Base64Decoder(canonical);
         } else {
           const { StringDecoder } = globalThis.__string_decoder_module;
           self[kDecoder] = new StringDecoder(outputEncoding);
@@ -360,7 +360,9 @@
         }
       }
     }
-    const info = { mode: spec.mode, name: spec.name, nid: spec.nid, blockSize: spec.blockSize };
+    const info = { mode: spec.mode, name: spec.name, nid: spec.nid };
+    // Node leaves out the block size of stream ciphers.
+    if (spec.mode !== 'stream') info.blockSize = spec.blockSize;
     if (spec.ivLength) info.ivLength = spec.ivLength;
     info.keyLength = spec.keyLength;
     return info;
