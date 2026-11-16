@@ -43,12 +43,14 @@ func (l *LocalFilesystem) resolvePath(p string) (string, error) {
 // textualPath gives the path p names, taken within the root if there is one, from its text
 // alone.
 func (l *LocalFilesystem) textualPath(p string) (string, error) {
-	// No sandbox configured
+	// No root: the path goes to the OS as given, which resolves each link before a ".." that
+	// follows it, as Node leaves it to do. Cleaning the text first would apply the ".." to the
+	// link's own name.
 	if l.Root == "" {
-		if filepath.IsAbs(p) {
-			return filepath.Clean(p), nil
+		if p == "" {
+			return filepath.Abs(p)
 		}
-		return filepath.Abs(p)
+		return p, nil
 	}
 
 	// Ensure document root is absolute
