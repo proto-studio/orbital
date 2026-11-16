@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -72,16 +73,19 @@ func TestEntry_MissingModuleIsUncaught(t *testing.T) {
 func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"pre.cjs":    `process.on('uncaughtException', (e) => console.log('caught', e.name, e.message)); process.on('exit', (c) => console.log('exit', c));`,
-		"badsyn.mjs": `export default (`,
-		"e1.mjs":     `import './badsyn.mjs';`,
-		"dep.mjs":    `export const a = 1;`,
-		"e2.mjs":     `import { b } from './dep.mjs';`,
-		"tla.mjs":    `await new Promise(() => {});`,
-		"zero.cjs":   `process.on('exit', () => { process.exitCode = 0; });`,
-		"seven.cjs":  `process.on('exit', () => { process.exitCode = 7; });`,
-		"waits.mjs":  `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
-		"entry.mjs":  `console.log('entry');`,
+		"pre.cjs":     `process.on('uncaughtException', (e) => console.log('caught', e.name, e.message)); process.on('exit', (c) => console.log('exit', c));`,
+		"badsyn.mjs":  `export default (`,
+		"e1.mjs":      `import './badsyn.mjs';`,
+		"dep.mjs":     `export const a = 1;`,
+		"e2.mjs":      `import { b } from './dep.mjs';`,
+		"tla.mjs":     `await new Promise(() => {});`,
+		"zero.cjs":    `process.on('exit', () => { process.exitCode = 0; });`,
+		"seven.cjs":   `process.on('exit', () => { process.exitCode = 7; });`,
+		"throws.cjs":  "process.on('exit', (c) => { console.log('exit', c); throw new Error('boom'); }); process.on('exit', () => console.log('second'));",
+		"handled.cjs": "process.on('uncaughtException', (e) => console.log('caught', e.message)); process.on('exit', () => { throw new Error('boom'); });",
+		"ok.mjs":      "console.log('ok');",
+		"waits.mjs":   `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
+		"entry.mjs":   `console.log('entry');`,
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
@@ -104,9 +108,23 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		// While an --import waits, an emptied loop emits 'beforeExit', whose
 		// listener here settles it; it fires again once the entry is done.
 		{[]string{"--import", p("waits.mjs"), p("entry.mjs")}, "beforeExit\npreloaded\nentry\nbeforeExit\n", 0},
+		// An 'exit' listener that throws stops the others and is an uncaught
+		// exception: reported (exit 1, or the exitCode set), or handled (exit 0).
+		{[]string{"-r", p("throws.cjs"), p("tla.mjs")}, "exit 0\nError: boom\n", 1},
+		{[]string{"-r", p("handled.cjs"), p("tla.mjs")}, "caught boom\n", 0},
+		{[]string{"-r", p("throws.cjs"), p("ok.mjs")}, "ok\nexit 0\nError: boom\n", 1},
+		{[]string{"-r", p("handled.cjs"), p("ok.mjs")}, "ok\ncaught boom\n", 0},
 	}
 	for _, tc := range cases {
 		out, code := runOrbital(t, "", tc.args...)
+		// Stack frames vary; the rest is compared.
+		var kept []string
+		for _, line := range strings.SplitAfter(out, "\n") {
+			if !strings.HasPrefix(line, "    at ") {
+				kept = append(kept, line)
+			}
+		}
+		out = strings.Join(kept, "")
 		if code != tc.code || out != tc.out {
 			t.Errorf("%v: exit %d, output %q; want %d, %q", tc.args, code, out, tc.code, tc.out)
 		}

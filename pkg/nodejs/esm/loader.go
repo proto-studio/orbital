@@ -81,7 +81,11 @@ func stripFileURL(u string) string {
 //
 // malformed reports an escape that decodes to invalid UTF-8, which Node's
 // decodeURIComponent refuses ("URI malformed").
-func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malformed bool) {
+//
+// lexical is the decoded path as the URL has it, dot segments resolved but
+// repeated separators kept, which Node's error for a missing module names;
+// path is that, cleaned, for the filesystem.
+func urlPath(spec, dir string) (path, lexical, encoded, suffix string, encodedSep, malformed bool) {
 	rest := spec
 	if strings.HasPrefix(rest, "file:") {
 		// file:///p, file://localhost/p and file:/p all name /p. (A host other
@@ -118,9 +122,38 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malfor
 		malformed = true
 	}
 	if strings.HasPrefix(rest, "/") {
-		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep, malformed
+		lexical = removeDotSegments(decoded)
+		return filepath.Clean(lexical), lexical, pathpkg.Clean(rest), suffix, encodedSep, malformed
 	}
-	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep, malformed
+	lexical = removeDotSegments(strings.TrimSuffix(filepath.ToSlash(dir), "/") + "/" + decoded)
+	return filepath.Clean(lexical), lexical, pathpkg.Join(escapePath(dir), rest), suffix, encodedSep, malformed
+}
+
+// removeDotSegments resolves the "." and ".." segments of p, an absolute URL
+// path, as the URL parser does: ".." drops the segment before it, even an
+// empty one, and empty segments (repeated separators) are otherwise kept.
+func removeDotSegments(p string) string {
+	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	out := make([]string, 0, len(segs))
+	for i, s := range segs {
+		last := i == len(segs)-1
+		switch s {
+		case "..":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+			if last {
+				out = append(out, "")
+			}
+		case ".":
+			if last {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, s)
+		}
+	}
+	return "/" + strings.Join(out, "/")
 }
 
 // validFileHost reports whether raw, a file: URL's authority as written, is a
@@ -145,7 +178,94 @@ func validFileHost(raw string) bool {
 			return false
 		}
 	}
-	return true
+	// A host ending in a number is an IPv4 address, and must parse as one.
+	_, numeric, ok := ipv4Host(strings.ToLower(d))
+	return !numeric || ok
+}
+
+// ipv4Host reads host as the URL parser does when it ends in a number (its last
+// dot-separated label, a trailing dot aside, is decimal digits or a 0x hex
+// number): as an IPv4 address of one to four decimal, octal (leading 0) or hex
+// (0x) parts, the last filling the remaining bytes. It returns the address in
+// dotted form, whether host is numeric at all, and whether it parsed.
+func ipv4Host(host string) (addr string, numeric, ok bool) {
+	parts := strings.Split(host, ".")
+	if parts[len(parts)-1] == "" {
+		if len(parts) == 1 {
+			return "", false, false
+		}
+		parts = parts[:len(parts)-1]
+	}
+	last := parts[len(parts)-1]
+	if last == "" {
+		return "", false, false
+	}
+	if strings.Trim(last, "0123456789") != "" {
+		if _, valid := ipv4Number(last); !valid {
+			return "", false, false
+		}
+	}
+	if len(parts) > 4 {
+		return "", true, false
+	}
+	nums := make([]uint64, len(parts))
+	for i, p := range parts {
+		n, valid := ipv4Number(p)
+		if !valid {
+			return "", true, false
+		}
+		nums[i] = n
+	}
+	for _, n := range nums[:len(nums)-1] {
+		if n > 255 {
+			return "", true, false
+		}
+	}
+	if nums[len(nums)-1] >= 1<<(8*(5-len(nums))) {
+		return "", true, false
+	}
+	v := nums[len(nums)-1]
+	for i, n := range nums[:len(nums)-1] {
+		v += n << (8 * (3 - i))
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", v>>24, v>>16&255, v>>8&255, v&255), true, true
+}
+
+// ipv4Number parses one part of an IPv4 host: decimal, octal after a leading
+// "0", or hex after "0x" ("0x" alone is 0). Values past 2^32 are capped there,
+// which the range checks refuse all the same.
+func ipv4Number(s string) (uint64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	base := uint64(10)
+	if len(s) >= 2 && (s[:2] == "0x" || s[:2] == "0X") {
+		s, base = s[2:], 16
+	} else if len(s) >= 2 && s[0] == '0' {
+		s, base = s[1:], 8
+	}
+	var n uint64
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		var d uint64
+		switch {
+		case c >= '0' && c <= '9':
+			d = uint64(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = uint64(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = uint64(c-'A') + 10
+		default:
+			return 0, false
+		}
+		if d >= base {
+			return 0, false
+		}
+		if n = n*base + d; n > 1<<32 {
+			n = 1 << 32
+		}
+	}
+	return n, true
 }
 
 // nodePlatform is process.platform for this OS.
@@ -302,7 +422,7 @@ func (e *ESM) hookURLKey(raw string) (string, error) {
 	if err := checkFileURLHost(u, raw, ""); err != nil {
 		return "", err
 	}
-	path, encoded, suffix, _, malformed := urlPath(u, "/")
+	path, _, encoded, suffix, _, malformed := urlPath(u, "/")
 	if malformed {
 		return "", uriMalformed()
 	}
@@ -335,6 +455,16 @@ func checkFileURLHost(u, input, module string) error {
 		}
 	}
 	if host := fileURLHost(u); host != "" && host != "localhost" {
+		// The error's input is the URL as parsed: a numeric host in dotted form.
+		if addr, numeric, ok := ipv4Host(host); numeric && ok {
+			rest := u[len("file://"):]
+			if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
+				rest = rest[i:]
+			} else {
+				rest = ""
+			}
+			u = "file://" + addr + rest
+		}
 		return &moduleError{
 			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
 			code:      "ERR_INVALID_FILE_URL_HOST",
@@ -447,7 +577,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 
 	rawSpec := spec
 	dir := e.referrerDir(referrer)
-	var attempted, encoded, suffix string
+	var attempted, lexical, encoded, suffix string
 	// A relative or absolute path is told from its raw spelling (a leading tab
 	// makes it a bare name, as in Node); a file: URL as the URL parser reads it.
 	// "//host/p" is a network-path reference: against a file: base it names the
@@ -469,7 +599,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 			return "", err
 		}
 		var encodedSep, malformed bool
-		attempted, encoded, suffix, encodedSep, malformed = urlPath(spec, dir)
+		attempted, lexical, encoded, suffix, encodedSep, malformed = urlPath(spec, dir)
 		if encodedSep {
 			return "", e.encodedSeparator(encoded, referrer)
 		}
@@ -477,7 +607,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 			return "", uriMalformed()
 		}
 	case winAbs(spec):
-		attempted = spec
+		attempted, lexical = spec, spec
 	default:
 		abs, suffix, err := e.resolveBare(spec, rawSpec, dir, referrer)
 		if err != nil {
@@ -490,7 +620,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 		abs = e.resolveIndex(attempted)
 	}
 	if abs == "" {
-		err := e.moduleNotFound(attempted, referrer)
+		err := e.moduleNotFound(lexical, referrer)
 		err.url += suffix
 		return "", err
 	}
@@ -712,7 +842,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 							}
 							// The target is a URL relative to the package: its
 							// path is decoded and a query or fragment kept.
-							abs, encoded, suffix, encodedSep, malformed := urlPath(target, pkgDir)
+							abs, lexical, encoded, suffix, encodedSep, malformed := urlPath(target, pkgDir)
 							if encodedSep {
 								return "", "", e.encodedSeparator(encoded, referrer)
 							}
@@ -727,7 +857,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 									return r, suffix, nil
 								}
 							}
-							err := e.moduleNotFound(abs, referrer)
+							err := e.moduleNotFound(lexical, referrer)
 							err.url += suffix
 							return "", "", err
 						}
@@ -753,18 +883,18 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 			}
 		}
 	}
-	target, suffix := pkgDir, ""
+	target, lexical, suffix := pkgDir, pkgDir, ""
 	if sub != "." {
 		// As a URL path relative to the package: decoded, with the suffix kept
 		// apart, and refused if it encodes a separator.
-		path, encoded, sfx, encodedSep, malformed := urlPath(sub, pkgDir)
+		path, lex, encoded, sfx, encodedSep, malformed := urlPath(sub, pkgDir)
 		if encodedSep {
 			return "", "", e.encodedSeparator(encoded, referrer)
 		}
 		if malformed {
 			return "", "", uriMalformed()
 		}
-		target, suffix = path, sfx
+		target, lexical, suffix = path, lex, sfx
 	}
 	if r := e.resolveFile(target); r != "" {
 		return r, suffix, nil
@@ -775,7 +905,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 		}
 	}
 	if sub != "." {
-		err := e.moduleNotFound(target, referrer)
+		err := e.moduleNotFound(lexical, referrer)
 		err.url += suffix
 		return "", "", err
 	}
