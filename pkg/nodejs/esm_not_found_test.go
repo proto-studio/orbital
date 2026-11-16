@@ -660,3 +660,52 @@ err.name = 'X'; log.push(err.stack.split('\n')[0].slice(0, 35));`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A coded error's stack header and string use the name and message it has when
+// read and the code it was created with; a file: URL with credentials or a port is
+// an invalid URL, and a non-local host error names its input and module. Expected
+// from Node 20.18.1.
+func TestDynamicImport_CodedErrorShapeAndURLAuthority(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"entry.mjs": `let err; try { await import('./nope.mjs'); } catch (e) { err = e; }
+err.message = ''; log.push(err.stack.split('\n')[0]);
+let err2; try { await import('./nope2.mjs'); } catch (e) { err2 = e; }
+err2.code = 'X'; log.push(String(err2).slice(0, 30)); delete err2.code; log.push(String(err2).slice(0, 30));
+let err3; try { await import('./nope3.mjs'); } catch (e) { err3 = e; }
+err3.name = ''; log.push(err3.stack.split('\n')[0].slice(0, 30));
+for (const u of ['file://example.com/tmp/x.mjs', 'file://user@localhost/tmp/x.mjs', 'file://localhost:123/tmp/x.mjs']) {
+  try { await import(u); } catch (e) { log.push([e.code, e.input, e.module && e.module.split('/').pop(), Object.keys(e).join()]); }
+}`,
+	})
+	want := `["Error [ERR_MODULE_NOT_FOUND]: ","Error [ERR_MODULE_NOT_FOUND]: ","Error [ERR_MODULE_NOT_FOUND]: "," [ERR_MODULE_NOT_FOUND]: Canno",` +
+		`["ERR_INVALID_FILE_URL_HOST","file://example.com/tmp/x.mjs","entry.mjs","code,input,module"],` +
+		`["ERR_INVALID_URL","file://user@localhost/tmp/x.mjs",null,"code,input"],["ERR_INVALID_URL","file://localhost:123/tmp/x.mjs",null,"code,input"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// What a loader hook throws reaches the importer as it was: class, message, stack
+// and own properties, or the thrown value itself; the loader's own errors arrive the
+// same way, as plain errors carrying their code. Expected from Node 20.18.1.
+func TestDynamicImport_HookErrorsArriveAsThrown(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'custom') throw Object.assign(new Error('custom'), { code: 'MY_CODE', extra: 42 });
+  if (s === 'range') throw new RangeError('r');
+  if (s === 'prim') throw 'just a string';
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['custom', 'range', 'prim']) {
+  try { await import(s); } catch (e) { log.push(typeof e === 'object' ? [e.constructor.name, e.message, e.code, e.extra, Object.keys(e).join(), String(e), e.stack.split('\n')[0]] : e); }
+}
+try { await import('./nope.mjs'); } catch (e) { log.push(String(e).slice(0, 26), e.stack.split('\n')[0].slice(0, 30), e.code); }`,
+	})
+	want := `[["Error","custom","MY_CODE",42,"code,extra","Error: custom","Error: custom"],["RangeError","r",null,null,"","RangeError: r","RangeError: r"],"just a string",` +
+		`"Error: Cannot find module ","Error [ERR_MODULE_NOT_FOUND]: ","ERR_MODULE_NOT_FOUND"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

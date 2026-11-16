@@ -9,6 +9,7 @@ package esm
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,6 +38,8 @@ type ESM struct {
 	makeError *v8.Value
 	// rejected is esm-loader.js's __esmRejected, captured like makeError.
 	rejected *v8.Value
+	// hookError is esm-loader.js's __esmHookError, captured like makeError.
+	hookError *v8.Value
 	// keyPaths maps a module url carrying a query or fragment to its file.
 	keyPaths map[string]string
 	// linkErr is the last error object a failed resolution threw, which is what
@@ -86,6 +89,7 @@ func (e *ESM) ensureLoader() error {
 	if existing, _ := global.Get("__esmFinishDynamicImport"); existing != nil && existing.IsFunction() {
 		e.makeError, _ = global.Get("__esmModuleError")
 		e.rejected, _ = global.Get("__esmRejected")
+		e.hookError, _ = global.Get("__esmHookError")
 		e.loaderReady = true
 		return nil
 	}
@@ -94,6 +98,7 @@ func (e *ESM) ensureLoader() error {
 	}
 	e.makeError, _ = global.Get("__esmModuleError")
 	e.rejected, _ = global.Get("__esmRejected")
+	e.hookError, _ = global.Get("__esmHookError")
 	// Wire dynamic import() through the same JS resolver as static imports.
 	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
 		return e.resolveModule(specifier, referrer)
@@ -403,12 +408,29 @@ func (e *ESM) throwable(err error) error {
 	if !errors.As(err, &me) || e.rt.Ended() != nil {
 		return err
 	}
+	ctx := e.rt.Context()
+	if me.hookPayload != "" {
+		// An error a loader hook threw, rebuilt as it was.
+		fn := e.hookError
+		if fn == nil || !fn.IsFunction() {
+			return err
+		}
+		arg, serr := ctx.NewString(me.hookPayload)
+		if serr != nil {
+			return err
+		}
+		exc, cerr := fn.Call(nil, arg)
+		if cerr != nil || exc == nil {
+			return err
+		}
+		e.linkErr = exc
+		return &thrownError{err: err, exc: exc}
+	}
 	mk := e.makeError
 	if mk == nil || !mk.IsFunction() {
 		return err
 	}
-	ctx := e.rt.Context()
-	args := make([]*v8.Value, 3, 5)
+	args := make([]*v8.Value, 3, 6)
 	for i, s := range []string{me.msg, me.code, me.url} {
 		v, serr := ctx.NewString(s)
 		if serr != nil {
@@ -424,7 +446,11 @@ func (e *ESM) throwable(err error) error {
 	if ierr != nil {
 		return err
 	}
-	args = append(args, kind, input)
+	module, merr := ctx.NewString(me.module)
+	if merr != nil {
+		return err
+	}
+	args = append(args, kind, input, module)
 	exc, cerr := mk.Call(nil, args...)
 	if cerr != nil || exc == nil {
 		return err
@@ -486,7 +512,7 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, stop context.Context) (*v8
 		return p.PromiseResult(), nil
 	case v8.PromiseRejected:
 		reason := p.PromiseResult()
-		if me := codedError(reason); me != nil {
+		if me := describeRejection(rt, reason); me != nil {
 			return nil, me
 		}
 		msg := "promise rejected"
@@ -501,23 +527,35 @@ func awaitPromiseRT(rt *runtime.Runtime, p *v8.Value, stop context.Context) (*v8
 	return nil, errors.New("esm: hook promise never settled: the loader hooks have no pending work left")
 }
 
-// codedError carries a hook's rejection with a Node error code (such as the
-// default resolver's ERR_MODULE_NOT_FOUND) back to the application realm with its
-// message, code and url, so the importer sees the error Node would give it.
-func codedError(reason *v8.Value) *moduleError {
-	if reason == nil || !reason.IsObject() {
+// describeRejection carries a hook chain's rejection from the loader realm rt
+// to the application realm as its class, message, stack and own enumerable
+// properties, as Node's transfer from its hooks thread keeps them. code is kept
+// for the loader's own bookkeeping.
+func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
+	global, err := rt.Context().Global()
+	if err != nil {
 		return nil
 	}
-	code, name := objString(reason, "code"), objString(reason, "name")
-	if code == "" && name != "URIError" {
+	fn, _ := global.Get("__describeRejection")
+	if fn == nil || !fn.IsFunction() {
 		return nil
 	}
-	return &moduleError{
-		msg:       objString(reason, "message"),
-		code:      code,
-		url:       objString(reason, "url"),
-		typeError: name == "TypeError",
-		uriError:  name == "URIError",
-		input:     objString(reason, "input"),
+	if reason == nil {
+		reason = rt.Context().Undefined()
 	}
+	res, err := fn.Call(nil, reason)
+	if err != nil || res == nil || !res.IsString() || res.String() == "" {
+		return nil
+	}
+	payload := res.String()
+	var d struct {
+		Name    string         `json:"name"`
+		Message string         `json:"message"`
+		Props   map[string]any `json:"props"`
+	}
+	if json.Unmarshal([]byte(payload), &d) != nil {
+		return nil
+	}
+	code, _ := d.Props["code"].(string)
+	return &moduleError{msg: d.Name + ": " + d.Message, code: code, hookPayload: payload}
 }

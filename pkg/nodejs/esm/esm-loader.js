@@ -29,6 +29,7 @@
   var NativeURIError = URIError;
   var reject = Promise.reject.bind(Promise);
   var defineProperty = Object.defineProperty;
+  var apply = Reflect.apply;
 
   // An own data property, as an assignment would make, without calling a setter
   // code may have put on Error.prototype.
@@ -36,10 +37,20 @@
     defineProperty(obj, key, { value: value, writable: true, enumerable: enumerable, configurable: true });
   }
 
+  // Each coded error's code as created: Node formats with that, whatever the
+  // program later does to the code property.
+  var codes = new WeakMap();
+  var codesGet = WeakMap.prototype.get;
+  var codesSet = WeakMap.prototype.set;
+  function codeOf(err) {
+    var code = apply(codesGet, codes, [err]);
+    return code === undefined ? err.code : code;
+  }
+
   // Like Node's coded errors, these stringify as "Error [CODE]: message", from a
   // prototype between the error and Error.prototype (or TypeError.prototype).
   function codedToString() {
-    return this.name + ' [' + this.code + ']: ' + this.message;
+    return this.name + ' [' + codeOf(this) + ']: ' + this.message;
   }
   var CodedError = Object.create(NativeError.prototype);
   var CodedTypeError = Object.create(NativeTypeError.prototype);
@@ -47,7 +58,6 @@
   own(CodedTypeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
   var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-  var apply = Reflect.apply;
 
   // Replaces err's stack accessor with one that formats through the original
   // on first read and puts the code in the header ("Error [CODE]: ...").
@@ -61,10 +71,13 @@
           var custom = typeof NativeError.prepareStackTrace === 'function';
           value = apply(desc.get, err, []);
           done = true;
-          // The header uses the name the error has now, as V8's does.
-          var current = String(err.name);
-          if (!custom && typeof value === 'string' && value.indexOf(current + ': ') === 0) {
-            value = current + ' [' + code + ']: ' + value.slice(current.length + 2);
+          // Like Node, the header is built from the name and message the
+          // error has now, with the code it was created with; the frames come
+          // from the engine.
+          if (!custom && typeof value === 'string') {
+            var at = value.indexOf('\n    at ');
+            var frames = at >= 0 ? value.slice(at) : '';
+            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + frames;
           }
         }
         return value;
@@ -79,7 +92,7 @@
   }
 
   // kind is the error's class: "Error", "TypeError" or "URIError".
-  globalThis.__esmModuleError = function (message, code, url, kind, input) {
+  globalThis.__esmModuleError = function (message, code, url, kind, input, module) {
     var isTypeError = kind === 'TypeError';
     var err = isTypeError ? new NativeTypeError(message)
       : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
@@ -92,10 +105,33 @@
         lazyCodedStack(err, desc, code);
       }
       own(err, 'code', code, true);
+      apply(codesSet, codes, [err, code]);
       setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);
     }
     if (url) own(err, 'url', url, true);
     if (input) own(err, 'input', input, true);
+    if (module) own(err, 'module', module, true);
+    return err;
+  };
+
+  // Rebuilds an error a loader hook threw, from the description the loader
+  // realm gave (see __describeRejection in loader-hooks.js): its class, message,
+  // stack and own enumerable properties, or the thrown value if it wasn't an
+  // object, as Node transfers it from its hooks thread.
+  var jsonParse = JSON.parse;
+  var objectKeys = Object.keys;
+  var hookCtors = {
+    Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
+    RangeError: RangeError, SyntaxError: SyntaxError, ReferenceError: ReferenceError, EvalError: EvalError,
+  };
+  globalThis.__esmHookError = function (payload) {
+    var d = jsonParse(payload);
+    if (d.primitive) return d.undef ? undefined : d.value;
+    var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
+    var err = new Ctor(d.message);
+    var keys = objectKeys(d.props || {});
+    for (var i = 0; i < keys.length; i++) own(err, keys[i], d.props[keys[i]], true);
+    own(err, 'stack', d.stack, false);
     return err;
   };
 

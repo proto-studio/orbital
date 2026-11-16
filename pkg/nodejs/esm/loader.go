@@ -248,7 +248,7 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 	if !strings.HasPrefix(u, "file:") {
 		return u, nil
 	}
-	if err := checkFileURLHost(u, u); err != nil {
+	if err := checkFileURLHost(u, u, ""); err != nil {
 		return "", err
 	}
 	path, encoded, suffix, _, malformed := urlPath(u, "/")
@@ -270,14 +270,24 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 // checkFileURLHost is Node's error for a file: URL whose host is neither empty
 // nor localhost.
 // input is the specifier as given, which an ERR_INVALID_URL reports.
-func checkFileURLHost(u, input string) error {
+// module, when set, is the importer's URL, which Node also reports on the host
+// error (its "input" being the URL itself).
+func checkFileURLHost(u, input, module string) error {
 	if strings.HasPrefix(u, "file://") {
 		// A host whose escapes are malformed or not UTF-8 isn't a URL at all.
 		raw := u[len("file://"):]
 		if i := strings.IndexAny(raw, "/\\?#"); i >= 0 {
 			raw = raw[:i]
 		}
-		if d, err := url.PathUnescape(raw); err != nil || !utf8.ValidString(d) {
+		// Credentials or a port make it invalid too: a file: URL can't have them.
+		hostPart := raw
+		if strings.HasPrefix(hostPart, "[") {
+			if i := strings.IndexByte(hostPart, ']'); i >= 0 {
+				hostPart = hostPart[i+1:]
+			}
+		}
+		if d, err := url.PathUnescape(raw); err != nil || !utf8.ValidString(d) ||
+			strings.ContainsAny(raw, "@") || strings.Contains(hostPart, ":") {
 			return &moduleError{msg: "Invalid URL", code: "ERR_INVALID_URL", typeError: true, input: input}
 		}
 	}
@@ -286,6 +296,8 @@ func checkFileURLHost(u, input string) error {
 			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
 			code:      "ERR_INVALID_FILE_URL_HOST",
 			typeError: true,
+			input:     u,
+			module:    module,
 		}
 	}
 	return nil
@@ -400,7 +412,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 	switch {
 	case isURLSpecifier(spec):
-		if err := checkFileURLHost(spec, rawSpec); err != nil {
+		if err := checkFileURLHost(spec, rawSpec, e.importerURL(referrer)); err != nil {
 			return "", err
 		}
 		var encodedSep, malformed bool
@@ -444,6 +456,11 @@ type moduleError struct {
 	uriError bool
 	// input is the string ERR_INVALID_URL couldn't parse, its "input" property.
 	input string
+	// module is the importer's URL on an ERR_INVALID_FILE_URL_HOST.
+	module string
+	// hookPayload, when set, describes an error a loader hook threw (see
+	// __describeRejection), which the importer gets rebuilt as it was.
+	hookPayload string
 	// url is the file: URL of the missing module, empty when Node reports none
 	// (a missing package).
 	url string
@@ -542,6 +559,24 @@ func (e *ESM) importerPath(referrer string) string {
 	}
 	return e.pathOf(referrer)
 }
+
+// importerURL is the importer's URL as Node names it on a resolution error:
+// its module URL, or the working directory's for an entry point.
+func (e *ESM) importerURL(referrer string) string {
+	if referrer == "" {
+		return fileURL(strings.TrimSuffix(e.cwd(), "/") + "/")
+	}
+	if urlSchemeRe.MatchString(referrer) {
+		return referrer
+	}
+	if p, ok := e.keyPaths[referrer]; ok && p != referrer {
+		return "file://" + referrer
+	}
+	return fileURL(referrer)
+}
+
+// urlSchemeRe matches a string that starts with a URL scheme.
+var urlSchemeRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 // fileURL is the file: URL for an absolute path, as Node's pathToFileURL gives it.
 func fileURL(p string) string {
