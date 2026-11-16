@@ -87,9 +87,9 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malfor
 		// than localhost is rejected before this; see fileURLHost.)
 		rest = rest[len("file:"):]
 		if strings.HasPrefix(rest, "//") {
-			// The host ends at the path, query or fragment.
+			// The host ends at the path, query or fragment ("\\" is "/" here).
 			rest = rest[2:]
-			if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+			if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
 				rest = rest[i:]
 			} else {
 				rest = ""
@@ -103,6 +103,9 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malfor
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest, suffix = rest[:i], normalizeSuffix(rest[i:])
 	}
+	// In a file: URL's path a backslash is a separator, as the URL parser
+	// reads it.
+	rest = strings.ReplaceAll(rest, "\\", "/")
 	encodedSep = hasEncodedSeparator(rest)
 	// Only the specifier is URL-encoded; dir is already a file path.
 	decoded := rest
@@ -134,7 +137,7 @@ func fileURLHost(spec string) string {
 		return ""
 	}
 	rest := spec[len("file://"):]
-	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+	if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
 		rest = rest[:i]
 	}
 	// The URL parser decodes a host's escapes (file://%6cocalhost is localhost).
@@ -245,7 +248,7 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 	if !strings.HasPrefix(u, "file:") {
 		return u, nil
 	}
-	if err := checkFileURLHost(u); err != nil {
+	if err := checkFileURLHost(u, u); err != nil {
 		return "", err
 	}
 	path, encoded, suffix, _, malformed := urlPath(u, "/")
@@ -266,15 +269,16 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 
 // checkFileURLHost is Node's error for a file: URL whose host is neither empty
 // nor localhost.
-func checkFileURLHost(u string) error {
+// input is the specifier as given, which an ERR_INVALID_URL reports.
+func checkFileURLHost(u, input string) error {
 	if strings.HasPrefix(u, "file://") {
 		// A host whose escapes are malformed or not UTF-8 isn't a URL at all.
 		raw := u[len("file://"):]
-		if i := strings.IndexAny(raw, "/?#"); i >= 0 {
+		if i := strings.IndexAny(raw, "/\\?#"); i >= 0 {
 			raw = raw[:i]
 		}
 		if d, err := url.PathUnescape(raw); err != nil || !utf8.ValidString(d) {
-			return &moduleError{msg: "Invalid URL", code: "ERR_INVALID_URL", typeError: true, input: u}
+			return &moduleError{msg: "Invalid URL", code: "ERR_INVALID_URL", typeError: true, input: input}
 		}
 	}
 	if host := fileURLHost(u); host != "" && host != "localhost" {
@@ -396,7 +400,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 	switch {
 	case isURLSpecifier(spec):
-		if err := checkFileURLHost(spec); err != nil {
+		if err := checkFileURLHost(spec, rawSpec); err != nil {
 			return "", err
 		}
 		var encodedSep, malformed bool

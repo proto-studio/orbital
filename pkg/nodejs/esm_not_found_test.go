@@ -643,3 +643,20 @@ try { await import('file://%ZZ/tmp/x.mjs'); } catch (e) { log.push(e.name, e.cod
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Backslashes in a file: URL are separators, an invalid URL's input is the
+// specifier as given, and the stack's code header uses the error's current name.
+// Expected from Node 20.18.1.
+func TestDynamicImport_BackslashesInputAndRenamedStack(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"x.mjs": `export default 'x';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.code, e.message.split(' imported')[0], e.input]; } };
+log.push(await r('file://localhost' + d.replace(/\//g, '\\') + '\\x.mjs'), await r('file:' + d.replace(/\//g, '\\') + '\\x.mjs'), await r('file://%Z\nZ/tmp/x'));
+let err; try { await import('./nope.mjs'); } catch (e) { err = e; }
+err.name = 'X'; log.push(err.stack.split('\n')[0].slice(0, 35));`,
+	})
+	if want := `["x","x",["ERR_INVALID_URL","Invalid URL","file://%Z\nZ/tmp/x"],"X [ERR_MODULE_NOT_FOUND]: Cannot fi"]`; got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
