@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	neturl "net/url"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -111,9 +110,6 @@ func (e *ESM) displayURL(key string) string {
 	}
 	return fileURL(key)
 }
-
-// urlSchemeRe matches a string that starts with a URL scheme.
-var urlSchemeRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 // typeKeySep separates a module url from the import type in its cache key.
 const typeKeySep = '\x01'
