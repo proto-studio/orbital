@@ -24,7 +24,8 @@ func TestImportPreload_HandledFailureStopsStartup(t *testing.T) {
 	}
 }
 
-// The same goes for an --import that throws or rejects while it runs.
+// The same goes for an --import that throws or rejects while it runs, or doesn't
+// parse.
 func TestImportPreload_HandledEvaluationFailureStopsStartup(t *testing.T) {
 	dir := t.TempDir()
 	pre := filepath.Join(dir, "pre.cjs")
@@ -34,18 +35,17 @@ func TestImportPreload_HandledEvaluationFailureStopsStartup(t *testing.T) {
 		entry:                         `console.log('entry ran');`,
 		filepath.Join(dir, "bad.mjs"): `throw new Error('boom');`,
 		filepath.Join(dir, "rej.mjs"): `await Promise.reject(new Error('rej'));`,
+		filepath.Join(dir, "syn.mjs"): `export default (`,
 	}
 	for p, src := range files {
 		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, m := range []string{"bad", "rej"} {
+	wants := map[string]string{"bad": "boom", "rej": "rej", "syn": "Unexpected end of input"}
+	for m, msg := range wants {
 		out, code := runOrbital(t, "", "-r", pre, "--import", filepath.Join(dir, m+".mjs"), entry)
-		want := "caught boom\nexit 0\n"
-		if m == "rej" {
-			want = "caught rej\nexit 0\n"
-		}
+		want := "caught " + msg + "\nexit 0\n"
 		if code != 0 || out != want {
 			t.Fatalf("%s: exit %d, output %q", m, code, out)
 		}

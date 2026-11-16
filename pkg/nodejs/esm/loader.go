@@ -267,6 +267,16 @@ func (e *ESM) hookURLKey(u string) (string, error) {
 // checkFileURLHost is Node's error for a file: URL whose host is neither empty
 // nor localhost.
 func checkFileURLHost(u string) error {
+	if strings.HasPrefix(u, "file://") {
+		// A host whose escapes are malformed or not UTF-8 isn't a URL at all.
+		raw := u[len("file://"):]
+		if i := strings.IndexAny(raw, "/?#"); i >= 0 {
+			raw = raw[:i]
+		}
+		if d, err := url.PathUnescape(raw); err != nil || !utf8.ValidString(d) {
+			return &moduleError{msg: "Invalid URL", code: "ERR_INVALID_URL", typeError: true, input: u}
+		}
+	}
 	if host := fileURLHost(u); host != "" && host != "localhost" {
 		return &moduleError{
 			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
@@ -428,6 +438,8 @@ type moduleError struct {
 	typeError bool
 	// uriError makes it a URIError, Node's error for a malformed escape.
 	uriError bool
+	// input is the string ERR_INVALID_URL couldn't parse, its "input" property.
+	input string
 	// url is the file: URL of the missing module, empty when Node reports none
 	// (a missing package).
 	url string
