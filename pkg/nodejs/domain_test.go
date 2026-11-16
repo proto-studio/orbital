@@ -280,6 +280,19 @@ setTimeout(() => Promise.reject(error), 10);
 d.run(() => Promise.resolve().then(() => ({ then(resolve, reject) { reject(new Error('thenable')); } })));
 let p; d.run(() => { p = Promise.resolve().then(() => p); });
 `, []string{"caught by catch", "domain caught Chaining cycle detected for promise #<Promise>", "domain caught thenable", "unhandledRejection shared"}},
+		"innermost domain": {`
+const domain = require('domain');
+const a = domain.create(), b = domain.create();
+a.on('error', (e) => note('a caught', e.message));
+b.on('error', (e) => note('b caught', e.message));
+a.run(() => Promise.resolve().then(() => b.run(() => { throw new Error('nested'); })));
+setTimeout(() => {
+  const c = domain.create(), e2 = domain.create();
+  e2.on('error', (e) => note('inner only caught', e.message));
+  process.once('uncaughtException', (e) => note('uncaught', e.message));
+  c.run(() => Promise.resolve().then(() => e2.run(() => { throw new Error('inner only'); })));
+}, 10);
+`, []string{"b caught nested", "inner only caught inner only"}},
 		"outside any domain": {`
 require('domain').create();
 process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));

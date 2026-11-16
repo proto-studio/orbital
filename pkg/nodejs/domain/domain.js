@@ -96,16 +96,23 @@
   // rejection tracker asks for its domain then.
   const promiseDomains = new WeakMap();
 
+  // Each entry is { domain }: the reaction's domain, or the innermost domain active when
+  // the reaction threw (a domain it entered and left entered by throwing, as run() does).
   exports._rejectionDomainFor = function(promise) {
-    return (promise !== null && typeof promise === 'object' && promiseDomains.get(promise)) || null;
+    const owner = promise !== null && typeof promise === 'object' ? promiseDomains.get(promise) : undefined;
+    return owner ? owner.domain : null;
   };
 
-  function bindReaction(domain, fn) {
+  function bindReaction(owner, fn) {
     if (typeof fn !== 'function') return fn;
+    const domain = owner.domain;
     return function domainReaction(value) {
       domain.enter();
       try {
         return apply(fn, this, [value]);
+      } catch (err) {
+        if (exports.active) owner.domain = exports.active;
+        throw err;
       } finally {
         // The domain ends with the reaction, so later jobs run outside it.
         domain.exit();
@@ -118,12 +125,13 @@
       value: {
         then(onFulfilled, onRejected) {
           const domain = exports.active;
-          if (domain) {
-            onFulfilled = bindReaction(domain, onFulfilled);
-            onRejected = bindReaction(domain, onRejected);
+          const owner = domain ? { domain } : null;
+          if (owner) {
+            onFulfilled = bindReaction(owner, onFulfilled);
+            onRejected = bindReaction(owner, onRejected);
           }
           const result = apply(promiseThen, this, [onFulfilled, onRejected]);
-          if (domain && result !== null && typeof result === 'object') promiseDomains.set(result, domain);
+          if (owner && result !== null && typeof result === 'object') promiseDomains.set(result, owner);
           return result;
         },
       }.then,
