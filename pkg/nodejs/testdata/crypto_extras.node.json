@@ -466,6 +466,17 @@
       "value": "boolean false"
     }
   ],
+  "spkac_dsaSha256": [
+    {
+      "value": "Buffer hello"
+    },
+    {
+      "value": "Buffer -----BEGIN PUBLIC KEY-----\nMIIDQjCCAjUGByqGSM44BAEwggIoAoIBAQCyK7MSdN/j0N3iH07rP6LTZLk+/1wM\nk6UtOx3a0ry3E3c5YbJOwKLrOwY3ys2060N9eloLfVKcNPczVhCNR2dFNLex23VX\nH1+dhGwOzPmF8DnZzwd9rQMEybDHjK0PfMfwIcx+ekJUsEqXsXs6zh41xQpLrUso\nBG/8DbDM5KYZc3OncuY0t1YNsFI0s+dXClIOwIXxiOXmRNyflSIplk+/ffzezn0v\no6IbLdh3D+pmjip85bL0OLlJjj61gpgyo5jyDjxQB6LjuEBstc88CRy3SAbOXKyV\nC1PSKwMCTp4Y8NkHS0AmUdJLsErwBCERhZxVmJOSmftlSXR0O5Z0eb9xAh0A2FYj\ncF7nnvNV4/4vp/UAh7t9rS42Qkj0+SusyQKCAQBDC/7gP1YTJ1753tqbR99yvkge\nz3H/pg6QDND8JMCjoRptPMdC3LnqTudlkLOwEsIfkR2gBzn9sTp7IStg0upbijHQ\n0LcU/CHcVHd+J2DhY9NV5Okisth3FlLthwIFTKBqiJY0wPqgtA3Vibr+zt+ylB9W\nW6TGm1pMo6Uen64rS7ox9j3FS/yR5YjhV1O8lIBtqzlh33vxovn3FZkj+wrAlNiL\nokz+YjAhUaxtUhzG7yUgRSChuw9AXu1jY6mTG1YjPGqhDQgXz0jFfq9FW6HJDZ7D\nfP3AU6DypqHVUXfLUVyXkIQFn9RGcpOYoZBjisRvSQI19wA1h3ofI0BzubUsA4IB\nBQACggEAFfcPRG2oaax09gkAmNazMlEg5GkszCNW3av9sm+pBy6cxEVXfpwuOQof\nm4a/3eFUbU4yOUSMkUaq0kXbngzCgn0PPysi8srEs5yHtGjRzdVw8pMpa9Lgz/qM\naJujpP6sE3A3NfcLrf0/Er7C1QaYT5J1Cy3bPwhk28zOBcU3Q9G7lR909xn3u7Gy\nbbRT8iwGsDvL/Gh9+bmBf8TTIvbSIe1bfKXl09TNL51mJaol8SGU2687Hoc3x/iJ\nMFbhhBho3udP3Giv5XzrchUJdFZZafdWCUcMqh+MepBWEpM3NzfackI31TGC72/c\nJIvaDzKZ3KMHIJERR7bsmufI8mg+UA==\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "value": "boolean true"
+    }
+  ],
   "spkac_ecSha256": [
     {
       "value": "Buffer ec challenge"
