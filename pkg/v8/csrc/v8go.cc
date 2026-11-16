@@ -1808,8 +1808,13 @@ static MaybeLocal<Module> compileInstantiateEvaluate(
         }
     }
 
+    // Evaluate() also answers for a module that has already been evaluated, or whose
+    // evaluation is still waiting on a top-level await: it gives the promise of that
+    // evaluation, so import() of a module still evaluating waits for it, and of one
+    // that threw rejects, as in Node. Only a module evaluating synchronously right now
+    // has no such promise; it is treated as done, as before.
     MaybeLocal<Value> maybe_eval;
-    if (module->GetStatus() < Module::kEvaluated) {
+    if (module->GetStatus() != Module::kEvaluating) {
         maybe_eval = module->Evaluate(context);
     } else {
         maybe_eval = Undefined(isolate).As<Value>();
