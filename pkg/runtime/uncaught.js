@@ -225,28 +225,23 @@
   }
 
   // FinalizationRegistry cleanup callbacks run from the event loop's poll phase
-  // (Runtime.runPlatformTasks). V8's cleanup task only records each callback
-  // and its held value here; runCleanups then calls them all, then runs the
-  // ticks they queued, then their promise jobs, as Node does for a batch. An
-  // exception reaches 'uncaughtException' as from any other callback.
-  const pendingCleanups = [];
-  Object.setPrototypeOf(pendingCleanups, null);
+  // (Runtime.runPlatformTasks), one V8 task at a time, and each task cleans up
+  // one registry. beginPlatformTask and endPlatformTask bracket a task as a
+  // callback: its cleanup callbacks all run, then the ticks they queued, then
+  // their promise jobs, as Node does after each task. An exception stops the
+  // task, as V8 does natively, and reaches 'uncaughtException' before those
+  // queues run; V8 cleans up the rest of that registry in a later task.
+  let cleanupError = null;
 
-  function runCleanups() {
-    if (pendingCleanups.length === 0) return;
+  function beginPlatformTask() {
     depth++;
-    try {
-      for (let i = 0; i < pendingCleanups.length && !dead; i += 2) {
-        try {
-          apply(pendingCleanups[i], undefined, [pendingCleanups[i + 1]]);
-        } catch (err) {
-          trigger(err, false);
-        }
-      }
-    } finally {
-      pendingCleanups.length = 0;
-      depth--;
-    }
+  }
+
+  function endPlatformTask() {
+    depth--;
+    const failed = cleanupError;
+    cleanupError = null;
+    if (failed && !dead) trigger(failed.err, false);
     if (depth === 0 && !dead) processTicks();
   }
   const NativeFinalizationRegistry = globalThis.FinalizationRegistry;
@@ -256,8 +251,13 @@
       if (new.target === undefined) return NativeFinalizationRegistry(cleanup);
       const wrapped = typeof cleanup === 'function'
         ? function (held) {
-          pendingCleanups[pendingCleanups.length] = cleanup;
-          pendingCleanups[pendingCleanups.length] = held;
+          try {
+            apply(cleanup, undefined, [held]);
+          } catch (err) {
+            // Rethrown so V8 stops this task; endPlatformTask reports it.
+            if (!cleanupError) cleanupError = { err };
+            throw err;
+          }
         }
         : cleanup;
       return construct(NativeFinalizationRegistry, [wrapped],
@@ -538,6 +538,6 @@
   return {
     callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled,
     watchModule, runMain, runScheduledTicks, queueMicrotask, beforeExit,
-    runCleanups,
+    beginPlatformTask, endPlatformTask,
   };
 })

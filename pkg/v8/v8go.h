@@ -81,7 +81,7 @@ void v8go_isolate_memory_pressure_notification(void* isolate, int level);
 long long v8go_isolate_adjust_amount_of_external_allocated_memory(void* isolate,
                                                                   long long change_in_bytes);
 void v8go_isolate_request_garbage_collection_for_testing(void* isolate, int type);
-void v8go_isolate_pump_message_loop(void* isolate);
+int v8go_isolate_pump_message_loop(void* isolate);
 
 // Context operations
 void* v8go_context_new(void* isolate);
