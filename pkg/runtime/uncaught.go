@@ -341,7 +341,11 @@ func (rt *Runtime) MakeCallback(fn, recv *v8.Value, args ...*v8.Value) *v8.Value
 // throwSite returns, as a JavaScript object, where V8's message places the exception the
 // last RunScript caught, or undefined.
 func (rt *Runtime) throwSite() *v8.Value {
-	msg := rt.context.TakeLastExceptionMessage()
+	msg := rt.pendingMessage
+	rt.pendingMessage = nil
+	if msg == nil {
+		msg = rt.context.TakeLastExceptionMessage()
+	}
 	if msg == nil {
 		return rt.context.Undefined()
 	}
@@ -497,6 +501,12 @@ func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
 		var err error
 		if result, err = rt.RunScript(source, origin); err != nil {
 			result = nil
+			// A main script that didn't compile ran none of its code: its text isn't kept,
+			// so the same origin run again with corrected text keeps its own.
+			rt.pendingMessage = rt.context.TakeLastExceptionMessage()
+			if rt.pendingMessage != nil && rt.pendingMessage.Compile {
+				rt.forgetScript(source, origin)
+			}
 			scriptErr = rt.reportScriptError(err)
 		}
 	}

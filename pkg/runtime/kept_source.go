@@ -330,3 +330,8 @@ func (rt *Runtime) SetFirstLineOffset(name string, offset int) {
 		kept.offset = offset
 	}
 }
+
+// forgetScript removes what registerSource kept for a script that then failed to compile.
+func (rt *Runtime) forgetScript(source, origin string) {
+	rt.forgetModule(source, origin, sourceURL(source))
+}

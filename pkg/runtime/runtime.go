@@ -47,6 +47,7 @@ type Runtime struct {
 	fatalSource       string                 // same goroutine: the header for the next fatal exception
 	keptSources       map[string]*keptSource // same goroutine: see keepSource
 	keptScripts       []*keptScript          // same goroutine: kept scripts, oldest first
+	pendingMessage    *v8.ExceptionMessage   // same goroutine: see runMainScript and throwSite
 	keptBytes         int                    // same goroutine: bytes of text and names kept
 	keptEvicted       []string               // same goroutine: scripts whose text was dropped, oldest first
 	fatalSourceInline bool                   // and whether the thrown value was not an error

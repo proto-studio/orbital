@@ -1747,3 +1747,30 @@ func TestUncaughtSourceForOverlongLine(t *testing.T) {
 		t.Errorf("Source has %d bytes, want none", len(uncaught.Source))
 	}
 }
+
+// A main script that failed to compile leaves nothing behind for its origin: run again
+// with corrected text, it keeps its own.
+func TestUncaughtSourceAfterMainScriptSyntaxError(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("process.once('uncaughtException', () => {});\n", "[setup]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw ; };\n", "[app]"); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n", "[app]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[app]:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
