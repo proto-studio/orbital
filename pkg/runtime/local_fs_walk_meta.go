@@ -5,7 +5,6 @@ package runtime
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -25,13 +24,44 @@ func (l *LocalFilesystem) walkFinal(p, opName string, op func(w *walk) error) er
 	return w.fail(opName, op(w))
 }
 
+// rootedTruncate truncates a regular file, as truncate(2) does: a directory is EISDIR, and a
+// pipe or device EINVAL, found before the open, which doesn't wait for a reader either way.
 func (l *LocalFilesystem) rootedTruncate(p string, size int64) error {
-	f, err := l.rootedOpenFile(p, os.O_WRONLY, 0)
-	if err != nil {
-		return err
+	for range maxLinkHops {
+		w, err := l.walkTo(p, walkOptions{followFinal: true})
+		if err != nil {
+			return err
+		}
+		var st unix.Stat_t
+		if err := unix.Fstatat(w.dir(), w.name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			w.close()
+			return w.fail("open", err)
+		}
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFLNK:
+			w.close()
+			continue // a link appeared after the walk read the name; walk again
+		case unix.S_IFDIR:
+			w.close()
+			return w.fail("open", unix.EISDIR)
+		case unix.S_IFREG:
+		default:
+			w.close()
+			return w.fail("open", unix.EINVAL)
+		}
+		fd, err := unix.Openat(w.dir(), w.name, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		w.close()
+		if err != nil {
+			return &fs.PathError{Op: "open", Path: p, Err: err}
+		}
+		err = unix.Ftruncate(fd, size)
+		unix.Close(fd)
+		if err != nil {
+			return &fs.PathError{Op: "truncate", Path: p, Err: err}
+		}
+		return nil
 	}
-	defer f.Close()
-	return f.Truncate(size)
+	return &fs.PathError{Op: "open", Path: p, Err: unix.ELOOP}
 }
 
 func (l *LocalFilesystem) rootedChmod(p string, mode fs.FileMode) error {
