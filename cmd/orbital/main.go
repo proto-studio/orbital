@@ -787,11 +787,11 @@ func runESModuleSource(source, origin string) error {
 }
 
 // emitExit emits the process 'exit' event once, as Node does at the end of a
-// program, and returns process.exitCode (-1 if unset) and whether a listener
-// threw. A listener that throws stops the emit and goes to 'uncaughtException'
+// program, and returns process.exitCode, whether the program set it, and
+// whether a listener threw. A listener that throws stops the emit and goes to 'uncaughtException'
 // like any callback; if nothing handles it, or a listener calls process.exit,
 // the program ends here with Node's report and code.
-func emitExit(rt *runtime.Runtime) (code int, threw bool) {
+func emitExit(rt *runtime.Runtime) (code int, set, threw bool) {
 	emit, err := rt.RunScript(`(function () {
 		if (typeof process === 'undefined' || typeof process.emit !== 'function' || process._exiting) return true;
 		process._exiting = true;
@@ -807,11 +807,11 @@ func emitExit(rt *runtime.Runtime) (code int, threw bool) {
 	if ended := rt.Ended(); ended != nil {
 		exitWithError(ended)
 	}
-	code = -1
-	if v, err := rt.RunScript(`(typeof process === 'undefined' || process.exitCode === undefined) ? -1 : Number(process.exitCode)`, "[exit]"); err == nil && v != nil {
-		code = int(v.Integer())
+	// undefined when unset; any number (negative ones included) when set.
+	if v, err := rt.RunScript(`(typeof process === 'undefined' || process.exitCode === undefined) ? undefined : Number(process.exitCode)`, "[exit]"); err == nil && v != nil && !v.IsUndefined() {
+		code, set = int(v.Integer()), true
 	}
-	return code, threw
+	return code, set, threw
 }
 
 // finalizeExit emits the process 'exit' event (so handlers such as the
@@ -819,7 +819,7 @@ func emitExit(rt *runtime.Runtime) (code int, threw bool) {
 // exits the process with that code. This mirrors Node's behavior where a
 // program's exit status reflects process.exitCode.
 func finalizeExit(rt *runtime.Runtime) {
-	if code, _ := emitExit(rt); code > 0 {
+	if code, set, _ := emitExit(rt); set && code != 0 {
 		rt.Dispose()
 		os.Exit(code)
 	}
@@ -829,8 +829,8 @@ func finalizeExit(rt *runtime.Runtime) {
 // never settles: the 'exit' listeners run, then the exit code is 13 unless the
 // program set another (or a listener threw and a handler took it: 0).
 func exitUnsettled(rt *runtime.Runtime) {
-	code, threw := emitExit(rt)
-	if code < 0 {
+	code, set, threw := emitExit(rt)
+	if !set {
 		code = 13
 		if threw {
 			code = 0

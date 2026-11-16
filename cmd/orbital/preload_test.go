@@ -84,6 +84,7 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		"throws.cjs":  "process.on('exit', (c) => { console.log('exit', c); throw new Error('boom'); }); process.on('exit', () => console.log('second'));",
 		"handled.cjs": "process.on('uncaughtException', (e) => console.log('caught', e.message)); process.on('exit', () => { throw new Error('boom'); });",
 		"ok.mjs":      "console.log('ok');",
+		"neg.cjs":     "process.on('exit', () => { process.exitCode = -1; });",
 		"waits.mjs":   `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
 		"entry.mjs":   `console.log('entry');`,
 	}
@@ -114,6 +115,9 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		{[]string{"-r", p("handled.cjs"), p("tla.mjs")}, "caught boom\n", 0},
 		{[]string{"-r", p("throws.cjs"), p("ok.mjs")}, "ok\nexit 0\nError: boom\n", 1},
 		{[]string{"-r", p("handled.cjs"), p("ok.mjs")}, "ok\ncaught boom\n", 0},
+		// A negative exitCode is still one the program set: -1 exits 255.
+		{[]string{"-r", p("neg.cjs"), p("ok.mjs")}, "ok\n", 255},
+		{[]string{"-r", p("neg.cjs"), p("tla.mjs")}, "", 255},
 	}
 	for _, tc := range cases {
 		out, code := runOrbital(t, "", tc.args...)
