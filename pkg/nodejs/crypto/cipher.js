@@ -179,6 +179,48 @@
     }
   }
 
+  // Without the string_decoder module (crypto registered on its own), output
+  // keeps an incomplete UTF-8 or UTF-16 character for the next call itself.
+  class TailDecoder {
+    constructor(encoding) {
+      this.encoding = encoding;
+      this.rest = Buffer.alloc(0);
+    }
+
+    write(buf) {
+      const all = Buffer.concat([this.rest, buf]);
+      const n = all.length - this.incomplete(all);
+      this.rest = all.subarray(n);
+      return all.subarray(0, n).toString(this.encoding);
+    }
+
+    end() {
+      const out = this.rest.toString(this.encoding);
+      this.rest = Buffer.alloc(0);
+      return out;
+    }
+
+    // How many bytes at the end start a character that isn't complete.
+    incomplete(b) {
+      if (this.encoding === 'utf8') {
+        for (let i = 1; i <= Math.min(3, b.length); i++) {
+          const c = b[b.length - i];
+          if ((c & 0xc0) === 0x80) continue; // continuation byte
+          const need = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+          return need > i ? i : 0;
+        }
+        return 0;
+      }
+      if (this.encoding === 'utf16le') {
+        let k = b.length % 2;
+        const hi = b.length - k - 1;
+        if (hi > 0 && b[hi] >= 0xd8 && b[hi] <= 0xdb) k += 2; // lone high surrogate
+        return k;
+      }
+      return 0;
+    }
+  }
+
   function canonicalEncoding(encoding) {
     const e = String(encoding).toLowerCase();
     if (e === 'utf-8') return 'utf8';
@@ -197,8 +239,8 @@
         if (canonical === 'base64' || canonical === 'base64url') {
           self[kDecoder] = new Base64Decoder(canonical);
         } else {
-          const { StringDecoder } = globalThis.__string_decoder_module;
-          self[kDecoder] = new StringDecoder(outputEncoding);
+          const sd = globalThis.__string_decoder_module;
+          self[kDecoder] = sd ? new sd.StringDecoder(outputEncoding) : new TailDecoder(canonical);
         }
       }
       return self[kDecoder].write(buf);

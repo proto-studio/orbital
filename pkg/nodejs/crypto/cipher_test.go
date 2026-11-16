@@ -129,3 +129,36 @@ func TestCipher_ChaChaPolyMatchesAEAD(t *testing.T) {
 		}
 	}
 }
+
+// With crypto registered on its own (no string_decoder module), encoded
+// output still works, and a character split across updates comes out whole.
+func TestCipher_EncodedOutputWithoutStringDecoder(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+	result, err := rt.RunScript(`(() => {
+		const c = __crypto_module;
+		const key = Buffer.alloc(16, 1), iv = Buffer.alloc(16, 2);
+		const e = c.createCipheriv('aes-128-ctr', key, iv);
+		const hex = e.update('hello', 'utf8', 'hex') + e.final('hex');
+		const ct = Buffer.from(hex, 'hex');
+		const text = Buffer.from('hé€😀', 'utf8');
+		const ct2 = c.createCipheriv('aes-128-ctr', key, iv).update(text);
+		const d = c.createDecipheriv('aes-128-ctr', key, iv);
+		let utf8 = '';
+		for (let i = 0; i < ct2.length; i++) utf8 += d.update(ct2.subarray(i, i + 1), undefined, 'utf8');
+		utf8 += d.final('utf8');
+		const u16 = Buffer.from('a😀b', 'utf16le');
+		const ct3 = c.createCipheriv('aes-128-ctr', key, iv).update(u16);
+		const d16 = c.createDecipheriv('aes-128-ctr', key, iv);
+		let s16 = '';
+		for (let i = 0; i < ct3.length; i++) s16 += d16.update(ct3.subarray(i, i + 1), undefined, 'utf16le');
+		s16 += d16.final('utf16le');
+		return JSON.stringify([ct.length, utf8 === text.toString(), s16 === 'a😀b']);
+	})()`, "test.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.String(); got != "[5,true,true]" {
+		t.Errorf("got %s", got)
+	}
+}
