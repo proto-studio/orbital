@@ -441,6 +441,8 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 	case "json":
 		return "export default " + source + ";\n", nil
 	default: // "module"
+		// This text, not the file's, is what V8 compiles under url.
+		e.rt.KeepModuleSource(url, source)
 		return source, nil
 	}
 }

@@ -125,6 +125,11 @@ func (e *ESM) installRegisterBridge() error {
 // RunModule compiles and runs an ES module from source, and runs the event loop until it
 // has no work left. It doesn't emit 'beforeExit': that belongs to a program's entry point.
 func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
+	// Its text, for the line printed above a fatal exception: the module may exist only
+	// in memory. (Modules the loader resolves keep theirs as it finalizes them.)
+	if e.rt != nil {
+		e.rt.KeepModuleSource(filename, source)
+	}
 	return e.runModule(source, filename, false)
 }
 
@@ -145,6 +150,7 @@ func (e *ESM) runModule(source, filename string, entry bool) (*v8.Value, error) 
 
 	mod, err := ctx.CompileModule(source, filename)
 	if err != nil {
+		e.rt.ForgetModuleSource(filename, source)
 		return nil, err
 	}
 
@@ -267,8 +273,11 @@ func (e *ESM) GetModuleNamespace(source, filename string) (*v8.Value, error) {
 
 	ctx := e.rt.Context()
 
+	// Its text, for the line printed above a fatal exception, as RunModule keeps it.
+	e.rt.KeepModuleSource(filename, source)
 	mod, err := ctx.CompileModule(source, filename)
 	if err != nil {
+		e.rt.ForgetModuleSource(filename, source)
 		return nil, err
 	}
 

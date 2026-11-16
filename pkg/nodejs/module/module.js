@@ -1,6 +1,14 @@
 (function() {
 	'use strict';
 
+	// The natives that compile a module's wrapper and keep its text for fatal exception
+	// headers are the loader's alone: taken here, and gone from the global object before
+	// any script runs.
+	const compileModuleWrapper = globalThis.__compileModuleWrapper;
+	const moduleWrapperCompiled = globalThis.__moduleWrapperCompiled;
+	delete globalThis.__compileModuleWrapper;
+	delete globalThis.__moduleWrapperCompiled;
+
 	// Module cache. Node exposes this as `require.cache` / `Module._cache`: a
 	// plain object keyed by a module's resolved filename. Using a real object
 	// (not a Map) is required for Node compatibility — libraries and test suites
@@ -246,7 +254,8 @@
 				const dirname = resolved.substring(0, resolved.lastIndexOf('/')) || '.';
 
 				// Strip a UTF-8 BOM if present (Node does this for all files).
-				if (source.charCodeAt(0) === 0xFEFF) {
+				const hadBOM = source.charCodeAt(0) === 0xFEFF;
+				if (hadBOM) {
 					source = source.slice(1);
 				}
 
@@ -287,10 +296,27 @@
 				// compiles a wrapper that native compilation could not; source with a
 				// NUL character goes there too, since it cannot cross to the native side.
 				let compiledWrapper = source.indexOf('\0') === -1
-					? __compileModuleWrapper(wrapper, resolved)
+					? compileModuleWrapper(wrapper, resolved, hadBOM)
 					: undefined;
 				if (typeof compiledWrapper !== 'function') {
-					compiledWrapper = (0, eval)(wrapper);
+					// The runtime keeps a module's text for the line printed above a fatal
+					// exception. A NUL can't cross to it, so a character the source doesn't
+					// use stands in, and the line is shown up to there, as Node shows it up
+					// to the NUL.
+					let nulMark = '\uFFFF';
+					for (let c = 0xE000; source.indexOf(nulMark) !== -1 && c <= 0xF8FF; c++) {
+						nulMark = String.fromCharCode(c);
+					}
+					const kept = (hadBOM ? '\uFEFF' : '') + source.replace(/\0/g, nulMark);
+					moduleWrapperCompiled(resolved, kept, false, nulMark);
+					let compiled = false;
+					try {
+						compiledWrapper = (0, eval)(wrapper);
+						compiled = true;
+					} finally {
+						// A wrapper that doesn't compile leaves no code that needs its text.
+						if (!compiled) moduleWrapperCompiled(resolved, kept, true);
+					}
 				}
 
 				compiledWrapper.call(

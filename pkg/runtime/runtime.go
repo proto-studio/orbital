@@ -40,10 +40,15 @@ type Runtime struct {
 	fatal             atomic.Pointer[UncaughtError]
 	exited            atomic.Pointer[ExitError]
 	tracksRejections  bool
-	rejectionsPending bool     // only touched on the goroutine running JavaScript
-	fatalSettled      bool     // same goroutine: UncaughtError has discarded the promise queue
-	mainBody          func()   // same goroutine: what the runMain native function runs next
-	processExitHooks  []func() // same goroutine
+	rejectionsPending bool                   // only touched on the goroutine running JavaScript
+	fatalSettled      bool                   // same goroutine: UncaughtError has discarded the promise queue
+	mainBody          func()                 // same goroutine: what the runMain native function runs next
+	processExitHooks  []func()               // same goroutine
+	fatalSource       string                 // same goroutine: the header for the next fatal exception
+	keptSources       map[string]*keptSource // same goroutine: see keepSource
+	keptScripts       []*keptScript          // same goroutine: kept scripts, oldest first
+	keptBytes         int                    // same goroutine: bytes of text and names kept
+	keptEvicted       []string               // same goroutine: scripts whose text was dropped, oldest first
 }
 
 // Module represents a Node.js module that can be registered with the runtime.

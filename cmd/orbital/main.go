@@ -270,7 +270,7 @@ func main() {
 func exitWithError(err error) {
 	var uncaught *runtime.UncaughtError
 	if errors.As(err, &uncaught) {
-		fmt.Fprintf(os.Stderr, "%s\n", uncaught.Message)
+		fmt.Fprint(os.Stderr, uncaught.Report())
 		os.Exit(uncaught.ExitCode)
 	}
 	// process.exit() has already run the 'exit' listeners.

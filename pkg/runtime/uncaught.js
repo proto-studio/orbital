@@ -51,8 +51,184 @@
     return Number.isNaN(code) ? fallback : code;
   }
 
+  const StringCtor = String;
+
+  // offsetOf is how many characters of a CommonJS module's wrapper come before its source
+  // on the first line of the script named file (see Runtime.SetFirstLineOffset), or 0.
+  function offsetOf(file) {
+    try {
+      const offset = native.keptOffset(file);
+      return typeof offset === 'number' ? offset : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  // readSource is the text the runtime compiled under a frame's name (see
+  // Runtime.keepSource), or null. Nothing is read from files.
+  function readSource(file) {
+    try {
+      const kept = native.keptSource(file);
+      return typeof kept === 'string' ? kept : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // The header is built only with methods captured here, before any script runs, so a
+  // script that replaces String or RegExp methods can't change it.
+  const charCodeAt = String.prototype.charCodeAt;
+  const strSlice = String.prototype.slice;
+  const strIndexOf = String.prototype.indexOf;
+  const regexpExec = RegExp.prototype.exec;
+  const NumberCtor = Number;
+  const len = (str) => str.length;
+  const code = (str, i) => apply(charCodeAt, str, [i]);
+  const cut = (str, from, to) => apply(strSlice, str, to === undefined ? [from] : [from, to]);
+
+  // lineOf is the 1-based line n of text, counting every JavaScript line terminator as V8
+  // does, or undefined.
+  function lineOf(text, n) {
+    let line = 1;
+    let start = 0;
+    const end = len(text);
+    for (let i = 0; i < end; i++) {
+      const c = code(text, i);
+      if (c !== 10 && c !== 13 && c !== 0x2028 && c !== 0x2029) continue;
+      if (line === n) return cut(text, start, i);
+      if (c === 13 && i + 1 < end && code(text, i + 1) === 10) i++;
+      line++;
+      start = i + 1;
+    }
+    return line === n ? cut(text, start) : undefined;
+  }
+
+  // untilNul is line up to a NUL, as Node prints it as a C string. A module's NULs are
+  // kept as another character, nulMark, chosen not to appear in its source.
+  function untilNul(line, nulMark) {
+    const mark = typeof nulMark === 'string' && len(nulMark) === 1 ? code(nulMark, 0) : -1;
+    for (let i = 0; i < len(line); i++) {
+      const c = code(line, i);
+      if (c === 0 || c === mark) return cut(line, 0, i);
+    }
+    return line;
+  }
+
+  function nulMarkOf(file) {
+    try {
+      return native.keptNul(file);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  const isIdentChar = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ||
+    c === 36 || c === 95 || (c > 127 && c !== 0xFEFF && c !== 0xA0 && c !== 0x2028 && c !== 0x2029);
+
+  // throwBefore is where a throw keyword starts if only spaces separate it from column, or
+  // -1. A linear scan.
+  function throwBefore(line, column) {
+    let i = column - 1;
+    while (i >= 0) {
+      const c = code(line, i);
+      if (c === 32 || c === 9 || c === 11 || c === 12 || c === 0xA0) i--;
+      else break;
+    }
+    if (i === column - 1 || i < 4) return -1;
+    if (cut(line, i - 4, i + 1) !== 'throw') return -1;
+    if (i - 5 >= 0 && isIdentChar(code(line, i - 5))) return -1;
+    return i - 4;
+  }
+
+  // places lists the "file:line:column" candidates of one stack frame: a frame is
+  // "name (place)" or just "place", and either part can hold " (", as in
+  // "/tmp/app (copy)/main.js", so each split is a candidate, the first split first.
+  function places(at) {
+    const out = [];
+    if (len(at) > 0 && code(at, len(at) - 1) === 41) {
+      for (let i = apply(strIndexOf, at, [' (']); i !== -1; i = apply(strIndexOf, at, [' (', i + 1])) {
+        out[out.length] = cut(at, i + 2, len(at) - 1);
+      }
+    }
+    out[out.length] = at;
+    return out;
+  }
+
+  // errorSource is the header Node prints above a fatal exception: the file and line, the
+  // line itself, and a caret under where it was thrown. Node takes the place from V8's
+  // message for the throw; here it comes from the error's first stack frame in a script,
+  // which is where the error was made. For an exception thrown where it was made, as by
+  // the usual `throw new Error(...)`, the caret moves back to the throw, where Node puts
+  // it. A rejection has no throw to point at, and Node marks where the error was made.
+  function errorSource(err, thrown) {
+    if (typeof err !== 'object' || err === null) return '';
+    let stack;
+    try {
+      stack = err.stack;
+    } catch (_) {
+      return '';
+    }
+    if (typeof stack !== 'string') return '';
+    // Frames of built-in functions, such as "at decodeURIComponent (<anonymous>)", come
+    // before the script's own and have no place.
+    let file = null;
+    let line = 0;
+    let column = 0;
+    let text = null;
+    let placed = false;
+    let start = apply(strIndexOf, stack, ['\n']);
+    while (start !== -1 && !placed) {
+      const next = apply(strIndexOf, stack, ['\n', start + 1]);
+      let frame = cut(stack, start + 1, next === -1 ? undefined : next);
+      start = next;
+      let k = 0;
+      while (k < len(frame) && (code(frame, k) === 32 || code(frame, k) === 9)) k++;
+      if (cut(frame, k, k + 3) !== 'at ') continue;
+      frame = cut(frame, k + 3);
+      const candidates = places(frame);
+      for (let i = 0; i < candidates.length && text === null; i++) {
+        const place = apply(regexpExec, /^(.+):(\d+):(\d+)$/, [candidates[i]]);
+        if (!place) continue;
+        placed = true;
+        text = readSource(place[1]);
+        file = place[1];
+        line = NumberCtor(place[2]);
+        column = NumberCtor(place[3]) - 1;
+      }
+    }
+    if (text === null) return '';
+    let sourceLine = lineOf(text, line);
+    if (sourceLine === undefined) return '';
+    sourceLine = untilNul(sourceLine, nulMarkOf(file));
+    const offset = line === 1 ? offsetOf(file) : 0;
+    if (offset > 0) {
+      column -= offset;
+      // The CommonJS loader compiles a module without its BOM, which the file still has
+      // and which Node counts on the line.
+      if (code(text, 0) === 0xFEFF) column++;
+      if (column < 0) return '';
+    }
+    if (thrown) {
+      const at = throwBefore(sourceLine, column);
+      if (at !== -1) column = at;
+    }
+    let caret = '';
+    for (let i = 0; i < column && i < len(sourceLine); i++) {
+      caret += code(sourceLine, i) === 9 ? '\t' : ' ';
+    }
+    return file + ':' + line + '\n' + sourceLine + '\n' + caret + '^\n';
+  }
+
   function die(err, code, origin, handlerThrew) {
     dead = true;
+    // The header is only a help: nothing here may stop the report.
+    let source = '';
+    try {
+      source = StringCtor(errorSource(err, origin === 'uncaughtException' || !!handlerThrew));
+    } catch (_) {
+      source = '';
+    }
+    native.fatalSource(source);
     native.fatal(format(err), code, origin, !!handlerThrew, err);
   }
 

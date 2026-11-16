@@ -76,6 +76,17 @@ func (m *Module) Register(rt *runtime.Runtime) error {
 	if err := rt.SetGlobal("__compileModuleWrapper", compileVal); err != nil {
 		return err
 	}
+	compiledFn, err := iso.NewFunctionTemplate(m.wrapperCompiledFunc)
+	if err != nil {
+		return err
+	}
+	compiledVal, err := compiledFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rt.SetGlobal("__moduleWrapperCompiled", compiledVal); err != nil {
+		return err
+	}
 
 	// Run the embedded module system JavaScript
 	_, err = rt.RunScript(moduleJS, "module.js")
@@ -116,15 +127,55 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 2 {
 		return ctx.Undefined()
 	}
-	fn, err := ctx.RunScript(args[0].String(), args[1].String())
+	wrapper, name := args[0].String(), args[1].String()
+	fn, err := ctx.RunScript(wrapper, name)
 	if err != nil || fn == nil || !fn.IsFunction() {
 		// RunScript keeps what a failed script threw for reporting an uncaught error
 		// from the main script. This failure is not one: the caller throws it again.
 		ctx.TakeLastScriptException()
 		return ctx.Undefined()
 	}
+	// The wrapper's opening shares the module's first line, so columns there count it too.
+	if strings.HasPrefix(wrapper, moduleWrapperPrefix) {
+		// The module's text as compiled, with the BOM the loader took off, for the line
+		// printed above a fatal exception from it.
+		text := wrapper[len(moduleWrapperPrefix):]
+		// module.js closes the wrapper after the source: "\n})\n//# sourceURL=...".
+		if i := strings.LastIndex(text, "\n})\n//# sourceURL="); i != -1 {
+			text = text[:i]
+		}
+		if len(args) >= 3 && args[2].Boolean() {
+			text = "\uFEFF" + text
+		}
+		m.rt.KeepModuleSource(name, text)
+		m.rt.SetFirstLineOffset(name, len(moduleWrapperPrefix))
+	}
 	return fn
 }
+
+// wrapperCompiledFunc implements __moduleWrapperCompiled(name, text, failed, nul), which
+// module.js calls for a wrapper it compiles by eval instead: its opening shares the first
+// line too. module.js calls it again with failed true if the eval doesn't compile, and the
+// text is dropped.
+func (m *Module) wrapperCompiledFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	if args := info.Args(); len(args) >= 2 {
+		name := args[0].String()
+		if len(args) >= 3 && args[2].Boolean() {
+			m.rt.ForgetModuleSource(name, args[1].String())
+			return info.Context().Undefined()
+		}
+		nul := ""
+		if len(args) >= 4 {
+			nul = args[3].String()
+		}
+		m.rt.KeepModuleSourceWithNUL(name, args[1].String(), nul)
+		m.rt.SetFirstLineOffset(name, len(moduleWrapperPrefix))
+	}
+	return info.Context().Undefined()
+}
+
+// moduleWrapperPrefix is how module.js opens the function a CommonJS module runs in.
+const moduleWrapperPrefix = "(function(exports, require, module, __filename, __dirname) {"
 
 // resolveFunc resolves a module path.
 func (m *Module) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {

@@ -4,7 +4,9 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 
+	"proto.zip/studio/orbital/internal/v8dist"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
@@ -28,9 +30,13 @@ type UncaughtError struct {
 	// Thrown is the value that ended the runtime, in the runtime's own context. It is only
 	// usable until the runtime is disposed. Workers use it to hand the value to the parent.
 	Thrown *v8.Value
+	// Source is the header Node prints above Message: "file:line", that line, and a caret
+	// under where the exception was thrown, each followed by a newline. It is empty when
+	// the place is unknown, as for a thrown value that is not an error.
+	Source string
 }
 
-// Error returns the text Node would print.
+// Error returns the exception's text, without the header.
 func (e *UncaughtError) Error() string {
 	return e.Message
 }
@@ -49,6 +55,23 @@ func validUnhandledRejections(mode string) bool {
 		}
 	}
 	return false
+}
+
+// Report returns everything Node prints to stderr for the exception: the source header,
+// the exception, and a version line. Node ends with "Node.js <version>"; Orbital is not
+// Node.js, so it names itself and its own version there.
+func (e *UncaughtError) Report() string {
+	var b strings.Builder
+	if e.Source != "" {
+		b.WriteString(e.Source)
+		b.WriteString("\n")
+	}
+	b.WriteString(e.Message)
+	b.WriteString("\n")
+	b.WriteString("\nOrbital ")
+	b.WriteString(v8dist.ModuleVersion)
+	b.WriteString("\n")
+	return b.String()
 }
 
 // ExitError is what ended a runtime when JavaScript called process.exit(). Node would run
@@ -101,6 +124,40 @@ func (rt *Runtime) installUncaught() error {
 		return err
 	}
 	if err := native.Set("unhandledRejections", mode); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "fatalSource", func(info *v8.FunctionCallbackInfo) *v8.Value {
+		if args := info.Args(); len(args) >= 1 {
+			rt.fatalSource = args[0].String()
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "keptSource", rt.keptSourceFunc); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "keptOffset", func(info *v8.FunctionCallbackInfo) *v8.Value {
+		offset := 0
+		if args := info.Args(); len(args) >= 1 {
+			if kept, ok := rt.keptSources[args[0].String()]; ok && !kept.ambiguous {
+				offset = kept.offset
+			}
+		}
+		return rt.context.NewInteger(int64(offset))
+	}); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "keptNul", func(info *v8.FunctionCallbackInfo) *v8.Value {
+		nul := ""
+		if args := info.Args(); len(args) >= 1 {
+			if kept, ok := rt.keptSources[args[0].String()]; ok && kept.hasText {
+				nul = kept.nul
+			}
+		}
+		val, _ := rt.context.NewString(nul)
+		return val
+	}); err != nil {
 		return err
 	}
 	if err := rt.setNative(native, "rejectionsPending", func(*v8.FunctionCallbackInfo) *v8.Value {
@@ -201,6 +258,7 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		Origin:       args[2].String(),
 		HandlerThrew: args[3].Boolean(),
 		Thrown:       thrown,
+		Source:       rt.fatalSource,
 	})
 	rt.stopRunning()
 	return nil
@@ -400,6 +458,7 @@ func (rt *Runtime) reportRejections() {
 // the script directly would let queued reactions run ahead of the handlers, or instead of
 // a fatal exit. It returns nil in place of an error if a handler took the exception.
 func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
+	rt.registerSource(source, origin)
 	var result *v8.Value
 	var scriptErr error
 	rt.mainBody = func() {
