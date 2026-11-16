@@ -162,6 +162,21 @@ async function main() {
     });
     order.push('sync');
   });
+  // WebCrypto CryptoKeys work as keys, directly or as options.key.
+  const subtle = globalThis.crypto.subtle;
+  const ed = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const ec = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const edPub = await subtle.importKey('jwk', k.edPub.export({ format: 'jwk' }), { name: 'Ed25519' }, true, ['verify']);
+  results.cryptoKeys = {
+    ed: outcome(() => crypto.verify(null, msg, ed.publicKey, crypto.sign(null, msg, ed.privateKey))),
+    edOptions: outcome(() => crypto.verify(null, msg, { key: ed.publicKey }, crypto.sign(null, msg, { key: ed.privateKey }))),
+    edVerifyWithPrivate: outcome(() => crypto.verify(null, msg, ed.privateKey, crypto.sign(null, msg, ed.privateKey))),
+    edImported: outcome(() => crypto.verify(null, msg, edPub, crypto.sign(null, msg, k.edPriv))),
+    ecStream: outcome(() => crypto.createVerify('sha256').update(msg).verify(ec.publicKey,
+      crypto.createSign('sha256').update(msg).sign(ec.privateKey))),
+    ecP1363: outcome(() => crypto.sign('sha256', msg, { key: ec.privateKey, dsaEncoding: 'ieee-p1363' }).length),
+    signWithPublic: outcome(() => crypto.sign(null, msg, ed.publicKey)),
+  };
   // (Node 20 aborts when the callback form fails, as with an Ed25519 key and a digest,
   // so that case isn't run here.)
   const { AsyncLocalStorage } = require('async_hooks');

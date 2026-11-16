@@ -91,9 +91,12 @@
     let options = {};
     if (input instanceof KeyObject) {
       key = input;
+    } else if ((key = crypto._fromCryptoKey(input))) {
+      // a CryptoKey
     } else if (input && typeof input === 'object' && !ArrayBuffer.isView(input) && !(input instanceof ArrayBuffer)) {
       options = input;
       if (input.key instanceof KeyObject) key = input.key;
+      else key = crypto._fromCryptoKey(input.key);
     }
     if (!key) {
       if (typeof input !== 'string' && !ArrayBuffer.isView(input) && !(input && typeof input === 'object')) {

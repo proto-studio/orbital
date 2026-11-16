@@ -12,6 +12,31 @@
       "callback"
     ]
   ],
+  "cryptoKeys": {
+    "ecP1363": {
+      "value": 64
+    },
+    "ecStream": {
+      "value": true
+    },
+    "ed": {
+      "value": true
+    },
+    "edImported": {
+      "value": true
+    },
+    "edOptions": {
+      "value": true
+    },
+    "edVerifyWithPrivate": {
+      "value": true
+    },
+    "signWithPublic": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected private.",
+      "name": "TypeError"
+    }
+  },
   "digest_blake2b512": {
     "ecdsa": {
       "value": true
