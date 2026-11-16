@@ -1940,14 +1940,7 @@
       args = Array.prototype.slice.call(args);
       names.forEach((argName, i) => {
         if (argName === null || typeof args[i] === 'number') return; // left as is, or a descriptor
-        const given = args[i];
-        args[i] = pathString(given);
-        checkPath(args[i], argName);
-        // A Buffer path whose bytes aren't UTF-8 crosses as its bytes, which a string would lose.
-        if (ArrayBuffer.isView(given) && hasBuffer()) {
-          const bytes = viewBytes(given);
-          if (!Buffer.from(args[i]).equals(bytes)) args[i] = { __pathBytes: base64Of(bytes) };
-        }
+        args[i] = nativePath(args[i], argName);
       });
       return args;
     };
@@ -1962,14 +1955,24 @@
       };
     }
   }
+  // A path as the native layer takes it: a string, checked as Node checks it, or, for a
+  // Buffer whose bytes aren't UTF-8, { __pathBytes: base64 }, since a string would lose them.
+  function nativePath(given, name) {
+    const text = pathString(given);
+    checkPath(text, name);
+    if (ArrayBuffer.isView(given) && hasBuffer()) {
+      const bytes = viewBytes(given);
+      if (!Buffer.from(text).equals(bytes)) return { __pathBytes: base64Of(bytes) };
+    }
+    return text;
+  }
   const _existsSync = fs.existsSync;
   fs.existsSync = function (path) {
     try {
-      path = pathString(path);
+      path = nativePath(path, 'path');
     } catch (e) {
       return false;
     }
-    if (typeof path === 'string' && path.includes('\0')) return false;
     return _existsSync.call(this, path);
   };
 })();

@@ -271,9 +271,13 @@ const fs = require('fs');
 const code = (fn) => { try { return fn(); } catch (e) { return e.code; } };
 fs.symlinkSync('/alias/../f', '/through');
 fs.symlinkSync('/f/', '/slash');
-done({ through: code(() => fs.readFileSync('/through', 'utf8')), slash: code(() => fs.readFileSync('/slash', 'utf8')) });
+fs.cpSync('/through', '/copied', { verbatimSymlinks: true });
+done({
+  through: code(() => fs.readFileSync('/through', 'utf8')), slash: code(() => fs.readFileSync('/slash', 'utf8')),
+  readlink: fs.readlinkSync('/through'), readlinkSlash: fs.readlinkSync('/slash'), copied: code(() => fs.readFileSync('/copied', 'utf8')),
+});
 `)
-	wantJSON(t, got, map[string]any{"through": "bf", "slash": "ENOTDIR"})
+	wantJSON(t, got, map[string]any{"through": "bf", "slash": "ENOTDIR", "readlink": "/alias/../f", "readlinkSlash": "/f/", "copied": "bf"})
 }
 
 // A Buffer path keeps its bytes, though they aren't UTF-8, where the filesystem takes them.
@@ -287,9 +291,14 @@ func TestFSLinks_BufferPathBytes(t *testing.T) {
 const fs = require('fs');
 const name = Buffer.concat([Buffer.from(%q + '/l'), Buffer.from([0xff])]);
 fs.symlinkSync('t', name);
-done({ target: fs.readlinkSync(name) });
-`, dir))
-	wantJSON(t, got, map[string]any{"target": "t"})
+const file = Buffer.concat([Buffer.from(%q + '/w'), Buffer.from([0xff])]);
+fs.writeFileSync(file, 'written');
+done({ target: fs.readlinkSync(name), read: fs.readFileSync(file, 'utf8'), exists: fs.existsSync(file), size: fs.statSync(file).size });
+`, dir, dir))
+	wantJSON(t, got, map[string]any{"target": "t", "read": "written", "exists": true, "size": 7.0})
+	if data, err := os.ReadFile(filepath.Join(dir, "w\xff")); err != nil || string(data) != "written" {
+		t.Errorf("w\\xff = %q, %v", data, err)
+	}
 	if target, err := os.Readlink(filepath.Join(dir, "l\xff")); err != nil || target != "t" {
 		t.Errorf("l\\xff = %q, %v", target, err)
 	}
