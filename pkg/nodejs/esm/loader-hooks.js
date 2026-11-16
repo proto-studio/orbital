@@ -43,6 +43,13 @@
   const jsonParse = JSON.parse;
   const isPrototypeOf = Object.prototype.isPrototypeOf;
   const ErrorPrototype = Error.prototype;
+  // An own data property, as an assignment would make, without calling a setter
+  // a hook's initialize() may have put on a prototype.
+  const definePropertyNow = Object.defineProperty;
+  function ownProp(obj, key, value) {
+    definePropertyNow(obj, key, { value: value, writable: true, enumerable: true, configurable: true });
+  }
+
   function internal(err) {
     reflectApply(internalAdd, internalErrors, [err]);
     return err;
@@ -305,11 +312,8 @@
   // Default (terminal) resolve: bridge to the Go default loader. Returns a url
   // string, or throws a Node-shaped ERR_MODULE_NOT_FOUND so resolve hooks that
   // probe alternatives (e.g. .js -> .ts) can catch and retry.
-  // Captured before any hook runs, so a hook replacing the globals or adding
-  // setters to their prototypes can't change the loader's own errors.
-  const NativeError = Error;
-  const NativeTypeError = TypeError;
-  const NativeURIError = URIError;
+  // The loader's own errors use the constructors captured above and own data
+  // properties, so a hook adding setters to their prototypes can't change them.
   function ownData(obj, key, value) {
     objectDefineProperty(obj, key, { value: value, writable: true, enumerable: true, configurable: true });
   }
@@ -341,7 +345,7 @@
       // An import attribute the module's format doesn't allow (Node's
       // validateAttributes in its default load).
       const err = new NativeTypeError(r.message);
-      err.code = r.code;
+      ownProp(err, 'code', r.code);
       throw internal(err);
     }
     return { source: r.source, format: r.format, shortCircuit: true };
@@ -350,6 +354,7 @@
   // Captured now, like the error constructors, so a hook's initialize()
   // replacing them can't change how attributes cross to Go.
   const ObjectKeys = Object.keys;
+  const hasOwn = Object.prototype.hasOwnProperty;
   const ObjectDefineProperty = Object.defineProperty;
   const ObjectCreate = Object.create;
   const JSONStringify = JSON.stringify;
@@ -411,20 +416,31 @@
   // value that can't be cloned (a function, say) fails the import, as it does
   // crossing Node's hooks thread.
   function stashAttrs(attrs) {
-    const id = ++stashSeq;
     let value = attrs;
     let cloned = false;
     if (clone && attrs !== null && typeof attrs === 'object') {
       const copy = clone(attrs);
-      // A clone can't keep an own "__proto__" key (and may fill an array's
-      // holes); keep the original then, and rebuild it for the load.
-      if (ObjectKeys(copy).length === ObjectKeys(attrs).length) {
-        value = copy;
-        cloned = true;
+      value = copy;
+      cloned = true;
+      const keys = ObjectKeys(attrs);
+      if (ObjectKeys(copy).length !== keys.length) {
+        // A clone can't keep an own "__proto__" key, and may fill an array's
+        // holes: rebuild the container from the original's keys, taking each
+        // value from the clone (so no getter runs twice).
+        const rebuilt = ArrayIsArray(attrs) ? [] : {};
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const v = reflectApply(hasOwn, copy, [k]) ? copy[k] : attrs[k];
+          ObjectDefineProperty(rebuilt, k, { value: v, writable: true, enumerable: true, configurable: true });
+        }
+        if (ArrayIsArray(attrs)) rebuilt.length = attrs.length;
+        value = rebuilt;
       }
     }
-    stashed[id] = { value: value, cloned: cloned };
+    // Encoded first: if that throws, nothing is left stashed.
     const encoded = JSONParse(encodeAttrs(value));
+    const id = ++stashSeq;
+    stashed[id] = { value: value, cloned: cloned };
     encoded.id = id;
     return JSONStringify(encoded);
   }
@@ -538,14 +554,16 @@
     };
     const res = await chain(specifier, ctx);
     // A resolve hook may replace the attributes the module is loaded with, with
-    // an object (Node's check of a resolve hook's result).
-    if (res.importAttributes != null && typeof res.importAttributes !== 'object') {
+    // an object (Node's check of a resolve hook's result). Read once, as Node's
+    // transfer of the result reads it.
+    const replaced = res.importAttributes;
+    if (replaced != null && typeof replaced !== 'object') {
       const err = new NativeTypeError('Expected an object to be returned for the "importAttributes" from the "' +
-        lastHook + '" hook but got ' + describe(res.importAttributes) + '.');
-      err.code = 'ERR_INVALID_RETURN_PROPERTY_VALUE';
+        lastHook + '" hook but got ' + describe(replaced) + '.');
+      ownProp(err, 'code', 'ERR_INVALID_RETURN_PROPERTY_VALUE');
       throw internal(err);
     }
-    const resolvedAttributes = res.importAttributes != null ? res.importAttributes : importAttributes;
+    const resolvedAttributes = replaced != null ? replaced : importAttributes;
     return {
       url: res.url,
       format: res.format == null ? '' : res.format,
