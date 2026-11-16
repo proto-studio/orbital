@@ -111,6 +111,18 @@ results.pss = outcome(() => {
     verifies('sha256', k.rsaPub, Buffer.from(nodeSigs.pssMax, 'base64'))];
 });
 
+// The longest salt the key fits, and longer ones (emLen - hLen - 2 is 94 bytes here).
+results.pssSaltLimits = (() => {
+  const pss = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING };
+  return {
+    longest: outcome(() => verifies('sha256', k.rsaPub, crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss, saltLength: 94 }), { ...pss, saltLength: 94 })),
+    oneTooLong: outcome(() => crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss, saltLength: 95 })),
+    huge: outcome(() => crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss, saltLength: 2147483647 })),
+    hugeStream: outcome(() => crypto.createSign('sha256').update(msg).sign({ key: k.rsaPriv, ...pss, saltLength: 2147483647 })),
+    verifyHuge: outcome(() => verifies('sha256', k.rsaPub, Buffer.alloc(128, 1), { ...pss, saltLength: 2147483647 })),
+  };
+})();
+
 // PSS with an explicitly empty salt, made by Node (Orbital doesn't sign with one).
 const pssZeroSaltSig = Buffer.from('LlPGdQIvapXcdDBU3DJlpXoRHa0mQoQUtnvCCZco5M/Tvk8ZF6NrDyW964wTBoH4NaiCisNibwlGUqq7PGjaB1mWqS+GC5kREcHfJr8/0bgh33bHml1ezc2lvgPyPHnrb7pXkj5l4163lzz+IK6/28mu2x9bf2O2qleRNeMoSdc=', 'base64');
 results.pssZeroSalt = outcome(() => {

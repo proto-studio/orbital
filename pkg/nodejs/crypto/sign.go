@@ -42,6 +42,7 @@ var (
 	errIllegalPadding   = &signError{"ERR_OSSL_RSA_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE", "error:1C8000A5:Provider routines::illegal or unsupported padding mode"}
 	errDigestTooBig     = &signError{"ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY", "error:02000070:rsa routines::digest too big for rsa key"}
 	errSigFailed        = &signError{"", "Sign failed"}
+	errDataTooLarge     = &signError{"ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE", "error:0200006E:rsa routines::data too large for key size"}
 	errDigestNotAllowed = &signError{"ERR_OSSL_DIGEST_NOT_ALLOWED", "error:1C8000AE:Provider routines::digest not allowed"}
 )
 
@@ -148,6 +149,14 @@ func pssSalt(n int) int {
 		return rsa.PSSSaltLengthAuto
 	}
 	return n
+}
+
+// pssSaltTooLong reports whether an explicit salt length can't fit an
+// EMSA-PSS encoding for the key and hash (sLen > emLen - hLen - 2), checked
+// before crypto/rsa allocates the salt.
+func pssSaltTooLong(n *big.Int, hLen, saltLength int) bool {
+	emLen := (n.BitLen() - 1 + 7) / 8
+	return saltLength > 0 && saltLength > emLen-hLen-2
 }
 
 // Go's PSS takes a salt length of 0 to mean "automatic", so a PSS
@@ -258,6 +267,9 @@ func signWith(priv any, data []byte, p signParams) ([]byte, error) {
 				// time, so this isn't offered.
 				return nil, errUnsupportedOp
 			}
+			if pssSaltTooLong(k.N, len(sum), p.saltLength) {
+				return nil, errDataTooLarge
+			}
 			sig, err := rsa.SignPSS(rand.Reader, k, id, sum, &rsa.PSSOptions{SaltLength: pssSalt(p.saltLength)})
 			if err != nil {
 				return nil, errDigestTooBig
@@ -317,6 +329,9 @@ func verifyWith(pub any, data, sig []byte, p signParams) (bool, error) {
 		case rsaPSSPadding:
 			if p.saltLength == 0 {
 				return verifyPSSNoSalt(k, h, sum, sig), nil
+			}
+			if pssSaltTooLong(k.N, len(sum), p.saltLength) {
+				return false, nil
 			}
 			return rsa.VerifyPSS(k, id, sum, sig, &rsa.PSSOptions{SaltLength: pssSalt(p.saltLength)}) == nil, nil
 		}
