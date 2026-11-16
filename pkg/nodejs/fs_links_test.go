@@ -293,9 +293,14 @@ const name = Buffer.concat([Buffer.from(%q + '/l'), Buffer.from([0xff])]);
 fs.symlinkSync('t', name);
 const file = Buffer.concat([Buffer.from(%q + '/w'), Buffer.from([0xff])]);
 fs.writeFileSync(file, 'written');
-done({ target: fs.readlinkSync(name), read: fs.readFileSync(file, 'utf8'), exists: fs.existsSync(file), size: fs.statSync(file).size });
-`, dir, dir))
-	wantJSON(t, got, map[string]any{"target": "t", "read": "written", "exists": true, "size": 7.0})
+const made = fs.mkdtempSync(Buffer.concat([Buffer.from(%q + '/p'), Buffer.from([0xff])]));
+done({ target: fs.readlinkSync(name), read: fs.readFileSync(file, 'utf8'), exists: fs.existsSync(file), size: fs.statSync(file).size,
+  temp: typeof made });
+`, dir, dir, dir))
+	wantJSON(t, got, map[string]any{"target": "t", "read": "written", "exists": true, "size": 7.0, "temp": "string"})
+	if matches, _ := filepath.Glob(filepath.Join(dir, "p\xff*")); len(matches) != 1 {
+		t.Errorf("mkdtemp with a byte prefix made %v", matches)
+	}
 	if data, err := os.ReadFile(filepath.Join(dir, "w\xff")); err != nil || string(data) != "written" {
 		t.Errorf("w\\xff = %q, %v", data, err)
 	}

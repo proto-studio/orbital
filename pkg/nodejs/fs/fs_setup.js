@@ -1198,6 +1198,8 @@
   defineCall('link', (existingPath, newPath) => [checkedPath(existingPath, 'existingPath'), checkedPath(newPath, 'newPath')], 'link');
   // mkdtemp(prefix[, options]) makes prefix followed by six random characters, mode 0o700.
   function prefixArg(prefix) {
+    // A Buffer prefix that isn't UTF-8 arrives already checked, in the path wrapper's byte form.
+    if (prefix && typeof prefix === 'object' && typeof prefix.__pathBytes === 'string') return prefix;
     if (typeof prefix !== 'string' && !ArrayBuffer.isView(prefix) && !(prefix && typeof prefix.href === 'string')) {
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
         'The "prefix" argument must be of type string or an instance of Buffer or URL. Received ' + receivedType(prefix));
