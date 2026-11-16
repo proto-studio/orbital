@@ -3,6 +3,38 @@
     "request 0",
     "request 1"
   ],
+  "binaryKey_arrayBuffer": {
+    "value": [
+      "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b",
+      true,
+      true,
+      "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+    ]
+  },
+  "binaryKey_dataView": {
+    "value": [
+      "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b",
+      true,
+      true,
+      "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+    ]
+  },
+  "binaryKey_offsetView": {
+    "value": [
+      "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b",
+      true,
+      true,
+      "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+    ]
+  },
+  "binaryKey_uint16": {
+    "value": [
+      "638dded40d208c393735f6d09ccf0413756b1984a0580056e9a483e81a1ccc6cdda745b3bbfae3fd6b81fcceca1112361cd0f6e96c53005aadda635a22fd440b",
+      true,
+      true,
+      "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
+    ]
+  },
   "callback": [
     "null",
     "null",
