@@ -408,11 +408,8 @@ func (el *EventLoop) run(done func() bool) bool {
 				if task.cancelled.Load() {
 					continue
 				}
-				if cancelled() {
-					return false
-				}
 				el.mu.Lock()
-				stop := el.shouldStop
+				stop := el.shouldStop || ctx.Err() != nil
 				if stop {
 					// Keep the rest for a later Run, as the timers stay in their heap.
 					el.immediates = append(batch[i:], el.immediates...)
