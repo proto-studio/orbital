@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -118,5 +119,19 @@ func TestRun_QueuedCompletionKeepsTheTurnAlive(t *testing.T) {
 	el.Run()
 	if got := fmt.Sprint(ran); got != "[io immediate]" {
 		t.Fatalf("ran %s, want [io immediate]", got)
+	}
+}
+
+// An immediate that stops the loop leaves the rest of its batch for the next Run.
+func TestRun_StopKeepsTheRestOfTheBatch(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() { ran = append(ran, "a"); el.Stop() })
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	el.Run()
+	el.SetContext(context.Background())
+	el.Run()
+	if got := fmt.Sprint(ran); got != "[a b]" {
+		t.Fatalf("ran %s, want [a b]", got)
 	}
 }
