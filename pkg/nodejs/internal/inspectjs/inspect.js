@@ -2,8 +2,8 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to
-// { context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection,
-// scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix }.
+// { context, quote, string, key, symbols, keys, primitive, numeric, stringSpec, more, view, binary,
+// collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -125,6 +125,43 @@
     if (typeof value === 'symbol') return 'NaN';
     if (typeof value === 'bigint' && spec !== 'f') return primitive(value);
     return primitive(spec === 'd' ? Number(value) : spec === 'i' ? parseInt(value) : parseFloat(value));
+  }
+
+  // builtIns names the constructors of the global object, like Node's builtInObjects: global
+  // names that start with a capital. Read on first use, once every module has added its globals.
+  let builtIns = null;
+
+  // hasBuiltInToString reports whether value, an object, converts to a string as its kind always
+  // does, rather than through its own toString or Symbol.toPrimitive: Node's hasBuiltInToString.
+  // A value that throws while it's looked at, like a proxy with a throwing trap, counts as
+  // built in.
+  function hasBuiltInToString(value) {
+    try {
+      if (typeof value[Symbol.toPrimitive] === 'function') return false;
+      if (typeof value.toString !== 'function') return true;
+      if (Object.prototype.hasOwnProperty.call(value, 'toString')) return false;
+      let pointer = value;
+      do {
+        pointer = Object.getPrototypeOf(pointer);
+      } while (!Object.prototype.hasOwnProperty.call(pointer, 'toString'));
+      const desc = Object.getOwnPropertyDescriptor(pointer, 'constructor');
+      if (builtIns === null) {
+        builtIns = new Set(Object.getOwnPropertyNames(globalThis).filter((name) => /^[A-Z][a-zA-Z0-9]+$/.test(name)));
+      }
+      return desc !== undefined && typeof desc.value === 'function' && builtIns.has(desc.value.name);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  // stringSpec is how util.format prints value for %s: a number or BigInt as primitive prints
+  // it, with -0 and a BigInt's n, and anything but an object String(value), as is an object with
+  // its own way of becoming a string. It answers null for any other object, which %s inspects
+  // with a depth of 0.
+  function stringSpec(value) {
+    if (typeof value === 'number' || typeof value === 'bigint') return primitive(value);
+    if (typeof value !== 'object' || value === null || !hasBuiltInToString(value)) return String(value);
+    return null;
   }
 
   // more is the entry that stands for the items an array or collection leaves out.
@@ -702,7 +739,7 @@
   }
 
   return {
-    context, quote, string, key, symbols, keys, primitive, numeric, more, view, binary, collection, scalar,
+    context, quote, string, key, symbols, keys, primitive, numeric, stringSpec, more, view, binary, collection, scalar,
     isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix
   };
 })()

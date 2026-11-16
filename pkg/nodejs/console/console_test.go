@@ -532,3 +532,17 @@ func TestConsole_LogReentrantNoCycle(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// %s keeps a NUL in the string an object's own toString returns, as Node does.
+func TestConsole_LogStringSpecifierKeepsNUL(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	if _, err := rt.RunScript(`console.log('%s|', { toString() { return 'before\0after'; } });`, "test.js"); err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := stdout.String(), "before\x00after|\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

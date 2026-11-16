@@ -41,6 +41,8 @@
     },
     primitive: inspectShared.primitive,
     type: (value) => typeof value,
+    // text is printf's %s, or nothing for an object it inspects with a depth of 0.
+    text: inspectShared.stringSpec,
     // decimal, integer and float are printf's %d, %i and %f.
     decimal: (value) => inspectShared.numeric('d', value),
     integer: (value) => inspectShared.numeric('i', value),

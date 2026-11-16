@@ -252,3 +252,18 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
     Object.create(Object.setPrototypeOf({ q: 1 }, Object.create(null))), { a: Object.create(Object.create(Object.create(null))) });
   console.log(u.inspect(Object.create(Object.create(Object.create(null))), { depth: 0 }), u.inspect({ a: Object.create(np) }, { depth: null }));
 }
+// %s prints a number or BigInt as inspect does, with -0 and a BigInt's n, anything but an
+// object with String(), as it does an object with its own toString or Symbol.toPrimitive, and
+// inspects any other object with a depth of 0.
+{
+  class T { toString() { return 'custom'; } }
+  class P { [Symbol.toPrimitive]() { return 'prim'; } }
+  class Sub extends T {}
+  const loop = { a: 1 }; loop.self = loop;
+  const err = new Error('boom'); err.stack = 'Error: boom\n    at f (file.js:1:1)';
+  const args = ['%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s', 10n, -0, 5, Symbol('s'), null, undefined, { a: { b: { c: 1 } } }, new T(), [1, [2, [3]]],
+    new P(), new Sub(), Object.assign(new Date(0), { toString() { return 'date'; } })];
+  const more = ['%s|%s|%s|%s', new Map([[1, { x: 1 }]]), loop, err, { k: 'v'.repeat(80), l: [1, 2] }];
+  for (const a of [args, more]) { console.log(u.format(...a)); console.log(...a); console.log(u.formatWithOptions({ depth: 5 }, ...a)); }
+  console.log('%s', -12345678901234567890n, 'tail', 3n);
+}
