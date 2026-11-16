@@ -227,13 +227,6 @@ func percentEncode(s, set string) string {
 // urlWhitespace drops what the URL parser drops: tabs and newlines.
 var urlWhitespace = strings.NewReplacer("\t", "", "\n", "", "\r", "")
 
-// isURLSpecifier reports a specifier Node reads as a URL: relative, absolute or
-// file:.
-func isURLSpecifier(spec string) bool {
-	return strings.HasPrefix(spec, "file:") || strings.HasPrefix(spec, "./") ||
-		strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/")
-}
-
 // hasEncodedSeparator reports an escaped "/" or "\" in a URL path, which Node
 // refuses to turn into a file path.
 func hasEncodedSeparator(p string) bool {
@@ -424,12 +417,11 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	spec = urlWhitespace.Replace(spec)
 	dir := e.referrerDir(referrer)
 	var attempted, encoded, suffix string
-	if isURLSpecifier(spec) {
-		// The URL parser drops tabs and newlines wherever they appear.
-		spec = urlWhitespace.Replace(spec)
-	}
+	// A relative or absolute path is told from its raw spelling (a leading tab
+	// makes it a bare name, as in Node); a file: URL after the parser's cleanup.
+	pathLike := strings.HasPrefix(rawSpec, "./") || strings.HasPrefix(rawSpec, "../") || strings.HasPrefix(rawSpec, "/")
 	switch {
-	case isURLSpecifier(spec):
+	case pathLike || strings.HasPrefix(spec, "file:"):
 		if err := checkFileURLHost(spec, rawSpec, e.importerURL(referrer)); err != nil {
 			return "", err
 		}
@@ -476,6 +468,9 @@ type moduleError struct {
 	input string
 	// module is the importer's URL on an ERR_INVALID_FILE_URL_HOST.
 	module string
+	// hookValue, when set, is a non-error value a loader hook threw, serialized
+	// with V8's ValueSerializer for the importer to get a structured clone.
+	hookValue []byte
 	// hookPayload, when set, describes an error a loader hook threw (see
 	// __describeRejection), which the importer gets rebuilt as it was.
 	hookPayload string
@@ -769,6 +764,11 @@ func resolveExportsTarget(exp interface{}) (target string, ok bool) {
 		// With no valid one left, the last invalid one is returned, for its error.
 		last, sawInvalid := "", false
 		for _, e := range v {
+			if e == nil {
+				// null: not exported, which also clears an earlier invalid one.
+				last, sawInvalid = "", false
+				continue
+			}
 			r, ok := resolveExportsTarget(e)
 			if !ok {
 				continue

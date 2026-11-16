@@ -30,6 +30,7 @@
   var reject = Promise.reject.bind(Promise);
   var defineProperty = Object.defineProperty;
   var apply = Reflect.apply;
+  var captureStackTrace = Error.captureStackTrace;
 
   // An own data property, as an assignment would make, without calling a setter
   // code may have put on Error.prototype.
@@ -61,23 +62,25 @@
 
   // Replaces err's stack accessor with one that formats through the original
   // on first read and puts the code in the header ("Error [CODE]: ...").
-  function lazyCodedStack(err, desc, code) {
+  // holder carries the same frames, captured with the error, so the default
+  // header can be built without the engine also reading name and message.
+  function lazyCodedStack(err, desc, code, holder) {
     var done = false;
     var value;
     defineProperty(err, 'stack', {
       get: function () {
         if (!done) {
-          // A program's own formatter's result is kept as it is.
-          var custom = typeof NativeError.prepareStackTrace === 'function';
-          value = apply(desc.get, err, []);
           done = true;
-          // Like Node, the header is built from the name and message the
-          // error has now, with the code it was created with; the frames come
-          // from the engine.
-          if (!custom && typeof value === 'string') {
-            var at = value.indexOf('\n    at ');
-            var frames = at >= 0 ? value.slice(at) : '';
-            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + frames;
+          if (typeof NativeError.prepareStackTrace === 'function') {
+            // A program's own formatter runs now, and its result is kept as is.
+            value = apply(desc.get, err, []);
+          } else {
+            // Like Node, the header is built from the name and message the
+            // error has now (each read once), with the code it was created
+            // with; the frames are the engine's.
+            var raw = String(holder.stack);
+            var at = raw.indexOf('\n    at ');
+            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + (at >= 0 ? raw.slice(at) : '');
           }
         }
         return value;
@@ -102,7 +105,9 @@
       // program installs, even later) happens at that read, as in Node.
       var desc = getOwnPropertyDescriptor(err, 'stack');
       if (desc && typeof desc.get === 'function') {
-        lazyCodedStack(err, desc, code);
+        var holder = {};
+        captureStackTrace(holder);
+        lazyCodedStack(err, desc, code, holder);
       }
       own(err, 'code', code, true);
       apply(codesSet, codes, [err, code]);
@@ -116,10 +121,9 @@
 
   // Rebuilds an error a loader hook threw, from the description the loader
   // realm gave (see __describeRejection in loader-hooks.js): its class, message,
-  // stack and own enumerable properties, or the thrown value if it wasn't an
-  // object, as Node transfers it from its hooks thread.
+  // stack and own enumerable properties, as Node transfers it from its hooks
+  // thread. (A thrown value that isn't an error is structured-cloned in Go.)
   var jsonParse = JSON.parse;
-  var NativeDate = Date;
   var objectKeys = Object.keys;
   var hookCtors = {
     Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
@@ -127,8 +131,6 @@
   };
   globalThis.__esmHookError = function (payload) {
     var d = jsonParse(payload);
-    if (d.primitive) return d.undef ? undefined : d.value;
-    if (d.object) return 'date' in d ? new NativeDate(d.date) : d.json;
     var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
     var err = new Ctor(d.message);
     var keys = objectKeys(d.props || {});
