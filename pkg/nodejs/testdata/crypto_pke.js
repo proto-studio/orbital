@@ -9,7 +9,12 @@ const fx = {
  "ecPub": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEghDdsoDqZIADcqHkyyE5ouLyms/U\n+If7x+I2wJGsZQo1MKvu79+fe71lxh/6ttI2RrTwDYxVc51T+ubyz8uUwA==\n-----END PUBLIC KEY-----\n",
  "oaep": "rNA9RegmY9HlPLU6o9PahhPsagwSSzE9zLKpYKjob//Vkg7mE0LcECSn6LzMVAXl/WaPPZcZ0TgRx2hMrqF4JVyd5+NB79Gmew14jLmzopoi7YmNUvDnGZEyeiWdpFO6DPPZ2yk2gqog14QOnPpCCmYRri8WGn2JT7n/5J43izU=",
  "oaep256": "qwvdh1uqe9fP/saAhGX9T1rlSinnAYwlyRcRNpQkQ+drEf74aldqYvxxy4KNgO6dlHUvwFJx4k6TExkicNfQ1Qdwwbpp24R8Bgyp9gB92S9PSIttvFPktDs9+fwgOzghYInOcBfMftB5aF72SSRHwOgTri23jOXMCnfOdKdK7uE=",
- "oaepLabel": "XAZo2TOf4tu5wo/rYyPScrvg6K6tEPLrYvybNv5lLaJItGAC5yKXeEiW1ysldp5RNcx9ibDWNkiiuQ4PsjXiNHI35kIEzKUElzHnGVCTJn5jgt1Ahg3F/wo+/ENr4eMNXmhr2j7P3Ok6fpP+PpIgAEsh6EwZM7F31Fm2zMkDaDA="
+ "oaepLabel": "XAZo2TOf4tu5wo/rYyPScrvg6K6tEPLrYvybNv5lLaJItGAC5yKXeEiW1ysldp5RNcx9ibDWNkiiuQ4PsjXiNHI35kIEzKUElzHnGVCTJn5jgt1Ahg3F/wo+/ENr4eMNXmhr2j7P3Ok6fpP+PpIgAEsh6EwZM7F31Fm2zMkDaDA=",
+ "oaep_ripemd160": "eVji9lrYoE88yzUksW26ChpHrUoaJAjvHoFtK26D8oikwVxbIXnLLXIYKtcV7zxBQw6IH4RtNrvlSE5tTjrN67MvlgYc/YiTsmaoUpz9/Czox7B3SH5kJ40IJD253roko4BiXDmPsiNWQU0urM5/ybqZwA9PY7d2tkWXPLSJzwQ=",
+ "oaep_blake2s256": "TK/uRuXs7Y8UoeEfJiJd3tH7h3VXY88zmB/uZfElmsQ3dXgIWDXAg8lieepKL3XTHU7gcxRea1HtZ6mdBhKVnMfT8BzdCZLzSK396es+vyibPlAoMTLhZSXc5+xlqbMPaZS6fGzbxBNpPL+OYQR48qfIgYG2beB3dxuJ5rdyNqA=",
+ "oaep_md5-sha1": "t8rF/+ui1lR2rWN3LxzYwrHWv75EHttB3GYSOGo6Pc+Zw4/4cPUp+A/iMW+d0wA27lvaqd9fmyW6ftvBt+g6O7/WN73toNcRnffJwcViGL5UW4PMAAdnifAcnQQDrlZpjhRYT/ukVGepoWNNk71yyeNTXhLqLPz7brPp8J6D5Zk=",
+ "oaep_shake128": "XfsU0buCdnlglx/08LWKQ2X7FyQ2iY2469mGi22B2pVVfI1jTtuRy+k5JTodJ6u/yRWF0BvSxJyYKggdMZfvg+USX9BWeF0d7aeU98+s+UtahyptvOmOp+8J65tvm5XiHmw2c+ZoySfdisPCksU31gAVjlqqZCL8Vmwsjd59uwU=",
+ "oaep_shake256": "Onv+SNP4kmejOmOm+RasGKyp8IsWTvC3FiXItOw4s0rpz7/+IPJR0ZtemZnZh+ahMrw2O1o+BunqXM1O4ZhZx5EFJgtaZqV7SCbsdmJJUva2xGoHJgJmS66FDQzP9fmDav7mil4vw7GC8HT8oxM7Pw69zvki49uAmiYv72j0Ec4="
 };
 const results = {};
 const msg = Buffer.from('secret message');
@@ -33,6 +38,13 @@ results.oaep256 = outcome(() => [roundTrip({ oaepHash: 'sha256' }, { oaepHash: '
 results.oaepLabel = outcome(() => [roundTrip({ oaepHash: 'sha256', oaepLabel: Buffer.from('label') }, { oaepHash: 'sha256', oaepLabel: Buffer.from('label') }),
   crypto.privateDecrypt({ key: priv, oaepHash: 'sha256', oaepLabel: Buffer.from('label') }, Buffer.from(fx.oaepLabel, 'base64')).toString()]);
 results.oaepWrongLabel = outcome(() => crypto.privateDecrypt({ key: priv, oaepHash: 'sha256', oaepLabel: Buffer.from('other') }, Buffer.from(fx.oaepLabel, 'base64')));
+// OAEP with the digests from golang.org/x/crypto, MD5-SHA1 and SHAKE: round trips and Node's
+// ciphertexts. BLAKE2b-512's 64-byte hash leaves no room in a 1024-bit key.
+for (const h of ['ripemd160', 'blake2s256', 'md5-sha1', 'shake128', 'shake256']) {
+  results['oaep_' + h] = outcome(() => [roundTrip({ oaepHash: h }, { oaepHash: h }),
+    crypto.privateDecrypt({ key: priv, oaepHash: h }, Buffer.from(fx['oaep_' + h], 'base64')).toString()]);
+}
+results.oaep_blake2b512 = outcome(() => crypto.publicEncrypt({ key: pub, oaepHash: 'blake2b512' }, msg));
 results.oaepWrongHash = outcome(() => crypto.privateDecrypt(priv, Buffer.from(fx.oaep256, 'base64')));
 results.pkcs1Encrypt = outcome(() => crypto.publicEncrypt({ key: pub, padding: RSA_PKCS1_PADDING }, msg).length);
 results.pkcs1PrivateDecrypt = outcome(() => crypto.privateDecrypt({ key: priv, padding: RSA_PKCS1_PADDING }, crypto.publicEncrypt({ key: pub, padding: RSA_PKCS1_PADDING }, msg)));
