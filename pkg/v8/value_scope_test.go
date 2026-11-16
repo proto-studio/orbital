@@ -254,7 +254,7 @@ func TestCallbackContextKeepsImportAndRejections(t *testing.T) {
 	}
 	defer ctx.Dispose()
 
-	ctx.SetDynamicImportResolver(func(specifier, referrer string) (string, string, error) {
+	ctx.SetDynamicImportResolver(func(specifier, referrer string, _ []v8.ImportAttribute) (string, string, error) {
 		return "export default 'imported ' + " + "'" + specifier + "';", specifier, nil
 	})
 	reports, err := ctx.RunScript(`globalThis.reports = []; (event, promise, value) => { reports.push(event + ':' + (value && value.message)); }`, "reports.js")
