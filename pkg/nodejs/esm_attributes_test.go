@@ -904,3 +904,27 @@ try { await import('num'); } catch (e) { log.push(e.message); }`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A (url, type) job that failed before any hooks were registered stays failed
+// after, for a type starting with \x02 or holding a lone surrogate too, and an
+// unsupported key's failure stays with the url as in Node 20.18.1.
+func TestImportAttributes_FailedJobsSurviveRegister(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs":   `export default 'd';`,
+		"hooks.mjs": `export async function load(u, c, n) { if (u.includes('dep.mjs?h')) return { format: 'module', source: 'export default "hooked"', shortCircuit: true }; return n(u, c); }`,
+		"entry.mjs": `const t = async (f) => { try { log.push(await f()); } catch (e) { log.push(e.code); } };
+await t(async () => (await import('./dep.mjs?h', { with: { type: '\x02x' } })).default);
+await t(async () => (await import('./dep.mjs?h', { with: { type: '\uD800' } })).default);
+await t(async () => (await import('./dep.mjs?f', { with: { foo: 'x' } })).default);
+await t(async () => (await import('./dep.mjs?f')).default);
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+await t(async () => (await import('./dep.mjs?h', { with: { type: '\x02x' } })).default);
+await t(async () => (await import('./dep.mjs?h', { with: { type: '\uD800' } })).default);`,
+	})
+	want := `["ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED","ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","ERR_IMPORT_ATTRIBUTE_UNSUPPORTED","ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED","ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED"]`
+	if got := runLogModuleIn(t, dir); got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
