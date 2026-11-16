@@ -270,6 +270,16 @@ Promise.resolve().then(() => note('unrelated sees domain', process.domain === d)
 d.run(() => Promise.resolve().then(() => Promise.reject(new Error('adopted'))));
 d.run(() => Promise.resolve().then(() => { throw new Error('plain throw'); }));
 `, []string{"unrelated sees domain false", "thrown caught by catch", "domain caught plain throw", "domain caught adopted"}},
+		"by promise, not reason": {`
+const d = require('domain').create();
+d.on('error', (e) => note('domain caught', e.message));
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
+const error = new Error('shared');
+d.run(() => Promise.resolve().then(() => { throw error; }).catch(() => note('caught by catch')));
+setTimeout(() => Promise.reject(error), 10);
+d.run(() => Promise.resolve().then(() => ({ then(resolve, reject) { reject(new Error('thenable')); } })));
+let p; d.run(() => { p = Promise.resolve().then(() => p); });
+`, []string{"caught by catch", "domain caught Chaining cycle detected for promise #<Promise>", "domain caught thenable", "unhandledRejection shared"}},
 		"outside any domain": {`
 require('domain').create();
 process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));
