@@ -165,6 +165,25 @@
     return reject(err);
   };
 
+  // A file's JSON value, made once and shared by every module job for it (one
+  // per import type), as Node shares it through the CommonJS cache. Fixed on
+  // the global object, so code can't replace or shadow it.
+  var jsonValues = new Map();
+  var jsonHas = Map.prototype.has;
+  var jsonGet = Map.prototype.get;
+  var jsonSet = Map.prototype.set;
+  defineProperty(globalThis, '__esmJSONValue', {
+    value: function (path, make) {
+      if (apply(jsonHas, jsonValues, [path])) return apply(jsonGet, jsonValues, [path]);
+      var value = make();
+      apply(jsonSet, jsonValues, [path, value]);
+      return value;
+    },
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
   globalThis.__esmFinishDynamicImport = function (evalPromise, ns) {
     return Promise.resolve(evalPromise).then(function () {
       return ns;

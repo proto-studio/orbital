@@ -838,3 +838,30 @@ log.push((await import('./f.mjs', { with: { type: 'a' } })).default, (await impo
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Each (url, type) is one module job, so a hook switching its answer later
+// changes nothing; a file's JSON imported with two types gives two namespaces
+// sharing one value. Expected from Node 20.18.1.
+func TestImportAttributes_JobsPerTypeShareFileJSONValue(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"d.json": `{"j":1}`,
+		"f.mjs":  `export default 'js';`,
+		"hooks.mjs": `let n1 = 0;
+export async function load(u, c, n) {
+  if (u.endsWith('f.mjs') && c.importAttributes.type === 'a') { n1++; return n1 === 1 ? { format: 'json', source: '{"j":1}', shortCircuit: true } : { format: 'module', source: 'export default "second"', shortCircuit: true }; }
+  if (u.endsWith('d.json') && c.importAttributes.type) return { format: 'json', source: '{"k":2}', shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('./f.mjs', { with: { type: 'a' } });
+const b = await import('./f.mjs', { with: { type: 'a' } });
+const x = await import('./d.json', { with: { type: 'json' } });
+const y = await import('./d.json', { with: { type: 'b' } });
+log.push(a === b, b.default, x === y, x.default === y.default, y.default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[true,{"j":1},false,true,{"k":2}]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
