@@ -93,3 +93,30 @@ func TestRunOnce_TicksBetweenImmediates(t *testing.T) {
 		t.Fatalf("ran %s, want [a tick b]", got)
 	}
 }
+
+// An immediate that cancels everything stops the rest of its own batch too.
+func TestCancelAllTimers_StopsTheRunningBatch(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() { ran = append(ran, "a"); el.CancelAllTimers() })
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	el.Run()
+	if got := fmt.Sprint(ran); got != "[a]" {
+		t.Fatalf("ran %s, want [a]", got)
+	}
+}
+
+// A completion queued before the turn starts keeps the loop alive through the turn, so
+// what its callback schedules runs, as libuv counts a request until its callback ran.
+func TestRun_QueuedCompletionKeepsTheTurnAlive(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.EnqueueMicrotask(func() {
+		ran = append(ran, "io")
+		el.SetImmediate(func() { ran = append(ran, "immediate") })
+	})
+	el.Run()
+	if got := fmt.Sprint(ran); got != "[io immediate]" {
+		t.Fatalf("ran %s, want [io immediate]", got)
+	}
+}

@@ -71,6 +71,7 @@ type EventLoop struct {
 	cond        *sync.Cond
 	timers      taskHeap
 	immediates  []*Task  // setImmediate: run in the check phase, after I/O
+	checkBatch  []*Task  // the immediates the check phase is running
 	ticks       []func() // scheduled by running JS: run ahead of everything else
 	microtasks  []func() // native completions: run once no tick is waiting
 	nextID      uint64
@@ -327,7 +328,7 @@ func (el *EventLoop) run(done func() bool) bool {
 		// all its phases, unreferenced timers and immediates included. Queued callbacks
 		// and the drained hook still run below, and the loop ends after them.
 		el.mu.Lock()
-		alive := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
+		alive := el.aliveLocked()
 		el.mu.Unlock()
 
 		// Timers phase: every timer due when the phase starts. Timers scheduled while it
@@ -400,6 +401,8 @@ func (el *EventLoop) run(done func() bool) bool {
 		if alive && len(el.immediates) > 0 {
 			batch := el.immediates
 			el.immediates = nil
+			// CancelAllTimers reaches the batch through this while it runs.
+			el.checkBatch = batch
 			el.mu.Unlock()
 			for i, task := range batch {
 				if task.cancelled.Load() {
@@ -410,12 +413,13 @@ func (el *EventLoop) run(done func() bool) bool {
 				}
 				el.mu.Lock()
 				stop := el.shouldStop
-				el.mu.Unlock()
 				if stop {
 					// Keep the rest for a later Run, as the timers stay in their heap.
-					el.mu.Lock()
 					el.immediates = append(batch[i:], el.immediates...)
-					el.mu.Unlock()
+					el.checkBatch = nil
+				}
+				el.mu.Unlock()
+				if stop {
 					break
 				}
 				task.fn()
@@ -425,10 +429,14 @@ func (el *EventLoop) run(done func() bool) bool {
 					// The rest of the batch runs ahead of anything queued since, next time.
 					el.mu.Lock()
 					el.immediates = append(batch[i+1:], el.immediates...)
+					el.checkBatch = nil
 					el.mu.Unlock()
 					return true
 				}
 			}
+			el.mu.Lock()
+			el.checkBatch = nil
+			el.mu.Unlock()
 			continue
 		}
 
@@ -443,7 +451,7 @@ func (el *EventLoop) run(done func() bool) bool {
 		hasTimers := el.timers.Len() > 0
 		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
 
-		if !el.hasReferencedTimerLocked() && !hasPending {
+		if !hasPending && !el.aliveLocked() && len(el.ticks) == 0 {
 			el.running = false
 			el.mu.Unlock()
 			return false
@@ -613,6 +621,12 @@ func (el *EventLoop) RunOnce() bool {
 	return hasWork
 }
 
+// aliveLocked is libuv's uv_loop_alive: a referenced timer or immediate, pending I/O, or a
+// completed operation whose callback is queued but hasn't run yet. el.mu must be held.
+func (el *EventLoop) aliveLocked() bool {
+	return el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0 || len(el.microtasks) > 0
+}
+
 // hasReferencedTimerLocked reports whether a live timer keeps the loop alive.
 func (el *EventLoop) hasReferencedTimerLocked() bool {
 	for _, task := range el.timers {
@@ -652,6 +666,9 @@ func (el *EventLoop) CancelAllTimers() {
 		task.Cancel()
 	}
 	el.immediates = nil
+	for _, task := range el.checkBatch {
+		task.Cancel()
+	}
 }
 
 // ClearAllMicrotasks clears all pending microtasks.
