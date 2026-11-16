@@ -220,9 +220,11 @@ traceability.
 - **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
   CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`) from Go's standard library, and
   ChaCha20 and ChaCha20-Poly1305 from `golang.org/x/crypto` (`cipher.go`). CCM, OCB, XTS,
-  CFB1, key wrap, ARIA, Camellia and SM4 throw `ERR_CRYPTO_UNKNOWN_CIPHER`: neither library
-  has them, except XTS, whose `x/crypto` version takes a sector number rather than
-  OpenSSL's 16-byte tweak.
+  CFB1, key wrap, Triple DES in CFB and OFB, ARIA, Camellia and SM4 throw
+  `ERR_CRYPTO_UNKNOWN_CIPHER`, and `getCiphers()` doesn't list them. Neither library has
+  most of these; Triple DES in CFB and OFB could be built from the standard library but
+  isn't yet, and `x/crypto`'s XTS takes a sector number rather than OpenSSL's 16-byte
+  tweak.
 - **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
   `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
   so a GCM context holds it in memory.
@@ -240,8 +242,8 @@ traceability.
   one scrypt call fails the memory limit, Node adds that message to later
   `Invalid scrypt params` errors too; Orbital gives each error its own reason.
 - **[approx] `getHashes()`, `getCurves()` and `getCiphers()` list only what Orbital
-  implements** (`lists.go`): the digests in `digests.go`, the P-256/384/521 curves, and no
-  ciphers until `createCipheriv` exists. Node lists every name OpenSSL knows.
+  implements** (`lists.go`): the digests in `digests.go`, the P-256/384/521 curves, and the
+  ciphers in `cipher.go`. Node lists every name OpenSSL knows.
 - **[approx] `X509Certificate` reads certificates with Go's `crypto/x509`.** Fields are
   printed as Node prints them from OpenSSL, but Go refuses some malformed certificates
   OpenSSL reads, and a certificate that fails to parse gives

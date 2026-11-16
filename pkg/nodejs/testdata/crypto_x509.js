@@ -170,7 +170,9 @@ results.lists = {
   curvesWork: crypto.getCurves().filter((c) => {
     try { crypto.generateKeyPairSync('ec', { namedCurve: c }); return false; } catch { return true; }
   }),
-  ciphers: Array.isArray(crypto.getCiphers()),
+  ciphersInclude: ['aes-128-cbc', 'aes-256-gcm', 'id-aes128-GCM', 'aes128', 'aes-192-cfb8', 'des-ede3-cbc', 'des3',
+    'chacha20', 'chacha20-poly1305'].filter((c) => !crypto.getCiphers().includes(c)),
+  ciphersSorted: crypto.getCiphers().join() === crypto.getCiphers().slice().sort().join(),
 };
 
 // createHash and createHmac take Node's digest names.
