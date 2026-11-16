@@ -190,7 +190,7 @@
       if (text !== null) sourceLine = lineOf(text, line);
     }
     if (typeof sourceLine !== 'string') return '';
-    sourceLine = untilNul(sourceLine);
+    sourceLine = untilNul(sourceLine, nulMarkOf(file));
     let caret = '';
     for (let i = 0; i < start && i < len(sourceLine); i++) {
       caret += code(sourceLine, i) === 9 ? '\t' : ' ';
