@@ -14,13 +14,14 @@ import (
 
 	"github.com/chzyer/readline"
 	"golang.org/x/term"
+	"proto.zip/studio/orbital/internal/v8dist"
 	"proto.zip/studio/orbital/pkg/nodejs"
 	"proto.zip/studio/orbital/pkg/nodejs/esm"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
-// Version info
-const orbitalVersion = "0.1.0"
+// orbitalVersion is the module version the Release workflow records, without its "v".
+var orbitalVersion = strings.TrimPrefix(v8dist.ModuleVersion, "v")
 
 // Global config
 var documentRoot string

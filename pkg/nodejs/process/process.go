@@ -73,6 +73,9 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	versions.Set("node", nodeVer)
 	versions.Set("v8", v8Ver)
 	versions.Set("gnode", goVer)
+	// Orbital's own version, without the "v" as Node writes the entries here.
+	orbitalVer, _ := ctx.NewString(strings.TrimPrefix(v8dist.ModuleVersion, "v"))
+	versions.Set("orbital", orbitalVer)
 	if err := processObj.Set("versions", versions); err != nil {
 		return err
 	}
