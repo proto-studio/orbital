@@ -630,3 +630,16 @@ delete Error.prepareStackTrace;`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// An invalid URL's error keeps its input property through a loader hook.
+func TestDynamicImport_InvalidURLInputThroughHooks(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) { return n(s, c); }`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('file://%ZZ/tmp/x.mjs'); } catch (e) { log.push(e.name, e.code, e.input, Object.keys(e).join()); }`,
+	})
+	if want := `["TypeError","ERR_INVALID_URL","file://%ZZ/tmp/x.mjs","code,input"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

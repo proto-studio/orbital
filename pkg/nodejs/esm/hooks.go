@@ -129,6 +129,10 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 				obj.Set("code", cv)
 				kv, _ := c.NewString(me.kind())
 				obj.Set("kind", kv)
+				if me.input != "" {
+					iv, _ := c.NewString(me.input)
+					obj.Set("input", iv)
+				}
 				if me.url != "" {
 					uv, _ := c.NewString(me.url)
 					obj.Set("url", uv)
