@@ -317,7 +317,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	// load hook runs, except undefined, which there means the implicit type (the
 	// default load still refuses it).
 	resolvedList, typeReceived := parseAttrsJSON(resolvedAttrs)
-	keyList := resolvedList
+	keyList := keyAttrs(resolvedList, resolvedAttrs)
 	if typeReceived == "undefined" {
 		keyList = withoutType(resolvedList)
 	} else if typeReceived != "" {

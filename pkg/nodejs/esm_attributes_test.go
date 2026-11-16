@@ -550,3 +550,30 @@ log.push((await import('m1')).default, (await import('m2', { with: { type: 'b' }
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// The attributes a resolve hook returns are cloned once (a getter runs once), a
+// sparse array keeps its length, and types differing only in a lone surrogate stay
+// separate modules. Expected from Node 20.18.1.
+func TestImportAttributes_CloneOnceSparseAndSurrogates(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"v.js": ``,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './g') { let i = 0; const a = {}; Object.defineProperty(a, 'type', { enumerable: true, get() { return ['a', 'b'][i++]; } }); return { ...(await n('./v.js', c)), importAttributes: a }; }
+  if (s === './sp') return { ...(await n('./v.js?sp', c)), importAttributes: new Array(5) };
+  if (s === './s1') return { ...(await n('./v.js?s1', c)), importAttributes: { type: '\uD800' } };
+  if (s === './s2') return { ...(await n('./v.js?s1', c)), importAttributes: { type: '\uD801' } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('v.js')) { const a = c.importAttributes; return { format: 'module', source: 'export default ' + JSON.stringify(Array.isArray(a) ? ['len', a.length, Object.keys(a).length] : a.type === undefined ? null : [...a.type].map(ch => ch.charCodeAt(0))), shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['./g', './sp', './s1', './s2']) { try { log.push((await import(s)).default); } catch (e) { log.push(e.code); } }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[[97],["len",5,0],[55296],[55297]]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

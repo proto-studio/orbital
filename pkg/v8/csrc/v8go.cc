@@ -1827,6 +1827,24 @@ static Local<Value> resolveFailure(Isolate* isolate, void* error_value,
 // importAttributes flattens an import's attributes into key, value, key, ...
 // strings. V8 lists them as (key, value) pairs for import(), and as (key, value,
 // source offset) triples for a static import: stride says which.
+// losslessUtf8 is a string's UTF-8, with a lone surrogate written as its own
+// three bytes (WTF-8) rather than replaced by U+FFFD, so distinct JavaScript
+// strings stay distinct.
+static std::string losslessUtf8(Isolate* isolate, Local<Context> context,
+                                Local<Value> value) {
+    Local<String> str;
+    if (!value->ToString(context).ToLocal(&str)) return std::string();
+#if V8_MAJOR_VERSION >= 15
+    std::string out(str->Utf8Length(isolate), '\0');
+    size_t written = str->WriteUtf8(isolate, out.data(), out.size());
+#else
+    std::string out(str->Utf8LengthV2(isolate), '\0');
+    size_t written = str->WriteUtf8V2(isolate, out.data(), out.size());
+#endif
+    out.resize(written);
+    return out;
+}
+
 static std::vector<std::string> importAttributes(Isolate* isolate,
                                                  Local<Context> context,
                                                  Local<FixedArray> attrs,
@@ -1842,11 +1860,9 @@ static std::vector<std::string> importAttributes(Isolate* isolate,
         Local<Data> value = attrs->Get(context, i + 1);
 #endif
         if (!key->IsValue() || !value->IsValue()) continue;
-        String::Utf8Value k(isolate, key.As<Value>());
-        String::Utf8Value v(isolate, value.As<Value>());
-        // Keep the lengths: a key or value may contain a NUL.
-        out.emplace_back(*k ? std::string(*k, k.length()) : std::string());
-        out.emplace_back(*v ? std::string(*v, v.length()) : std::string());
+        // Lengths kept (a key or value may contain a NUL), surrogates too.
+        out.emplace_back(losslessUtf8(isolate, context, key.As<Value>()));
+        out.emplace_back(losslessUtf8(isolate, context, value.As<Value>()));
     }
     return out;
 }
@@ -2158,9 +2174,7 @@ static void dynamicImportJob(const FunctionCallbackInfo<Value>& info) {
         for (uint32_t i = 0; i < list->Length(); i++) {
             Local<Value> item;
             if (!list->Get(context, i).ToLocal(&item)) return;
-            String::Utf8Value item_utf8(isolate, item);
-            attrs.emplace_back(*item_utf8
-                ? std::string(*item_utf8, item_utf8.length()) : std::string());
+            attrs.emplace_back(losslessUtf8(isolate, context, item));
         }
     }
     // Run it at most once, however often the scheduler calls it.
@@ -2214,11 +2228,19 @@ static MaybeLocal<Promise> hostImportModuleDynamically(
     if (context->Global()->Get(context, String::NewFromUtf8(isolate,
                 "__esmScheduleDynamicImport").ToLocalChecked())
             .ToLocal(&scheduler) && scheduler->IsFunction()) {
+        // The attributes' own strings, so nothing is lost before the job runs.
         std::vector<Local<Value>> attr_values;
-        for (auto& a : attrs) {
-            attr_values.push_back(String::NewFromUtf8(isolate, a.data(),
-                    NewStringType::kNormal, static_cast<int>(a.size()))
-                .ToLocalChecked());
+        for (int i = 0; !import_attributes.IsEmpty() && i + 1 < import_attributes->Length(); i += 2) {
+#if V8_MAJOR_VERSION >= 15
+            Local<Data> key = import_attributes->Get(i);
+            Local<Data> value = import_attributes->Get(i + 1);
+#else
+            Local<Data> key = import_attributes->Get(context, i);
+            Local<Data> value = import_attributes->Get(context, i + 1);
+#endif
+            if (!key->IsValue() || !value->IsValue()) continue;
+            attr_values.push_back(key.As<Value>());
+            attr_values.push_back(value.As<Value>());
         }
         Local<Value> items[4] = {
             resolver, specifier, referrer_value,

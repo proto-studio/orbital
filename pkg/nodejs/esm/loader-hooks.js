@@ -358,6 +358,8 @@
   const NativeBigInt = BigInt;
   const clone = typeof structuredClone === 'function' ? structuredClone : null;
   const EMPTY = '{"array":false,"pairs":[]}';
+  const isWellFormed = String.prototype.isWellFormed;
+  const apply = Reflect.apply;
 
   // Attributes cross to Go as JSON [key, value] pairs. A value that isn't a
   // string goes as { text, received, json?, undefined?, bigint? }: its string
@@ -385,7 +387,17 @@
       }
       pairs[i] = [k, other];
     }
-    return JSONStringify({ array: ArrayIsArray(attrs), pairs: pairs });
+    const isArray = ArrayIsArray(attrs);
+    // An array's length too, so a sparse one keeps its holes. And a type with a
+    // lone surrogate as its UTF-16 code units, which JSON can't lose (Go would
+    // read the surrogate as U+FFFD), for the module cache key.
+    const type = attrs.type;
+    let typeKey;
+    if (typeof type === 'string' && !apply(isWellFormed, type, [])) {
+      typeKey = '';
+      for (let i = 0; i < type.length; i++) typeKey += (type.charCodeAt(i) + 0x10000).toString(16).slice(1);
+    }
+    return JSONStringify({ array: isArray, length: isArray ? attrs.length : undefined, typeKey: typeKey, pairs: pairs });
   }
 
   // The resolved attributes object itself stays in this realm until its load,
@@ -394,10 +406,25 @@
   const stashed = ObjectCreate(null);
   let stashSeq = 0;
 
+  // The attributes are cloned once, here: Go checks and keys the clone, and the
+  // load hooks get it, so a getter runs once, as in Node's single transfer. A
+  // value that can't be cloned (a function, say) fails the import, as it does
+  // crossing Node's hooks thread.
   function stashAttrs(attrs) {
     const id = ++stashSeq;
-    stashed[id] = attrs;
-    const encoded = JSONParse(encodeAttrs(attrs));
+    let value = attrs;
+    let cloned = false;
+    if (clone && attrs !== null && typeof attrs === 'object') {
+      const copy = clone(attrs);
+      // A clone can't keep an own "__proto__" key (and may fill an array's
+      // holes); keep the original then, and rebuild it for the load.
+      if (ObjectKeys(copy).length === ObjectKeys(attrs).length) {
+        value = copy;
+        cloned = true;
+      }
+    }
+    stashed[id] = { value: value, cloned: cloned };
+    const encoded = JSONParse(encodeAttrs(value));
     encoded.id = id;
     return JSONStringify(encoded);
   }
@@ -414,15 +441,9 @@
   function unstashAttrs(text) {
     const encoded = JSONParse(text || EMPTY);
     if (encoded.id !== undefined && encoded.id in stashed) {
-      const attrs = stashed[encoded.id];
+      const entry = stashed[encoded.id];
       delete stashed[encoded.id];
-      if (clone && attrs !== null && typeof attrs === 'object') {
-        // A value that can't be cloned (a function, say) fails the import, as
-        // it does crossing Node's hooks thread.
-        const copy = clone(attrs);
-        // A clone can't keep an own "__proto__" key; rebuild then instead.
-        if (ObjectKeys(copy).length === ObjectKeys(attrs).length) return copy;
-      }
+      if (entry.cloned) return entry.value;
     }
     return decodeAttrs(text);
   }
@@ -441,6 +462,7 @@
       // defineProperty, so a "__proto__" key stays an own attribute.
       ObjectDefineProperty(attrs, k, { value, writable: true, enumerable: true, configurable: true });
     }
+    if (encoded.array && typeof encoded.length === 'number') attrs.length = encoded.length;
     return attrs;
   }
 
