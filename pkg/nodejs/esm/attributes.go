@@ -166,6 +166,17 @@ func (e *ESM) recordAttrCheck(key string, err error) {
 	e.attrChecks[key] = err
 }
 
+// withoutType returns attrs without its `type` entry.
+func withoutType(attrs []v8.ImportAttribute) []v8.ImportAttribute {
+	out := make([]v8.ImportAttribute, 0, len(attrs))
+	for _, a := range attrs {
+		if a.Key != "type" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // attrsJSON encodes attributes as the object a hook sees as importAttributes.
 func attrsJSON(attrs []v8.ImportAttribute) string {
 	var b strings.Builder

@@ -306,8 +306,13 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	preFormat := objString(resolved, "format")
 	resolvedAttrs := objString(resolved, "importAttributes")
 	// Like Node's module map, a type that isn't a string is refused before any
-	// load hook runs.
-	if _, typeReceived := parseAttrsJSON(resolvedAttrs); typeReceived != "" {
+	// load hook runs, except undefined, which there means the implicit type (the
+	// default load still refuses it).
+	resolvedList, typeReceived := parseAttrsJSON(resolvedAttrs)
+	keyList := resolvedList
+	if typeReceived == "undefined" {
+		keyList = withoutType(resolvedList)
+	} else if typeReceived != "" {
 		e.dropResolvedAttrs(resolvedAttrs)
 		return "", "", attrTypeError("ERR_INVALID_ARG_TYPE",
 			`The "type" argument must be of type string. Received `+typeReceived)
@@ -318,8 +323,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	// its outcome, without loading again.
 	check, key := "", ""
 	if attrs != nil {
-		resolvedList, _ := parseAttrsJSON(resolvedAttrs)
-		key = attrCheckKey(url, resolvedList)
+		key = attrCheckKey(url, keyList)
 		if prior, seen := e.attrChecks[key]; seen {
 			if prior != nil {
 				e.dropResolvedAttrs(resolvedAttrs)
@@ -359,8 +363,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	if attrs == nil {
 		return final, url, nil
 	}
-	resolvedList, _ := parseAttrsJSON(resolvedAttrs)
-	return final, e.typedKey(url, format, resolvedList), nil
+	return final, e.typedKey(url, format, keyList), nil
 }
 
 // dropResolvedAttrs releases the attributes the loader realm keeps for a load
