@@ -7,6 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"proto.zip/studio/orbital/pkg/runtime"
 )
 
 // process emits 'beforeExit' when the event loop runs out of work, runs the loop again if a
@@ -49,5 +52,40 @@ func TestProcess_BeforeExitMatchesNode(t *testing.T) {
 				t.Errorf("got %q, want %q", got, want[name])
 			}
 		})
+	}
+}
+
+// A preloaded ES module is not the program: its loop running out of work emits no
+// 'beforeExit', which comes once, after the entry.
+func TestProcess_BeforeExitNotForPreloads(t *testing.T) {
+	dir := t.TempDir()
+	preload := filepath.Join(dir, "preload.mjs")
+	entry := filepath.Join(dir, "entry.mjs")
+	if err := os.WriteFile(preload, []byte("process.on('beforeExit', () => note('beforeExit'));\nnote('preload');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry, []byte("note('entry');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript(`globalThis.__notes = []; globalThis.note = (...a) => __notes.push(a.join(' '));`, "prelude.js"); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.ESM.Preload(preload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.ESM.RunModuleFile(entry); err != nil {
+		t.Fatal(err)
+	}
+	val, err := inst.Runtime.RunScript(`__notes.join(',')`, "notes.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := val.String(), "preload,entry,beforeExit"; got != want {
+		t.Errorf("notes = %q, want %q", got, want)
 	}
 }

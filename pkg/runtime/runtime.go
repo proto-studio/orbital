@@ -441,6 +441,12 @@ func (rt *Runtime) RunEventLoop() {
 		if rt.Ended() != nil {
 			return
 		}
+		// A listener can leave a promise rejected, and the rejection handlers can schedule
+		// work of their own, so they run before the loop's liveness decides what's next.
+		rt.reportRejections()
+		if rt.Ended() != nil {
+			return
+		}
 		if !rt.eventLoop.isAlive() {
 			// The listeners' ticks have run; this only clears what is left in Go's queues.
 			rt.eventLoop.Run()
