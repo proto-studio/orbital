@@ -191,10 +191,12 @@ int v8go_set_promise_reject_handler(void* context_ptr, void* function_ptr);
 // Returns what the last failed v8go_context_run_script threw, once, or NULL.
 void* v8go_context_take_last_script_exception(void* context_ptr);
 // Gives, once, where V8's message for that exception places it: the script's name, the
-// 1-based line, that line's text and the 0-based start and end columns (-1 if unknown).
+// 1-based line, that line's text and the 0-based start and end columns (-1 if unknown), and
+// whether the script failed to compile. A very long name or line is left out.
 // Returns 0 if there is none. The caller frees *resource and *source_line.
 int v8go_context_take_last_exception_message(void* context_ptr, char** resource, int* line,
-                                             char** source_line, int* start, int* end);
+                                             char** source_line, int* start, int* end,
+                                             int* compile);
 void v8go_perform_microtask_checkpoint(void* isolate);
 
 #ifdef __cplusplus

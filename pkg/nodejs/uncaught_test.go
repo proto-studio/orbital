@@ -1731,3 +1731,19 @@ func TestUncaughtSourceForNulModuleWithReplacedStringMethods(t *testing.T) {
 		t.Errorf("Source = %q, want it to start %q", uncaught.Source, want)
 	}
 }
+
+func TestUncaughtSourceForOverlongLine(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(strings.Repeat(" ", 20000)+"throw 'long';\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source has %d bytes, want none", len(uncaught.Source))
+	}
+}

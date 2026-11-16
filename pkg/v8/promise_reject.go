@@ -43,6 +43,8 @@ type ExceptionMessage struct {
 	SourceLine string
 	// StartColumn and EndColumn are 0-based UTF-16 offsets into SourceLine, or -1.
 	StartColumn, EndColumn int
+	// Compile reports that the script failed to compile, so none of it ran.
+	Compile bool
 }
 
 // TakeLastExceptionMessage returns where V8's message places what the last failed RunScript
@@ -53,8 +55,8 @@ func (c *Context) TakeLastExceptionMessage() *ExceptionMessage {
 		return nil
 	}
 	var resource, sourceLine *C.char
-	var line, start, end C.int
-	if C.v8go_context_take_last_exception_message(c.ptr, &resource, &line, &sourceLine, &start, &end) == 0 {
+	var line, start, end, compile C.int
+	if C.v8go_context_take_last_exception_message(c.ptr, &resource, &line, &sourceLine, &start, &end, &compile) == 0 {
 		return nil
 	}
 	defer C.free(unsafe.Pointer(resource))
@@ -65,5 +67,6 @@ func (c *Context) TakeLastExceptionMessage() *ExceptionMessage {
 		SourceLine:   C.GoString(sourceLine),
 		StartColumn:  int(start),
 		EndColumn:    int(end),
+		Compile:      compile != 0,
 	}
 }

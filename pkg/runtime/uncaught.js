@@ -209,7 +209,9 @@
   // it. A rejection has no throw to point at, and Node marks where the error was made.
   function errorSource(err, thrown, site) {
     const fromStack = stackSource(err, thrown);
-    if (fromStack !== '' || !thrown || !site || typeof site.file !== 'string' || site.file === '') {
+    // The glue leaves out a line too long to copy, and then there is nothing to show.
+    if (fromStack !== '' || !thrown || !site || typeof site.file !== 'string' || site.file === '' ||
+        typeof site.sourceLine !== 'string' || site.sourceLine === '') {
       return fromStack;
     }
     const start = site.start >= 0 ? site.start : 0;

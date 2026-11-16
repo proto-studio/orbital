@@ -52,6 +52,7 @@ struct ContextWrapper {
         std::string source_line;
         int start = -1;
         int end = -1;
+        bool compile = false; // the script didn't compile, so none of it ran
     } last_exception_message;
 };
 
@@ -70,21 +71,29 @@ static ContextWrapper* wrapperFromContext(Local<Context> context) {
 
 // recordException keeps what a TryCatch caught, and where its message places it, for
 // v8go_context_take_last_script_exception and v8go_context_take_last_exception_message.
+// A message's name and line longer than these are left out: the header shows one line,
+// and copying a huge one out of V8 would be memory V8's heap limit doesn't cover.
+static const int kMaxMessageResource = 4096;
+static const int kMaxMessageLine = 16384;
+
 static void recordException(ContextWrapper* wrapper, Isolate* isolate, Local<Context> context,
-                            TryCatch& try_catch) {
+                            TryCatch& try_catch, bool compile) {
     wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
     auto& m = wrapper->last_exception_message;
     m = {};
     Local<Message> message = try_catch.Message();
     if (message.IsEmpty()) return;
-    String::Utf8Value resource(isolate, message->GetScriptResourceName());
+    Local<Value> resource_value = message->GetScriptResourceName();
+    if (resource_value->IsString() && resource_value.As<String>()->Length() > kMaxMessageResource) return;
+    String::Utf8Value resource(isolate, resource_value);
     m.resource = *resource ? *resource : "";
     m.line = message->GetLineNumber(context).FromMaybe(0);
     Local<String> source_line;
-    if (message->GetSourceLine(context).ToLocal(&source_line)) {
+    if (message->GetSourceLine(context).ToLocal(&source_line) && source_line->Length() <= kMaxMessageLine) {
         String::Utf8Value line(isolate, source_line);
         m.source_line = *line ? *line : "";
     }
+    m.compile = compile;
     m.start = message->GetStartColumn(context).FromMaybe(-1);
     m.end = message->GetEndColumn(context).FromMaybe(-1);
     m.has = true;
@@ -477,7 +486,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            recordException(wrapper, isolate, context, try_catch);
+            recordException(wrapper, isolate, context, try_catch, true);
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
         }
@@ -492,7 +501,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            recordException(wrapper, isolate, context, try_catch);
+            recordException(wrapper, isolate, context, try_catch, false);
             String::Utf8Value exception(isolate, try_catch.Exception());
             String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
             
@@ -1943,7 +1952,8 @@ void* v8go_context_take_last_script_exception(void* context_ptr) {
 }
 
 int v8go_context_take_last_exception_message(void* context_ptr, char** resource, int* line,
-                                             char** source_line, int* start, int* end) {
+                                             char** source_line, int* start, int* end,
+                                             int* compile) {
     if (!context_ptr) return 0;
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
     // The same lock as the script run that records it.
@@ -1955,6 +1965,7 @@ int v8go_context_take_last_exception_message(void* context_ptr, char** resource,
     *source_line = strdup(m.source_line.c_str());
     *start = m.start;
     *end = m.end;
+    *compile = m.compile ? 1 : 0;
     m = {};
     return 1;
 }
