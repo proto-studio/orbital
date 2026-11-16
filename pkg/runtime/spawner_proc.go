@@ -214,6 +214,9 @@ func lookPathIn(file, pathList, cwd string) (string, error) {
 		// An empty PATH is one empty entry, the current directory, as the shell reads it.
 		dirs = []string{""}
 	}
+	// As execvp does, a file found but not executable is EACCES unless a later entry has
+	// one that is.
+	var notFound error = exec.ErrNotFound
 	for _, dir := range dirs {
 		if dir == "" {
 			dir = "."
@@ -230,8 +233,9 @@ func lookPathIn(file, pathList, cwd string) (string, error) {
 		if unix.Faccessat(unix.AT_FDCWD, candidate, unix.X_OK, unix.AT_EACCESS) == nil {
 			return candidate, nil
 		}
+		notFound = syscall.EACCES
 	}
-	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+	return "", &exec.Error{Name: file, Err: notFound}
 }
 
 // startProcess connects a command's file descriptors as stdio asks and starts it.

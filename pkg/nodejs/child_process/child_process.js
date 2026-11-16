@@ -357,6 +357,11 @@
     unref() {
       if (this._id !== null) {
         internal.unref(this._id);
+        // Node reads output from the start, so it sees a pipe close while the child runs.
+        // Reading ahead here does the same, so the end of output can let the loop finish.
+        for (const stream of this.stdio || []) {
+          if (stream && stream.readable && !stream.readableFlowing) stream.read(0);
+        }
       }
       return this;
     }

@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -88,5 +90,20 @@ func TestRealSpawnerPathSearch(t *testing.T) {
 	}
 	if got := spawnOutput(t, NewRealProcessSpawner(), "orbital-path-tool", &SpawnOptions{Cwd: second, Env: []string{"PATH="}}); got != "second" {
 		t.Fatalf("empty PATH: got %q, want second", got)
+	}
+}
+
+// A file found on PATH but not executable is EACCES, not ENOENT, as in Node.
+func TestRealSpawnerPathNotExecutable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute any file with an execute bit")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "orbital-path-tool"), []byte("#!/bin/sh\necho x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewRealProcessSpawner().Spawn(context.Background(), "orbital-path-tool", nil, &SpawnOptions{Env: []string{"PATH=" + dir}})
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("err = %v, want EACCES", err)
 	}
 }
