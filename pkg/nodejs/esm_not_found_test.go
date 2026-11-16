@@ -867,11 +867,14 @@ for (const s of ['/\\localhost' + dir + 'tmp/x.mjs', '/\\example.com/tmp/x.mjs',
 // keeps shared property values shared. Expected from Node 20.18.1.
 func TestDynamicImport_HookErrorBrandsClassesAndSharing(t *testing.T) {
 	got := runLogModule(t, map[string]string{
-		"hooks.mjs": `class CustomTypeError extends TypeError { constructor(m) { super(m); this.extra = 1; } }
+		"hooks.mjs": `let causeReads = 0;
+class CustomTypeError extends TypeError { constructor(m) { super(m); this.extra = 1; } }
 export async function resolve(s, c, n) {
   if (s === 'fncause') throw new TypeError('x', { cause: () => {} });
   if (s === 'fnprop') throw Object.assign(new RangeError('y'), { f() {}, k: 1 });
   if (s === 'shared') { const v = { z: 1 }; throw Object.assign(new Error('x'), { a: v, b: v }); }
+  if (s === 'cgetter') { const e = new Error('g'); Object.defineProperty(e, 'cause', { enumerable: true, configurable: true, get() { return ++causeReads; } }); throw e; }
+  if (s === 'cenum') { const e = new Error('outer'); e.cause = Object.assign(new TypeError('inner'), { code: 'INNER' }); throw e; }
   if (s === 'getfn') { let reads = 0; throw Object.assign(new Error('x'), { extra: { get n() { return ++reads; } }, f() {}, k: 1 }); }
   if (s === 'sub') throw new CustomTypeError('sub');
   if (s === 'proto') { const e = new Error('p'); Object.setPrototypeOf(e, RangeError.prototype); throw e; }
@@ -883,9 +886,11 @@ for (const s of ['fncause', 'fnprop', 'sub', 'proto']) {
   try { await import(s); } catch (e) { log.push([e.constructor.name, e.message, typeof e.cause, String(e.cause), Object.getOwnPropertyNames(e).join()]); }
 }
 try { await import('shared'); } catch (e) { log.push(e.a === e.b, e.a.z); }
-try { await import('getfn'); } catch (e) { log.push(e.extra.n, typeof e.f, e.k); }`,
+try { await import('getfn'); } catch (e) { log.push(e.extra.n, typeof e.f, e.k); }
+try { await import('cgetter'); } catch (e) { log.push(e.cause, Object.keys(e).join()); }
+try { await import('cenum'); } catch (e) { log.push(e.cause instanceof TypeError, e.cause.code, Object.keys(e).join()); }`,
 	})
-	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1,1,"undefined",1]`
+	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1,1,"undefined",1,1,"cause",true,"INNER","cause"]`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
