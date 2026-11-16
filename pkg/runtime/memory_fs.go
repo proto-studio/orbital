@@ -294,9 +294,11 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 	if !ok || f.isDir {
 		return fs.ErrNotExist
 	}
-	// An existing destination keeps its identity, so handles open on it see the copy.
+	// An existing destination keeps its identity, so handles open on it see the copy, and
+	// takes the source's mode, as a real copy does.
 	if existing, ok := m.files[dst]; ok && !existing.isDir {
 		existing.data = append([]byte(nil), f.data...)
+		existing.mode = f.mode
 		existing.modTime = time.Now()
 		return nil
 	}
