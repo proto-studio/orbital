@@ -596,12 +596,20 @@ func (c *Console) specString(v *v8.Value) string {
 	if v.IsNumber() {
 		return number(v)
 	}
-	// Through c.text, which keeps a NUL that a custom toString may return.
+	// Through c.text, which keeps a NUL that a custom toString may return. A proxy converts
+	// itself, as in Node, its target deciding only whether it has a custom conversion.
 	if text := c.inspectValue("text", v); text != nil && text.IsString() {
 		return c.text(text)
 	}
 	if !v.IsObject() || v.IsFunction() {
 		return v.String()
+	}
+	if target, revoked := proxyTarget(v); revoked {
+		return revokedProxy
+	} else if target != nil {
+		// The target's handle is made for this print, and released once it's done.
+		defer target.Release()
+		v = target
 	}
 	// Any other object is inspected with a depth of 0.
 	saved := c.shallow
@@ -667,6 +675,13 @@ func (c *Console) formatValue(v *v8.Value) string {
 		// Only in inspect/dir mode do strings get quoted and colored
 		return c.text(v)
 	}
+	if target, revoked := proxyTarget(v); revoked {
+		return revokedProxy
+	} else if target != nil {
+		// The target's handle is made for this print, and released once it's done.
+		defer target.Release()
+		v = target
+	}
 	if v.IsFunction() {
 		return c.formatter.FormatValue("[Function]", runtime.TypeFunction)
 	}
@@ -724,6 +739,13 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 		quoted := c.quoted(v, c.level(depth-1))
 		return c.formatter.FormatValue(quoted, runtime.TypeString)
 	}
+	if target, revoked := proxyTarget(v); revoked {
+		return revokedProxy
+	} else if target != nil {
+		// The target's handle is made for this print, and released once it's done.
+		defer target.Release()
+		v = target
+	}
 	if v.IsFunction() {
 		return c.formatter.FormatValue("[Function]", runtime.TypeFunction)
 	}
@@ -734,6 +756,27 @@ func (c *Console) formatValueQuotedWithDepth(v *v8.Value, depth int) string {
 		return c.formatObjectWithDepth(v, depth-1)
 	}
 	return c.formatOther(v)
+}
+
+// revokedProxy is how Node prints a proxy that was revoked.
+const revokedProxy = "<Revoked Proxy>"
+
+// proxyTarget answers what to print for v when it's a proxy: its target, following proxies of
+// proxies, which Node prints in its place so that none of the proxy's traps run, or revoked
+// when it was revoked. It answers nil for anything else. The caller releases the target.
+func proxyTarget(v *v8.Value) (target *v8.Value, revoked bool) {
+	if !v.IsObject() {
+		return nil, false
+	}
+	t, ok := v.ProxyTarget()
+	if !ok {
+		return nil, false
+	}
+	if t == nil || t.IsNull() {
+		t.Release()
+		return nil, true
+	}
+	return t, false
 }
 
 // number is the text of a number, with negative zero as -0 like Node.

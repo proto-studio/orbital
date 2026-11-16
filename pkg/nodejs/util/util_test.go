@@ -369,9 +369,8 @@ func TestUtil_InspectDataView(t *testing.T) {
 	}
 }
 
-// TestUtil_InspectBinaryPastDepth checks that an ArrayBuffer past the depth limit is named
-// without reading more of it than its constructor, so a toStringTag getter that throws doesn't
-// break inspection.
+// TestUtil_InspectBinaryPastDepth checks that an ArrayBuffer past the depth limit is named with
+// its toStringTag, so a getter for it that throws throws out of inspect, as in Node.
 func TestUtil_InspectBinaryPastDepth(t *testing.T) {
 	rt := setupRuntime(t)
 	defer rt.Dispose()
@@ -379,12 +378,18 @@ func TestUtil_InspectBinaryPastDepth(t *testing.T) {
 	result, err := rt.RunScript(`
 		const ab = new ArrayBuffer(2);
 		Object.defineProperty(ab, Symbol.toStringTag, { get() { throw new Error('tag'); } });
-		__util_module.inspect({ x: ab }, { depth: 0 });
+		let thrown = 'nothing';
+		try {
+			__util_module.inspect({ x: ab }, { depth: 0 });
+		} catch (e) {
+			thrown = e.message;
+		}
+		thrown + ' ' + __util_module.inspect({ x: new ArrayBuffer(2) }, { depth: 0 });
 	`, "test.js")
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
-	if got, want := result.String(), "{ x: [ArrayBuffer] }"; got != want {
+	if got, want := result.String(), "tag { x: [ArrayBuffer] }"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -438,7 +443,7 @@ func TestUtil_InspectReadsElementsOnce(t *testing.T) {
 }
 
 // TestUtil_InspectProxyPastDepth checks that a proxy whose getPrototypeOf trap throws can still
-// be inspected past the depth limit.
+// be inspected past the depth limit: like Node, inspect prints its target, without running a trap.
 func TestUtil_InspectProxyPastDepth(t *testing.T) {
 	rt := setupRuntime(t)
 	defer rt.Dispose()
@@ -450,7 +455,7 @@ func TestUtil_InspectProxyPastDepth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
-	if got, want := result.String(), "{ x: [Object] }"; got != want {
+	if got, want := result.String(), "{ x: {} }"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -631,9 +636,11 @@ func TestUtil_InspectLongPrototypeChainKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunScript failed: %v", err)
 	}
-	want := "Object <Object <Complex prototype>>(1) { 1 => 2 }\n" +
-		"Object <Object <Complex prototype>>(1) [ 0 ]\n" +
-		"{ a: { b: { c: [Object <Complex prototype>] } } }"
+	// V8 names each kind, as Node's prefixes show; Node then lays the bodies out as plain
+	// objects, which this doesn't follow.
+	want := "Map <Object <Complex prototype>>(1) { 1 => 2 }\n" +
+		"Uint8Array <Object <Complex prototype>>(1) [ 0 ]\n" +
+		"{ a: { b: { c: [ArrayBuffer <Complex prototype>] } } }"
 	if got := result.String(); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

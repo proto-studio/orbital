@@ -336,3 +336,53 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   console.log(u.inspect({ a: new Uint8Array(0) }, { compact: 1 }), u.inspect({ x: { y: { a: new Uint8Array(0) } } }));
   console.log({ x: { y: { a: new Uint8Array(0) } } });
 }
+// V8 names how an object was made, so an instance whose prototype was set to null keeps its
+// class's name. A proxy prints as its target, or <Revoked Proxy>, and none of its traps run;
+// a toStringTag getter that throws throws out of inspect.
+{
+  const p = (...v) => v.forEach((x) => console.log(u.inspect(x)));
+  class Foo { constructor() { this.a = 1; } }
+  p(Object.setPrototypeOf(new Foo(), null), Object.create(Object.create(null)),
+    Object.setPrototypeOf(new Foo(), Object.create(Object.create(null))));
+  const { proxy, revoke } = Proxy.revocable({ a: 1 }, {});
+  revoke();
+  const throwing = new Proxy({ a: 1 }, { ownKeys() { throw new Error('x'); }, get() { throw new Error('g'); } });
+  p(throwing, proxy, new Proxy([1, 2], {}), new Proxy(function f() {}, {}), new Proxy(new Proxy({ b: 2 }, {}), {}), { inner: proxy, list: [throwing] });
+  console.log(throwing, proxy, { inner: proxy, list: [throwing] }, new Proxy([1, 2], {}));
+  console.log(u.format('%s|%s', new Proxy({ toString() { return 'x'; } }, {}), new Proxy({ a: 1 }, {})));
+  try { u.inspect(Object.defineProperty({ a: 1 }, Symbol.toStringTag, { get() { throw new Error('tag'); } })); } catch (e) { console.log('throws', e.message); }
+  let calls = 0;
+  const counted = new Proxy([1], { ownKeys(t) { calls++; return Reflect.ownKeys(t); }, get(t, k) { calls++; return Reflect.get(t, k); } });
+  u.inspect(counted); u.inspect(counted); console.log(counted); console.log('trap calls', calls);
+}
+// A proxy's custom inspector runs with the proxy as its receiver, and answering the proxy
+// leaves it to be printed as usual; %s converts the proxy itself.
+{
+  let p = new Proxy({ a: 1, [Symbol.for('nodejs.util.inspect.custom')]() { return p; } }, {});
+  console.log(u.inspect(p));
+  let q = new Proxy({ [Symbol.for('nodejs.util.inspect.custom')]() { return this === q ? 'proxy this' : 'target this'; } }, {});
+  console.log(u.inspect(q));
+  const conv = new Proxy({ x: 'target', toString() { return this.x; } }, { get(t, k) { return k === 'x' ? 'proxy' : Reflect.get(t, k); } });
+  console.log('%s', conv); console.log(u.format('%s', conv));
+}
+// util.format's %s judges a proxy by its target without running a trap (#221): one whose
+// target has its own toString is converted, which runs the proxy's get trap, here a throwing
+// one; one whose target doesn't is inspected as its target.
+{
+  const trap = { getOwnPropertyDescriptor() { throw new Error('trap'); }, get() { throw new Error('trap'); } };
+  const results = [];
+  for (const value of [new Proxy({ toString() { return 'T'; } }, trap), new Proxy({ a: 1 }, trap), new Proxy({ a: 1 }, {})]) {
+    try {
+      results.push(u.format('%s', value));
+    } catch (e) {
+      results.push('throws ' + e.message);
+    }
+  }
+  console.log(results.join(' | '));
+}
+// A custom inspector is called directly, whatever its own call property holds.
+{
+  const custom = () => 'ok';
+  custom.call = null;
+  console.log(u.inspect({ [Symbol.for('nodejs.util.inspect.custom')]: custom }));
+}

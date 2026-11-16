@@ -133,6 +133,9 @@ int v8go_object_delete(void* context, void* object, const char* key);
 void* v8go_object_get_property_names(void* context, void* object);
 void* v8go_object_get_own_non_index_keys(void* context, void* object);
 void* v8go_own_non_index_keys_function(void* context);
+void* v8go_constructor_name_function(void* context);
+void* v8go_proxy_target_function(void* context);
+void* v8go_value_proxy_target(void* context, void* value, int* is_proxy);
 void v8go_value_release(void* value);
 
 // Array operations  
