@@ -97,7 +97,9 @@ function validateObject(value, name) {
   }
 }
 
-const platform = (globalThis.process && globalThis.process.platform) || native.platform;
+// Go names Windows 'windows', where Node's process.platform says 'win32'.
+let platform = (globalThis.process && globalThis.process.platform) || native.platform;
+if (platform === 'windows') platform = 'win32';
 const platformIsWin32 = (platform === 'win32');
 
 // Node reads process.cwd() and process.env; a runtime without process uses the host's.
