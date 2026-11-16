@@ -304,3 +304,58 @@ func TestCallbackContextKeepsImportAndRejections(t *testing.T) {
 		t.Errorf("got %q, want %q", got.String(), want)
 	}
 }
+
+// A million calls of a trivial Go-backed function, each given an argument, leave the isolate's
+// persistent handles bounded: each call's context wrapper and argument handles are freed once
+// Go no longer uses them. Leaked, they'd take tens of megabytes.
+func TestNativeCallsKeepHandlesBounded(t *testing.T) {
+	iso, err := v8.NewIsolate()
+	if err != nil {
+		t.Fatalf("NewIsolate: %v", err)
+	}
+	defer iso.Dispose()
+	ctx, err := iso.NewContext()
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	defer ctx.Dispose()
+
+	tmpl, err := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+		_ = info.Args()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewFunctionTemplate: %v", err)
+	}
+	fn, err := tmpl.GetFunction(ctx)
+	if err != nil {
+		t.Fatalf("GetFunction: %v", err)
+	}
+	global, err := ctx.Global()
+	if err != nil {
+		t.Fatalf("Global: %v", err)
+	}
+	if err := global.Set("native", fn); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	// In batches, with Go's GC between them, as a running program's would be.
+	for batch := 0; batch < 10; batch++ {
+		if _, err := ctx.RunScript(`for (let i = 0; i < 100000; i++) native(i, 'x');`, "loop.js"); err != nil {
+			t.Fatalf("RunScript: %v", err)
+		}
+		runtime.GC()
+	}
+	runtime.GC()
+	runtime.GC()
+	// A last call frees what the finalizers have handed back.
+	if _, err := ctx.RunScript(`native()`, "drain.js"); err != nil {
+		t.Fatalf("RunScript: %v", err)
+	}
+	stats, err := iso.GetHeapStatistics()
+	if err != nil {
+		t.Fatalf("GetHeapStatistics: %v", err)
+	}
+	if stats.UsedGlobalHandlesSize > 4<<20 {
+		t.Errorf("persistent handles take %d bytes after 1M native calls", stats.UsedGlobalHandlesSize)
+	}
+}

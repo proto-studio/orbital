@@ -1,6 +1,7 @@
 package v8
 
 import (
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -14,9 +15,8 @@ import (
 // make Values in it: like the rest of an isolate's state, they're not for concurrent use.
 
 // releaseScope collects the Values made while it's the innermost scope of its isolate. A kept
-// scope collects nothing: it stands for a Go callback that JavaScript called while an outer
-// scope was open, whose Values may be kept past the outer scope's end (a function given to a
-// timer, say), so they mustn't be released with it.
+// scope stands for a Go callback that JavaScript called, whose Values may be kept past the call
+// (a function given to a timer, say): they aren't released when it closes, but get a finalizer.
 type releaseScope struct {
 	keep bool
 	made []*Value
@@ -38,9 +38,8 @@ func newValue(ptr unsafe.Pointer, ctx *Context) *Value {
 	}
 	releaseScopes.Lock()
 	if scopes := releaseScopes.open[ctx.iso.ptr]; len(scopes) > 0 {
-		if top := scopes[len(scopes)-1]; !top.keep {
-			top.made = append(top.made, v)
-		}
+		top := scopes[len(scopes)-1]
+		top.made = append(top.made, v)
 	}
 	releaseScopes.Unlock()
 	return v
@@ -69,22 +68,31 @@ func openScope(ptr unsafe.Pointer, keep bool) func() []*Value {
 }
 
 // keepValues runs f, a Go callback JavaScript called, with Values made in the isolate ptr kept
-// out of any scope already open there.
+// out of any scope already open there. Those Values, its arguments among them, are made anew
+// for each call, so each gets a finalizer that frees its handle once nothing keeps it.
 func keepValues(ptr unsafe.Pointer, f func()) {
 	if ptr == nil {
 		f()
 		return
 	}
-	releaseScopes.Lock()
-	open := len(releaseScopes.open[ptr]) > 0
-	releaseScopes.Unlock()
-	if !open {
-		f()
+	closeScope := openScope(ptr, true)
+	defer func() {
+		for _, v := range closeScope() {
+			if v.ptr != nil {
+				runtime.SetFinalizer(v, (*Value).releaseLater)
+			}
+		}
+	}()
+	f()
+}
+
+// releaseLater hands v's handle to its isolate to free on its own thread, as v's finalizer.
+func (v *Value) releaseLater() {
+	if v.ptr == nil || v.ctx == nil || v.ctx.iso == nil {
 		return
 	}
-	closeScope := openScope(ptr, true)
-	defer closeScope()
-	f()
+	v.ctx.iso.queueUnused(v.ptr, false)
+	v.ptr = nil
 }
 
 // ReleaseAfter runs f and then releases every Value made in c's isolate while it ran, so none
