@@ -201,11 +201,11 @@ void* v8go_context_take_last_script_exception(void* context_ptr);
 // Runs a script from inside a native function. If it throws, it returns NULL and leaves the
 // exception pending, with V8's message for it, for the JavaScript that called the function.
 void* v8go_context_run_script_rethrowing(void* context_ptr, const char* source, const char* origin);
-// Compiles source as the body of a function with the given parameter names, named origin,
-// from inside a native function, as Node compiles a CommonJS module. If it doesn't
-// compile, it returns NULL and leaves the SyntaxError pending, as
+// Compiles source, a string value, as the body of a function with the given parameter
+// names, named origin, from inside a native function, as Node compiles a CommonJS module.
+// If it doesn't compile, it returns NULL and leaves the SyntaxError pending, as
 // v8go_context_run_script_rethrowing does.
-void* v8go_context_compile_function_rethrowing(void* context_ptr, const char* source, const char* origin,
+void* v8go_context_compile_function_rethrowing(void* context_ptr, void* source, const char* origin,
                                                const char** params, int param_count);
 // Gives, once, where V8's message places the exception last caught by
 // v8go_context_run_script or the callRecording function: the script's name, the 1-based

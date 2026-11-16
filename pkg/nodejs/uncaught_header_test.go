@@ -66,6 +66,10 @@ func TestUncaughtHeaderMatchesNode(t *testing.T) {
 			files: map[string]string{"main.js": "const e = new Error(\"made\");\nfunction g() {\n    throw e;\n}\ng();\n"},
 			want:  "DIR/main.js:3\n    throw e;\n    ^\n",
 		},
+		"main script that opens like a CommonJS wrapper": {
+			files: map[string]string{"main.js": "(function(exports, require, module, __filename, __dirname) { throw new Error('w'); })();\n"},
+			want:  "DIR/main.js:1\n(function(exports, require, module, __filename, __dirname) { throw new Error('w'); })();\n" + strings.Repeat(" ", 61) + "^\n",
+		},
 		"rethrown from a catch": {
 			files: map[string]string{"main.js": "try { null.x; } catch (e) {\n  throw e;\n}\n"},
 			want:  "DIR/main.js:2\n  throw e;\n  ^\n",

@@ -7,10 +7,6 @@
 	// bust the cache with `delete require.cache[require.resolve(id)]` and probe it
 	// with `id in require.cache`, both of which are no-ops against a Map.
 	const moduleCache = Object.create(null);
-
-	// How a CommonJS module's function wrapper opens, on its first line. The runtime leaves
-	// it out of the fatal exception header (see moduleWrapperPrefix in module.go).
-	const moduleWrapperPrefix = '(function(exports, require, module, __filename, __dirname) {';
 	function cacheHas(key) {
 		return Object.prototype.hasOwnProperty.call(moduleCache, key);
 	}
@@ -289,15 +285,8 @@
 
 				// Compile as the body of the module's function, as Node does, named
 				// after the file, so import() in the module resolves relative to it and
-				// a SyntaxError is placed in the module's own lines. Source with a NUL
-				// character can't cross to the native side, so eval compiles it in a
-				// wrapper instead; the trailing sourceURL names it after the file.
-				let compiledWrapper = source.indexOf('\0') === -1
-					? __compileModuleWrapper(body, resolved)
-					: undefined;
-				if (typeof compiledWrapper !== 'function') {
-					compiledWrapper = (0, eval)(moduleWrapperPrefix + body + '\n})\n//# sourceURL=' + resolved);
-				}
+				// a SyntaxError is placed in the module's own lines.
+				const compiledWrapper = __compileModuleWrapper(body, resolved);
 
 				compiledWrapper.call(
 					mod.exports,
