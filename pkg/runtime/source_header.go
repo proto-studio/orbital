@@ -17,15 +17,6 @@ func (rt *Runtime) sourceHeader(place *v8.ExceptionPlace) string {
 		return ""
 	}
 	line, start, end := place.SourceLine, place.StartColumn, place.EndColumn
-	// A CommonJS module runs in a wrapper that opens on its first line; Node compiles the
-	// module without one, so its header shows neither the opening nor its columns.
-	if prefix := rt.wrapperPrefix; prefix != "" && place.Line == 1 && strings.HasPrefix(line, prefix) {
-		line = line[len(prefix):]
-		if start >= len(prefix) {
-			start -= len(prefix)
-			end -= len(prefix)
-		}
-	}
 	var b strings.Builder
 	b.WriteString(place.ResourceName)
 	b.WriteString(":")
@@ -63,11 +54,4 @@ func (rt *Runtime) sourceHeader(place *v8.ExceptionPlace) string {
 	}
 	b.WriteString("\n")
 	return b.String()
-}
-
-// SetWrapperPrefix tells the runtime the text a module loader puts before a module's own
-// code on its first line, as the CommonJS loader's function wrapper does. The fatal
-// exception header leaves it out, as Node, which compiles the module without it, does.
-func (rt *Runtime) SetWrapperPrefix(prefix string) {
-	rt.wrapperPrefix = prefix
 }

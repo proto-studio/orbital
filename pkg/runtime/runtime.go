@@ -15,7 +15,6 @@ import (
 // Runtime represents a JavaScript runtime environment.
 type Runtime struct {
 	unhandledRejections string // Config.UnhandledRejections
-	wrapperPrefix       string // see SetWrapperPrefix
 	noWarnings          bool   // Config.NoWarnings
 	threadPool          *threadPool
 

@@ -34,7 +34,6 @@ func (m *Module) Name() string {
 // Register sets up the CommonJS module runtime.
 func (m *Module) Register(rt *runtime.Runtime) error {
 	m.rt = rt
-	rt.SetWrapperPrefix(moduleWrapperPrefix)
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
@@ -116,17 +115,13 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 2 {
 		return ctx.Undefined()
 	}
-	fn := ctx.CompileFunctionRethrowing(args[0].String(), args[1].String(),
+	fn := ctx.CompileFunctionRethrowing(args[0], args[1].String(),
 		"exports", "require", "module", "__filename", "__dirname")
 	if fn == nil || !fn.IsFunction() {
 		return ctx.Undefined()
 	}
 	return fn
 }
-
-// moduleWrapperPrefix is how module.js opens the function a CommonJS module runs in, on
-// the module's first line, when eval compiles it.
-const moduleWrapperPrefix = "(function(exports, require, module, __filename, __dirname) {"
 
 // resolveFunc resolves a module path.
 func (m *Module) resolveFunc(info *v8.FunctionCallbackInfo) *v8.Value {

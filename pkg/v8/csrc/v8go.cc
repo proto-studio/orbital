@@ -532,9 +532,9 @@ void* v8go_context_run_script_rethrowing(void* context_ptr, const char* source, 
     return value;
 }
 
-void* v8go_context_compile_function_rethrowing(void* context_ptr, const char* source, const char* origin,
+void* v8go_context_compile_function_rethrowing(void* context_ptr, void* source_ptr, const char* origin,
                                                const char** params, int param_count) {
-    if (!context_ptr || !source) return nullptr;
+    if (!context_ptr || !source_ptr) return nullptr;
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
     Isolate* isolate = wrapper->isolate;
     Locker locker(isolate);
@@ -549,10 +549,11 @@ void* v8go_context_compile_function_rethrowing(void* context_ptr, const char* so
         if (!String::NewFromUtf8(isolate, params[i]).ToLocal(&name)) return nullptr;
         names.push_back(name);
     }
-    Local<String> source_str;
-    if (!String::NewFromUtf8(isolate, source).ToLocal(&source_str)) return nullptr;
+    // The source stays a V8 string, so a NUL character in it is kept.
+    Local<Value> source_value = static_cast<ValueWrapper*>(source_ptr)->value.Get(isolate);
+    if (!source_value->IsString()) return nullptr;
     ScriptOrigin script_origin(String::NewFromUtf8(isolate, origin ? origin : "").ToLocalChecked());
-    ScriptCompiler::Source script_source(source_str, script_origin);
+    ScriptCompiler::Source script_source(source_value.As<String>(), script_origin);
     Local<Function> fn;
     if (!ScriptCompiler::CompileFunction(context, &script_source, param_count,
                                          names.empty() ? nullptr : names.data(), 0, nullptr)
