@@ -134,7 +134,11 @@
     const keys = objectKeys(e);
     for (let i = 0; i < keys.length; i++) {
       try {
-        ownData(raw, keys[i], e[keys[i]]);
+        const v = e[keys[i]];
+        // A function or symbol can't cross, and would fail the clone below
+        // after it had read the other values: left out first.
+        if (typeof v === 'function' || typeof v === 'symbol') continue;
+        ownData(raw, keys[i], v);
       } catch (err) { /* unreadable */ }
     }
     let props;
