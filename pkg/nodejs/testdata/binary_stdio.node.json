@@ -13,7 +13,7 @@
   },
   "inspect": {
     "stderr": "",
-    "stdout": "36338 bytes, sha256 19d0537fd11fdfbb154ee5031b070151b04e06660a8c37f03455ab605a1e5784"
+    "stdout": "36519 bytes, sha256 cc4bab42a69ac76f4e1d4d96aaaec0ae5bf15e5c66a5b833896b90a7f5980714"
   },
   "small_diffs": {
     "stderr": "4100420a",

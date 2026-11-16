@@ -62,7 +62,9 @@
       try {
         return String(JSON.stringify(value));
       } catch (e) {
-        if (e instanceof TypeError && e.message.split('\n')[0] === circularMessage) return '[Circular]';
+        // As Node's tryStringify tells, by name and message rather than its prototype, which a
+        // thrown proxy could answer with a trap that throws.
+        if (e.name === 'TypeError' && String(e.message).split('\n')[0] === circularMessage) return '[Circular]';
         throw e;
       }
     },
