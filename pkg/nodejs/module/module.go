@@ -17,6 +17,8 @@ var moduleJS string
 type Module struct {
 	rt    *runtime.Runtime
 	cache map[string]*v8.Value // Module cache
+	// compileSite is where the last failed native compile of a wrapper placed its error.
+	compileSite *v8.Value
 }
 
 // New creates a new Module runtime.
@@ -80,6 +82,26 @@ func (m *Module) Register(rt *runtime.Runtime) error {
 	if err != nil {
 		return err
 	}
+	// When that compile throws too, module.js hands the error here: the header shows
+	// where the native compile placed it, in the module, not where eval ran.
+	failedFn, err := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+		site := m.compileSite
+		m.compileSite = nil
+		if args := info.Args(); len(args) >= 1 && site != nil {
+			m.rt.RecordThrowSite(args[0], site)
+		}
+		return info.Context().Undefined()
+	})
+	if err != nil {
+		return err
+	}
+	failedVal, err := failedFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rt.SetGlobal("__moduleCompileFailed", failedVal); err != nil {
+		return err
+	}
 	compiledVal, err := compiledFn.GetFunction(ctx)
 	if err != nil {
 		return err
@@ -128,11 +150,28 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Undefined()
 	}
 	wrapper, name := args[0].String(), args[1].String()
+	m.compileSite = nil
 	fn, err := ctx.RunScript(wrapper, name)
 	if err != nil || fn == nil || !fn.IsFunction() {
-		// RunScript keeps what a failed script threw for reporting an uncaught error
-		// from the main script. This failure is not one: the caller throws it again.
+		// RunScript keeps what a failed script threw, and where, for reporting an
+		// uncaught error from the main script. This failure is not one: the caller
+		// throws it again.
 		ctx.TakeLastScriptException()
+		// Where the compile failed, for the error the caller's own compile throws.
+		// The module's own record goes away with the failed compile, so the wrapper's
+		// opening is taken off the line here.
+		msg := ctx.TakeLastExceptionMessage()
+		if msg != nil && msg.Line == 1 && strings.HasPrefix(msg.SourceLine, moduleWrapperPrefix) {
+			msg.SourceLine = msg.SourceLine[len(moduleWrapperPrefix):]
+			msg.StartColumn -= len(moduleWrapperPrefix)
+			msg.EndColumn -= len(moduleWrapperPrefix)
+			if len(args) >= 3 && args[2].Boolean() {
+				msg.SourceLine = "\uFEFF" + msg.SourceLine
+				msg.StartColumn++
+				msg.EndColumn++
+			}
+		}
+		m.compileSite = m.rt.ThrowSite(msg)
 		return ctx.Undefined()
 	}
 	// The wrapper's opening shares the module's first line, so columns there count it too.
@@ -147,8 +186,12 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if len(args) >= 3 && args[2].Boolean() {
 			text = "\uFEFF" + text
 		}
-		m.rt.KeepModuleSource(name, text)
-		m.rt.SetFirstLineOffset(name, len(moduleWrapperPrefix))
+		// A fourth argument of false compiles only to learn where a syntax error is; the
+		// module's own text is kept by whoever compiles it for real.
+		if len(args) < 4 || args[3].Boolean() {
+			m.rt.KeepModuleSource(name, text)
+			m.rt.SetFirstLineOffset(name, len(moduleWrapperPrefix))
+		}
 	}
 	return fn
 }

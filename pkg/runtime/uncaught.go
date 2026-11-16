@@ -107,6 +107,7 @@ type uncaughtHandlers struct {
 	runScheduledTicks *v8.Value
 	queueMicrotask    *v8.Value
 	beforeExit        *v8.Value
+	recordThrowSite   *v8.Value
 	// mainBody is the native function runMain calls to run the main script.
 	mainBody *v8.Value
 }
@@ -202,6 +203,7 @@ func (rt *Runtime) installUncaught() error {
 		"runScheduledTicks": &rt.uncaught.runScheduledTicks,
 		"queueMicrotask":    &rt.uncaught.queueMicrotask,
 		"beforeExit":        &rt.uncaught.beforeExit,
+		"recordThrowSite":   &rt.uncaught.recordThrowSite,
 	} {
 		if *dst, err = api.Get(name); err != nil {
 			return err
@@ -338,6 +340,22 @@ func (rt *Runtime) MakeCallback(fn, recv *v8.Value, args ...*v8.Value) *v8.Value
 	return result
 }
 
+// ThrowSite turns where V8's message placed an exception, as Context.TakeLastExceptionMessage
+// gives it, into a value for RecordThrowSite. It is undefined for a nil msg.
+func (rt *Runtime) ThrowSite(msg *v8.ExceptionMessage) *v8.Value {
+	return rt.siteValue(msg)
+}
+
+// RecordThrowSite makes site, from TakeThrowSite, the place the fatal exception header
+// shows for err, for code that has to catch an exception and throw another or the same
+// one again, which moves V8's own record of where it was thrown.
+func (rt *Runtime) RecordThrowSite(err, site *v8.Value) {
+	if err == nil || site == nil || site.IsUndefined() {
+		return
+	}
+	_, _ = rt.uncaught.recordThrowSite.Call(nil, err, site)
+}
+
 // throwSite returns, as a JavaScript object, where V8's message places the exception the
 // last RunScript caught, or undefined.
 func (rt *Runtime) throwSite() *v8.Value {
@@ -346,6 +364,10 @@ func (rt *Runtime) throwSite() *v8.Value {
 	if msg == nil {
 		msg = rt.context.TakeLastExceptionMessage()
 	}
+	return rt.siteValue(msg)
+}
+
+func (rt *Runtime) siteValue(msg *v8.ExceptionMessage) *v8.Value {
 	if msg == nil {
 		return rt.context.Undefined()
 	}
@@ -494,19 +516,15 @@ func (rt *Runtime) reportRejections() {
 // the script directly would let queued reactions run ahead of the handlers, or instead of
 // a fatal exit. It returns nil in place of an error if a handler took the exception.
 func (rt *Runtime) runMainScript(source, origin string) (*v8.Value, error) {
-	rt.registerSource(source, origin)
+	// RunScript keeps the script's text for the fatal exception header.
 	var result *v8.Value
 	var scriptErr error
 	rt.mainBody = func() {
 		var err error
 		if result, err = rt.RunScript(source, origin); err != nil {
 			result = nil
-			// A main script that didn't compile ran none of its code: its text isn't kept,
-			// so the same origin run again with corrected text keeps its own.
-			rt.pendingMessage = rt.context.TakeLastExceptionMessage()
-			if rt.pendingMessage != nil && rt.pendingMessage.Compile {
-				rt.forgetScript(source, origin)
-			}
+			// RunScript has taken V8's message for throwSite, and dropped the text of a
+			// script that didn't compile.
 			scriptErr = rt.reportScriptError(err)
 		}
 	}

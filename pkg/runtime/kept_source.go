@@ -38,6 +38,9 @@ type keptSource struct {
 	nul       string      // the character standing for NUL in text, or ""
 	offset    int         // wrapper characters before the source on the first line
 	script    *keptScript // the script it belongs to while kept as one
+	// provisional marks a record the last keep created, which a failed compile of that
+	// same text removes again; a record that existed before is left as it was.
+	provisional bool
 }
 
 // keptScript is one script run through Run: its origin, and its sourceURL name if it has
@@ -56,6 +59,7 @@ func sourceHash(text string) uint64 {
 // copy of the name, so a record never holds a caller's string.
 func (rt *Runtime) entry(name string, hash uint64) (*keptSource, string) {
 	if kept, ok := rt.keptSources[name]; ok {
+		kept.provisional = false
 		return kept, name
 	}
 	if rt.keptSources == nil {
@@ -65,7 +69,7 @@ func (rt *Runtime) entry(name string, hash uint64) (*keptSource, string) {
 		return nil, name
 	}
 	name = strings.Clone(name)
-	kept := &keptSource{hash: hash}
+	kept := &keptSource{hash: hash, provisional: true}
 	rt.keptSources[name] = kept
 	rt.keptBytes += len(name)
 	return kept, name
@@ -199,12 +203,22 @@ func (rt *Runtime) keepScript(text string, names ...string) {
 }
 
 // keepModule keeps a module's text, as compiled, under each of its names for the
-// runtime's life. nul is the character standing for NUL in text, or "".
-func (rt *Runtime) keepModule(text, nul string, names ...string) {
+// runtime's life. nul is the character standing for NUL in text, or "". With replace,
+// different text under a name only modules have had takes its place: the module loader
+// compiles a URL once and caches it, so text it is handed again must be from a compile
+// that failed.
+func (rt *Runtime) keepModule(text, nul string, replace bool, names ...string) {
 	hash := sourceHash(text)
 	for _, name := range uniqueNames(names) {
 		kept, _ := rt.entry(name, hash)
-		if kept == nil || !rt.matches(kept, name, hash) {
+		if kept == nil {
+			continue
+		}
+		if replace && kept.module && kept.script == nil && !kept.ambiguous && kept.hash != hash {
+			rt.dropText(kept)
+			kept.hash = hash
+		}
+		if !rt.matches(kept, name, hash) {
 			continue
 		}
 		rt.detach(kept, name)
@@ -220,10 +234,15 @@ func (rt *Runtime) keepModule(text, nul string, names ...string) {
 // function of it can run, so no frame will need it, and a corrected module under the same
 // name isn't taken for a different one.
 func (rt *Runtime) forgetModule(text string, names ...string) {
+	rt.forget(text, names...)
+}
+
+// forget removes the records the last keep of text created, after it failed to compile.
+func (rt *Runtime) forget(text string, names ...string) {
 	hash := sourceHash(text)
 	for _, name := range uniqueNames(names) {
 		kept, ok := rt.keptSources[name]
-		if !ok || kept.ambiguous || kept.hash != hash {
+		if !ok || !kept.provisional || kept.ambiguous || kept.hash != hash {
 			continue
 		}
 		rt.detach(kept, name)
@@ -294,7 +313,13 @@ func sourceURL(source string) string {
 // printed above a fatal exception from it. A load hook can replace a module's text, a
 // module can have no file at all, and a file can change after it was compiled.
 func (rt *Runtime) KeepModuleSource(name, source string) {
-	rt.keepModule(source, "", name, sourceURL(source))
+	rt.keepModule(source, "", false, name, sourceURL(source))
+}
+
+// KeepLoadedModuleSource is KeepModuleSource for the module loader, which compiles a URL
+// once: different text later under the URL replaces text whose compile failed.
+func (rt *Runtime) KeepLoadedModuleSource(url, source string) {
+	rt.keepModule(source, "", true, url, sourceURL(source))
 }
 
 // KeepModuleSourceWithNUL is KeepModuleSource for text in which the character nul stands
@@ -306,7 +331,7 @@ func (rt *Runtime) KeepModuleSourceWithNUL(name, source, nul string) {
 	if !validNulMark(nul) {
 		return
 	}
-	rt.keepModule(source, nul, name, sourceURL(source))
+	rt.keepModule(source, nul, false, name, sourceURL(source))
 }
 
 // validNulMark reports whether nul is a character the module loader uses to stand for NUL.
@@ -333,5 +358,5 @@ func (rt *Runtime) SetFirstLineOffset(name string, offset int) {
 
 // forgetScript removes what registerSource kept for a script that then failed to compile.
 func (rt *Runtime) forgetScript(source, origin string) {
-	rt.forgetModule(source, origin, sourceURL(source))
+	rt.forget(source, origin, sourceURL(source))
 }

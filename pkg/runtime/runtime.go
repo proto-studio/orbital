@@ -47,7 +47,7 @@ type Runtime struct {
 	fatalSource       string                 // same goroutine: the header for the next fatal exception
 	keptSources       map[string]*keptSource // same goroutine: see keepSource
 	keptScripts       []*keptScript          // same goroutine: kept scripts, oldest first
-	pendingMessage    *v8.ExceptionMessage   // same goroutine: see runMainScript and throwSite
+	pendingMessage    *v8.ExceptionMessage   // same goroutine: see RunScript and throwSite
 	keptBytes         int                    // same goroutine: bytes of text and names kept
 	keptEvicted       []string               // same goroutine: scripts whose text was dropped, oldest first
 	fatalSourceInline bool                   // and whether the thrown value was not an error
@@ -422,7 +422,19 @@ func (rt *Runtime) GetGlobal(name string) (*v8.Value, error) {
 
 // RunScript executes JavaScript code.
 func (rt *Runtime) RunScript(source, origin string) (*v8.Value, error) {
-	return rt.context.RunScript(source, origin)
+	// Kept like Run's, for the line printed above a fatal exception from it.
+	rt.registerSource(source, origin)
+	result, err := rt.context.RunScript(source, origin)
+	if err != nil {
+		// Taken here, for throwSite, to see whether the script compiled: one that didn't
+		// ran none of its code, so its text is no longer kept.
+		msg := rt.context.TakeLastExceptionMessage()
+		rt.pendingMessage = msg
+		if msg != nil && msg.Compile {
+			rt.forgetScript(source, origin)
+		}
+	}
+	return result, err
 }
 
 // Run executes JavaScript code and runs the event loop until completion.

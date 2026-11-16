@@ -125,14 +125,24 @@
   const isIdentChar = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ||
     c === 36 || c === 95 || (c > 127 && c !== 0xFEFF && c !== 0xA0 && c !== 0x2028 && c !== 0x2029);
 
-  // throwBefore is where a throw keyword starts if only spaces separate it from column, or
-  // -1. A linear scan.
+  const strLastIndexOf = String.prototype.lastIndexOf;
+
+  // throwBefore is where a throw keyword starts if only spaces, opening parentheses and
+  // block comments separate it from column, or -1. Each character is passed over once.
   function throwBefore(line, column) {
     let i = column - 1;
     while (i >= 0) {
       const c = code(line, i);
-      if (c === 32 || c === 9 || c === 11 || c === 12 || c === 0xA0) i--;
-      else break;
+      if (c === 32 || c === 9 || c === 11 || c === 12 || c === 0xA0 || c === 40) {
+        i--;
+      } else if (c === 47 && i > 0 && code(line, i - 1) === 42) {
+        // The end of a block comment: continue before its start.
+        const open = i >= 3 ? apply(strLastIndexOf, line, ['/*', i - 3]) : -1;
+        if (open === -1) return -1;
+        i = open - 1;
+      } else {
+        break;
+      }
     }
     if (i === column - 1 || i < 4) return -1;
     if (cut(line, i - 4, i + 1) !== 'throw') return -1;
@@ -144,13 +154,14 @@
   // "name (place)" or just "place", and either part can hold " (", as in
   // "/tmp/app (copy)/main.js", so each split is a candidate, the first split first.
   function places(at) {
-    const out = [];
+    // Not an Array: nothing a script puts on Array.prototype is reached.
+    const out = { __proto__: null, length: 0 };
     if (len(at) > 0 && code(at, len(at) - 1) === 41) {
       for (let i = apply(strIndexOf, at, [' (']); i !== -1; i = apply(strIndexOf, at, [' (', i + 1])) {
-        out[out.length] = cut(at, i + 2, len(at) - 1);
+        out[out.length++] = cut(at, i + 2, len(at) - 1);
       }
     }
-    out[out.length] = at;
+    out[out.length++] = at;
     return out;
   }
 
@@ -201,22 +212,39 @@
 
   // errorSource is the header Node prints above a fatal exception. Node takes the place
   // from V8's message for the throw. site is that message when the runtime caught the
-  // exception itself, as it does for the main script, and is used when the stack has no
-  // place to read: a value thrown that is not an object, or a SyntaxError in the main
-  // script. Otherwise the place comes from the error's first stack frame in a script,
-  // which is where the error was made. For an exception thrown where it was made, as by
-  // the usual `throw new Error(...)`, the caret moves back to the throw, where Node puts
-  // it. A rejection has no throw to point at, and Node marks where the error was made.
-  function errorSource(err, thrown, site) {
-    const fromStack = stackSource(err, thrown);
-    // The glue leaves out a line too long to copy, and then there is nothing to show.
-    if (fromStack !== '' || !thrown || !site || typeof site.file !== 'string' || site.file === '' ||
-        typeof site.sourceLine !== 'string' || site.sourceLine === '') {
-      return fromStack;
+  // exception itself, as it does for the main script: it marks the throw even for an error
+  // made earlier, and places a value thrown that is not an object, or a SyntaxError,
+  // which have no stack to read.
+  // Otherwise the place comes from the error's first stack frame, which is where the error
+  // was made. For an exception thrown where it was made, as by the usual
+  // `throw new Error(...)`, the caret moves back to the throw, where Node puts it. A
+  // rejection has no throw to point at, and Node marks where the error was made.
+  //
+  // recordedSites holds where V8 placed an error that code rethrew from a catch, which
+  // moves V8's message: see Runtime.RecordThrowSite.
+  const recordedSites = new NewWeakMap();
+  const weakGet = WeakMap.prototype.get;
+  const weakSet = WeakMap.prototype.set;
+  function recordThrowSite(err, site) {
+    if ((typeof err === 'object' && err !== null) || typeof err === 'function') {
+      apply(weakSet, recordedSites, [err, site]);
     }
-    const start = site.start >= 0 ? site.start : 0;
-    const end = site.end > start ? site.end : start + 1;
-    return sourceHeader(site.file, site.line, start, end, site.sourceLine);
+  }
+
+  function errorSource(err, thrown, site) {
+    if ((typeof err === 'object' && err !== null) || typeof err === 'function') {
+      const recorded = apply(weakGet, recordedSites, [err]);
+      if (recorded !== undefined) site = recorded;
+    }
+    // The glue leaves out a line too long to copy, and then there is nothing to show.
+    if (thrown && site && typeof site.file === 'string' && site.file !== '' &&
+        typeof site.sourceLine === 'string' && site.sourceLine !== '') {
+      const start = site.start >= 0 ? site.start : 0;
+      const end = site.end > start ? site.end : start + 1;
+      const fromSite = sourceHeader(site.file, site.line, start, end, site.sourceLine);
+      if (fromSite !== '') return fromSite;
+    }
+    return stackSource(err, thrown);
   }
 
   function stackSource(err, thrown) {
@@ -733,6 +761,6 @@
 
   return {
     callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled,
-    watchModule, runMain, runScheduledTicks, queueMicrotask, beforeExit,
+    watchModule, runMain, runScheduledTicks, queueMicrotask, beforeExit, recordThrowSite,
   };
 })

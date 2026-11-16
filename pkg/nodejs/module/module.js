@@ -6,8 +6,10 @@
 	// any script runs.
 	const compileModuleWrapper = globalThis.__compileModuleWrapper;
 	const moduleWrapperCompiled = globalThis.__moduleWrapperCompiled;
+	const moduleCompileFailed = globalThis.__moduleCompileFailed;
 	delete globalThis.__compileModuleWrapper;
 	delete globalThis.__moduleWrapperCompiled;
+	delete globalThis.__moduleCompileFailed;
 
 	// The string methods that build the text kept for a module, taken before any script
 	// runs, so that a script replacing them doesn't change what the loader keeps.
@@ -304,24 +306,37 @@
 				// resolves relative to it. eval reports the first error properly, so it
 				// compiles a wrapper that native compilation could not; source with a
 				// NUL character goes there too, since it cannot cross to the native side.
-				let compiledWrapper = source.indexOf('\0') === -1
+				const compiledNatively = source.indexOf('\0') === -1;
+				let compiledWrapper = compiledNatively
 					? compileModuleWrapper(wrapper, resolved, hadBOM)
 					: undefined;
 				if (typeof compiledWrapper !== 'function') {
 					// The runtime keeps a module's text for the line printed above a fatal
 					// exception. A NUL can't cross to it, so a character the source doesn't
 					// use stands in, and the line is shown up to there, as Node shows it up
-					// to the NUL.
+					// to the NUL. Recorded first, since a module that doesn't compile throws
+					// from the eval.
 					let nulMark = '\uFFFF';
 					for (let c = 0xE000; stringIndexOf(source, nulMark) !== -1 && c <= 0xF8FF; c++) {
 						nulMark = fromCharCode(c);
 					}
 					const kept = (hadBOM ? '\uFEFF' : '') + stringReplace(source, /\0/g, nulMark);
 					moduleWrapperCompiled(resolved, kept, false, nulMark);
+					if (!compiledNatively) {
+						// Only to learn where a syntax error is: a NUL can't cross to the
+						// native side, and a space stands in for it at the same place. This
+						// copy's text isn't kept: the module's own is.
+						compileModuleWrapper(wrapper.replace(/\0/g, ' '), resolved, hadBOM, false);
+					}
 					let compiled = false;
 					try {
 						compiledWrapper = (0, eval)(wrapper);
 						compiled = true;
+					} catch (e) {
+						// eval names the script only once it has parsed it, so the
+						// native compile's place in the module stands for this error.
+						moduleCompileFailed(e);
+						throw e;
 					} finally {
 						// A wrapper that doesn't compile leaves no code that needs its text.
 						if (!compiled) moduleWrapperCompiled(resolved, kept, true);

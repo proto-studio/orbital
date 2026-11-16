@@ -793,6 +793,1079 @@ if (typeof Float16Array !== 'function') {
 	}
 }
 
+// Above a fatal exception Node prints where it was thrown: "file:line", the line, and a
+// caret. The expected places are what Node 20.18.1 prints for the same files.
+func TestUncaughtSourceLine(t *testing.T) {
+	for name, tc := range map[string]struct {
+		main, dep string
+		dir       string // a subdirectory to put the files in
+		file      string // the file the header names, "" for none
+		line      int
+		caret     string // what comes before the carets
+		carets    int    // how many carets, 1 if 0
+		inline    bool   // a thrown value that is not an error: Node prints its header inline
+	}{
+		"thrown in a function": {main: "function f(){ throw new Error('boom'); }\nf();\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 14)},
+		"made by V8":           {main: "const x = 1;\n  null.foo;\n", file: "main.js", line: 2, caret: strings.Repeat(" ", 7)},
+		"in a timer":           {main: "setTimeout(() => {\n    throw new TypeError('in timer');\n}, 1);\n", file: "main.js", line: 2, caret: "    "},
+		"tab indent":           {main: "if (true) {\n\tthrow new Error('tab');\n}\n", file: "main.js", line: 2, caret: "\t"},
+		"rejection":            {main: "Promise.reject(new Error('rej'));\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 15)},
+		"async function":       {main: "async function f() {\n  await null;\n  throw new Error('async');\n}\nf();\n", file: "main.js", line: 3, caret: strings.Repeat(" ", 8)},
+		"first line of a required module": {
+			main: "const d = require(DEP);\nsetTimeout(d, 1);\n",
+			dep:  "module.exports = () => { throw new RangeError('dep'); };\n",
+			file: "dep.js", line: 1, caret: strings.Repeat(" ", 25),
+		},
+		// Expected values below are what Node 20.18.1 prints for the same files.
+		"thrown by a built-in": {main: "setTimeout(() => {\n  decodeURIComponent('%');\n}, 1);\n", file: "main.js", line: 2, caret: "  "},
+		"not an error":         {main: "throw 'str';\n", file: "main.js", line: 1, inline: true},
+		"object thrown":        {main: "const o = 1;\n  throw {a: 1};\n", file: "main.js", line: 2, caret: "  ", inline: true},
+		"null thrown":          {main: "throw null;\n", file: "main.js", line: 1, inline: true},
+		"non-error after tab":  {main: "\tthrow 'tab';\n", file: "main.js", line: 1, caret: "\t", inline: true},
+		"non-error in a required module": {
+			main: "require(DEP);\n",
+			dep:  "  throw 'dep';\n",
+			file: "dep.js", line: 1, caret: "  ", inline: true,
+		},
+		"syntax error":              {main: "let x = ;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 8)},
+		"syntax error over a token": {main: "let x = foo barbaz;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 12), carets: 6},
+		// The error layout, not the inline one, as in Node.
+		"error with its own toStringTag": {
+			main: "const e = new Error('tagged'); e[Symbol.toStringTag] = 'Other';\nthrow e;\n",
+			file: "main.js", line: 2,
+		},
+		"object posing as an error": {
+			main: "throw { [Symbol.toStringTag]: 'Error' };\n",
+			file: "main.js", line: 1, inline: true,
+		},
+		"string methods replaced before the throw": {
+			main: "for (const m of ['slice', 'split', 'startsWith', 'search', 'indexOf', 'charCodeAt']) String.prototype[m] = () => { throw new Error('replaced'); };\nthrow 'boom';\n",
+			file: "main.js", line: 2, inline: true,
+		},
+		"globals replaced before the throw": {
+			main: "globalThis.String = () => ''; globalThis.require = null; globalThis.Error = null; throw 'boom';\n",
+			file: "main.js", line: 1, caret: strings.Repeat(" ", 82), inline: true,
+		},
+		"error made earlier":         {main: "const e = new Error('x');\ne.code = 'E';\nthrow e;\n", file: "main.js", line: 3},
+		"error from a factory":       {main: "function f() { return new Error('made'); }\nconst e = f();\n  throw e;\n", file: "main.js", line: 3, caret: "  "},
+		"rethrown":                   {main: "try { null.x; } catch (e) {\n  throw e;\n}\n", file: "main.js", line: 2, caret: "  "},
+		"thrown in a function later": {main: "const e = new Error('x');\nfunction g() {\n    throw e;\n}\ng();\n", file: "main.js", line: 3, caret: "    "},
+		"error made earlier in a required module": {
+			main: "require(DEP)();\n",
+			dep:  "const e = new Error('from dep');\nmodule.exports = () => { throw e; };\n",
+			file: "dep.js", line: 2, caret: strings.Repeat(" ", 25),
+		},
+		"throw in parentheses": {main: "setTimeout(() => {\n  throw (new Error('p'));\n}, 1);\n", file: "main.js", line: 2, caret: "  "},
+		"comment after throw":  {main: "setTimeout(() => {\n  throw /* c */ new Error('c');\n}, 1);\n", file: "main.js", line: 2, caret: "  "},
+		"syntax error in a required module": {
+			main: "require(DEP);\n",
+			dep:  "let x = ;\n",
+			file: "dep.js", line: 1, caret: strings.Repeat(" ", 8),
+		},
+		"syntax error on a later line": {main: "const a = 1;\nconst a = 2;\n", file: "main.js", line: 2, caret: strings.Repeat(" ", 6)},
+		"module with a BOM": {
+			main: "require(DEP);\n",
+			dep:  "\uFEFFthrow new Error('bom');\n",
+			file: "dep.js", line: 1, caret: " ",
+		},
+		"other line terminators": {main: "const a = 1;\rconst b = 2;\u2028const c = 3;\u2029  throw new Error('cr');\r\n", file: "main.js", line: 4, caret: "  "},
+		"parentheses in the path": {
+			dir:  "app (copy)",
+			main: "function f() { throw new Error('paren'); }\nf();\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 15),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), tc.dir)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mainPath := filepath.Join(dir, "main.js")
+			main := strings.ReplaceAll(tc.main, "DEP", strconv.Quote(filepath.Join(dir, "dep.js")))
+			files := map[string]string{"main.js": main}
+			if tc.dep != "" {
+				files["dep.js"] = tc.dep
+			}
+			for f, text := range files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			_, runErr := inst.Runtime.Run(main, mainPath)
+			var uncaught *runtime.UncaughtError
+			if !errors.As(runErr, &uncaught) {
+				t.Fatalf("Run returned %v", runErr)
+			}
+			want := ""
+			if tc.file != "" {
+				text := files[tc.file]
+				line := regexp.MustCompile("\r\n|[\n\r\u2028\u2029]").Split(text, -1)[tc.line-1]
+				carets := tc.carets
+				if carets == 0 {
+					carets = 1
+				}
+				want = fmt.Sprintf("%s:%d\n%s\n%s%s\n", filepath.Join(dir, tc.file), tc.line, line, tc.caret, strings.Repeat("^", carets))
+			}
+			if uncaught.Source != want {
+				t.Errorf("Source = %q, want %q", uncaught.Source, want)
+			}
+			report := uncaught.Report()
+			wantReport := uncaught.Message + "\n\nOrbital " + v8dist.ModuleVersion + "\n"
+			if tc.inline {
+				wantReport = "\n" + want + wantReport
+			} else if want != "" {
+				wantReport = want + "\n" + wantReport
+			}
+			if report != wantReport {
+				t.Errorf("Report() = %q, want %q", report, wantReport)
+			}
+		})
+	}
+}
+
+// A broken process object cannot stop a fatal exception from being reported: the header
+// is left out instead.
+func TestUncaughtReportsWithBrokenProcess(t *testing.T) {
+	_, err := runUncaught(t, `
+process.on('exit', () => {
+  Object.defineProperty(globalThis, 'process', { get() { throw new Error('no process'); }, configurable: true });
+});
+throw new Error('original');
+`)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(err, &uncaught) || !strings.Contains(uncaught.Message, "Error: original") {
+		t.Fatalf("Run returned %v, want the original uncaught error", err)
+	}
+}
+
+// A runtime keeps the text of only its most recent scripts that have no file, so running
+// many does not grow it without bound: the newest still gets its header, the oldest not.
+func TestUncaughtKeepsRecentScriptSources(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	for i := 0; i < 40; i++ {
+		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('from %d'); };\n", i, i)
+		if _, err := inst.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => f39(), 1);\n", "[last]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[script 39]:1\nglobalThis.f39 = () => { throw new Error('from 39'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+
+	inst2, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst2.Runtime.Dispose()
+	for i := 0; i < 40; i++ {
+		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('from %d'); };\n", i, i)
+		if _, err := inst2.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, runErr = inst2.Runtime.Run("setTimeout(() => f0(), 1);\n", "[last]")
+	uncaught = nil
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("the oldest script's header = %q, want none", uncaught.Source)
+	}
+}
+
+// A stack is only a string the thrown value carries: the header reads back only files the
+// runtime compiled scripts from, never one a stack merely names.
+func TestUncaughtSourceIgnoresFilesAStackNames(t *testing.T) {
+	other := filepath.Join(t.TempDir(), "other.txt")
+	if err := os.WriteFile(other, []byte("not a script\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(fmt.Sprintf("Promise.reject({ stack: 'x\\n    at ' + %q + ':1:1' });\n", other), "main.js")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+// An ES module's header shows the text V8 compiled, kept by the loader, even if its file
+// changes afterwards, as with a load hook that replaces it.
+func TestUncaughtSourceForModuleAsCompiled(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "entry.mjs")
+	// The module rewrites its own file once it has been compiled.
+	src := fmt.Sprintf("setTimeout(() => {\n  throw new Error('compiled');\n}, 1);\nimport fs from 'fs'; fs.writeFileSync(%q, '// changed\\n// on disk\\n');\n", entry)
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.ESM.RunModuleFile(entry)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("RunModuleFile returned %v", runErr)
+	}
+	if !strings.Contains(uncaught.Source, "\n  throw new Error('compiled');\n  ^\n") {
+		t.Errorf("Source = %q, want the compiled line", uncaught.Source)
+	}
+}
+
+// A name reused for different text shows no header for an exception from it: the frame
+// could come from either script.
+func TestUncaughtSourceForReusedName(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run("globalThis.first = () => { throw new Error('first'); };\n", "[same]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Runtime.Run("globalThis.second = 2;\n", "[same]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => first(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+// A module that throws is dropped from the cache even if it set module.loaded itself, so
+// the next require runs it again, as in Node; a JSON module stays cached.
+func TestRequire_RetriesAModuleThatThrew(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "m.js"), []byte("globalThis.n = (globalThis.n || 0) + 1; module.loaded = true;\nif (globalThis.n === 1) throw new Error('first');\nmodule.exports = 'ok';\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "j.json"), []byte(`{"a":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const m = %q, j = %q;
+let first;
+try { require(m); } catch (e) { first = e.message; }
+done({ first, second: require(m), runs: globalThis.n, jsonCached: require(j) === require(j) });`,
+		filepath.Join(dir, "m.js"), filepath.Join(dir, "j.json")))
+	wantJSON(t, got, map[string]any{"first": "first", "second": "ok", "runs": float64(2), "jsonCached": true})
+}
+
+// An ES module run from memory, under a name with no file, still gets its header. As in
+// Node, an ES module's top-level exception is marked where the error was made.
+func TestUncaughtSourceForInMemoryModule(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	name := filepath.Join(t.TempDir(), "virtual.mjs")
+	_, runErr := inst.ESM.RunModule("const a = 1;\nthrow new Error('virtual');\n", name)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("RunModule returned %v", runErr)
+	}
+	if want := name + ":2\nthrow new Error('virtual');\n      ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A script run under a name a CommonJS module was required by isn't shifted by the
+// module's wrapper.
+func TestUncaughtSourceAfterRequireUnderTheSameName(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "dep.js")
+	const text = "globalThis.boom = () => { throw new Error('same name'); };\n"
+	if err := os.WriteFile(dep, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run(fmt.Sprintf("require(%q);\n", dep), filepath.Join(dir, "main.js")); err != nil {
+		t.Fatal(err)
+	}
+	// The same text, run unwrapped under the module's name: its columns have no offset.
+	if _, err := inst.Runtime.Run(text, dep); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => boom(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := dep + ":1\n" + strings.TrimSuffix(text, "\n") + "\n" + strings.Repeat(" ", 26) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A module compiled by eval, because its source holds a NUL, has its wrapper's opening
+// taken off its first line too, and the line ends at the NUL, as Node 20.18.1 prints it.
+func TestUncaughtSourceForModuleWithNUL(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "nul.js")
+	if err := os.WriteFile(dep, []byte("/*\x00*/ throw new Error('boom');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(fmt.Sprintf("require(%q);\n", dep), filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := dep + ":1\n/*\n  ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// The header prints the line V8 compiled, as Node does, even when the file the script is
+// named after says something else, and a module compiled by eval (its source holds a NUL)
+// has its wrapper's opening taken off its first line too. Expected values are what Node
+// 20.18.1 prints; Node's line, like Orbital's, ends at the NUL.
+func TestUncaughtSourceFromCompiledLine(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other.txt")
+	dep := filepath.Join(dir, "nul.js")
+	plain := filepath.Join(dir, "plain.js")
+	files := map[string]string{
+		plain: "module.exports = 1;\n",
+		other: "other content here\n",
+		dep:   "module.exports = () => { throw new Error('a\x00b'); };\n",
+	}
+	for f, text := range files {
+		if err := os.WriteFile(f, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct{ main, want string }{
+		"sourceURL naming another file": {
+			main: fmt.Sprintf("eval(%q);\n", "  throw new Error('x')\n//# sourceURL="+other),
+			want: other + ":1\n  throw new Error('x')\n  ^\n",
+		},
+		"sourceURL naming a required module": {
+			main: fmt.Sprintf("require(%q);\neval(%q);\n", plain, "throw new Error('boom')\n//# sourceURL="+plain),
+			want: plain + ":1\nthrow new Error('boom')\n^\n",
+		},
+		"module compiled by eval": {
+			main: fmt.Sprintf("require(%q)();\n", dep),
+			want: dep + ":1\nmodule.exports = () => { throw new Error('a\n" + strings.Repeat(" ", 25) + "^\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			_, runErr := inst.Runtime.Run(tc.main, filepath.Join(dir, "main.js"))
+			var uncaught *runtime.UncaughtError
+			if !errors.As(runErr, &uncaught) {
+				t.Fatalf("Run returned %v", runErr)
+			}
+			if uncaught.Source != tc.want {
+				t.Errorf("Source = %q, want %q", uncaught.Source, tc.want)
+			}
+		})
+	}
+}
+
+// A script an embedder runs through RunScript keeps its text too, so a callback it defined
+// that throws later gets its header.
+func TestUncaughtSourceForRunScript(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("globalThis.later = () => { throw new Error('from prelude'); };\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[prelude]:1\nglobalThis.later = () => { throw new Error('from prelude'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A name RunScript reused for different text keeps none: the header is left out rather
+// than showing a line from the other script.
+func TestUncaughtSourceForRunScriptReusedName(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("globalThis.later = () => { throw new Error('first'); };\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Runtime.RunScript("globalThis.other = 1;\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+// Run and RunScript share one record of scripts' text: a name used by both for different
+// text keeps none, rather than showing the other script's line.
+func TestUncaughtSourceForRunThenRunScript(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run("globalThis.other = 1;\n", "[shared]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Runtime.RunScript("globalThis.later = () => { throw new Error('second'); };\n", "[shared]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+// A module compiled through GetModuleNamespace keeps its text as RunModule's does.
+func TestUncaughtSourceForModuleNamespace(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	name := filepath.Join(t.TempDir(), "ns.mjs")
+	_, nsErr := inst.ESM.GetModuleNamespace("setTimeout(() => {\n  throw new Error('ns');\n}, 1);\nexport const a = 1;\n", name)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(nsErr, &uncaught) {
+		t.Fatalf("GetModuleNamespace returned %v", nsErr)
+	}
+	if want := name + ":2\n  throw new Error('ns');\n  ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A module holding a NUL with a syntax error elsewhere is placed in the module, as Node
+// 20.18.1 places it.
+func TestUncaughtSourceForSyntaxErrorBesideNUL(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "nul.js")
+	if err := os.WriteFile(dep, []byte("/*\x00*/\nlet x = ;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(fmt.Sprintf("require(%q);\n", dep), filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := dep + ":2\nlet x = ;\n        ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+func TestUncaughtSourceForModuleChangedOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "dep.js")
+	if err := os.WriteFile(dep, []byte("module.exports = () => { throw new Error('compiled'); };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	script := fmt.Sprintf("const f = require(%q);\nrequire('fs').writeFileSync(%q, '// changed\\n');\nsetTimeout(f, 1);\n", dep, dep)
+	_, runErr := inst.Runtime.Run(script, filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := dep + ":1\nmodule.exports = () => { throw new Error('compiled'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+func TestUncaughtSourceForReusedModuleName(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	name := filepath.Join(t.TempDir(), "same.mjs")
+	if _, err := inst.ESM.RunModule("globalThis.first = () => { throw new Error('first'); };\n", name); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.ESM.RunModule("setTimeout(() => first(), 1);\n", name)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("RunModule returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+func TestUncaughtSourceForReusedNameAfterEviction(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run("globalThis.kept = () => { throw new Error('first'); };\n", "reused.js"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if _, err := inst.Runtime.Run("void 0;\n", fmt.Sprintf("[filler %d]", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := inst.Runtime.Run("// only a comment\n", "reused.js"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => kept(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source = %q, want none", uncaught.Source)
+	}
+}
+
+func TestUncaughtSourceForSourceURLScript(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//# sourceURL=virtual.js\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "virtual.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+func TestUncaughtSourceForDirectModules(t *testing.T) {
+	for name, run := range map[string]func(inst *Instance, src, file string) error{
+		"RunModule": func(inst *Instance, src, file string) error {
+			_, err := inst.ESM.RunModule(src, file)
+			return err
+		},
+		"GetModuleNamespace": func(inst *Instance, src, file string) error {
+			_, err := inst.ESM.GetModuleNamespace(src, file)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			file := filepath.Join(t.TempDir(), "virtual.mjs")
+			runErr := run(inst, "setTimeout(() => {\n  throw new Error('direct');\n}, 1);\nexport const a = 1;\n", file)
+			var uncaught *runtime.UncaughtError
+			if !errors.As(runErr, &uncaught) {
+				t.Fatalf("returned %v", runErr)
+			}
+			if want := file + ":2\n  throw new Error('direct');\n  ^\n"; uncaught.Source != want {
+				t.Errorf("Source = %q, want %q", uncaught.Source, want)
+			}
+		})
+	}
+}
+
+func TestModuleLoaderNativesAreNotGlobals(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `done({ compile: typeof __compileModuleWrapper, keep: typeof __moduleWrapperCompiled, failed: typeof __moduleCompileFailed, req: typeof require('path').join });`)
+	wantJSON(t, got, map[string]any{"compile": "undefined", "keep": "undefined", "failed": "undefined", "req": "function"})
+}
+
+// A valid module holding a NUL keeps its own text: a later throw from it gets its
+// header, as in Node 20.18.1.
+func TestUncaughtSourceForValidModuleWithNUL(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "nulok.js")
+	if err := os.WriteFile(dep, []byte("/*\x00*/\nmodule.exports = () => { throw new Error('later'); };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(fmt.Sprintf("setTimeout(require(%q), 1);\n", dep), filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := dep + ":2\nmodule.exports = () => { throw new Error('later'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A module's SyntaxError that the application catches and throws again later still shows
+// the module's place, as Node 20.18.1 does.
+func TestUncaughtSourceForSavedSyntaxError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.js")
+	if err := os.WriteFile(bad, []byte("let x = ;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(fmt.Sprintf("let saved;\ntry { require(%q); } catch (e) { saved = e; }\n  throw saved;\n", bad), filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := bad + ":1\nlet x = ;\n        ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A module that failed to compile leaves nothing behind for its name: corrected and loaded
+// again, it gets its header.
+func TestUncaughtSourceAfterFailedCompile(t *testing.T) {
+	t.Run("require", func(t *testing.T) {
+		dir := t.TempDir()
+		dep := filepath.Join(dir, "dep.js")
+		if err := os.WriteFile(dep, []byte("let x = ;\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer inst.Runtime.Dispose()
+		script := fmt.Sprintf(`try { require(%q); } catch (e) {}
+require('fs').writeFileSync(%q, "module.exports = () => { throw new Error('fixed'); };\n");
+setTimeout(require(%q), 1);
+`, dep, dep, dep)
+		_, runErr := inst.Runtime.Run(script, filepath.Join(dir, "main.js"))
+		var uncaught *runtime.UncaughtError
+		if !errors.As(runErr, &uncaught) {
+			t.Fatalf("Run returned %v", runErr)
+		}
+		if want := dep + ":1\nmodule.exports = () => { throw new Error('fixed'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
+			t.Errorf("Source = %q, want %q", uncaught.Source, want)
+		}
+	})
+	t.Run("RunModule", func(t *testing.T) {
+		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer inst.Runtime.Dispose()
+		name := filepath.Join(t.TempDir(), "mod.mjs")
+		if _, err := inst.ESM.RunModule("let x = ;\n", name); err == nil {
+			t.Fatal("the invalid module compiled")
+		}
+		_, runErr := inst.ESM.RunModule("setTimeout(() => {\n  throw new Error('fixed');\n}, 1);\n", name)
+		var uncaught *runtime.UncaughtError
+		if !errors.As(runErr, &uncaught) {
+			t.Fatalf("RunModule returned %v", runErr)
+		}
+		if want := name + ":2\n  throw new Error('fixed');\n  ^\n"; uncaught.Source != want {
+			t.Errorf("Source = %q, want %q", uncaught.Source, want)
+		}
+	})
+}
+
+// A sourceURL directive names a script or module however V8 accepts it, tab included.
+func TestUncaughtSourceForSourceURLForms(t *testing.T) {
+	t.Run("tab", func(t *testing.T) {
+		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer inst.Runtime.Dispose()
+		if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//#\tsourceURL=tabbed.js\n", "[prelude]"); err != nil {
+			t.Fatal(err)
+		}
+		_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+		var uncaught *runtime.UncaughtError
+		if !errors.As(runErr, &uncaught) {
+			t.Fatalf("Run returned %v", runErr)
+		}
+		if want := "tabbed.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+			t.Errorf("Source = %q, want %q", uncaught.Source, want)
+		}
+	})
+	t.Run("module", func(t *testing.T) {
+		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer inst.Runtime.Dispose()
+		name := filepath.Join(t.TempDir(), "mod.mjs")
+		_, runErr := inst.ESM.RunModule("setTimeout(() => {\n  throw new Error('url');\n}, 1);\n//# sourceURL=virtual.mjs\n", name)
+		var uncaught *runtime.UncaughtError
+		if !errors.As(runErr, &uncaught) {
+			t.Fatalf("RunModule returned %v", runErr)
+		}
+		if want := "virtual.mjs:2\n  throw new Error('url');\n  ^\n"; uncaught.Source != want {
+			t.Errorf("Source = %q, want %q", uncaught.Source, want)
+		}
+	})
+}
+
+// String and RegExp methods a script replaces don't change the header.
+func TestUncaughtSourceWithReplacedStringMethods(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	script := "for (const m of ['split', 'slice', 'indexOf', 'startsWith', 'endsWith', 'search', 'charCodeAt']) String.prototype[m] = () => { throw new Error('replaced'); };\n" +
+		"RegExp.prototype.exec = () => null;\n" +
+		"setTimeout(() => {\n  throw new Error('late');\n}, 1);\n"
+	_, runErr := inst.Runtime.Run(script, "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[main]:4\n  throw new Error('late');\n  ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// The last sourceURL directive names the script even when "sourceURL=" appears after it
+// in something that isn't one.
+func TestUncaughtSourceForSourceURLFollowedByText(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//# sourceURL=named.js\n// sourceURL=ignored\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "named.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A literal U+FFFF in a module is shown like any other character; only a NUL ends the
+// line, as Node prints it.
+func TestUncaughtSourceWithLiteralFFFF(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.js")
+	withNul := filepath.Join(dir, "nul.js")
+	files := map[string]string{
+		plain:   "/*￿*/ module.exports = () => { throw new Error('plain'); };\n",
+		withNul: "/*￿*/ /*\x00*/ module.exports = () => { throw new Error('nul'); };\n",
+	}
+	for f, text := range files {
+		if err := os.WriteFile(f, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct{ file, want string }{
+		"no NUL": {plain, plain + ":1\n/*￿*/ module.exports = () => { throw new Error('plain'); };\n" + strings.Repeat(" ", 31) + "^\n"},
+		// Node's caret after a NUL counts UTF-8 bytes; only the line is compared.
+		"NUL too": {withNul, withNul + ":1\n/*\uFFFF*/ /*\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inst.Runtime.Dispose()
+			_, runErr := inst.Runtime.Run(fmt.Sprintf("setTimeout(require(%q), 1);\n", tc.file), filepath.Join(dir, "main.js"))
+			var uncaught *runtime.UncaughtError
+			if !errors.As(runErr, &uncaught) {
+				t.Fatalf("Run returned %v", runErr)
+			}
+			if !strings.HasPrefix(uncaught.Source, tc.want) {
+				t.Errorf("Source = %q, want it to start %q", uncaught.Source, tc.want)
+			}
+		})
+	}
+}
+
+// Text a script and then a module both use under one name is kept as long as modules are.
+func TestUncaughtSourceForScriptThenModule(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	name := filepath.Join(t.TempDir(), "both.mjs")
+	const text = "globalThis.later = () => { throw new Error('both'); };\n"
+	if _, err := inst.Runtime.Run(text, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.ESM.RunModule(text, name); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if _, err := inst.Runtime.Run("void 0;\n", fmt.Sprintf("[filler %d]", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := name + ":1\n" + strings.TrimSuffix(text, "\n") + "\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A script and the name its sourceURL gives it age together, as one of the most recent
+// scripts, not as two.
+func TestUncaughtSourceURLAgesWithItsScript(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	for i := 0; i < 12; i++ {
+		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('x'); };\n//# sourceURL=url%d.js\n", i, i)
+		if _, err := inst.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => f0(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "url0.js:1\nglobalThis.f0 = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 24) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A line longer than the glue copies out of V8's message gets no header, rather than a
+// copy of it.
+func TestUncaughtSourceForOverlongLine(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.Runtime.Run(strings.Repeat(" ", 20000)+"throw 'long';\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if uncaught.Source != "" {
+		t.Errorf("Source has %d bytes, want none", len(uncaught.Source))
+	}
+}
+
+// A main script that failed to compile leaves nothing behind for its origin: run again
+// with corrected text, it keeps its own.
+func TestUncaughtSourceAfterMainScriptSyntaxError(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("process.once('uncaughtException', () => {});\n", "[setup]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw ; };\n", "[app]"); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n", "[app]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[app]:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+func TestUncaughtSourceWithManyComments(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	comments := strings.Repeat("/* c */ ", 200)
+	script := "const identity = (x) => x;\nsetTimeout(() => {\n  throw " + comments + "identity(new Error('boom'));\n}, 1);\n"
+	start := time.Now()
+	_, runErr := inst.Runtime.Run(script, "[main]")
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("reporting took %s", elapsed)
+	}
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if !strings.HasPrefix(uncaught.Source, "[main]:3\n") {
+		t.Errorf("Source = %q", uncaught.Source)
+	}
+}
+
+// A script that failed to compile under RunScript leaves nothing behind: corrected and run
+// again, it keeps its text.
+func TestUncaughtSourceAfterRunScriptSyntaxError(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("globalThis.later = () => { throw ; };\n", "[prelude]"); err == nil {
+		t.Fatal("the invalid script compiled")
+	}
+	if _, err := inst.Runtime.RunScript("globalThis.later = () => { throw new Error('x'); };\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[prelude]:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// An imported module that failed to compile, fixed and imported again under the same URL,
+// keeps its text.
+func TestUncaughtSourceAfterImportSyntaxError(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "dep.mjs")
+	entry := filepath.Join(dir, "entry.mjs")
+	if err := os.WriteFile(dep, []byte("export const x = ;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := fmt.Sprintf(`import fs from 'fs';
+try { await import(%q); } catch {}
+fs.writeFileSync(%q, "export const later = () => {\n  throw new Error('fixed');\n};\n");
+const { later } = await import(%q);
+setTimeout(later, 1);
+`, dep, dep, dep)
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	_, runErr := inst.ESM.RunModuleFile(entry)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("RunModuleFile returned %v", runErr)
+	}
+	if !strings.Contains(uncaught.Source, "\n  throw new Error('fixed');\n  ^\n") {
+		t.Errorf("Source = %q, want the fixed module's line", uncaught.Source)
+	}
+}
+
+// A failed module compile doesn't remove text a script under the same name still uses.
+func TestUncaughtSourceKeptAfterFailedModuleOfSameText(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	name := filepath.Join(t.TempDir(), "sloppy.js")
+	const text = "with ({}) { globalThis.later = () => { throw new Error('sloppy'); }; }\n"
+	if _, err := inst.Runtime.Run(text, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.ESM.RunModule(text, name); err == nil {
+		t.Fatal("'with' compiled as a module")
+	}
+	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := name + ":1\n" + strings.TrimSuffix(text, "\n") + "\n" + strings.Repeat(" ", 39) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A setter a script puts on Array.prototype doesn't reach the header.
+func TestUncaughtSourceWithPoisonedArrayPrototype(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	script := "Object.defineProperty(Array.prototype, '0', { set() { throw new Error('poisoned'); } });\n" +
+		"setTimeout(() => {\n  throw new Error('late');\n}, 1);\n"
+	_, runErr := inst.Runtime.Run(script, "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[main]:3\n  throw new Error('late');\n  ^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
 func runUncaughtWith(t *testing.T, cfg *runtime.Config, source string) ([]string, error) {
 	t.Helper()
 	cfg.EnableConsole, cfg.EnableTimers, cfg.Timeout = true, true, 20*time.Second
@@ -1025,686 +2098,6 @@ w.on('exit', (c) => note('exit', c));
 	}
 }
 
-func TestUncaughtSourceLine(t *testing.T) {
-	for name, tc := range map[string]struct {
-		main, dep string
-		dir       string // a subdirectory to put the files in
-		file      string // the file the header names, "" for none
-		line      int
-		caret     string // what comes before the carets
-		carets    int    // how many carets, 1 if 0
-		inline    bool   // a thrown value that is not an error: Node prints its header inline
-	}{
-		"thrown in a function": {main: "function f(){ throw new Error('boom'); }\nf();\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 14)},
-		"made by V8":           {main: "const x = 1;\n  null.foo;\n", file: "main.js", line: 2, caret: strings.Repeat(" ", 7)},
-		"in a timer":           {main: "setTimeout(() => {\n    throw new TypeError('in timer');\n}, 1);\n", file: "main.js", line: 2, caret: "    "},
-		"tab indent":           {main: "if (true) {\n\tthrow new Error('tab');\n}\n", file: "main.js", line: 2, caret: "\t"},
-		"rejection":            {main: "Promise.reject(new Error('rej'));\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 15)},
-		"async function":       {main: "async function f() {\n  await null;\n  throw new Error('async');\n}\nf();\n", file: "main.js", line: 3, caret: strings.Repeat(" ", 8)},
-		"first line of a required module": {
-			main: "const d = require(DEP);\nsetTimeout(d, 1);\n",
-			dep:  "module.exports = () => { throw new RangeError('dep'); };\n",
-			file: "dep.js", line: 1, caret: strings.Repeat(" ", 25),
-		},
-		// Expected values below are what Node 20.18.1 prints for the same files.
-		"thrown by a built-in": {main: "setTimeout(() => {\n  decodeURIComponent('%');\n}, 1);\n", file: "main.js", line: 2, caret: "  "},
-		"not an error":         {main: "throw 'str';\n", file: "main.js", line: 1, inline: true},
-		"object thrown":        {main: "const o = 1;\n  throw {a: 1};\n", file: "main.js", line: 2, caret: "  ", inline: true},
-		"null thrown":          {main: "throw null;\n", file: "main.js", line: 1, inline: true},
-		"non-error after tab":  {main: "\tthrow 'tab';\n", file: "main.js", line: 1, caret: "\t", inline: true},
-		"non-error in a required module": {
-			main: "require(DEP);\n",
-			dep:  "  throw 'dep';\n",
-			file: "dep.js", line: 1, caret: "  ", inline: true,
-		},
-		"syntax error":              {main: "let x = ;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 8)},
-		"syntax error over a token": {main: "let x = foo barbaz;\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 12), carets: 6},
-		// The error layout, not the inline one; the place is where the error was made
-		// until V8's throw site is used for errors.
-		"error with its own toStringTag": {
-			main: "const e = new Error('tagged'); e[Symbol.toStringTag] = 'Other';\nthrow e;\n",
-			file: "main.js", line: 1, caret: strings.Repeat(" ", 10),
-		},
-		"object posing as an error": {
-			main: "throw { [Symbol.toStringTag]: 'Error' };\n",
-			file: "main.js", line: 1, inline: true,
-		},
-		"string methods replaced before the throw": {
-			main: "for (const m of ['slice', 'split', 'startsWith', 'search', 'indexOf', 'charCodeAt']) String.prototype[m] = () => { throw new Error('replaced'); };\nthrow 'boom';\n",
-			file: "main.js", line: 2, inline: true,
-		},
-		"globals replaced before the throw": {
-			main: "globalThis.String = () => ''; globalThis.require = null; globalThis.Error = null; throw 'boom';\n",
-			file: "main.js", line: 1, caret: strings.Repeat(" ", 82), inline: true,
-		},
-		"syntax error on a later line": {main: "const a = 1;\nconst a = 2;\n", file: "main.js", line: 2, caret: strings.Repeat(" ", 6)},
-		"module with a BOM": {
-			main: "require(DEP);\n",
-			dep:  "\uFEFFthrow new Error('bom');\n",
-			file: "dep.js", line: 1, caret: " ",
-		},
-		"other line terminators": {main: "const a = 1;\rconst b = 2;\u2028const c = 3;\u2029  throw new Error('cr');\r\n", file: "main.js", line: 4, caret: "  "},
-		"parentheses in the path": {
-			dir:  "app (copy)",
-			main: "function f() { throw new Error('paren'); }\nf();\n", file: "main.js", line: 1, caret: strings.Repeat(" ", 15),
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), tc.dir)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			mainPath := filepath.Join(dir, "main.js")
-			main := strings.ReplaceAll(tc.main, "DEP", strconv.Quote(filepath.Join(dir, "dep.js")))
-			files := map[string]string{"main.js": main}
-			if tc.dep != "" {
-				files["dep.js"] = tc.dep
-			}
-			for f, text := range files {
-				if err := os.WriteFile(filepath.Join(dir, f), []byte(text), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer inst.Runtime.Dispose()
-			_, runErr := inst.Runtime.Run(main, mainPath)
-			var uncaught *runtime.UncaughtError
-			if !errors.As(runErr, &uncaught) {
-				t.Fatalf("Run returned %v", runErr)
-			}
-			want := ""
-			if tc.file != "" {
-				text := files[tc.file]
-				line := regexp.MustCompile("\r\n|[\n\r\u2028\u2029]").Split(text, -1)[tc.line-1]
-				carets := tc.carets
-				if carets == 0 {
-					carets = 1
-				}
-				want = fmt.Sprintf("%s:%d\n%s\n%s%s\n", filepath.Join(dir, tc.file), tc.line, line, tc.caret, strings.Repeat("^", carets))
-			}
-			if uncaught.Source != want {
-				t.Errorf("Source = %q, want %q", uncaught.Source, want)
-			}
-			report := uncaught.Report()
-			wantReport := uncaught.Message + "\n\nOrbital " + v8dist.ModuleVersion + "\n"
-			if tc.inline {
-				wantReport = "\n" + want + wantReport
-			} else if want != "" {
-				wantReport = want + "\n" + wantReport
-			}
-			if report != wantReport {
-				t.Errorf("Report() = %q, want %q", report, wantReport)
-			}
-		})
-	}
-}
-
-func TestUncaughtReportsWithBrokenProcess(t *testing.T) {
-	_, err := runUncaught(t, `
-process.on('exit', () => {
-  Object.defineProperty(globalThis, 'process', { get() { throw new Error('no process'); }, configurable: true });
-});
-throw new Error('original');
-`)
-	var uncaught *runtime.UncaughtError
-	if !errors.As(err, &uncaught) || !strings.Contains(uncaught.Message, "Error: original") {
-		t.Fatalf("Run returned %v, want the original uncaught error", err)
-	}
-}
-
-func TestUncaughtKeepsRecentScriptSources(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	for i := 0; i < 40; i++ {
-		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('from %d'); };\n", i, i)
-		if _, err := inst.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => f39(), 1);\n", "[last]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "[script 39]:1\nglobalThis.f39 = () => { throw new Error('from 39'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-
-	inst2, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst2.Runtime.Dispose()
-	for i := 0; i < 40; i++ {
-		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('from %d'); };\n", i, i)
-		if _, err := inst2.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, runErr = inst2.Runtime.Run("setTimeout(() => f0(), 1);\n", "[last]")
-	uncaught = nil
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("the oldest script's header = %q, want none", uncaught.Source)
-	}
-}
-
-func TestUncaughtSourceIgnoresFilesAStackNames(t *testing.T) {
-	other := filepath.Join(t.TempDir(), "other.txt")
-	if err := os.WriteFile(other, []byte("not a script\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	_, runErr := inst.Runtime.Run(fmt.Sprintf("Promise.reject({ stack: 'x\\n    at ' + %q + ':1:1' });\n", other), "main.js")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("Source = %q, want none", uncaught.Source)
-	}
-}
-
-func TestUncaughtSourceForModuleAsCompiled(t *testing.T) {
-	dir := t.TempDir()
-	entry := filepath.Join(dir, "entry.mjs")
-	// The module rewrites its own file once it has been compiled.
-	src := fmt.Sprintf("setTimeout(() => {\n  throw new Error('compiled');\n}, 1);\nimport fs from 'fs'; fs.writeFileSync(%q, '// changed\\n// on disk\\n');\n", entry)
-	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	_, runErr := inst.ESM.RunModuleFile(entry)
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("RunModuleFile returned %v", runErr)
-	}
-	if !strings.Contains(uncaught.Source, "\n  throw new Error('compiled');\n  ^\n") {
-		t.Errorf("Source = %q, want the compiled line", uncaught.Source)
-	}
-}
-
-func TestUncaughtSourceForReusedName(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.Run("globalThis.first = () => { throw new Error('first'); };\n", "[same]"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := inst.Runtime.Run("globalThis.second = 2;\n", "[same]"); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => first(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("Source = %q, want none", uncaught.Source)
-	}
-}
-
-// A module that throws is dropped from the cache even if it set module.loaded itself, so
-// the next require runs it again, as in Node; a JSON module stays cached.
-func TestRequire_RetriesAModuleThatThrew(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "m.js"), []byte("globalThis.n = (globalThis.n || 0) + 1; module.loaded = true;\nif (globalThis.n === 1) throw new Error('first');\nmodule.exports = 'ok';\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "j.json"), []byte(`{"a":1}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
-const m = %q, j = %q;
-let first;
-try { require(m); } catch (e) { first = e.message; }
-done({ first, second: require(m), runs: globalThis.n, jsonCached: require(j) === require(j) });`,
-		filepath.Join(dir, "m.js"), filepath.Join(dir, "j.json")))
-	wantJSON(t, got, map[string]any{"first": "first", "second": "ok", "runs": float64(2), "jsonCached": true})
-}
-
-// An ES module run from memory, under a name with no file, still gets its header. As in
-// Node, an ES module's top-level exception is marked where the error was made.
-func TestUncaughtSourceForInMemoryModule(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	name := filepath.Join(t.TempDir(), "virtual.mjs")
-	_, runErr := inst.ESM.RunModule("const a = 1;\nthrow new Error('virtual');\n", name)
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("RunModule returned %v", runErr)
-	}
-	if want := name + ":2\nthrow new Error('virtual');\n      ^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-// A script run under a name a CommonJS module was required by isn't shifted by the
-// module's wrapper.
-func TestUncaughtSourceAfterRequireUnderTheSameName(t *testing.T) {
-	dir := t.TempDir()
-	dep := filepath.Join(dir, "dep.js")
-	const text = "globalThis.boom = () => { throw new Error('same name'); };\n"
-	if err := os.WriteFile(dep, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.Run(fmt.Sprintf("require(%q);\n", dep), filepath.Join(dir, "main.js")); err != nil {
-		t.Fatal(err)
-	}
-	// The same text, run unwrapped under the module's name: its columns have no offset.
-	if _, err := inst.Runtime.Run(text, dep); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => boom(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := dep + ":1\n" + strings.TrimSuffix(text, "\n") + "\n" + strings.Repeat(" ", 26) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-// A module compiled by eval, because its source holds a NUL, has its wrapper's opening
-// taken off its first line too, and the line ends at the NUL, as Node 20.18.1 prints it.
-func TestUncaughtSourceForModuleWithNUL(t *testing.T) {
-	dir := t.TempDir()
-	dep := filepath.Join(dir, "nul.js")
-	if err := os.WriteFile(dep, []byte("/*\x00*/ throw new Error('boom');\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	_, runErr := inst.Runtime.Run(fmt.Sprintf("require(%q);\n", dep), filepath.Join(dir, "main.js"))
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := dep + ":1\n/*\n  ^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceForModuleChangedOnDisk(t *testing.T) {
-	dir := t.TempDir()
-	dep := filepath.Join(dir, "dep.js")
-	if err := os.WriteFile(dep, []byte("module.exports = () => { throw new Error('compiled'); };\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	script := fmt.Sprintf("const f = require(%q);\nrequire('fs').writeFileSync(%q, '// changed\\n');\nsetTimeout(f, 1);\n", dep, dep)
-	_, runErr := inst.Runtime.Run(script, filepath.Join(dir, "main.js"))
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := dep + ":1\nmodule.exports = () => { throw new Error('compiled'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-// A module compiled through GetModuleNamespace keeps its text as RunModule's does.
-func TestUncaughtSourceForModuleNamespace(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	name := filepath.Join(t.TempDir(), "ns.mjs")
-	_, nsErr := inst.ESM.GetModuleNamespace("setTimeout(() => {\n  throw new Error('ns');\n}, 1);\nexport const a = 1;\n", name)
-	var uncaught *runtime.UncaughtError
-	if !errors.As(nsErr, &uncaught) {
-		t.Fatalf("GetModuleNamespace returned %v", nsErr)
-	}
-	if want := name + ":2\n  throw new Error('ns');\n  ^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-// RunModule run twice under one name with different text keeps none: functions from the
-// first module can still throw, and the header is left out rather than misplaced.
-func TestUncaughtSourceForReusedModuleName(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	name := filepath.Join(t.TempDir(), "same.mjs")
-	if _, err := inst.ESM.RunModule("globalThis.first = () => { throw new Error('first'); };\n", name); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.ESM.RunModule("setTimeout(() => first(), 1);\n", name)
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("RunModule returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("Source = %q, want none", uncaught.Source)
-	}
-}
-
-func TestUncaughtSourceForReusedNameAfterEviction(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.Run("globalThis.kept = () => { throw new Error('first'); };\n", "reused.js"); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 20; i++ {
-		if _, err := inst.Runtime.Run("void 0;\n", fmt.Sprintf("[filler %d]", i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := inst.Runtime.Run("// only a comment\n", "reused.js"); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => kept(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("Source = %q, want none", uncaught.Source)
-	}
-}
-
-func TestUncaughtSourceForSourceURLScript(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//# sourceURL=virtual.js\n", "[prelude]"); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "virtual.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceForDirectModules(t *testing.T) {
-	for name, run := range map[string]func(inst *Instance, src, file string) error{
-		"RunModule": func(inst *Instance, src, file string) error {
-			_, err := inst.ESM.RunModule(src, file)
-			return err
-		},
-		"GetModuleNamespace": func(inst *Instance, src, file string) error {
-			_, err := inst.ESM.GetModuleNamespace(src, file)
-			return err
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer inst.Runtime.Dispose()
-			file := filepath.Join(t.TempDir(), "virtual.mjs")
-			runErr := run(inst, "setTimeout(() => {\n  throw new Error('direct');\n}, 1);\nexport const a = 1;\n", file)
-			var uncaught *runtime.UncaughtError
-			if !errors.As(runErr, &uncaught) {
-				t.Fatalf("returned %v", runErr)
-			}
-			if want := file + ":2\n  throw new Error('direct');\n  ^\n"; uncaught.Source != want {
-				t.Errorf("Source = %q, want %q", uncaught.Source, want)
-			}
-		})
-	}
-}
-
-func TestModuleLoaderNativesAreNotGlobals(t *testing.T) {
-	got := runJS(t, &runtime.Config{}, `done({ compile: typeof __compileModuleWrapper, keep: typeof __moduleWrapperCompiled, req: typeof require('path').join });`)
-	wantJSON(t, got, map[string]any{"compile": "undefined", "keep": "undefined", "req": "function"})
-}
-
-func TestUncaughtSourceAfterFailedCompile(t *testing.T) {
-	t.Run("require", func(t *testing.T) {
-		dir := t.TempDir()
-		dep := filepath.Join(dir, "dep.js")
-		if err := os.WriteFile(dep, []byte("let x = ;\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer inst.Runtime.Dispose()
-		script := fmt.Sprintf(`try { require(%q); } catch (e) {}
-require('fs').writeFileSync(%q, "module.exports = () => { throw new Error('fixed'); };\n");
-setTimeout(require(%q), 1);
-`, dep, dep, dep)
-		_, runErr := inst.Runtime.Run(script, filepath.Join(dir, "main.js"))
-		var uncaught *runtime.UncaughtError
-		if !errors.As(runErr, &uncaught) {
-			t.Fatalf("Run returned %v", runErr)
-		}
-		if want := dep + ":1\nmodule.exports = () => { throw new Error('fixed'); };\n" + strings.Repeat(" ", 25) + "^\n"; uncaught.Source != want {
-			t.Errorf("Source = %q, want %q", uncaught.Source, want)
-		}
-	})
-	t.Run("RunModule", func(t *testing.T) {
-		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer inst.Runtime.Dispose()
-		name := filepath.Join(t.TempDir(), "mod.mjs")
-		if _, err := inst.ESM.RunModule("let x = ;\n", name); err == nil {
-			t.Fatal("the invalid module compiled")
-		}
-		_, runErr := inst.ESM.RunModule("setTimeout(() => {\n  throw new Error('fixed');\n}, 1);\n", name)
-		var uncaught *runtime.UncaughtError
-		if !errors.As(runErr, &uncaught) {
-			t.Fatalf("RunModule returned %v", runErr)
-		}
-		if want := name + ":2\n  throw new Error('fixed');\n  ^\n"; uncaught.Source != want {
-			t.Errorf("Source = %q, want %q", uncaught.Source, want)
-		}
-	})
-}
-
-func TestUncaughtSourceForSourceURLForms(t *testing.T) {
-	t.Run("tab", func(t *testing.T) {
-		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer inst.Runtime.Dispose()
-		if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//#\tsourceURL=tabbed.js\n", "[prelude]"); err != nil {
-			t.Fatal(err)
-		}
-		_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
-		var uncaught *runtime.UncaughtError
-		if !errors.As(runErr, &uncaught) {
-			t.Fatalf("Run returned %v", runErr)
-		}
-		if want := "tabbed.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
-			t.Errorf("Source = %q, want %q", uncaught.Source, want)
-		}
-	})
-	t.Run("module", func(t *testing.T) {
-		inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer inst.Runtime.Dispose()
-		name := filepath.Join(t.TempDir(), "mod.mjs")
-		_, runErr := inst.ESM.RunModule("setTimeout(() => {\n  throw new Error('url');\n}, 1);\n//# sourceURL=virtual.mjs\n", name)
-		var uncaught *runtime.UncaughtError
-		if !errors.As(runErr, &uncaught) {
-			t.Fatalf("RunModule returned %v", runErr)
-		}
-		if want := "virtual.mjs:2\n  throw new Error('url');\n  ^\n"; uncaught.Source != want {
-			t.Errorf("Source = %q, want %q", uncaught.Source, want)
-		}
-	})
-}
-
-func TestUncaughtSourceWithReplacedStringMethods(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	script := "for (const m of ['split', 'slice', 'indexOf', 'startsWith', 'endsWith', 'search', 'charCodeAt']) String.prototype[m] = () => { throw new Error('replaced'); };\n" +
-		"RegExp.prototype.exec = () => null;\n" +
-		"setTimeout(() => {\n  throw new Error('late');\n}, 1);\n"
-	_, runErr := inst.Runtime.Run(script, "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "[main]:4\n  throw new Error('late');\n  ^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceForSourceURLFollowedByText(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n//# sourceURL=named.js\n// sourceURL=ignored\n", "[prelude]"); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "named.js:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceWithLiteralFFFF(t *testing.T) {
-	dir := t.TempDir()
-	plain := filepath.Join(dir, "plain.js")
-	withNul := filepath.Join(dir, "nul.js")
-	files := map[string]string{
-		plain:   "/*￿*/ module.exports = () => { throw new Error('plain'); };\n",
-		withNul: "/*￿*/ /*\x00*/ module.exports = () => { throw new Error('nul'); };\n",
-	}
-	for f, text := range files {
-		if err := os.WriteFile(f, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for name, tc := range map[string]struct{ file, want string }{
-		"no NUL": {plain, plain + ":1\n/*￿*/ module.exports = () => { throw new Error('plain'); };\n" + strings.Repeat(" ", 31) + "^\n"},
-		// Node's caret after a NUL counts UTF-8 bytes; only the line is compared.
-		"NUL too": {withNul, withNul + ":1\n/*\uFFFF*/ /*\n"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer inst.Runtime.Dispose()
-			_, runErr := inst.Runtime.Run(fmt.Sprintf("setTimeout(require(%q), 1);\n", tc.file), filepath.Join(dir, "main.js"))
-			var uncaught *runtime.UncaughtError
-			if !errors.As(runErr, &uncaught) {
-				t.Fatalf("Run returned %v", runErr)
-			}
-			if !strings.HasPrefix(uncaught.Source, tc.want) {
-				t.Errorf("Source = %q, want it to start %q", uncaught.Source, tc.want)
-			}
-		})
-	}
-}
-
-func TestUncaughtSourceForScriptThenModule(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	name := filepath.Join(t.TempDir(), "both.mjs")
-	const text = "globalThis.later = () => { throw new Error('both'); };\n"
-	if _, err := inst.Runtime.Run(text, name); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := inst.ESM.RunModule(text, name); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 20; i++ {
-		if _, err := inst.Runtime.Run("void 0;\n", fmt.Sprintf("[filler %d]", i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := name + ":1\n" + strings.TrimSuffix(text, "\n") + "\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceURLAgesWithItsScript(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	for i := 0; i < 12; i++ {
-		src := fmt.Sprintf("globalThis.f%d = () => { throw new Error('x'); };\n//# sourceURL=url%d.js\n", i, i)
-		if _, err := inst.Runtime.Run(src, fmt.Sprintf("[script %d]", i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => f0(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "url0.js:1\nglobalThis.f0 = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 24) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
-	}
-}
-
 // The text kept for a module with a NUL character is built with the string methods as
 // they were before any script ran.
 func TestUncaughtSourceForNulModuleWithReplacedStringMethods(t *testing.T) {
@@ -1729,48 +2122,5 @@ func TestUncaughtSourceForNulModuleWithReplacedStringMethods(t *testing.T) {
 	}
 	if want := file + ":1\n/*\n"; !strings.HasPrefix(uncaught.Source, want) {
 		t.Errorf("Source = %q, want it to start %q", uncaught.Source, want)
-	}
-}
-
-func TestUncaughtSourceForOverlongLine(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	_, runErr := inst.Runtime.Run(strings.Repeat(" ", 20000)+"throw 'long';\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if uncaught.Source != "" {
-		t.Errorf("Source has %d bytes, want none", len(uncaught.Source))
-	}
-}
-
-// A main script that failed to compile leaves nothing behind for its origin: run again
-// with corrected text, it keeps its own.
-func TestUncaughtSourceAfterMainScriptSyntaxError(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inst.Runtime.Dispose()
-	if _, err := inst.Runtime.RunScript("process.once('uncaughtException', () => {});\n", "[setup]"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := inst.Runtime.Run("globalThis.later = () => { throw ; };\n", "[app]"); err != nil {
-		t.Fatalf("Run returned %v", err)
-	}
-	if _, err := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\n", "[app]"); err != nil {
-		t.Fatal(err)
-	}
-	_, runErr := inst.Runtime.Run("setTimeout(() => later(), 1);\n", "[main]")
-	var uncaught *runtime.UncaughtError
-	if !errors.As(runErr, &uncaught) {
-		t.Fatalf("Run returned %v", runErr)
-	}
-	if want := "[app]:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
-		t.Errorf("Source = %q, want %q", uncaught.Source, want)
 	}
 }
