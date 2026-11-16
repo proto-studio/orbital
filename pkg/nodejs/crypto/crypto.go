@@ -186,13 +186,42 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		return crypto._digestSize(value) > 0;
 	}
 
+	// SHAKE128 and SHAKE256 are extendable-output functions: createHash reads
+	// them to options.outputLength, and HMAC refuses them as OpenSSL does.
+	const isXOF = (name) => /^shake-?(128|256)$/i.test(name);
+
+	function outputLengthOption(options) {
+		const n = options !== null && typeof options === 'object' ? options.outputLength : undefined;
+		if (n === undefined) return -1;
+		if (typeof n !== 'number') {
+			const err = new TypeError('The "options.outputLength" property must be of type number. ' + describeReceived(n));
+			err.code = 'ERR_INVALID_ARG_TYPE';
+			throw err;
+		}
+		if (!Number.isInteger(n) || n < 0 || n > 4294967295) {
+			const err = new RangeError('The value of "options.outputLength" is out of range. It must be ' +
+				(Number.isInteger(n) ? '>= 0 && <= 4294967295' : 'an integer') + '. Received ' + String(n));
+			err.code = 'ERR_OUT_OF_RANGE';
+			throw err;
+		}
+		return n;
+	}
+
 	// Hash class
 	class Hash {
-		constructor(algorithm) {
+		constructor(algorithm, options) {
+			if (typeof algorithm === 'string') outputLengthOption(options);
 			if (!checkDigestName(algorithm, 'algorithm')) {
 				throw new Error('Digest method not supported');
 			}
+			const outputLength = outputLengthOption(options);
+			if (outputLength !== -1 && !isXOF(algorithm) && outputLength !== crypto._digestSize(algorithm)) {
+				const err = new Error('error:030000B2:digital envelope routines::not XOF or invalid length');
+				err.code = 'ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH';
+				throw err;
+			}
 			this._algorithm = algorithm;
+			this._outputLength = isXOF(algorithm) ? outputLength : -1;
 			this._data = [];
 		}
 
@@ -203,11 +232,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 		digest(encoding) {
 			const data = Buffer.concat(this._data).toString('base64');
-			return encodeDigest(crypto._hashDigest(this._algorithm, data), encoding);
+			return encodeDigest(crypto._hashDigest(this._algorithm, data, this._outputLength), encoding);
 		}
 
-		copy() {
-			const h = new Hash(this._algorithm);
+		copy(options) {
+			const h = new Hash(this._algorithm, options);
 			h._data = this._data.slice();
 			return h;
 		}
@@ -221,6 +250,7 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 				err.code = 'ERR_CRYPTO_INVALID_DIGEST';
 				throw err;
 			}
+			if (isXOF(algorithm)) throw new Error('error:00000000:lib(0)::reason(0)');
 			this._algorithm = algorithm;
 			this._key = keyBytes(key);
 			this._data = [];
@@ -263,8 +293,8 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 
 	// Wrap createHash to return Hash instance
 	const originalCreateHash = crypto.createHash;
-	crypto.createHash = function(algorithm) {
-		return new Hash(algorithm);
+	crypto.createHash = function(algorithm, options) {
+		return new Hash(algorithm, options);
 	};
 
 	// Wrap createHmac to return Hmac instance
@@ -411,7 +441,15 @@ func (c *Crypto) hashDigestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	h := newHash()
 
 	h.Write(data)
-	result := hex.EncodeToString(h.Sum(nil))
+	var sum []byte
+	if x, ok := h.(*shake); ok && len(args) > 2 && args[2].Integer() >= 0 {
+		// An extendable-output function read to options.outputLength.
+		sum = make([]byte, args[2].Integer())
+		x.s.Read(sum)
+	} else {
+		sum = h.Sum(nil)
+	}
+	result := hex.EncodeToString(sum)
 
 	val, _ := ctx.NewString(result)
 	return val

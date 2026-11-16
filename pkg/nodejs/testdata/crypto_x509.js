@@ -68,7 +68,9 @@ results.trusted = outcome(() => {
 const more = {
  "oneCN": "-----BEGIN CERTIFICATE-----\nMIIBTDCB86ADAgECAgEWMAoGCCqGSM49BAMCMBYxFDASBgNVBAMMC2EBMS4yLjMu\nND1iMB4XDTI0MDEwNTAzMDQwNVoXDTI0MDEwNTA0MDQwNVowFjEUMBIGA1UEAwwL\nYQExLjIuMy40PWIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQHBuL4BF0M6q0h\n9//gxfktwxAQWpGImHj3dD7u2uiuNWlLPeM+r9mZQ3PYxBCNum7kI1/4sTy5DKqo\nwka8WyG0ozIwMDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRfiszfHjKBT7ko\nz9sXYl2D366y8DAKBggqhkjOPQQDAgNIADBFAiAwPNjHFnbA5Vy9FNSdC6l/oXiP\nA6FXPFn37QG94yHrPgIhAPmESJgSQLTMY8gvZ4AtOid6VIl5I9h37HfdYZru3QJX\n-----END CERTIFICATE-----\n",
  "otherName": "-----BEGIN CERTIFICATE-----\nMIIBrTCCAVOgAwIBAgIBFTAKBggqhkjOPQQDAjAUMRIwEAYDVQQDEwlvdGhlcm5h\nbWUwHhcNMjQwMTA1MDMwNDA1WhcNMjQwMTA1MDQwNDA1WjAUMRIwEAYDVQQDEwlv\ndGhlcm5hbWUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQHBuL4BF0M6q0h9//g\nxfktwxAQWpGImHj3dD7u2uiuNWlLPeM+r9mZQ3PYxBCNum7kI1/4sTy5DKqowka8\nWyG0o4GVMIGSMIGPBgNVHREEgYcwgYSgIAYKKwYBBAGCNxQCA6ASDBB1c2VyQGV4\nYW1wbGUuY29toB4GCCsGAQUFBwgFoBIMEHhtcHBAZXhhbXBsZS5jb22gHwYIKwYB\nBQUHCAegExYRX2xkYXAuZXhhbXBsZS5jb22gDgYDKgMEoAcMBW90aGVygg9kbnMu\nZXhhbXBsZS5jb20wCgYIKoZIzj0EAwIDSAAwRQIhAK7/HE8Agapk1QrR0K9mjXKu\nkIyi3TrDRdlAoJfSkzwsAiBjgGkeaVEMOJb8b6WYvKx9RD/ggf8XH1fOBjgjTbat\nIA==\n-----END CERTIFICATE-----\n",
- "twoRDNIssuer": "-----BEGIN CERTIFICATE-----\nMIIBEzCBuqADAgECAgEXMAoGCCqGSM49BAMCMBgxCjAIBgNVBAMTAWExCjAIBgMq\nAwQTAWIwHhcNMjQwMTA1MDMwNDA1WhcNMjQwMTA1MDQwNDA1WjAPMQ0wCwYDVQQD\nEwRsZWFmMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBwbi+ARdDOqtIff/4MX5\nLcMQEFqRiJh493Q+7trorjVpSz3jPq/ZmUNz2MQQjbpu5CNf+LE8uQyqqMJGvFsh\ntDAKBggqhkjOPQQDAgNIADBFAiEApW3/pUh7lQ8ea8FKMHmKdHmPZG6PjityMx5g\nRRTCuPcCIFKhacf+6cb8gA7WgChg0ZT83MzlZ5zIe53gqKqHwJZD\n-----END CERTIFICATE-----\n"
+ "twoRDNIssuer": "-----BEGIN CERTIFICATE-----\nMIIBEzCBuqADAgECAgEXMAoGCCqGSM49BAMCMBgxCjAIBgNVBAMTAWExCjAIBgMq\nAwQTAWIwHhcNMjQwMTA1MDMwNDA1WhcNMjQwMTA1MDQwNDA1WjAPMQ0wCwYDVQQD\nEwRsZWFmMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBwbi+ARdDOqtIff/4MX5\nLcMQEFqRiJh493Q+7trorjVpSz3jPq/ZmUNz2MQQjbpu5CNf+LE8uQyqqMJGvFsh\ntDAKBggqhkjOPQQDAgNIADBFAiEApW3/pUh7lQ8ea8FKMHmKdHmPZG6PjityMx5g\nRRTCuPcCIFKhacf+6cb8gA7WgChg0ZT83MzlZ5zIe53gqKqHwJZD\n-----END CERTIFICATE-----\n",
+  "hashCA": "-----BEGIN CERTIFICATE-----\nMIIBkDCCATagAwIBAgIURrMb581lv67aoZ0NxiLw//xjWhAwCgYIKoZIzj0EAwIw\nFzEVMBMGA1UEAwwMIyBFWEFNUExFIENBMB4XDTI2MTExNjAyNTY1OVoXDTM2MTEx\nMzAyNTY1OVowFzEVMBMGA1UEAwwMIyBFWEFNUExFIENBMFkwEwYHKoZIzj0CAQYI\nKoZIzj0DAQcDQgAEYDQarMF/k4Nitdlmbg1aDkYZbFgKaEp1T+3VTr7Cdx5SW8Ye\nTcr6/WvUV1cPWZe54InGCW0VFTmECyT/X+YbiqNgMF4wHQYDVR0OBBYEFC9VYY86\nq9/tsCo/8iY1eAkFdb6SMB8GA1UdIwQYMBaAFC9VYY86q9/tsCo/8iY1eAkFdb6S\nMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgIEMAoGCCqGSM49BAMCA0gAMEUC\nICLpeGAG7RsCn/viPR17pelp0c79FIlaQPcbj3b64Xu0AiEA6qcfTA+ODcuoSXDx\nKUiQvo9pCgkt0orbDbslwDkrXaY=\n-----END CERTIFICATE-----\n",
+  "hashLeaf": "-----BEGIN CERTIFICATE-----\nMIIBDTCBtAIBCDAKBggqhkjOPQQDAjAXMRUwEwYDVQQDDAwjIGV4YW1wbGUgY2Ew\nHhcNMjYxMTE2MDI1NzA3WhcNMzYxMTEzMDI1NzA3WjAPMQ0wCwYDVQQDDARsZWFm\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETvURM0DnoDETwzGrq6Mr0xLsadDL\nOT/DsKe7/gF/9nYwsJq3xr25ylJ3l2tqY04Go525cqYU91xWj6dJ+HtCyTAKBggq\nhkjOPQQDAgNIADBFAiEArn9FPnx6YqNbWurGYnIXsA595m96gBqmBlnvXY6ccJwC\nIBRio5ynagMTsLabhek4FUK7lrQEfIo5BtmcgxBgUOug\n-----END CERTIFICATE-----\n",
 };
 results.otherNames = outcome(() => {
   const o = new X509Certificate(more.otherName);
@@ -93,6 +95,12 @@ const sameName = new X509Certificate(certs.edSameName);
 const emptySubject = parsed.emptySubject;
 results.checkIssuedMore = [loose.checkIssued(ca), loose.verify(ca.publicKey), leaf.checkIssued(sameName),
   emptySubject.checkIssued(ca), ca.checkIssued(emptySubject)];
+// A name value that starts with '#' is still a string, compared without regard to case.
+const hashCA = new X509Certificate(more.hashCA);
+const hashLeaf = new X509Certificate(more.hashLeaf);
+results.checkIssuedHashName = [hashLeaf.issuer, hashCA.subject, hashLeaf.checkIssued(hashCA), hashLeaf.verify(hashCA.publicKey)];
+// Getters that return objects give the same object each time.
+results.cachedGetters = [leaf.publicKey === leaf.publicKey, leaf.raw === leaf.raw, ca.keyUsage === ca.keyUsage, Array.isArray(ca.keyUsage)];
 results.checkIssuedBad = outcome(() => leaf.checkIssued('x'));
 results.verify = [leaf.verify(ca.publicKey), leaf.verify(leaf.publicKey), ca.verify(ca.publicKey), ed.verify(ed.publicKey), odd.verify(odd.publicKey)];
 // The message for a key of the wrong type quotes util.inspect of the key, which differs.
@@ -133,7 +141,8 @@ results.checkIPBad = [outcome(() => leaf.checkIP('not an ip')), outcome(() => le
 // Orbital lists the part of Node's lists it implements; each name it lists must work.
 results.lists = {
   hashesInclude: ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', 'sha3-256',
-    'RSA-SHA256', 'sha256WithRSAEncryption', 'id-rsassa-pkcs1-v1_5-with-sha3-512'].filter((h) => !crypto.getHashes().includes(h)),
+    'RSA-SHA256', 'sha256WithRSAEncryption', 'id-rsassa-pkcs1-v1_5-with-sha3-512', 'ripemd160', 'blake2b512', 'blake2s256',
+    'md5-sha1', 'shake128', 'shake256'].filter((h) => !crypto.getHashes().includes(h)),
   // Node lists shake128/256, which createHmac refuses.
   hashesWork: crypto.getHashes().filter((h) => !h.startsWith('shake')).filter((h) => {
     try { crypto.createHash(h).update('x').digest(); crypto.createHmac(h, 'k').update('x').digest(); return false; } catch { return true; }
@@ -148,10 +157,32 @@ results.lists = {
 
 // createHash and createHmac take Node's digest names.
 const digests = {};
-for (const name of ['sha256', 'SHA256', 'RSA-SHA256', 'sha-256', 'sha224', 'sha512-224', 'sha512-256', 'sha3-224', 'sha3-512', 'md5WithRSAEncryption', 'ssl3-sha1']) {
+for (const name of ['sha256', 'SHA256', 'RSA-SHA256', 'sha-256', 'sha224', 'sha512-224', 'sha512-256', 'sha3-224', 'sha3-512', 'md5WithRSAEncryption', 'ssl3-sha1',
+  'ripemd160', 'RMD160', 'ripemd160WithRSA', 'blake2b512', 'BLAKE2S-256', 'md5-sha1']) {
   digests[name] = [crypto.createHash(name).update('abc').digest('hex'), crypto.createHmac(name, 'key').update('abc').digest('hex')];
 }
 results.digests = digests;
+// SHAKE: createHash reads options.outputLength bytes; HMAC refuses it.
+results.shake = {
+  default128: outcome(() => crypto.createHash('shake128').update('abc').digest('hex')),
+  default256: outcome(() => crypto.createHash('SHAKE256').update('abc').digest('hex')),
+  length5: outcome(() => crypto.createHash('shake128', { outputLength: 5 }).update('abc').digest('hex')),
+  length0: outcome(() => crypto.createHash('shake256', { outputLength: 0 }).update('abc').digest('hex')),
+  length100: outcome(() => crypto.createHash('shake256', { outputLength: 100 }).update('abc').digest('base64')),
+  copy: outcome(() => {
+    const h = crypto.createHash('shake128', { outputLength: 4 }).update('ab');
+    return [h.copy().digest('hex'), h.copy({ outputLength: 6 }).digest('hex'), h.digest('hex')];
+  }),
+  sha256Length32: outcome(() => crypto.createHash('sha256', { outputLength: 32 }).update('abc').digest('hex')),
+  sha256Length5: outcome(() => crypto.createHash('sha256', { outputLength: 5 })),
+  stringLength: outcome(() => crypto.createHash('shake128', { outputLength: '5' })),
+  negativeLength: outcome(() => crypto.createHash('shake128', { outputLength: -1 })),
+  fractionLength: outcome(() => crypto.createHash('shake128', { outputLength: 1.5 })),
+  hugeLength: outcome(() => crypto.createHash('shake128', { outputLength: 2 ** 32 })),
+  unknownWithBadLength: outcome(() => crypto.createHash('nope', { outputLength: 'x' })),
+  nullOptions: outcome(() => crypto.createHash('sha256', null).digest('hex')),
+  hmac: outcome(() => crypto.createHmac('shake128', 'k')),
+};
 results.digestErrors = [outcome(() => crypto.createHash('nope')), outcome(() => crypto.createHash(5)),
   outcome(() => crypto.createHmac('nope', 'k')), outcome(() => crypto.createHmac(5, 'k'))];
 results.prototype = Object.getOwnPropertyNames(X509Certificate.prototype).sort();
