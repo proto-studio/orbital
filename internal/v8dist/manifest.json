@@ -1,9 +1,9 @@
 {
   "v8_version": "15.7.112.12",
   "module_version": "v0.3.7",
-  "source_commit": "b302fa3bf4c1e6026fdc747e9f5fc77d5e6770a2",
-  "source_run_id": "43754392419",
-  "glue_inputs": "70c17e865e40f6eb220872ed21abc7aca323cd313e925a43a74688c0b9474201",
+  "source_commit": "4ddbb0836db59dc66c04e63c11436d3fb304f562",
+  "source_run_id": "43891446937",
+  "glue_inputs": "c21f91d1605d37049e3034508f4f5b79477312ae32f5eec34c612287519ebc41",
   "v8_build_config": "3593e51ccb583c155809efe5a9f630f3c671194f2c7c6a3baa4fdde13246cfc4",
   "glue_build_files": {
     "v8-glue-sdk-darwin-arm64.tar.gz": "4ecd68cc784522894fb7f11081ea450672f394b24c1c94d391053e2ab2d69c6b",
@@ -18,19 +18,19 @@
       "goos": "linux",
       "goarch": "amd64",
       "filename": "v8-linux-amd64.tar.gz",
-      "sha256": "3d81d80c2c192ac338ef7158fa4d03f90b15038628b989ba13ff8b8a598a7080"
+      "sha256": "87b146cbbbfdacb1a3b41615c9209d51ab1d4f74d5fb4d4b93aedadc04e99755"
     },
     {
       "goos": "linux",
       "goarch": "arm64",
       "filename": "v8-linux-arm64.tar.gz",
-      "sha256": "2dd95c4ffb0ff661839046b2e7352679a50f12771fbfd010d31356d3cc4fec45"
+      "sha256": "6146a20985a48b966df6b83991651a9312c6d638ce2cb6070b4ae13b008a58ec"
     },
     {
       "goos": "darwin",
       "goarch": "arm64",
       "filename": "v8-darwin-arm64.tar.gz",
-      "sha256": "09211c3f579f2c771f5cfc72427b19443834a3f208256bc51e7f6f57f87a2c07"
+      "sha256": "7bedc73edeeb89e7070d411e726d108cc694ef36685ec22dca24a3420fe3d815"
     }
   ]
 }
