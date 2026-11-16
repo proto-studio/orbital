@@ -407,6 +407,11 @@ func (rt *Runtime) runPlatformTasks() bool {
 		}
 		ran := rt.context.PumpMessageLoop()
 		_, _ = rt.uncaught.endPlatformTask.Call(nil)
+		// Rejections the task left are reported before the next task runs, as Node
+		// does between tasks.
+		if ran {
+			rt.reportRejections()
+		}
 		if rt.ended() {
 			rt.keepTerminating()
 			break
