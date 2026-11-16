@@ -160,9 +160,8 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   `writeFile` read and write synchronously, and `fs.createWriteStream` opens its file
   synchronously. The other callback and promise forms, and write streams' writes, run off
   the thread.
-- **[approx] `fs.link` given a symbolic link links the file it leads to,** as on macOS. On
-  Linux, Node links the symbolic link itself. A custom `Filesystem` without
-  `LinkFilesystem` fails `symlink`, `readlink` and `link` with `ENOSYS`.
+- **[gap] A custom `Filesystem` without `LinkFilesystem`** fails `symlink`, `readlink` and
+  `link` with `ENOSYS`.
 - **[approx] `fs.watch` and `fs.watchFile` poll.** `watch` checks every 100 ms and reports
   `'rename'` when an entry appears or goes and `'change'` when its stats change, so it can
   miss a change undone within one poll and doesn't report the events in Node's exact order.

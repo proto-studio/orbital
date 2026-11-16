@@ -62,3 +62,6 @@ const searchFlag = unix.O_PATH
 
 // mkdirKeepsSticky says whether mkdir sets the sticky bit it is given. Linux's does.
 const mkdirKeepsSticky = true
+
+// linkFollowsFinal says whether link(2) follows a final symbolic link. Linux's doesn't.
+const linkFollowsFinal = false
