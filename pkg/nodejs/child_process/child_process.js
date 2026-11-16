@@ -248,7 +248,8 @@
     if (shell) {
       const line = [file, ...args].join(' ');
       spawnfile = typeof shell === 'string' ? shell : '/bin/sh';
-      spawnargs = [spawnfile, '-c', line];
+      // As in Node, argv0 names the shell process.
+      spawnargs = [typeof options.argv0 === 'string' ? options.argv0 : spawnfile, '-c', line];
       // A shell the script names is an ordinary program, and is checked as one.
       if (typeof shell === 'string') {
         command = shell;
@@ -271,7 +272,7 @@
         env,
         shell: nativeShell,
         detached: !!options.detached,
-        argv0: !shell && typeof options.argv0 === 'string' ? options.argv0 : ''
+        argv0: typeof options.argv0 === 'string' ? options.argv0 : ''
       }
     };
   }
