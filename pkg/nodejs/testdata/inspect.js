@@ -440,3 +440,15 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   }
   console.log(seen.join(' | '));
 }
+// What a toJSON throws is thrown on unchanged and unconverted: a proxy stays itself, and an object's
+// own Symbol.toPrimitive isn't run.
+{
+  const out = [];
+  const e = new Proxy({}, { getPrototypeOf() { throw 99; } });
+  try { console.log('%j', { toJSON() { throw e; } }); } catch (x) { out.push(x === e ? 'same proxy' : 'other: ' + String(x)); }
+  let hooks = 0;
+  const prim = { [Symbol.toPrimitive]() { hooks++; return 'p'; } };
+  try { console.log('%j', { toJSON() { throw prim; } }); } catch (x) { out.push(x === prim ? 'same object' : 'other'); }
+  out.push('hooks ' + hooks);
+  console.log(out.join(' | '));
+}

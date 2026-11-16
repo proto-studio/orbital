@@ -1520,14 +1520,24 @@ void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, 
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            String::Utf8Value message(isolate, try_catch.Exception());
-            *error = strdup(*message ? *message : "Unknown error");
-            // The value thrown itself, so Go can hand it on or throw it again unchanged.
             if (exception) {
+                // The value thrown itself, so Go can hand it on or throw it again unchanged:
+                // kept first, and described without converting it, which would run its own
+                // toString or Symbol.toPrimitive.
                 ValueWrapper* thrown = new ValueWrapper();
                 thrown->isolate = isolate;
                 thrown->value.Reset(isolate, try_catch.Exception());
                 *exception = thrown;
+                Local<Message> message = try_catch.Message();
+                if (!message.IsEmpty()) {
+                    String::Utf8Value text(isolate, message->Get());
+                    *error = strdup(*text ? *text : "Uncaught exception");
+                } else {
+                    *error = strdup("Uncaught exception");
+                }
+            } else {
+                String::Utf8Value message(isolate, try_catch.Exception());
+                *error = strdup(*message ? *message : "Unknown error");
             }
         }
         return nullptr;
