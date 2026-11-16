@@ -35,7 +35,7 @@
 		'http': () => __http_module,
 		'https': () => __https_module,
 		'http2': () => __http2_module,
-		'timers': () => ({ setTimeout, setInterval, setImmediate, clearTimeout, clearInterval, clearImmediate }),
+		'timers': () => ({ setTimeout, setInterval, setImmediate, clearTimeout, clearInterval, clearImmediate, promises: __timers_promises_module }),
 		'timers/promises': () => __timers_promises_module,
 		'string_decoder': () => __string_decoder_module,
 		'querystring': () => __querystring_module,
