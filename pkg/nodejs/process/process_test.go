@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"proto.zip/studio/orbital/internal/v8dist"
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
@@ -289,6 +290,15 @@ func TestProcess_Versions(t *testing.T) {
 
 	if !result.Boolean() {
 		t.Error("process.versions should be an object")
+	}
+
+	// Orbital's own version sits beside the emulated Node version.
+	result, err = rt.RunScript(`process.versions.orbital`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if want := strings.TrimPrefix(v8dist.ModuleVersion, "v"); result.String() != want {
+		t.Errorf("process.versions.orbital = %q, want %q", result.String(), want)
 	}
 }
 
