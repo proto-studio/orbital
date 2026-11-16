@@ -343,8 +343,17 @@
     apply(then, promise, [undefined, function (err) { trigger(err, true); }]);
   }
 
+  // beforeExit emits process 'beforeExit' when the event loop has run out of work, as Node
+  // does, with process.exitCode (or 0) as its argument. It isn't emitted once the process
+  // is exiting.
+  function beforeExit() {
+    const p = getProcess();
+    if (dead || !p || p._exiting) return;
+    p.emit('beforeExit', p.exitCode || 0);
+  }
+
   return {
     callback, trigger, rebuildThrown, promiseReject, processRejections, bindProcess, markHandled,
-    watchModule, runMain, runScheduledTicks, queueMicrotask,
+    watchModule, runMain, runScheduledTicks, queueMicrotask, beforeExit,
   };
 })
