@@ -26,5 +26,5 @@ func (c *Context) TakeLastScriptException() *Value {
 	if result == nil {
 		return nil
 	}
-	return &Value{ptr: result, ctx: c}
+	return newValue(result, c)
 }

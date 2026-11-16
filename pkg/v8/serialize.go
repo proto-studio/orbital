@@ -50,7 +50,7 @@ func (c *Context) DeserializeValue(data []byte, bufferProto *Value) (*Value, err
 	if result == nil {
 		return nil, takeError(errMsg)
 	}
-	return &Value{ptr: result, ctx: c}, nil
+	return newValue(result, c), nil
 }
 
 // takeError turns an error string from the glue into an error and frees it. An empty or

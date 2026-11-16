@@ -412,9 +412,21 @@ void* v8go_context_new_with_template(void* isolate_ptr, void* global_template_pt
 void v8go_context_dispose(void* ptr) {
     if (!ptr) return;
     ContextWrapper* wrapper = static_cast<ContextWrapper*>(ptr);
-    wrapper->promise_reject_handler.Reset();
-    wrapper->last_script_exception.Reset();
-    wrapper->context.Reset();
+    if (!wrapper->context.IsEmpty()) {
+        Isolate* isolate = wrapper->isolate;
+        Locker locker(isolate);
+        Isolate::Scope isolate_scope(isolate);
+        HandleScope handle_scope(isolate);
+        // V8 may keep the context, and run module and rejection callbacks in it, after this:
+        // clear the slot that points here, so they find no wrapper rather than a freed one.
+        Local<Context> context = wrapper->context.Get(isolate);
+        if (wrapperFromContext(context) == wrapper) {
+            context->SetAlignedPointerInEmbedderData(kContextWrapperSlot, nullptr, kContextWrapperTag);
+        }
+        wrapper->promise_reject_handler.Reset();
+        wrapper->last_script_exception.Reset();
+        wrapper->context.Reset();
+    }
     delete wrapper;
 }
 
@@ -1101,14 +1113,16 @@ static void functionCallback(const FunctionCallbackInfo<Value>& info) {
     cb_info->isolate = isolate;
     cb_info->v8_info = &info;
     
-    // Get the context
+    // A wrapper of the call's own, which Go takes over: values the callback keeps may use it
+    // after the call, and Go frees it once none does. The context's own wrapper, which its Go
+    // Context owns, isn't shared, so neither can free it under the other.
     Local<Context> context = isolate->GetCurrentContext();
     ContextWrapper* ctx_wrapper = new ContextWrapper();
     ctx_wrapper->isolate = isolate;
     ctx_wrapper->context.Reset(isolate, context);
     
     // Call Go callback handler
-    void* result = goCallbackHandler(ctx_wrapper, callback_id, cb_info);
+    void* result = goCallbackHandler(ctx_wrapper, isolate, callback_id, cb_info);
     
     if (result) {
         ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(result);
