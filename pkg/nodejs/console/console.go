@@ -1007,6 +1007,7 @@ func (c *Console) formatView(v *v8.Value, depth int) (string, bool) {
 		if !ok {
 			return "", false
 		}
+		defer fields.Release()
 		// Done with its entries, so it's left here, its <ref *N> going first.
 		return c.inspectCall("viewEnd", shot, c.integer(c.level(depth)), fields, c.refArg(c.leave()))
 	}
@@ -1205,6 +1206,7 @@ func (c *Console) reduceJS(name string, parts []string, args ...*v8.Value) (stri
 	if !ok {
 		return "", false
 	}
+	defer arr.Release()
 	return c.inspectCall(name, append([]*v8.Value{arr}, args...)...)
 }
 
@@ -1217,9 +1219,17 @@ func (c *Console) stringArray(parts []string) (*v8.Value, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// Each string's handle is released once it's in the array, which holds it from then on.
 	for i, part := range parts {
 		s, err := c.ctx.NewString(part)
-		if err != nil || arr.SetIndex(i, s) != nil {
+		if err != nil {
+			arr.Release()
+			return nil, false
+		}
+		failed := arr.SetIndex(i, s) != nil
+		s.Release()
+		if failed {
+			arr.Release()
 			return nil, false
 		}
 	}
