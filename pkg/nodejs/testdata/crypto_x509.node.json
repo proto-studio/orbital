@@ -679,7 +679,8 @@
     }
   },
   "lists": {
-    "ciphers": true,
+    "ciphersInclude": [],
+    "ciphersSorted": true,
     "curvesInclude": [],
     "curvesWork": [],
     "hashesInclude": [],
