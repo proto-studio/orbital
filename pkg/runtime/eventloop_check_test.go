@@ -135,3 +135,20 @@ func TestRun_StopKeepsTheRestOfTheBatch(t *testing.T) {
 		t.Fatalf("ran %s, want [a b]", got)
 	}
 }
+
+// A tick that panics leaves the loop's lock as it found it, so an embedder's recover gets
+// the panic rather than the runtime failing on the lock.
+func TestRunTicks_PanicKeepsTheLock(t *testing.T) {
+	el := NewEventLoop()
+	el.SetTimeout(func() { el.EnqueueTick(func() { panic("tick") }) }, 0)
+	func() {
+		defer func() {
+			if r := recover(); r != "tick" {
+				t.Fatalf("recovered %v, want the tick's panic", r)
+			}
+		}()
+		el.Run()
+	}()
+	// The lock is usable afterwards.
+	el.EnqueueTick(func() {})
+}
