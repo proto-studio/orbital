@@ -166,6 +166,26 @@ func (e *ESM) recordAttrCheck(key string, err error) {
 	e.attrChecks[key] = err
 }
 
+// keyAttrs returns the attributes to key a hook's module by: the type's exact
+// UTF-16 units (typeKey in loader-hooks.js's encoding) in place of its text,
+// which may have lost a lone surrogate on the way.
+func keyAttrs(attrs []v8.ImportAttribute, encoded string) []v8.ImportAttribute {
+	var e struct {
+		TypeKey *string `json:"typeKey"`
+	}
+	if json.Unmarshal([]byte(encoded), &e) != nil || e.TypeKey == nil {
+		return attrs
+	}
+	out := make([]v8.ImportAttribute, len(attrs))
+	for i, a := range attrs {
+		if a.Key == "type" {
+			a.Value = "u" + *e.TypeKey
+		}
+		out[i] = a
+	}
+	return out
+}
+
 // withoutType returns attrs without its `type` entry.
 func withoutType(attrs []v8.ImportAttribute) []v8.ImportAttribute {
 	out := make([]v8.ImportAttribute, 0, len(attrs))
@@ -214,14 +234,18 @@ func parseAttrsJSON(s string) (attrs []v8.ImportAttribute, typeReceived string) 
 		}
 		if json.Unmarshal(p[1], &val) != nil {
 			var other struct {
-				Text     string `json:"text"`
-				Received string `json:"received"`
+				Text      string `json:"text"`
+				Received  string `json:"received"`
+				Undefined bool   `json:"undefined"`
 			}
 			_ = json.Unmarshal(p[1], &other)
 			val = other.Text
 			if key == "type" {
 				// Any non-string marks it, even one JS couldn't describe.
 				typeReceived = other.Received
+				if other.Undefined {
+					typeReceived = "undefined"
+				}
 				if typeReceived == "" {
 					typeReceived = "a value of another type"
 				}
