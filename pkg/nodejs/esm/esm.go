@@ -421,6 +421,14 @@ func (e *ESM) throwable(err error) error {
 		return err
 	}
 	ctx := e.rt.Context()
+	if me.hookValue != nil {
+		exc, derr := ctx.DeserializeValue(me.hookValue, nil)
+		if derr != nil || exc == nil {
+			return err
+		}
+		e.linkErr = exc
+		return &thrownError{err: err, exc: exc}
+	}
 	if me.hookPayload != "" {
 		// An error a loader hook threw, rebuilt as it was.
 		fn := e.hookError
@@ -561,12 +569,21 @@ func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
 	}
 	payload := res.String()
 	var d struct {
+		Clone   bool           `json:"clone"`
 		Name    string         `json:"name"`
 		Message string         `json:"message"`
 		Props   map[string]any `json:"props"`
 	}
 	if json.Unmarshal([]byte(payload), &d) != nil {
 		return nil
+	}
+	if d.Clone {
+		// A value that isn't an error: structured-cloned across, as Node does.
+		data, serr := rt.Context().SerializeValue(reason, nil)
+		if serr != nil {
+			return nil
+		}
+		return &moduleError{msg: "a loader hook threw " + reason.String(), hookValue: data}
 	}
 	code, _ := d.Props["code"].(string)
 	return &moduleError{msg: d.Name + ": " + d.Message, code: code, hookPayload: payload}

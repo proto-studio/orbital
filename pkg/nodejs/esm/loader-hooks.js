@@ -35,8 +35,6 @@
   const jsonStringify = JSON.stringify;
   const isPrototypeOf = Object.prototype.isPrototypeOf;
   const ErrorPrototype = Error.prototype;
-  const getTime = Date.prototype.getTime;
-  function dateValue(d) { return reflectApply(getTime, d, []); }
   function internal(err) {
     reflectApply(internalAdd, internalErrors, [err]);
     return err;
@@ -48,13 +46,11 @@
   // errors arrive as plain errors there, their code a property).
   globalThis.__describeRejection = function (e) {
     try {
-      if (e === null || (typeof e !== 'object' && typeof e !== 'function')) {
-        return jsonStringify({ primitive: true, value: e === undefined ? null : e, undef: e === undefined });
-      }
-      if (!reflectApply(isPrototypeOf, ErrorPrototype, [e])) {
-        // Not an error: Node transfers the value itself (structured clone).
-        if (e instanceof Date) return jsonStringify({ object: true, date: dateValue(e) });
-        return jsonStringify({ object: true, json: e });
+      // Not an error: Node transfers the value itself, structured-cloned, which
+      // Go does with V8's serializer.
+      if (e === null || (typeof e !== 'object' && typeof e !== 'function') ||
+          !reflectApply(isPrototypeOf, ErrorPrototype, [e])) {
+        return jsonStringify({ clone: true });
       }
       const props = {};
       const keys = objectKeys(e);

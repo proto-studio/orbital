@@ -734,3 +734,31 @@ for (const s of ['obj', 'date', 'arr']) { try { await import(s); } catch (e) { l
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A leading tab makes a path specifier a bare name, the stack header reads name and
+// message once, and a non-error value a hook throws is structured-cloned across
+// (BigInts, cycles, Maps). Expected from Node 20.18.1.
+func TestDynamicImport_RawClassificationStackReadsAndClones(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"dep.mjs": `export default 'dep';`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'big') throw { x: 1n };
+  if (s === 'cyc') { const o = { a: 1 }; o.self = o; throw o; }
+  if (s === 'map') throw new Map([[1, 2]]);
+  return n(s, c);
+}`,
+		"entry.mjs": `try { await import('\t./dep.mjs'); log.push('loaded'); } catch (e) { log.push(e.code, e.message.split(' imported')[0]); }
+let err; try { await import('./nope.mjs'); } catch (e) { err = e; }
+let n = 0; Object.defineProperty(err, 'name', { get() { n++; return 'N' + n; }, configurable: true });
+log.push(err.stack.split('\n')[0].slice(0, 30), n);
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+try { await import('big'); } catch (e) { log.push(typeof e.x, String(e.x)); }
+try { await import('cyc'); } catch (e) { log.push(e.self === e, e.a); }
+try { await import('map'); } catch (e) { log.push(e instanceof Map, e.get(1)); }`,
+	})
+	want := `["ERR_MODULE_NOT_FOUND","Cannot find package '\t.'","N1 [ERR_MODULE_NOT_FOUND]: Can",1,"bigint","1",true,1,true,2]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
