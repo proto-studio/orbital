@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -59,5 +60,36 @@ func TestRun_StopInTickBetweenTimers(t *testing.T) {
 	}
 	if ran != 1 {
 		t.Fatalf("%d ticks ran, want 1", ran)
+	}
+}
+
+// When RunUntil's predicate is met by an immediate, the rest of its batch runs next time.
+func TestRunUntil_KeepsTheRestOfTheBatch(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() { ran = append(ran, "a") })
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	el.SetImmediate(func() { ran = append(ran, "c") })
+	el.AddPendingWork() // keeps the loop alive while RunUntil returns early
+	el.RunUntil(func() bool { return len(ran) == 1 })
+	el.DonePendingWork()
+	el.Run()
+	if got := fmt.Sprint(ran); got != "[a b c]" {
+		t.Fatalf("ran %s, want [a b c]", got)
+	}
+}
+
+// RunOnce runs the ticks an immediate queued before the next immediate, as Run does.
+func TestRunOnce_TicksBetweenImmediates(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() {
+		ran = append(ran, "a")
+		el.EnqueueTick(func() { ran = append(ran, "tick") })
+	})
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	el.RunOnce()
+	if got := fmt.Sprint(ran); got != "[a tick b]" {
+		t.Fatalf("ran %s, want [a tick b]", got)
 	}
 }
