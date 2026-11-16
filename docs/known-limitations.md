@@ -218,9 +218,11 @@ traceability.
 ### Still missing
 
 - **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
-  CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`), the ciphers Go's standard
-  library has (`cipher.go`). CCM, OCB, XTS, ChaCha20-Poly1305, CFB1, key wrap, ARIA,
-  Camellia and SM4 throw `ERR_CRYPTO_UNKNOWN_CIPHER`.
+  CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`) from Go's standard library, and
+  ChaCha20 and ChaCha20-Poly1305 from `golang.org/x/crypto` (`cipher.go`). CCM, OCB, XTS,
+  CFB1, key wrap, ARIA, Camellia and SM4 throw `ERR_CRYPTO_UNKNOWN_CIPHER`: neither library
+  has them, except XTS, whose `x/crypto` version takes a sector number rather than
+  OpenSSL's 16-byte tweak.
 - **[perf] AES-GCM keeps the whole message until `final()`.** Output streams from
   `update()` as in Node, but the tag is computed by Go's AEAD over the full plaintext,
   so a GCM context holds it in memory.

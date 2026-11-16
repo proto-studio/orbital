@@ -37,6 +37,11 @@
       "message": "Invalid initialization vector",
       "name": "TypeError"
     },
+    "gcmEmptyIvBadTag": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
     "gcmTag3": {
       "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
       "message": "Invalid authentication tag length: 3",
@@ -103,6 +108,230 @@
       "value": true
     }
   },
+  "chacha": {
+    "aadAfterData": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "cc680a4765a4200d5457abfd9382a935"
+      ]
+    },
+    "aadAfterEmptyUpdate": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "39c5b75b853329ea8426e55a7a245141"
+      ]
+    },
+    "aadAtEnd": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "516c84da28efb9277d04a76a52cbf376"
+      ]
+    },
+    "aadBefore": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "39c5b75b853329ea8426e55a7a245141"
+      ]
+    },
+    "aadTwice": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "2401531738eef369c0acb1494f9dd638"
+      ]
+    },
+    "badIvAndTag": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "badKeyAndTag": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 17",
+      "name": "TypeError"
+    },
+    "carry": {
+      "value": [
+        "96fe7cae21ea1cde33d37f944926074c1789bf45b1e85d013940e7cd1a3efea39c02df14c6f0a01dbe6f3840c73020932e8eccd2bbec1c70c8d9db691571e23c3bc648c991202537843915784cdf0a7dd3fb856998457edad899fe50b64a171ce87e1616060d93fe7d7b3ee23ce6765c75bdd5a75f81780bb50d391d4a31610db18c279302a316d59f95030618a182567091979fe9b4",
+        true
+      ]
+    },
+    "carryAll": {
+      "value": [
+        "6ca711f004f89f978fcae239370e89cf4e48738d4572ca8718ae988564205b6ccd49433f502c5800d12574632f50c027a7b3b6f54a0e37dafbdec150b699fc99664b78c23b63a8325defdf2fc7ccdf9a673564c3006bdaa93e941de676486beb08a283605bcd45c2fe68bd5ec69eb3f29d02acccf0c290ff984a71f1113a9410cb5ebeb12da8f0a645f7f764de501a025e3991f7af57",
+        true
+      ]
+    },
+    "iv0": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "iv12": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "iv17": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "key16": {
+      "code": "ERR_CRYPTO_INVALID_KEYLEN",
+      "message": "Invalid key length",
+      "name": "RangeError"
+    },
+    "middle": {
+      "value": [
+        "f405388115015d515c6a06eb767e36727c7a973e87506ae7e65c1b008eb165fc97895ecd1aba377f4ed0494846e28c27ebc025e375151fdc46075f66a5cdbb4c1460b67e517a70c9a485e2dfdfb8998da2621cdf76dcfa25ea197a0b4f89b687454624246dd6e8cb4ec322254b007153ba3deb93a44f7039856c4a639a11280affff36c9215970de86a872c86bb44f5566fcaa1acc37",
+        true
+      ]
+    },
+    "noData": {
+      "value": [
+        "",
+        "a174ec73ee3688ef6fdf65f05029934e"
+      ]
+    },
+    "noPadding": {
+      "value": "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77"
+    },
+    "nullIv": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "open": {
+      "value": true
+    },
+    "openBadTag": {
+      "message": "Unsupported state or unable to authenticate data",
+      "name": "Error"
+    },
+    "openNoTag": {
+      "message": "Unsupported state or unable to authenticate data",
+      "name": "Error"
+    },
+    "openShortTag": {
+      "value": true
+    },
+    "openTagAfterData": {
+      "value": true
+    },
+    "openWrongAAD": {
+      "message": "Unsupported state or unable to authenticate data",
+      "name": "Error"
+    },
+    "plaintextLength": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "39c5b75b853329ea8426e55a7a245141"
+      ]
+    },
+    "polyIv0": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "polyIv11": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "polyIv13": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "polyIv16": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "polyIv8": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "polyNullIv": {
+      "code": "ERR_CRYPTO_INVALID_IV",
+      "message": "Invalid initialization vector",
+      "name": "TypeError"
+    },
+    "setAADAfterFinal": {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAAD",
+      "name": "Error"
+    },
+    "setAuthTag8": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 8",
+      "name": "TypeError"
+    },
+    "setAuthTag8With16": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 8",
+      "name": "TypeError"
+    },
+    "setAuthTagTwice": {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAuthTag",
+      "name": "Error"
+    },
+    "streamGetAuthTag": {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation getAuthTag",
+      "name": "Error"
+    },
+    "streamSetAAD": {
+      "code": "ERR_CRYPTO_INVALID_STATE",
+      "message": "Invalid state for operation setAAD",
+      "name": "Error"
+    },
+    "streamTagOption": {
+      "value": ""
+    },
+    "tag0": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 0",
+      "name": "TypeError"
+    },
+    "tag1": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "af"
+      ]
+    },
+    "tag12": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "af48416a129b2c36d6c5391c"
+      ]
+    },
+    "tag16": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "af48416a129b2c36d6c5391c9636e340"
+      ]
+    },
+    "tag17": {
+      "code": "ERR_CRYPTO_INVALID_AUTH_TAG",
+      "message": "Invalid authentication tag length: 17",
+      "name": "TypeError"
+    },
+    "tag4": {
+      "value": [
+        "562c49e3754d29fda618f2bd83f0d60ba7fe38af4d9b419767500da8b64b120cabd3b9e0c527ea77",
+        "af48416a"
+      ]
+    },
+    "wrap": {
+      "value": [
+        "6a011fd78f9183deed873d435549333e61064de7d4c4e8390f490c13489cc4f54939c2ee2c391c559e6c112ecce8b11e59bd6e87f2270872ca1bce053fae0a92d6a147ac34c375c85268bef68c216e102bfe01b38d224aa14a950ffac87647199e19652d2c0ea6dd8a2d0625c45928b2fa4ea9fce5dab42cc82ed7da10ed00e57f627b1a4f1ca867cfb85f624dd35fdc4efe3eece4bc",
+        true
+      ]
+    }
+  },
   "chunked": {
     "value": "9512f24bf70bfd0f01dd3ffd5c61adc95c1f6d53224fe5ce60a474288f691aba05d95dc2d23dd84f5f17f624a0618ceb441a42e21332cc472ca2eb4fdd210bd1 0,0,16,0,16,16,16"
   },
@@ -127,6 +356,49 @@
       "mode": "cbc",
       "name": "aes-256-cbc",
       "nid": 427
+    },
+    "chacha20": {
+      "ivLength": 16,
+      "keyLength": 32,
+      "mode": "stream",
+      "name": "chacha20",
+      "nid": 1019
+    },
+    "chachaIvLengths": [
+      "12",
+      "undefined",
+      "undefined"
+    ],
+    "chachaNids": [
+      {
+        "ivLength": 12,
+        "keyLength": 32,
+        "mode": "stream",
+        "name": "chacha20-poly1305",
+        "nid": 1018
+      },
+      {
+        "ivLength": 16,
+        "keyLength": 32,
+        "mode": "stream",
+        "name": "chacha20",
+        "nid": 1019
+      }
+    ],
+    "chachaPoly": {
+      "ivLength": 12,
+      "keyLength": 32,
+      "mode": "stream",
+      "name": "chacha20-poly1305",
+      "nid": 1018
+    },
+    "ctr": {
+      "blockSize": 1,
+      "ivLength": 16,
+      "keyLength": 16,
+      "mode": "ctr",
+      "name": "aes-128-ctr",
+      "nid": 904
     },
     "des3": {
       "blockSize": 8,
@@ -218,6 +490,94 @@
       "value": [
         "89c2b7832ee9a281b56eeaf978b06f97a4330eeddd18ff6f6586f732a34a8d38b7dc4312b46c52a860342f521d52a5a4",
         null,
+        true
+      ]
+    }
+  },
+  "cipher_CHACHA20": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "2c",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbf",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2f5",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2f5830b67d1dfba74f04104e5708dac722d",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_ChaCha20-Poly1305": {
+    "len0": {
+      "value": [
+        "",
+        "7bfb8db0d2d2c331f91ca0520f90c03d",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "b1",
+        "e4f1cc1b8fb5ed89ef8a1f216d5b17a3",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d66627414",
+        "47ea59ffb60f147d5fa56d1bf5062f10",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149b",
+        "423a9393edb4fd860afb26bec5e8b18d",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149bc8",
+        "2fa81e4c39f4197c45f4a532235cdc66",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149bc874d84bf296ff2bfac0c5a2b56cbcc51d",
+        "c4ecfee9b734709b7a31b51a6d39a92e",
         true
       ]
     }
@@ -1014,6 +1374,94 @@
       ]
     }
   },
+  "cipher_chacha20": {
+    "len0": {
+      "value": [
+        "",
+        null,
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "2c",
+        null,
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbf",
+        null,
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2",
+        null,
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2f5",
+        null,
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "2ca15bf9018f106eee6b95b466cfbfc2f5830b67d1dfba74f04104e5708dac722d",
+        null,
+        true
+      ]
+    }
+  },
+  "cipher_chacha20-poly1305": {
+    "len0": {
+      "value": [
+        "",
+        "7bfb8db0d2d2c331f91ca0520f90c03d",
+        true
+      ]
+    },
+    "len1": {
+      "value": [
+        "b1",
+        "e4f1cc1b8fb5ed89ef8a1f216d5b17a3",
+        true
+      ]
+    },
+    "len15": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d66627414",
+        "47ea59ffb60f147d5fa56d1bf5062f10",
+        true
+      ]
+    },
+    "len16": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149b",
+        "423a9393edb4fd860afb26bec5e8b18d",
+        true
+      ]
+    },
+    "len17": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149bc8",
+        "2fa81e4c39f4197c45f4a532235cdc66",
+        true
+      ]
+    },
+    "len33": {
+      "value": [
+        "b106f7a9b555c8ae4c1d9d666274149bc874d84bf296ff2bfac0c5a2b56cbcc51d",
+        "c4ecfee9b734709b7a31b51a6d39a92e",
+        true
+      ]
+    }
+  },
   "cipher_des-ede": {
     "len0": {
       "value": [
@@ -1522,5 +1970,13 @@
   "streamError": [
     "ERR_OSSL_BAD_DECRYPT",
     "error:1C800064:Provider routines::bad decrypt"
+  ],
+  "upperEncodings": [
+    "onZoAJDA0ydfXEwYvkkY|wNLZ2++0N8oUVUSaKn3BEa8=",
+    "onZoAJDA0ydfXEwYvkkY|wNLZ2--0N8oUVUSaKn3BEa8",
+    "onZoAJDA0ydfXEwYvkkY|wNLZ2++0N8oUVUSaKn3BEa8=",
+    "皢h삐⟓屟ᡌ䦾쀘|�㞴ᓊ䑕⪚셽꼑",
+    "¢vh\u0000ÀÓ'_\\L\u0018¾I\u0018À|ÒÙÛï´7Ê\u0014UD*}Á\u0011¯",
+    "a276680090c0d3275f5c4c18be4918c0|d2d9dbefb437ca1455449a2a7dc111af"
   ]
 }

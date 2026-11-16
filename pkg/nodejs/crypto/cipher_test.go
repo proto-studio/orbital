@@ -6,6 +6,8 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"testing"
+
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // The streaming GCM context gives the same ciphertext and tag as Go's AEAD,
@@ -81,5 +83,49 @@ func TestCipher_FinalFreesContext(t *testing.T) {
 	}
 	if n := result.Integer(); n != 0 {
 		t.Errorf("%d cipher contexts left after final", n)
+	}
+}
+
+// The streaming ChaCha20-Poly1305 context gives the same ciphertext and tag
+// as x/crypto's AEAD, and opens what it seals.
+func TestCipher_ChaChaPolyMatchesAEAD(t *testing.T) {
+	key := make([]byte, 32)
+	nonce := make([]byte, 12)
+	rand.Read(key)
+	rand.Read(nonce)
+	aead, _ := chacha20poly1305.New(key)
+	for _, n := range []int{0, 1, 16, 63, 64, 65, 1000} {
+		msg := make([]byte, n)
+		rand.Read(msg)
+		aad := make([]byte, n%37)
+		rand.Read(aad)
+		want := aead.Seal(nil, nonce, msg, aad)
+		for _, decrypt := range []bool{false, true} {
+			cc, err := newCipherCtx("chacha20-poly1305", key, nonce, true, decrypt, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cc.aadLen, cc.inAAD = uint64(len(aad)), true
+			cc.mac.Write(aad)
+			in := msg
+			if decrypt {
+				in = want[:n]
+				cc.tag = want[n:]
+			}
+			var out []byte
+			for i := 0; i < len(in); i += 29 {
+				part, _ := cc.update(in[i:min(i+29, len(in))])
+				out = append(out, part...)
+			}
+			if _, err := cc.final(); err != nil {
+				t.Fatalf("length %d, decrypt %v: %v", n, decrypt, err)
+			}
+			if decrypt && !bytes.Equal(out, msg) {
+				t.Errorf("length %d: opened text differs", n)
+			}
+			if !decrypt && !bytes.Equal(append(out, cc.tag...), want) {
+				t.Errorf("length %d: output differs from Seal", n)
+			}
+		}
 	}
 }
