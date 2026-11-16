@@ -969,3 +969,53 @@ const run = (src) => new Promise((resolve) => new Worker(src, { eval: true }).on
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
 }
+
+// A rejection that belongs to a domain goes through the --unhandled-rejections mode too,
+// with the domain's 'error' in place of 'unhandledRejection'. Expected values are what
+// Node 20.18.1 does with each mode.
+func TestUnhandledRejectionModesWithDomain(t *testing.T) {
+	supportsRejections(t)
+	const script = `
+const domain = require('domain');
+process.on('warning', (w) => note('warning', w.name));
+process.on('uncaughtException', (e, o) => note('uncaught', e.message, o));
+const d = domain.create();
+d.on('error', (e) => note('domain error', e.message));
+d.run(() => { Promise.reject(new Error('in domain')); });
+setTimeout(() => note('still running'), 20);
+`
+	for mode, want := range map[string][]string{
+		"throw":                {"domain error in domain", "still running"},
+		"strict":               {"uncaught in domain unhandledRejection", "domain error in domain", "still running"},
+		"warn":                 {"domain error in domain", "warning UnhandledPromiseRejectionWarning", "warning UnhandledPromiseRejectionWarning", "still running"},
+		"none":                 {"domain error in domain", "still running"},
+		"warn-with-error-code": {"domain error in domain", "still running"},
+	} {
+		t.Run(mode, func(t *testing.T) {
+			notes, err := runUncaughtWith(t, &runtime.Config{UnhandledRejections: mode, NoWarnings: true}, script)
+			if err != nil {
+				t.Fatalf("Run returned %v", err)
+			}
+			if !reflect.DeepEqual(notes, want) {
+				t.Errorf("notes = %q, want %q", notes, want)
+			}
+		})
+	}
+}
+
+// An exception from a worker's 'exit' listener, once it ran out of work, reaches the
+// parent as the value thrown, as in Node 20.18.1.
+func TestWorkerExitListenerThrowKeepsTheValue(t *testing.T) {
+	notes, err := runUncaught(t, `
+const { Worker } = require('worker_threads');
+const w = new Worker("process.on('exit', () => { const e = new TypeError('x'); e.code = 'E_X'; throw e; });", { eval: true });
+w.on('error', (e) => note('error', e.constructor.name, e.message, e.code));
+w.on('exit', (c) => note('exit', c));
+`)
+	if err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if want := []string{"error TypeError x E_X", "exit 0"}; !reflect.DeepEqual(notes, want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}

@@ -366,7 +366,12 @@
   // reportUnhandled is the switch in Node's processPromiseRejections.
   function reportUnhandled(p, info, promise) {
     const reason = info.reason;
-    const emit = () => (p ? p.emit('unhandledRejection', reason, promise) : false);
+    // As in Node, the domain the promise belongs to takes the event as 'error'; with no
+    // listener there, emit throws, and the reason becomes an uncaught exception.
+    const emit = () => {
+      if (info.domain) return info.domain.emit('error', reason);
+      return p ? p.emit('unhandledRejection', reason, promise) : false;
+    };
     const fatal = () => (isErrorLike(reason) ? reason : unhandledRejectionError(reason));
     switch (mode) {
       case 'strict':
@@ -428,13 +433,7 @@
       if (info.handled) continue;
       info.reported = true;
       try {
-        if (info.domain !== null) {
-          // As in Node, the domain's 'error' takes the place of 'unhandledRejection'; with
-          // no listener there, emit throws and the reason becomes an uncaught exception.
-          info.domain.emit('error', info.reason);
-        } else {
-          reportUnhandled(p, info, promise);
-        }
+        reportUnhandled(p, info, promise);
       } catch (err) {
         trigger(err, false);
       }
