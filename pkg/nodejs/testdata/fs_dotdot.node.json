@@ -1,0 +1,32 @@
+{
+  "exists": {
+    "value": true
+  },
+  "mkdir": {
+    "value": true
+  },
+  "readFile": {
+    "value": "inner"
+  },
+  "readdir": {
+    "value": [
+      "f",
+      "sub"
+    ]
+  },
+  "relative": {
+    "value": "inner"
+  },
+  "rename": {
+    "value": true
+  },
+  "stat": {
+    "value": 5
+  },
+  "unlink": {
+    "value": false
+  },
+  "writeFile": {
+    "value": true
+  }
+}
