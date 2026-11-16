@@ -265,15 +265,15 @@
   // activeDomain is the domain module's process.domain, if a domain is active: Node
   // reports an unhandled rejection to the domain that was active when the promise was
   // rejected.
-  // A rejection a domain-bound promise reaction caused after it returned belongs to that
-  // domain too; the domain module keeps track of those by reason.
-  function activeDomain(reason) {
+  // A promise then() returned while a domain was active belongs to that domain even if it
+  // rejects later; the domain module keeps track of those promises.
+  function activeDomain(promise) {
     try {
       const p = getProcess();
       let d = p ? p.domain : null;
       if (!d) {
         const dm = globalThis.__domain_module;
-        if (dm && typeof dm._takeRejectionDomain === 'function') d = dm._takeRejectionDomain(reason);
+        if (dm && typeof dm._rejectionDomainFor === 'function') d = dm._rejectionDomainFor(promise);
       }
       return d && typeof d === 'object' && typeof d.emit === 'function' ? d : null;
     } catch (_) {
@@ -283,7 +283,7 @@
 
   function promiseReject(type, promise, reason) {
     if (type === kPromiseRejectWithNoHandler) {
-      const info = { reason, reported: false, handled: false, domain: activeDomain(reason) };
+      const info = { reason, reported: false, handled: false, domain: activeDomain(promise) };
       tracked.set(promise, info);
       pendingRejections[pendingRejections.length] = { promise, info };
       native.rejectionsPending();
