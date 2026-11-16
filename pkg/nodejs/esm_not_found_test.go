@@ -562,3 +562,32 @@ log.push(await r('arr2'), await r('file://%6cocalhost' + d + '/x.mjs'));`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// An exports target's dot segments are checked without its query or fragment, an
+// array of only invalid targets reports the last one, and an installed
+// Error.prepareStackTrace runs only when the stack is read. Expected from Node 20.18.1.
+func TestDynamicImport_TargetSuffixesAndLazyStack(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/q1/package.json": `{"type":"module","exports":"./..?x"}`,
+		"node_modules/q2/package.json": `{"type":"module","exports":"./%2e%2e#x"}`,
+		"node_modules/q3/package.json": `{"type":"module","exports":["../bad.mjs"]}`,
+		"node_modules/q3/index.js":     `export default 'idx';`,
+		"node_modules/index.js":        `export default 'nmidx';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.code, e.message.split(' imported')[0].replace(d, '<d>')]; } };
+let calls = 0;
+log.push(await r('q1'), await r('q2'), await r('q3'));
+Error.prepareStackTrace = () => { calls++; return 'custom'; };
+try { await import('./nope.mjs'); } catch (e) { log.push(calls, e.code); void e.stack; log.push(calls); }
+delete Error.prepareStackTrace;`,
+	})
+	got := runLogModuleIn(t, dir)
+	target := func(t, pkg string) string {
+		return `["ERR_INVALID_PACKAGE_TARGET","Invalid \"exports\" main target \"` + t + `\" defined in the package config <d>/node_modules/` + pkg + `/package.json"]`
+	}
+	want := `[` + target("./..?x", "q1") + `,` + target("./%2e%2e#x", "q2") + `,` + target("../bad.mjs", "q3") + `,0,"ERR_MODULE_NOT_FOUND",1]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
