@@ -154,13 +154,70 @@
     return out;
   }
 
-  // errorSource is the header Node prints above a fatal exception: the file and line, the
-  // line itself, and a caret under where it was thrown. Node takes the place from V8's
-  // message for the throw; here it comes from the error's first stack frame in a script,
+  // How the CommonJS loader opens the function a module runs in (module.js).
+  const kModuleWrapperPrefix = '(function(exports, require, module, __filename, __dirname) {';
+
+  // sourceHeader formats the header Node prints above a fatal exception: the file and line,
+  // the line itself, and carets under columns [start, end). compiledLine is the line as V8
+  // compiled it, with V8's columns, as its message for a throw gives it; Node prints that,
+  // so it is used when there is one. A null compiledLine means the place comes from a
+  // stack frame and the columns already count from the start of the kept text's line. It
+  // returns '' if the place can't be shown.
+  function sourceHeader(file, line, start, end, compiledLine) {
+    let sourceLine;
+    if (typeof compiledLine === 'string') {
+      sourceLine = compiledLine;
+      // The name alone isn't proof of the wrapper: code evaluated under a module's name
+      // with a sourceURL has none.
+      const offset = line === 1 ? offsetOf(file) : 0;
+      if (offset > 0 &&
+          cut(compiledLine, 0, len(kModuleWrapperPrefix)) === kModuleWrapperPrefix) {
+        start -= offset;
+        end -= offset;
+        sourceLine = cut(sourceLine, offset);
+        // The CommonJS loader compiles a module without its BOM, which Node counts on the
+        // line and prints with it.
+        const text = readSource(file);
+        if (text !== null && code(text, 0) === 0xFEFF) {
+          sourceLine = '﻿' + sourceLine;
+          start++;
+          end++;
+        }
+        if (start < 0) return '';
+      }
+    } else {
+      const text = readSource(file);
+      if (text !== null) sourceLine = lineOf(text, line);
+    }
+    if (typeof sourceLine !== 'string') return '';
+    sourceLine = untilNul(sourceLine);
+    let caret = '';
+    for (let i = 0; i < start && i < len(sourceLine); i++) {
+      caret += code(sourceLine, i) === 9 ? '\t' : ' ';
+    }
+    for (let i = start; i < end; i++) caret += '^';
+    return file + ':' + line + '\n' + sourceLine + '\n' + caret + '\n';
+  }
+
+  // errorSource is the header Node prints above a fatal exception. Node takes the place
+  // from V8's message for the throw. site is that message when the runtime caught the
+  // exception itself, as it does for the main script, and is used when the stack has no
+  // place to read: a value thrown that is not an object, or a SyntaxError in the main
+  // script. Otherwise the place comes from the error's first stack frame in a script,
   // which is where the error was made. For an exception thrown where it was made, as by
   // the usual `throw new Error(...)`, the caret moves back to the throw, where Node puts
   // it. A rejection has no throw to point at, and Node marks where the error was made.
-  function errorSource(err, thrown) {
+  function errorSource(err, thrown, site) {
+    const fromStack = stackSource(err, thrown);
+    if (fromStack !== '' || !thrown || !site || typeof site.file !== 'string' || site.file === '') {
+      return fromStack;
+    }
+    const start = site.start >= 0 ? site.start : 0;
+    const end = site.end > start ? site.end : start + 1;
+    return sourceHeader(site.file, site.line, start, end, site.sourceLine);
+  }
+
+  function stackSource(err, thrown) {
     if (typeof err !== 'object' || err === null) return '';
     let stack;
     try {
@@ -212,29 +269,39 @@
       const at = throwBefore(sourceLine, column);
       if (at !== -1) column = at;
     }
-    let caret = '';
-    for (let i = 0; i < column && i < len(sourceLine); i++) {
-      caret += code(sourceLine, i) === 9 ? '\t' : ' ';
-    }
-    return file + ':' + line + '\n' + sourceLine + '\n' + caret + '^\n';
+    return sourceHeader(file, line, column, column + 1, null);
   }
 
-  function die(err, code, origin, handlerThrew) {
+  // isNativeError reports whether Node would treat value as an error: it prints the header
+  // of any other thrown value straight away, after a blank line, with no blank line between
+  // it and the value.
+  // Error.isError, captured before any script runs, checks the internal brand that
+  // util.types.isNativeError checks, which no property of the value can change.
+  const errorIsError = Error.isError;
+  const isNativeError = (value) => {
+    if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return false;
+    return typeof errorIsError === 'function' && apply(errorIsError, Error, [value]) === true;
+  };
+
+  function die(err, code, origin, handlerThrew, site) {
     dead = true;
     // The header is only a help: nothing here may stop the report.
     let source = '';
+    let inline = false;
     try {
-      source = StringCtor(errorSource(err, origin === 'uncaughtException' || !!handlerThrew));
+      source = StringCtor(errorSource(err, origin === 'uncaughtException' || !!handlerThrew,
+        handlerThrew ? undefined : site));
+      inline = source !== '' && !isNativeError(err);
     } catch (_) {
       source = '';
     }
-    native.fatalSource(source);
+    native.fatalSource(source, inline);
     native.fatal(format(err), code, origin, !!handlerThrew, err);
   }
 
   // trigger is process._fatalException plus its native caller: run the handlers, and if
   // none takes the exception, stop the runtime.
-  function trigger(err, fromPromise) {
+  function trigger(err, fromPromise, site) {
     if (dead) return;
     const p = getProcess();
     const origin = fromPromise ? 'unhandledRejection' : 'uncaughtException';
@@ -259,7 +326,7 @@
     } catch (_) {
       // Nothing can be done about an 'exit' listener that throws at this point.
     }
-    die(err, exitCodeOf(p, kGenericUserError), origin);
+    die(err, exitCodeOf(p, kGenericUserError), origin, false, site);
   }
 
   // ---- process.nextTick ----------------------------------------------------------------

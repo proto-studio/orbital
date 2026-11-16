@@ -250,6 +250,7 @@
 			// Push to stack
 			moduleStack.push(mod);
 
+			let initialized = false;
 			try {
 				// Read and compile the module
 				let source = __requireFile(resolved);
@@ -270,6 +271,7 @@
 				if (resolved.endsWith('.json')) {
 					mod.exports = JSON.parse(source);
 					mod.loaded = true;
+					initialized = true;
 					return mod.exports;
 				}
 
@@ -336,10 +338,12 @@
 				);
 
 				mod.loaded = true;
-			} catch (e) {
-				delete moduleCache[resolved];
-				throw e;
+				initialized = true;
 			} finally {
+				// No catch and rethrow: a rethrow would move V8's record of where the
+				// exception was thrown, which the fatal exception header prints, here.
+				// The flag is local, since the module itself can set mod.loaded.
+				if (!initialized) delete moduleCache[resolved];
 				moduleStack.pop();
 			}
 

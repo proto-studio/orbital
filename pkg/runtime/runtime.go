@@ -49,6 +49,7 @@ type Runtime struct {
 	keptScripts       []*keptScript          // same goroutine: kept scripts, oldest first
 	keptBytes         int                    // same goroutine: bytes of text and names kept
 	keptEvicted       []string               // same goroutine: scripts whose text was dropped, oldest first
+	fatalSourceInline bool                   // and whether the thrown value was not an error
 }
 
 // Module represents a Node.js module that can be registered with the runtime.

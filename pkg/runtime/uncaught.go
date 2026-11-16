@@ -30,10 +30,13 @@ type UncaughtError struct {
 	// Thrown is the value that ended the runtime, in the runtime's own context. It is only
 	// usable until the runtime is disposed. Workers use it to hand the value to the parent.
 	Thrown *v8.Value
-	// Source is the header Node prints above Message: "file:line", that line, and a caret
+	// Source is the header Node prints above Message: "file:line", that line, and carets
 	// under where the exception was thrown, each followed by a newline. It is empty when
-	// the place is unknown, as for a thrown value that is not an error.
+	// the place is unknown.
 	Source string
+	// SourceInline reports that the thrown value is not an error. Node prints its header
+	// after a blank line and right above the value, not as part of an error's report.
+	SourceInline bool
 }
 
 // Error returns the exception's text, without the header.
@@ -62,7 +65,10 @@ func validUnhandledRejections(mode string) bool {
 // Node.js, so it names itself and its own version there.
 func (e *UncaughtError) Report() string {
 	var b strings.Builder
-	if e.Source != "" {
+	if e.Source != "" && e.SourceInline {
+		b.WriteString("\n")
+		b.WriteString(e.Source)
+	} else if e.Source != "" {
 		b.WriteString(e.Source)
 		b.WriteString("\n")
 	}
@@ -129,6 +135,7 @@ func (rt *Runtime) installUncaught() error {
 	if err := rt.setNative(native, "fatalSource", func(info *v8.FunctionCallbackInfo) *v8.Value {
 		if args := info.Args(); len(args) >= 1 {
 			rt.fatalSource = args[0].String()
+			rt.fatalSourceInline = len(args) >= 2 && args[1].Boolean()
 		}
 		return nil
 	}); err != nil {
@@ -259,6 +266,7 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		HandlerThrew: args[3].Boolean(),
 		Thrown:       thrown,
 		Source:       rt.fatalSource,
+		SourceInline: rt.fatalSourceInline,
 	})
 	rt.stopRunning()
 	return nil
@@ -330,6 +338,27 @@ func (rt *Runtime) MakeCallback(fn, recv *v8.Value, args ...*v8.Value) *v8.Value
 	return result
 }
 
+// throwSite returns, as a JavaScript object, where V8's message places the exception the
+// last RunScript caught, or undefined.
+func (rt *Runtime) throwSite() *v8.Value {
+	msg := rt.context.TakeLastExceptionMessage()
+	if msg == nil {
+		return rt.context.Undefined()
+	}
+	site, err := rt.context.NewObject()
+	if err != nil {
+		return rt.context.Undefined()
+	}
+	file, _ := rt.context.NewString(msg.ResourceName)
+	sourceLine, _ := rt.context.NewString(msg.SourceLine)
+	_ = site.Set("file", file)
+	_ = site.Set("line", rt.context.NewInteger(int64(msg.Line)))
+	_ = site.Set("sourceLine", sourceLine)
+	_ = site.Set("start", rt.context.NewInteger(int64(msg.StartColumn)))
+	_ = site.Set("end", rt.context.NewInteger(int64(msg.EndColumn)))
+	return site
+}
+
 // keepTerminating asks for termination again. V8 consumes the request once the stack has
 // unwound, and a runtime that has ended still has work in its promise queue until
 // UncaughtError discards it.
@@ -339,10 +368,13 @@ func (rt *Runtime) keepTerminating() {
 
 // handleUncaught treats a value as an exception nothing caught, as if it had been thrown
 // from a callback. It reports whether the runtime survived.
-func (rt *Runtime) handleUncaught(thrown *v8.Value) bool {
+func (rt *Runtime) handleUncaught(thrown, site *v8.Value) bool {
+	if site == nil {
+		site = rt.context.Undefined()
+	}
 	if !rt.ended() {
 		// trigger reports a handler's exception itself, so this call cannot fail with one.
-		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false))
+		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false), site)
 	}
 	if rt.ended() {
 		rt.keepTerminating()
@@ -485,6 +517,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 		return scriptErr
 	}
 	thrown := rt.context.TakeLastScriptException()
+	site := rt.throwSite()
 	if thrown == nil {
 		// The V8 glue predates TakeLastScriptException, so only the text survived. Node
 		// would hand over the object: its name, message and stack come through here, and
@@ -497,7 +530,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 			return scriptErr
 		}
 	}
-	if rt.handleUncaught(thrown) {
+	if rt.handleUncaught(thrown, site) {
 		return nil
 	}
 	if rt.ended() {

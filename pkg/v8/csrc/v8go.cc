@@ -43,6 +43,16 @@ struct ContextWrapper {
     Global<Function> promise_reject_handler;
     // What the last failed v8go_context_run_script threw, until it is taken.
     Global<Value> last_script_exception;
+    // Where V8's message for that exception places it: for a throw, the throw statement;
+    // for a SyntaxError, the offending token. Kept until it is taken.
+    struct {
+        bool has = false;
+        std::string resource;
+        int line = 0;
+        std::string source_line;
+        int start = -1;
+        int end = -1;
+    } last_exception_message;
 };
 
 // Embedder-data slot in which each Context stores its ContextWrapper*.
@@ -56,6 +66,28 @@ static ContextWrapper* wrapperFromContext(Local<Context> context) {
     return static_cast<ContextWrapper*>(
         context->GetAlignedPointerFromEmbedderData(
             kContextWrapperSlot, kContextWrapperTag));
+}
+
+// recordException keeps what a TryCatch caught, and where its message places it, for
+// v8go_context_take_last_script_exception and v8go_context_take_last_exception_message.
+static void recordException(ContextWrapper* wrapper, Isolate* isolate, Local<Context> context,
+                            TryCatch& try_catch) {
+    wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
+    auto& m = wrapper->last_exception_message;
+    m = {};
+    Local<Message> message = try_catch.Message();
+    if (message.IsEmpty()) return;
+    String::Utf8Value resource(isolate, message->GetScriptResourceName());
+    m.resource = *resource ? *resource : "";
+    m.line = message->GetLineNumber(context).FromMaybe(0);
+    Local<String> source_line;
+    if (message->GetSourceLine(context).ToLocal(&source_line)) {
+        String::Utf8Value line(isolate, source_line);
+        m.source_line = *line ? *line : "";
+    }
+    m.start = message->GetStartColumn(context).FromMaybe(-1);
+    m.end = message->GetEndColumn(context).FromMaybe(-1);
+    m.has = true;
 }
 
 struct ValueWrapper {
@@ -445,7 +477,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
+            recordException(wrapper, isolate, context, try_catch);
             String::Utf8Value exception(isolate, try_catch.Exception());
             *error = strdup(*exception ? *exception : "Unknown error");
         }
@@ -460,7 +492,7 @@ void* v8go_context_run_script(void* context_ptr, const char* source, const char*
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            wrapper->last_script_exception.Reset(isolate, try_catch.Exception());
+            recordException(wrapper, isolate, context, try_catch);
             String::Utf8Value exception(isolate, try_catch.Exception());
             String::Utf8Value stack_trace(isolate, try_catch.StackTrace(context).FromMaybe(Local<Value>()));
             
@@ -1908,6 +1940,23 @@ void* v8go_context_take_last_script_exception(void* context_ptr) {
     result->value.Reset(isolate, wrapper->last_script_exception.Get(isolate));
     wrapper->last_script_exception.Reset();
     return result;
+}
+
+int v8go_context_take_last_exception_message(void* context_ptr, char** resource, int* line,
+                                             char** source_line, int* start, int* end) {
+    if (!context_ptr) return 0;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    // The same lock as the script run that records it.
+    Locker locker(wrapper->isolate);
+    auto& m = wrapper->last_exception_message;
+    if (!m.has) return 0;
+    *resource = strdup(m.resource.c_str());
+    *line = m.line;
+    *source_line = strdup(m.source_line.c_str());
+    *start = m.start;
+    *end = m.end;
+    m = {};
+    return 1;
 }
 
 void v8go_perform_microtask_checkpoint(void* isolate_ptr) {
