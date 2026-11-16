@@ -525,7 +525,14 @@ func (el *EventLoop) contextForTicks() context.Context {
 // ctx is cancelled.
 func (el *EventLoop) runTicks(ctx context.Context) bool {
 	el.mu.Lock()
-	defer el.mu.Unlock()
+	// The lock is released around each callback, and a callback can panic: only a lock
+	// this function holds may be released on the way out.
+	locked := true
+	defer func() {
+		if locked {
+			el.mu.Unlock()
+		}
+	}()
 	for {
 		for len(el.ticks) > 0 {
 			if el.shouldStop || ctx.Err() != nil {
@@ -534,14 +541,18 @@ func (el *EventLoop) runTicks(ctx context.Context) bool {
 			fn := el.ticks[0]
 			el.ticks[0] = nil
 			el.ticks = el.ticks[1:]
+			locked = false
 			el.mu.Unlock()
 			fn()
 			el.mu.Lock()
+			locked = true
 		}
 		if el.shouldStop || ctx.Err() != nil {
 			return false
 		}
+		locked = false // runDrainedLocked releases the lock while the hook runs
 		el.runDrainedLocked()
+		locked = true
 		if len(el.ticks) == 0 {
 			return true
 		}
