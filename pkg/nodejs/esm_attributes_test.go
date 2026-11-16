@@ -636,3 +636,20 @@ for (const [s, o] of [['./txt', { with: { type: 'json' } }], ['./rg'], ['./sg'],
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// JSON a hook serves at a custom URL is a module per type; only file-backed JSON
+// shares its first value. Expected from Node 20.18.1.
+func TestImportAttributes_CustomURLJSONPerType(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) { if (s === 'mem:x') return { url: 'mem:x', shortCircuit: true }; return n(s, c); }
+export async function load(u, c, n) { if (u === 'mem:x') return { format: 'json', source: JSON.stringify({ t: c.importAttributes.type }), shortCircuit: true }; return n(u, c); }`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('mem:x', { with: { type: 'a' } }), b = await import('mem:x', { with: { type: 'b' } });
+log.push(a.default, b.default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[{"t":"a"},{"t":"b"}]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
