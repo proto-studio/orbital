@@ -147,7 +147,9 @@ func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
 // (url, type) pair's module job, failed or not, and later imports of that pair
 // reuse it without checking again.
 func (e *ESM) checkAttributesOnce(url, format string, attrs []v8.ImportAttribute) error {
-	key := attrCheckKey(url, attrs)
+	// Keyed as the hooked path keys it (keyAttrs), so registering hooks later
+	// finds the same job.
+	key := attrCheckKey(url, canonicalTypeAttrs(attrs))
 	if err, seen := e.attrChecks[key]; seen {
 		return err
 	}
@@ -201,6 +203,55 @@ func keyAttrs(attrs []v8.ImportAttribute, encoded string) []v8.ImportAttribute {
 		out[i] = a
 	}
 	return out
+}
+
+// canonicalTypeAttrs is attrs with the type written as keyAttrs writes it for
+// the hooked path: a type holding a lone surrogate (WTF-8 from the glue) as
+// "\x02" and its UTF-16 units in hex, one starting with "\x02" with another
+// "\x02" in front, and any other as itself.
+func canonicalTypeAttrs(attrs []v8.ImportAttribute) []v8.ImportAttribute {
+	out := make([]v8.ImportAttribute, len(attrs))
+	for i, a := range attrs {
+		if a.Key == "type" {
+			if units, lone := utf16Units(a.Value); lone {
+				var b strings.Builder
+				b.WriteByte('\x02')
+				for _, u := range units {
+					fmt.Fprintf(&b, "%04x", u)
+				}
+				a.Value = b.String()
+			} else if strings.HasPrefix(a.Value, "\x02") {
+				a.Value = "\x02" + a.Value
+			}
+		}
+		out[i] = a
+	}
+	return out
+}
+
+// utf16Units decodes s, WTF-8, into UTF-16 code units, and reports whether it
+// held a lone surrogate (which only WTF-8 can).
+func utf16Units(s string) ([]uint16, bool) {
+	var units []uint16
+	lone := false
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == 0xED && i+2 < len(s) && s[i+1] >= 0xA0 && s[i+1] <= 0xBF && s[i+2] >= 0x80 && s[i+2] <= 0xBF {
+			units = append(units, uint16(0xD000|uint16(s[i+1]&0x3F)<<6|uint16(s[i+2]&0x3F)))
+			lone = true
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r >= 0x10000 {
+			r -= 0x10000
+			units = append(units, uint16(0xD800+(r>>10)), uint16(0xDC00+(r&0x3FF)))
+		} else {
+			units = append(units, uint16(r))
+		}
+		i += size
+	}
+	return units, lone
 }
 
 // withoutType returns attrs without its `type` entry.
