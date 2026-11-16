@@ -140,6 +140,48 @@ func (c *Context) OwnNonIndexKeysFunction() (*Value, error) {
 	return newValue(ptr, c), nil
 }
 
+// ConstructorNameFunction returns a JavaScript function that answers V8's name for its
+// argument's constructor, as Node's internalGetConstructorName does, or undefined for anything
+// but an object. Unlike the constructor property, it knows how the object was made.
+func (c *Context) ConstructorNameFunction() (*Value, error) {
+	if c.ptr == nil {
+		return nil, ErrDisposed
+	}
+	ptr := C.v8go_constructor_name_function(c.ptr)
+	if ptr == nil {
+		return nil, errors.New("v8: could not make the constructor name function")
+	}
+	return &Value{ptr: ptr, ctx: c}, nil
+}
+
+// ProxyTargetFunction returns a JavaScript function that answers its argument's target when
+// that's a proxy (following proxies of proxies, and null for a revoked one), or undefined for
+// anything else, without running any of the proxy's traps.
+func (c *Context) ProxyTargetFunction() (*Value, error) {
+	if c.ptr == nil {
+		return nil, ErrDisposed
+	}
+	ptr := C.v8go_proxy_target_function(c.ptr)
+	if ptr == nil {
+		return nil, errors.New("v8: could not make the proxy target function")
+	}
+	return &Value{ptr: ptr, ctx: c}, nil
+}
+
+// ProxyTarget reports whether v is a proxy and, if so, returns its target, following proxies of
+// proxies; a revoked proxy's target is null. No trap runs.
+func (v *Value) ProxyTarget() (*Value, bool) {
+	if v == nil || v.ptr == nil || v.ctx == nil || v.ctx.ptr == nil {
+		return nil, false
+	}
+	var isProxy C.int
+	ptr := C.v8go_value_proxy_target(v.ctx.ptr, v.ptr, &isProxy)
+	if isProxy == 0 || ptr == nil {
+		return nil, false
+	}
+	return &Value{ptr: ptr, ctx: v.ctx}, true
+}
+
 // Release frees the native handle behind v, which must not be used afterwards. Values Go reads
 // many times over, like one GetOwnNonIndexKeys result per array printed, are released once read
 // so they don't accumulate.

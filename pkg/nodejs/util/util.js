@@ -152,7 +152,15 @@
 			// Primitives
 			if (type === 'boolean') return value.toString();
 			if (type === 'string') return inspectShared.string(layout, value, currentDepth);
-			if (type === 'function') return formatFunction(value);
+			// A proxy prints as its target, as in Node, so none of its traps run. The value given,
+			// the proxy itself, stays the receiver of a custom inspector and what it's compared with.
+			const given = value;
+			if (type === 'object' || type === 'function') {
+				const target = inspectShared.proxyTarget(value);
+				if (target === null) return '<Revoked Proxy>';
+				if (target !== undefined) value = target;
+			}
+			if (typeof value === 'function') return formatFunction(value);
 			if (type !== 'object') return inspectShared.primitive(value);
 
 			// Objects
@@ -160,9 +168,10 @@
 				// As in Node, a custom inspector runs before value counts as being formatted, so
 				// a replacement that holds value formats it afresh. One that answers value
 				// itself leaves it to be formatted as usual.
-				if (opts.customInspect && typeof value[Symbol.for('nodejs.util.inspect.custom')] === 'function') {
-					const result = value[Symbol.for('nodejs.util.inspect.custom')](currentDepth, opts);
-					if (result !== value) return typeof result === 'string' ? result : inspectValue(result, currentDepth);
+				const custom = opts.customInspect ? value[Symbol.for('nodejs.util.inspect.custom')] : undefined;
+				if (typeof custom === 'function') {
+					const result = Reflect.apply(custom, given, [currentDepth, opts]);
+					if (result !== given) return typeof result === 'string' ? result : inspectValue(result, currentDepth);
 				}
 				const circular = track.visit(value);
 				if (circular !== null) return circular;

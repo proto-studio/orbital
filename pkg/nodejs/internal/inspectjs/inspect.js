@@ -2,9 +2,10 @@
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
 // can register either one without the other. Evaluates to a function that takes the native
-// helpers inspectjs.go makes, ownNonIndexKeys, and returns { context, quote, string, key,
+// helpers inspectjs.go makes, ownNonIndexKeys, internalConstructorName and proxyTarget, and returns { context, quote, string, key,
 // keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot, finish, binary,
-// collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix }.
+// collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix,
+// proxyTarget }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -12,7 +13,7 @@
 // of an object, array, Map, Set or Error, the caller sets currentDepth to its level; reduce
 // then knows how many levels of objects the value holds. Lines that a value spans are indented
 // relative to the value itself: reduce indents an entry's lines along with the entry.
-(function (ownNonIndexKeys) {
+(function (ownNonIndexKeys, internalConstructorName, proxyTarget) {
   // META[c] is how util.inspect writes control character c (0x00-0x1F) inside a quoted string:
   // \b, \t, \n, \f and \r for those five, and \xNN for the rest.
   const META = [
@@ -157,6 +158,10 @@
   // A value that throws while it's looked at, like a proxy with a throwing trap, counts as
   // built in.
   function hasBuiltInToString(value) {
+    // A proxy is judged by its target, so none of its traps run; a revoked one counts as built in.
+    const target = proxyTarget(value);
+    if (target === null) return true;
+    if (target !== undefined) value = target;
     try {
       if (typeof value[Symbol.toPrimitive] === 'function') return false;
       if (typeof value.toString !== 'function') return true;
@@ -298,9 +303,8 @@
         if (obj === value) first = Object.getPrototypeOf(obj);
       }
       if (first === null) return null;
-      // Node asks V8 for the kind, which knows how value was made; Array or Object covers the
-      // values that get here.
-      const kind = Array.isArray(value) ? 'Array' : 'Object';
+      // V8's name for how value was made, as Node's internalGetConstructorName has it.
+      const kind = internalConstructorName(value);
       if (budget < 0) return `${kind} <Complex prototype>`;
       const inner = constructorName(first, budget - 1);
       if (inner !== null) return `${kind} <${inner}>`;
@@ -324,17 +328,10 @@
   // string, unless it's an own enumerable property, which is printed among the keys instead.
   // One that throws is left out.
   function tagOf(value) {
-    let tag;
-    try {
-      tag = value[Symbol.toStringTag];
-    } catch (e) {
-      return '';
-    }
-    try {
-      if (typeof tag !== 'string' || (tag !== '' && Object.prototype.propertyIsEnumerable.call(value, Symbol.toStringTag))) {
-        return '';
-      }
-    } catch (e) {
+    // As in Node, a getter that throws throws out of inspect. Proxies, whose traps could, are
+    // printed as their targets, so they don't get here.
+    const tag = value[Symbol.toStringTag];
+    if (typeof tag !== 'string' || (tag !== '' && Object.prototype.propertyIsEnumerable.call(value, Symbol.toStringTag))) {
       return '';
     }
     return tag;
@@ -358,17 +355,11 @@
   }
 
   // objectFallback is the kind Node names an object without a constructor after: V8's name for
-  // its constructor, which for an object made without one is its own toStringTag when that's a
-  // string data property, and otherwise Object. When it matches the tag shown, it's Object.
+  // its constructor (the class of an instance whose prototype was set to null, say, or its own
+  // toStringTag for one made without a constructor). When it matches the tag shown, it's Object.
   function objectFallback(value, tag) {
-    let desc;
-    try {
-      desc = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
-    } catch (e) {
-      return 'Object';
-    }
-    const own = desc !== undefined && typeof desc.value === 'string' ? desc.value : '';
-    return own === '' || own === tag ? 'Object' : own;
+    const name = internalConstructorName(value);
+    return typeof name !== 'string' || name === '' || name === tag ? 'Object' : name;
   }
 
   // objectPrefix is what util.inspect puts before a plain object's brace, with a space after it:
@@ -502,14 +493,11 @@
 
   // cut names value in brackets, as util.inspect prints it past the depth limit, or answers null
   // when Node prints it in full anyway: when it's empty, a RegExp, which leaves its properties
-  // out, a Date without properties or a Buffer. Errors are left to the caller. A value that
-  // throws when looked at, like a proxy with a throwing trap, is [Object].
+  // out, a Date without properties or a Buffer. Errors are left to the caller. As in Node, a
+  // getter that throws while the value is named, like its toStringTag, throws out of it;
+  // proxies, whose traps could, are printed as their targets and don't get here.
   function cut(value) {
-    try {
-      return cutName(value);
-    } catch (e) {
-      return '[Object]';
-    }
+    return cutName(value);
   }
 
   function cutName(value) {
@@ -804,6 +792,7 @@
 
   return {
     context, quote, string, key, keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot,
-    finish, binary, collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix
+    finish, binary, collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix,
+    proxyTarget
   };
 })

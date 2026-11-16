@@ -29,15 +29,31 @@ func Load(rt *runtime.Runtime) (*v8.Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer factory.Release()
 	if factory == nil || !factory.IsFunction() {
 		return nil, errors.New("inspectjs: inspect.js did not evaluate to a function")
 	}
 	// ownNonIndexKeys(value) lists value's own enumerable keys other than array indices, which
 	// JavaScript can only find by listing every index too. It runs natively, so the arrays it
 	// answers aren't kept alive in Go.
+	// The helpers' handles are released once the factory has them: its closures keep them.
 	ownNonIndexKeys, err := rt.Context().OwnNonIndexKeysFunction()
 	if err != nil {
 		return nil, err
 	}
-	return factory.Call(nil, ownNonIndexKeys)
+	defer ownNonIndexKeys.Release()
+	// internalConstructorName(value) is V8's name for how value was made, which Node uses for
+	// objects without a constructor; proxyTarget(value) is a proxy's target, which Node prints
+	// in its place without running its traps.
+	internalConstructorName, err := rt.Context().ConstructorNameFunction()
+	if err != nil {
+		return nil, err
+	}
+	defer internalConstructorName.Release()
+	proxyTarget, err := rt.Context().ProxyTargetFunction()
+	if err != nil {
+		return nil, err
+	}
+	defer proxyTarget.Release()
+	return factory.Call(nil, ownNonIndexKeys, internalConstructorName, proxyTarget)
 }

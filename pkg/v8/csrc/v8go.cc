@@ -1053,7 +1053,25 @@ static void OwnNonIndexKeysCallback(const FunctionCallbackInfo<Value>& info) {
     }
 }
 
-void* v8go_own_non_index_keys_function(void* context_ptr) {
+// A JavaScript function answering V8's name for its argument's constructor (undefined for
+// anything but an object), which, unlike the constructor property, knows how the object was
+// made: the class of an instance whose prototype was later set to null, say.
+static void ConstructorNameCallback(const FunctionCallbackInfo<Value>& info) {
+    if (info.Length() < 1 || !info[0]->IsObject()) return;
+    info.GetReturnValue().Set(info[0].As<Object>()->GetConstructorName());
+}
+
+// A JavaScript function answering the target of its argument when that's a proxy, following
+// proxies of proxies, and null for a revoked one; undefined for anything else. No trap runs.
+static void ProxyTargetCallback(const FunctionCallbackInfo<Value>& info) {
+    if (info.Length() < 1 || !info[0]->IsProxy()) return;
+    Local<Value> target = info[0].As<Proxy>()->GetTarget();
+    while (target->IsProxy()) target = target.As<Proxy>()->GetTarget();
+    info.GetReturnValue().Set(target);
+}
+
+// Makes a JavaScript function in the context that runs callback.
+static void* nativeFunction(void* context_ptr, FunctionCallback callback) {
     if (!context_ptr) return nullptr;
 
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
@@ -1065,10 +1083,44 @@ void* v8go_own_non_index_keys_function(void* context_ptr) {
     Context::Scope context_scope(context);
 
     Local<Function> fn;
-    if (!Function::New(context, OwnNonIndexKeysCallback).ToLocal(&fn)) return nullptr;
+    if (!Function::New(context, callback).ToLocal(&fn)) return nullptr;
     ValueWrapper* wrapper = new ValueWrapper();
     wrapper->isolate = isolate;
     wrapper->value.Reset(isolate, fn);
+    return wrapper;
+}
+
+void* v8go_own_non_index_keys_function(void* context_ptr) {
+    return nativeFunction(context_ptr, OwnNonIndexKeysCallback);
+}
+
+void* v8go_constructor_name_function(void* context_ptr) {
+    return nativeFunction(context_ptr, ConstructorNameCallback);
+}
+
+void* v8go_proxy_target_function(void* context_ptr) {
+    return nativeFunction(context_ptr, ProxyTargetCallback);
+}
+
+// The target of value when it's a proxy, following proxies of proxies, with *is_proxy set; a
+// revoked proxy's target is null. Nothing, with *is_proxy clear, for anything else.
+void* v8go_value_proxy_target(void* context_ptr, void* value_ptr, int* is_proxy) {
+    *is_proxy = 0;
+    if (!context_ptr || !value_ptr) return nullptr;
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
+    Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Value> value = val_wrapper->value.Get(isolate);
+    if (!value->IsProxy()) return nullptr;
+    *is_proxy = 1;
+    Local<Value> target = value.As<Proxy>()->GetTarget();
+    while (target->IsProxy()) target = target.As<Proxy>()->GetTarget();
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, target);
     return wrapper;
 }
 
