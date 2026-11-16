@@ -2401,7 +2401,7 @@
           req.destroy(connResetException('aborted'));
           continue;
         }
-        // A fully read request has nothing to abort. It closes after its 'end', as below.
+        // A fully read request has nothing to abort: it closes by itself after its 'end'.
       }
       conn.active.clear();
     }
@@ -2418,9 +2418,12 @@
       }
     };
 
-    // Runs the parser on data, or resumes it when data is null.
+    // Runs the parser on data, or resumes it when data is null. A resumption parses bytes
+    // from the last packet, which is what a parse error reports.
+    let lastPacket = null;
     const feed = (data) => {
       if (conn.upgraded && !conn.pendingUpgrade) return;
+      if (data !== null) lastPacket = data;
       if (conn.keepAliveTimeoutSet) {
         socket.setTimeout(server.timeout || 0);
         conn.keepAliveTimeoutSet = false;
@@ -2434,8 +2437,9 @@
         leftover = data === null ? parser.resume() : parser.execute(data);
       } catch (err) {
         if (!isParseError(err)) throw err;
-        err.bytesParsed = data ? data.length : 0;
-        err.rawPacket = data || Buffer.alloc(0);
+        const packet = data || lastPacket || Buffer.alloc(0);
+        err.bytesParsed = packet.length;
+        err.rawPacket = packet;
         let status = 400;
         if (err.code === 'HPE_HEADER_OVERFLOW') status = 431;
         conn.parserError(err, status);
@@ -2470,13 +2474,25 @@
       http._defer(() => {
         resumeScheduled = false;
         if (parser.completePending) feed(null);
+        // As in Node, the end is handled after what the last request queued has run.
+        if (endPending && !parser.completePending) {
+          endPending = false;
+          http._defer(onSocketEnd);
+        }
       });
     };
 
     socket.on('data', (data) => feed(data));
 
-    socket.on('end', () => {
-      if (parser.completePending) feed(null);
+    // The end of the connection is handled once the requests that came before it are,
+    // since their ends may still be held back.
+    let endPending = false;
+    socket.on('end', () => onSocketEnd());
+    function onSocketEnd() {
+      if (parser.completePending) {
+        endPending = true;
+        return;
+      }
       const finishErr = parser.finish();
       if (finishErr) {
         conn.parserError(finishErr, 400);
@@ -2492,7 +2508,7 @@
       } else if (socket.writable) {
         socket.end();
       }
-    });
+    }
 
     socket.on('close', () => {
       server._httpConnections.delete(conn);
