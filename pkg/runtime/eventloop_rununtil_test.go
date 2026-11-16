@@ -10,9 +10,10 @@ import (
 func TestEventLoopRunUntil(t *testing.T) {
 	el := NewEventLoop()
 	fired := false
+	// Timed from before the timer is set, so it can't look early.
+	start := time.Now()
 	el.SetTimeout(func() { fired = true }, 50*time.Millisecond)
 	later := el.SetTimeout(func() {}, time.Hour)
-	start := time.Now()
 	if !el.RunUntil(func() bool { return fired }) {
 		t.Fatal("RunUntil reported false after the timer fired")
 	}
