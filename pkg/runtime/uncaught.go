@@ -171,7 +171,7 @@ func (rt *Runtime) installUncaught() error {
 	}
 
 	rt.eventLoop.setDrainedHook(rt.reportRejections)
-	rt.eventLoop.setPlatformHook(rt.runPlatformTasks)
+	rt.eventLoop.setPlatformHook(rt.runPlatformTask)
 	return nil
 }
 
@@ -387,41 +387,26 @@ func (rt *Runtime) BindProcess(process *v8.Value) error {
 
 // reportRejections runs once the microtask queues are empty, which is the point where a
 // promise rejected with no handler has had its chance to get one.
-// maxPlatformTasks bounds how many platform tasks one call to
-// runPlatformTasks runs, so tasks that keep posting more can't hold the loop.
-const maxPlatformTasks = 1000
-
-// runPlatformTasks runs the tasks V8 has queued for the isolate, such as
-// FinalizationRegistry cleanup, one at a time: each task's callbacks, then the
+// runPlatformTask runs one task V8 has queued for the isolate, such as one
+// FinalizationRegistry's cleanup, as a callback: its callbacks, then the
 // ticks and promise jobs they queued, as Node does after each task. The loop
-// calls it from its poll phase, on its own goroutine and never inside a
-// callback. It reports whether it ran any.
-func (rt *Runtime) runPlatformTasks() bool {
-	ranAny := false
-	for i := 0; i < maxPlatformTasks; i++ {
-		if rt.ended() || rt.execController.IsDone() {
-			break
-		}
-		if _, err := rt.uncaught.beginPlatformTask.Call(nil); err != nil {
-			break
-		}
-		ran := rt.context.PumpMessageLoop()
-		_, _ = rt.uncaught.endPlatformTask.Call(nil)
-		// Rejections the task left are reported before the next task runs, as Node
-		// does between tasks.
-		if ran {
-			rt.reportRejections()
-		}
-		if rt.ended() {
-			rt.keepTerminating()
-			break
-		}
-		if !ran {
-			break
-		}
-		ranAny = true
+// calls it on its own goroutine and never inside a callback, then handles
+// what the task left (rejections, ticks) as after any other callback before
+// running the next. It reports whether it ran a task.
+func (rt *Runtime) runPlatformTask() bool {
+	if rt.ended() || rt.execController.IsDone() {
+		return false
 	}
-	return ranAny
+	if _, err := rt.uncaught.beginPlatformTask.Call(nil); err != nil {
+		return false
+	}
+	ran := rt.context.PumpMessageLoop()
+	_, _ = rt.uncaught.endPlatformTask.Call(nil)
+	if rt.ended() {
+		rt.keepTerminating()
+		return false
+	}
+	return ran
 }
 
 func (rt *Runtime) reportRejections() {

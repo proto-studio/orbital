@@ -153,3 +153,33 @@ setTimeout(() => {
 		t.Errorf("order = %v, want each cleanup followed by its unhandledRejection", got["order"])
 	}
 }
+
+// Cleanup runs before the loop waits: an I/O callback that collects while a
+// later timer keeps the loop alive gets its cleanup before that timer; and an
+// unhandledRejection listener's tick runs before the next registry's cleanup.
+// Both as in Node 20 run with --expose-gc.
+func TestFinalizationRegistry_BeforeWaitingMatchesNode(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `const out = {};
+// (e) an I/O callback collects while a later timer keeps the loop alive: cleanup runs first.
+const e = [];
+const regE = new FinalizationRegistry(() => e.push('cleanup'));
+// (f) an unhandledRejection listener's tick runs before the next registry's cleanup.
+const f = [];
+process.on('unhandledRejection', (r) => { f.push('unhandled ' + r); process.nextTick(() => f.push('tick ' + r)); });
+const mk = (name) => new FinalizationRegistry(() => { f.push('cleanup ' + name); Promise.reject(name); });
+const f1 = mk('A'), f2 = mk('B');
+(() => { f1.register({}, 1); f2.register({}, 2); })();
+setTimeout(() => {
+  gc();
+  setTimeout(() => {
+    const x = f[0].slice(-1), y = x === 'A' ? 'B' : 'A';
+    out.f = f.join() === ['cleanup ' + x, 'unhandled ' + x, 'tick ' + x, 'cleanup ' + y, 'unhandled ' + y, 'tick ' + y].join() || f;
+    (() => { regE.register({}, 1); })();
+    require('crypto').randomBytes(4, () => { e.push('io'); gc(); });
+    setTimeout(() => { e.push('timer'); out.e = e; done(out); }, 40);
+  }, 30);
+}, 10);
+`)
+	want := map[string]any{"f": true, "e": []any{"io", "cleanup", "timer"}}
+	wantJSON(t, got, want)
+}
