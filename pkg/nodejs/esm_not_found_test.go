@@ -758,6 +758,29 @@ for (const s of ['ctor', 'setter']) {
 	}
 }
 
+// A file: URL host ending in a number is read as an IPv4 address (refused when
+// malformed, named in dotted form when not), and a missing module's path keeps
+// repeated separators while dot segments resolve as in a URL. Expected from
+// Node 20.18.1.
+func TestDynamicImport_NumericHostsAndRepeatedSeparators(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"entry.mjs": `for (const u of ['file://256.0.0.1/tmp/x', 'file://1.2.3.4.5/tmp/x', 'file://09/tmp/x', 'file://a.09/tmp/x', 'file://1..2/tmp/x', 'file://0x100000000/tmp/x',
+  'file://0x7f.1/tmp/x', 'file://1.2.3/tmp/x', 'file://1.2./tmp/x', 'file://1.2.3.0x/tmp/x', 'file://foo.1e/tmp/x']) {
+  try { await import(u); } catch (e) { log.push([e.code, e.input]); }
+}
+const base = new URL('.', import.meta.url).href, dir = base.slice(7);
+for (const s of ['./dir//missing.mjs', './dir/./x//../missing.mjs', './/dir///m.mjs', 'file:////tmp/missing.mjs', 'file:///tmp//a/../m.mjs']) {
+  try { await import(s); } catch (e) { log.push([e.url.replace(base, '<base>'), e.message.split("'")[1].replace(dir, '<dir>')]); }
+}`,
+	})
+	want := `[["ERR_INVALID_URL","file://256.0.0.1/tmp/x"],["ERR_INVALID_URL","file://1.2.3.4.5/tmp/x"],["ERR_INVALID_URL","file://09/tmp/x"],["ERR_INVALID_URL","file://a.09/tmp/x"],["ERR_INVALID_URL","file://1..2/tmp/x"],["ERR_INVALID_URL","file://0x100000000/tmp/x"],` +
+		`["ERR_INVALID_FILE_URL_HOST","file://127.0.0.1/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://1.2.0.3/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://1.0.0.2/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://1.2.3.0/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://foo.1e/tmp/x"],` +
+		`["<base>dir//missing.mjs","<dir>dir//missing.mjs"],["<base>dir/x/missing.mjs","<dir>dir/x/missing.mjs"],["<base>/dir///m.mjs","<dir>/dir///m.mjs"],["file:////tmp/missing.mjs","//tmp/missing.mjs"],["file:///tmp//m.mjs","/tmp//m.mjs"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.

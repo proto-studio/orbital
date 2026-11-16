@@ -786,29 +786,40 @@ func runESModuleSource(source, origin string) error {
 	return nil
 }
 
+// emitExit emits the process 'exit' event once, as Node does at the end of a
+// program, and returns process.exitCode (-1 if unset) and whether a listener
+// threw. A listener that throws stops the emit and goes to 'uncaughtException'
+// like any callback; if nothing handles it, or a listener calls process.exit,
+// the program ends here with Node's report and code.
+func emitExit(rt *runtime.Runtime) (code int, threw bool) {
+	emit, err := rt.RunScript(`(function () {
+		if (typeof process === 'undefined' || typeof process.emit !== 'function' || process._exiting) return true;
+		process._exiting = true;
+		process.emit('exit', process.exitCode || 0);
+		return true;
+	})`, "[exit]")
+	if err == nil && emit != nil && emit.IsFunction() {
+		// The function returns true unless a listener threw: a handled exception
+		// leaves undefined, an unhandled one nil.
+		res := rt.MakeCallback(emit, nil)
+		threw = res == nil || !res.IsBoolean() || !res.Boolean()
+	}
+	if ended := rt.Ended(); ended != nil {
+		exitWithError(ended)
+	}
+	code = -1
+	if v, err := rt.RunScript(`(typeof process === 'undefined' || process.exitCode === undefined) ? -1 : Number(process.exitCode)`, "[exit]"); err == nil && v != nil {
+		code = int(v.Integer())
+	}
+	return code, threw
+}
+
 // finalizeExit emits the process 'exit' event (so handlers such as the
 // node:test summary run) and, if the script set a non-zero process.exitCode,
 // exits the process with that code. This mirrors Node's behavior where a
 // program's exit status reflects process.exitCode.
 func finalizeExit(rt *runtime.Runtime) {
-	codeVal, err := rt.RunScript(`(function () {
-		try {
-			if (typeof process !== 'undefined' && typeof process.emit === 'function' && !process._exiting) {
-				process._exiting = true;
-				process.emit('exit', process.exitCode || 0);
-			}
-		} catch (e) {}
-		return (typeof process !== 'undefined' && process.exitCode) ? Number(process.exitCode) : 0;
-	})();`, "[exit]")
-	// An 'exit' listener can call process.exit, which ends the runtime with its own code.
-	if exit := rt.ExitError(); exit != nil {
-		rt.Dispose()
-		os.Exit(exit.Code)
-	}
-	if err != nil || codeVal == nil {
-		return
-	}
-	if code := int(codeVal.Integer()); code != 0 {
+	if code, _ := emitExit(rt); code > 0 {
 		rt.Dispose()
 		os.Exit(code)
 	}
@@ -816,26 +827,14 @@ func finalizeExit(rt *runtime.Runtime) {
 
 // exitUnsettled ends the program as Node does when a module's top-level await
 // never settles: the 'exit' listeners run, then the exit code is 13 unless the
-// program set another.
+// program set another (or a listener threw and a handler took it: 0).
 func exitUnsettled(rt *runtime.Runtime) {
-	codeVal, err := rt.RunScript(`(function () {
-		try {
-			if (typeof process !== 'undefined' && typeof process.emit === 'function' && !process._exiting) {
-				process._exiting = true;
-				process.emit('exit', process.exitCode || 0);
-			}
-		} catch (e) {}
-		// 13 unless the program (an 'exit' listener included) set a code.
-		return (typeof process === 'undefined' || process.exitCode === undefined) ? 13 : Number(process.exitCode);
-	})();`, "[exit]")
-	// An 'exit' listener can call process.exit, which ends the runtime with its own code.
-	if exit := rt.ExitError(); exit != nil {
-		rt.Dispose()
-		os.Exit(exit.Code)
-	}
-	code := 13
-	if err == nil && codeVal != nil {
-		code = int(codeVal.Integer())
+	code, threw := emitExit(rt)
+	if code < 0 {
+		code = 13
+		if threw {
+			code = 0
+		}
 	}
 	rt.Dispose()
 	os.Exit(code)
