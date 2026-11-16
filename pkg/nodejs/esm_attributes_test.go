@@ -706,3 +706,25 @@ log.push(a === b);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Setters a hook's initialize() puts on Object.prototype don't reach the default
+// resolve and load results or their errors. Expected from Node 20.18.1.
+func TestImportAttributes_DefaultLoadIgnoresPrototypeSetters(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"hooks.mjs": `export async function initialize() {
+  for (const k of ['source', 'format', 'code', 'message', 'url', 'found']) Object.defineProperty(Object.prototype, k, { set(v) { throw new Error('setter ' + k); }, configurable: true });
+}`,
+		"dep.mjs":   `export default 'dep';`,
+		"data.json": `{"a":1}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+log.push((await import('./dep.mjs')).default);
+log.push((await import('./data.json', { with: { type: 'json' } })).default.a);
+try { await import('./dep.mjs?x', { with: { type: 'json' } }); } catch (e) { log.push(e.code); }
+try { await import('./nope.mjs'); } catch (e) { log.push(e.code); }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["dep",1,"ERR_IMPORT_ASSERTION_TYPE_FAILED","ERR_MODULE_NOT_FOUND"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

@@ -339,8 +339,8 @@
   // performs CJS/JSON finalization after the hook chain.
   function defaultLoad(url, context) {
     const attrs = context && context.importAttributes;
-    const r = globalThis.__goLoad(url, (context && context.format) || '',
-      encodeAttrs(attrs), checkAttributes ? '1' : '');
+    const r = jsonParse(globalThis.__goLoad(url, (context && context.format) || '',
+      encodeAttrs(attrs), checkAttributes ? '1' : ''));
     if (r.code) {
       // An import attribute the module's format doesn't allow (Node's
       // validateAttributes in its default load).

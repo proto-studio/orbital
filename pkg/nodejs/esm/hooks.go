@@ -209,7 +209,16 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 		if lerr != nil {
 			return c.Throw("Cannot load module '" + url + "': " + lerr.Error())
 		}
-		obj, _ := c.NewObject()
+		// As JSON, like __goResolve's result, so a setter a hook put on
+		// Object.prototype doesn't run.
+		result := func(res map[string]string) *v8.Value {
+			data, merr := json.Marshal(res)
+			if merr != nil {
+				return c.Throw(merr.Error())
+			}
+			out, _ := c.NewString(string(data))
+			return out
+		}
 		// Like Node's default load, the format the chain settled on
 		// (context.format) wins over the detected one, for the attribute check
 		// and the module.
@@ -221,18 +230,10 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			attrs, typeReceived := parseAttrsJSON(argString(info, 2))
 			if cerr := checkHookAttributes(e.displayURL(url), checkFormat, attrs, typeReceived); cerr != nil {
 				me := cerr.(*moduleError)
-				mv, _ := c.NewString(me.msg)
-				cv, _ := c.NewString(me.code)
-				obj.Set("message", mv)
-				obj.Set("code", cv)
-				return obj
+				return result(map[string]string{"message": me.msg, "code": me.code})
 			}
 		}
-		sv, _ := c.NewString(src)
-		fv, _ := c.NewString(format)
-		obj.Set("source", sv)
-		obj.Set("format", fv)
-		return obj
+		return result(map[string]string{"source": src, "format": format})
 	})
 	if err != nil {
 		return err
