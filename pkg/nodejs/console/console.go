@@ -501,8 +501,6 @@ func (discard) Clear()       {}
 
 // rethrowing wraps cb, a console method, so that what user code threw while it formatted,
 // which stopped it, is thrown again to its caller, as Node's console methods let it through.
-// It goes inside released, whose scope would otherwise release the thrown value before it's
-// thrown.
 func (c *Console) rethrowing(cb v8.FunctionCallback) v8.FunctionCallback {
 	return func(info *v8.FunctionCallbackInfo) *v8.Value {
 		// A console call made while another formats, from a getter say, has its own.
