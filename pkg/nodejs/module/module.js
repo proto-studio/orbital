@@ -7,6 +7,10 @@
 	// bust the cache with `delete require.cache[require.resolve(id)]` and probe it
 	// with `id in require.cache`, both of which are no-ops against a Map.
 	const moduleCache = Object.create(null);
+
+	// How a CommonJS module's function wrapper opens, on its first line. The runtime leaves
+	// it out of the fatal exception header (see moduleWrapperPrefix in module.go).
+	const moduleWrapperPrefix = '(function(exports, require, module, __filename, __dirname) {';
 	function cacheHas(key) {
 		return Object.prototype.hasOwnProperty.call(moduleCache, key);
 	}
@@ -235,6 +239,7 @@
 			// Push to stack
 			moduleStack.push(mod);
 
+			let loadedOK = false;
 			try {
 				// Read and compile the module
 				let source = __requireFile(resolved);
@@ -246,7 +251,8 @@
 				const dirname = resolved.substring(0, resolved.lastIndexOf('/')) || '.';
 
 				// Strip a UTF-8 BOM if present (Node does this for all files).
-				if (source.charCodeAt(0) === 0xFEFF) {
+				const hadBOM = source.charCodeAt(0) === 0xFEFF;
+				if (hadBOM) {
 					source = source.slice(1);
 				}
 
@@ -254,6 +260,7 @@
 				if (resolved.endsWith('.json')) {
 					mod.exports = JSON.parse(source);
 					mod.loaded = true;
+					loadedOK = true;
 					return mod.exports;
 				}
 
@@ -277,15 +284,17 @@
 
 				// Wrap in function to provide module scope. The trailing
 				// sourceURL makes stack traces reference the real file path
-				// instead of an anonymous eval frame.
-				const wrapper = '(function(exports, require, module, __filename, __dirname) {' +
+				// instead of an anonymous eval frame. A BOM the file had stays in
+				// the wrapper, where it is only whitespace: Node prints the line
+				// above a fatal exception with it, and counts it in the caret.
+				const wrapper = moduleWrapperPrefix + (hadBOM ? '\uFEFF' : '') +
 					source +
 					'\n})\n//# sourceURL=' + resolved;
 
 				// Compile as a script named after the file, so import() in the module
-				// resolves relative to it. eval reports the first error properly, so it
-				// compiles a wrapper that native compilation could not; source with a
-				// NUL character goes there too, since it cannot cross to the native side.
+				// resolves relative to it. A SyntaxError comes from there, placed in the
+				// module. Source with a NUL character is compiled by eval instead, since
+				// it cannot cross to the native side.
 				let compiledWrapper = source.indexOf('\0') === -1
 					? __compileModuleWrapper(wrapper, resolved)
 					: undefined;
@@ -303,10 +312,11 @@
 				);
 
 				mod.loaded = true;
-			} catch (e) {
-				delete moduleCache[resolved];
-				throw e;
+				loadedOK = true;
 			} finally {
+				// Not a catch that throws the exception again: that would move where V8
+				// places the throw, which the fatal exception header shows.
+				if (!loadedOK) delete moduleCache[resolved];
 				moduleStack.pop();
 			}
 

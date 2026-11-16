@@ -4,12 +4,17 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 
+	"proto.zip/studio/orbital/internal/v8dist"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
 //go:embed uncaught.js
 var uncaughtJS string
+
+// uncaughtScriptName is what uncaught.js runs as.
+const uncaughtScriptName = "node:internal/process/execution"
 
 // UncaughtError is what ended a runtime when JavaScript threw, or left a promise rejected,
 // and no handler took it. Node would print Message and exit with ExitCode. A library has no
@@ -28,11 +33,39 @@ type UncaughtError struct {
 	// Thrown is the value that ended the runtime, in the runtime's own context. It is only
 	// usable until the runtime is disposed. Workers use it to hand the value to the parent.
 	Thrown *v8.Value
+	// Source is the header Node prints above Message: "file:line", that line, and carets
+	// under where the exception was thrown, each followed by a newline. It is empty when
+	// there is no place to show.
+	Source string
+	// SourceInline reports that the thrown value is not an error. Node then prints the
+	// header after a blank line and right above the value, rather than above the error's
+	// report with a blank line between.
+	SourceInline bool
 }
 
-// Error returns the text Node would print.
+// Error returns the exception's text, without the header.
 func (e *UncaughtError) Error() string {
 	return e.Message
+}
+
+// Report returns everything Node prints to stderr for the exception: the source header,
+// the exception, and a version line. Node ends with "Node.js <version>"; Orbital is not
+// Node.js, so it names itself and its own version there.
+func (e *UncaughtError) Report() string {
+	var b strings.Builder
+	if e.Source != "" && e.SourceInline {
+		b.WriteString("\n")
+		b.WriteString(e.Source)
+	} else if e.Source != "" {
+		b.WriteString(e.Source)
+		b.WriteString("\n")
+	}
+	b.WriteString(e.Message)
+	b.WriteString("\n")
+	b.WriteString("\nOrbital ")
+	b.WriteString(v8dist.ModuleVersion)
+	b.WriteString("\n")
+	return b.String()
 }
 
 // UnhandledRejectionModes are the values Config.UnhandledRejections accepts, as Node's
@@ -87,13 +120,42 @@ type uncaughtHandlers struct {
 
 // installUncaught sets up exception handling for a new runtime.
 func (rt *Runtime) installUncaught() error {
-	factory, err := rt.context.RunScript(uncaughtJS, "node:internal/process/execution")
+	factory, err := rt.context.RunScript(uncaughtJS, uncaughtScriptName)
 	if err != nil {
 		return err
 	}
 
 	native, err := rt.context.NewObject()
 	if err != nil {
+		return err
+	}
+	callRecording, err := rt.context.CallRecordingFunction()
+	if err != nil {
+		return err
+	}
+	if err := native.Set("callRecording", callRecording); err != nil {
+		return err
+	}
+	// takeSite gives the header for where callRecording's function threw, and headerOf the
+	// one for a value nothing threw, as a rejection: for an error, where it was made.
+	if err := rt.setNative(native, "takeSite", func(*v8.FunctionCallbackInfo) *v8.Value {
+		return rt.headerValue(rt.context.TakeExceptionPlace())
+	}); err != nil {
+		return err
+	}
+	if err := rt.setNative(native, "headerOf", func(info *v8.FunctionCallbackInfo) *v8.Value {
+		args := info.Args()
+		if len(args) < 1 {
+			return rt.headerValue(nil)
+		}
+		place := rt.context.PlaceOf(args[0])
+		// Where JavaScript is running now, for a value with no place of its own: the
+		// runtime's own code, which is no place to show.
+		if place != nil && place.ResourceName == uncaughtScriptName {
+			place = nil
+		}
+		return rt.headerValue(place)
+	}); err != nil {
 		return err
 	}
 	if err := rt.setNative(native, "fatal", rt.fatalFunc); err != nil {
@@ -187,8 +249,17 @@ func (rt *Runtime) setNative(obj *v8.Value, name string, cb v8.FunctionCallback)
 	return obj.Set(name, fn)
 }
 
-// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew, thrown): no
-// handler took an exception.
+// headerValue is sourceHeader as a JavaScript string.
+func (rt *Runtime) headerValue(place *v8.ExceptionPlace) *v8.Value {
+	header, err := rt.context.NewString(rt.sourceHeader(place))
+	if err != nil {
+		return rt.context.Undefined()
+	}
+	return header
+}
+
+// fatalFunc implements native.fatal(message, exitCode, origin, handlerThrew, thrown, source,
+// sourceInline): no handler took an exception.
 func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
@@ -201,13 +272,18 @@ func (rt *Runtime) fatalFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) > 4 {
 		thrown = args[4]
 	}
-	rt.fatal.Store(&UncaughtError{
+	uncaught := &UncaughtError{
 		Message:      args[0].String(),
 		ExitCode:     int(args[1].Integer()),
 		Origin:       args[2].String(),
 		HandlerThrew: args[3].Boolean(),
 		Thrown:       thrown,
-	})
+	}
+	if len(args) > 6 {
+		uncaught.Source = args[5].String()
+		uncaught.SourceInline = args[6].Boolean()
+	}
+	rt.fatal.Store(uncaught)
 	rt.stopRunning()
 	return nil
 }
@@ -287,10 +363,15 @@ func (rt *Runtime) keepTerminating() {
 
 // handleUncaught treats a value as an exception nothing caught, as if it had been thrown
 // from a callback. It reports whether the runtime survived.
-func (rt *Runtime) handleUncaught(thrown *v8.Value) bool {
+// header is the source header for where it was thrown, or "".
+func (rt *Runtime) handleUncaught(thrown *v8.Value, header string) bool {
 	if !rt.ended() {
+		site, err := rt.context.NewString(header)
+		if err != nil {
+			site = rt.context.Undefined()
+		}
 		// trigger reports a handler's exception itself, so this call cannot fail with one.
-		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false))
+		_, _ = rt.uncaught.trigger.Call(nil, thrown, rt.context.NewBoolean(false), site)
 	}
 	if rt.ended() {
 		rt.keepTerminating()
@@ -454,6 +535,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 		return scriptErr
 	}
 	thrown := rt.context.TakeLastScriptException()
+	header := rt.sourceHeader(rt.context.TakeExceptionPlace())
 	if thrown == nil {
 		// The V8 glue predates TakeLastScriptException, so only the text survived. Node
 		// would hand over the object: its name, message and stack come through here, and
@@ -466,7 +548,7 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 			return scriptErr
 		}
 	}
-	if rt.handleUncaught(thrown) {
+	if rt.handleUncaught(thrown, header) {
 		return nil
 	}
 	if rt.ended() {

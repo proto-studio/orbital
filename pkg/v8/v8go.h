@@ -198,6 +198,25 @@ void v8go_set_dynamic_import_resolver(void* context, int resolver_id);
 int v8go_set_promise_reject_handler(void* context_ptr, void* function_ptr);
 // Returns what the last failed v8go_context_run_script threw, once, or NULL.
 void* v8go_context_take_last_script_exception(void* context_ptr);
+// Runs a script from inside a native function. If it throws, it returns NULL and leaves the
+// exception pending, with V8's message for it, for the JavaScript that called the function.
+void* v8go_context_run_script_rethrowing(void* context_ptr, const char* source, const char* origin);
+// Gives, once, where V8's message places the exception last caught by
+// v8go_context_run_script or the callRecording function: the script's name, the 1-based
+// line, that line's UTF-8 text and its length in bytes, which may include NUL characters,
+// and the 0-based start and end columns (-1 if unknown). A very long name leaves no place;
+// a very long line, or one V8 doesn't give, is NULL. Returns 0 if there is none. The caller
+// frees *resource and *source_line.
+int v8go_context_take_exception_place(void* context_ptr, char** resource, int* line,
+                                      char** source_line, int* source_line_length, int* start, int* end);
+// Gives, as v8go_context_take_exception_place does, where V8 places value when nothing threw
+// it: for an error, where it was made. Returns 0 if there is no place.
+int v8go_context_place_of(void* context_ptr, void* value, char** resource, int* line,
+                          char** source_line, int* source_line_length, int* start, int* end);
+// Returns a function callRecording(fn, recv, ...args) that calls fn and, if it throws, keeps
+// where V8's message places the throw for v8go_context_take_exception_place before throwing
+// the exception on. NULL on failure.
+void* v8go_context_call_recording_function(void* context_ptr);
 void v8go_perform_microtask_checkpoint(void* isolate);
 
 #ifdef __cplusplus

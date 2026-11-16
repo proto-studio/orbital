@@ -9,6 +9,12 @@
 
   const apply = Reflect.apply;
   const construct = Reflect.construct;
+  const setPrototypeOf = Object.setPrototypeOf;
+  // callRecording(fn, recv, ...args) calls fn natively. When fn throws, it keeps where V8's
+  // message places the throw, which a catch here would lose, and takeSite then gives the
+  // fatal exception header for that place. Only a throw costs a call into Go.
+  const callRecording = native.callRecording;
+  const isError = Error.isError;
   const hasOwn = Object.prototype.hasOwnProperty;
   const shift = Array.prototype.shift;
   const NewWeakMap = WeakMap;
@@ -52,14 +58,62 @@
     return Number.isNaN(code) ? fallback : code;
   }
 
-  function die(err, code, origin, handlerThrew) {
+  // takeSite is the header for where the function callRecording last called threw.
+  function takeSite() {
+    try {
+      const site = native.takeSite();
+      return typeof site === 'string' ? site : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // callWith calls fn through callRecording with the elements of args.
+  function callWith(fn, recv, args) {
+    switch (args.length) {
+      case 0: return callRecording(fn, recv);
+      case 1: return callRecording(fn, recv, args[0]);
+      case 2: return callRecording(fn, recv, args[0], args[1]);
+      case 3: return callRecording(fn, recv, args[0], args[1], args[2]);
+      default: {
+        // A null prototype keeps setters a script adds to Array out of the list.
+        const list = setPrototypeOf([fn, recv], null);
+        for (let i = 0; i < args.length; i++) list[i + 2] = args[i];
+        list.length = args.length + 2;
+        return apply(callRecording, undefined, list);
+      }
+    }
+  }
+
+  // die stops the runtime. site is the header Node prints above the report, for where the
+  // exception was thrown; without one, an error that nothing threw where it is known, as a
+  // rejection, is shown where it was made, as Node does. A value that isn't an error gets
+  // its header inline, right above it.
+  function die(err, code, origin, handlerThrew, site) {
     dead = true;
-    native.fatal(format(err), code, origin, !!handlerThrew, err);
+    let source = '';
+    let inline = false;
+    if (!handlerThrew) {
+      // The header is only a help: nothing here may stop the report.
+      try {
+        source = typeof site === 'string' ? site : '';
+        if (source === '' && ((typeof err === 'object' && err !== null) || typeof err === 'function')) {
+          const made = native.headerOf(err);
+          source = typeof made === 'string' ? made : '';
+        }
+        inline = source !== '' && !(typeof isError === 'function' && isError(err));
+      } catch (_) {
+        source = '';
+        inline = false;
+      }
+    }
+    native.fatal(format(err), code, origin, !!handlerThrew, err, source, inline);
   }
 
   // trigger is process._fatalException plus its native caller: run the handlers, and if
-  // none takes the exception, stop the runtime.
-  function trigger(err, fromPromise) {
+  // none takes the exception, stop the runtime. site is the header for where it was thrown,
+  // if known.
+  function trigger(err, fromPromise, site) {
     if (dead) return;
     const p = getProcess();
     const origin = fromPromise ? 'unhandledRejection' : 'uncaughtException';
@@ -84,7 +138,7 @@
     } catch (_) {
       // Nothing can be done about an 'exit' listener that throws at this point.
     }
-    die(err, exitCodeOf(p, kGenericUserError), origin);
+    die(err, exitCodeOf(p, kGenericUserError), origin, false, site);
   }
 
   // ---- process.nextTick ----------------------------------------------------------------
@@ -133,28 +187,37 @@
     return 'type ' + typeof value + ' (' + shown + ')';
   }
 
+  // runTicks runs the queued ticks. A tick's exception leaves it, through callRecording,
+  // so that its place is kept; the next ticks wait for processTicks to call it again.
+  function runTicks() {
+    while (tickHead < tickQueue.length && !dead) {
+      const tick = tickQueue[tickHead];
+      tickQueue[tickHead++] = undefined;
+      // A tick that queues the next one keeps the queue growing at its end while it
+      // drains from the front, so drop the used half once it is large.
+      if (tickHead >= kCompactAfter && tickHead * 2 >= tickQueue.length) {
+        const live = tickQueue.length - tickHead;
+        for (let i = 0; i < live; i++) tickQueue[i] = tickQueue[tickHead + i];
+        tickQueue.length = live;
+        tickHead = 0;
+      }
+      apply(tick.callback, undefined, tick.args);
+    }
+  }
+
   // processTicks is processTicksAndRejections, less the rejections, which the runtime
-  // reports once its queues have drained.
+  // reports once its queues have drained. One callRecording runs the ticks until one
+  // throws, rather than one per tick, which would cost every tick a native call.
   function processTicks() {
     if (processingTicks) return;
     processingTicks = true;
     try {
       do {
         while (tickHead < tickQueue.length && !dead) {
-          const tick = tickQueue[tickHead];
-          tickQueue[tickHead++] = undefined;
-          // A tick that queues the next one keeps the queue growing at its end while it
-          // drains from the front, so drop the used half once it is large.
-          if (tickHead >= kCompactAfter && tickHead * 2 >= tickQueue.length) {
-            const live = tickQueue.length - tickHead;
-            for (let i = 0; i < live; i++) tickQueue[i] = tickQueue[tickHead + i];
-            tickQueue.length = live;
-            tickHead = 0;
-          }
           try {
-            apply(tick.callback, undefined, tick.args);
+            callRecording(runTicks, undefined);
           } catch (err) {
-            trigger(err, false);
+            trigger(err, false, takeSite());
           }
         }
         tickQueue.length = 0;
@@ -207,15 +270,16 @@
   }
 
   // callback enters JavaScript from the event loop. Go only sees an exception's text, so
-  // catching it here is what gives the handlers the thrown value itself. The outermost one
-  // runs the tick and microtask queues before returning, as node::MakeCallback does.
+  // catching it here is what gives the handlers the thrown value itself, and where it was
+  // thrown. The outermost one runs the tick and microtask queues before returning, as
+  // node::MakeCallback does.
   function callback(fn, recv, ...args) {
     let result;
     depth++;
     try {
-      result = apply(fn, recv, args);
+      result = callWith(fn, recv, args);
     } catch (err) {
-      trigger(err, false);
+      trigger(err, false, takeSite());
       result = undefined;
     } finally {
       depth--;
