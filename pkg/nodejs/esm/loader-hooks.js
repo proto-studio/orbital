@@ -354,7 +354,7 @@
   // Captured now, like the error constructors, so a hook's initialize()
   // replacing them can't change how attributes cross to Go.
   const ObjectKeys = Object.keys;
-  const hasOwn = Object.prototype.hasOwnProperty;
+  // hasOwn is captured above, with __rejectionProps.
   const ObjectDefineProperty = Object.defineProperty;
   const ObjectCreate = Object.create;
   const JSONStringify = JSON.stringify;
