@@ -13,15 +13,22 @@ func TestImportPreload_HandledFailureStopsStartup(t *testing.T) {
 	dir := t.TempDir()
 	pre := filepath.Join(dir, "pre.cjs")
 	entry := filepath.Join(dir, "entry.mjs")
-	if err := os.WriteFile(pre, []byte(`process.on('uncaughtException', (e) => console.log('caught', e.code)); process.on('exit', (c) => console.log('exit', c));`), 0o644); err != nil {
+	if err := os.WriteFile(pre, []byte(`process.on('uncaughtException', (e) => console.log('caught', e.code)); process.on('beforeExit', () => console.log('beforeExit')); process.on('exit', (c) => console.log('exit', c));`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(entry, []byte(`console.log('entry ran');`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, code := runOrbital(t, "", "-r", pre, "--import", filepath.Join(dir, "nope.mjs"), entry)
-	if code != 0 || out != "caught ERR_MODULE_NOT_FOUND\nexit 0\n" {
-		t.Fatalf("exit %d, output %q", code, out)
+	script := filepath.Join(dir, "entry.cjs")
+	if err := os.WriteFile(script, []byte(`console.log('entry ran');`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 'beforeExit' fires as the loop runs out, for a module or a script entry.
+	for _, e := range []string{entry, script} {
+		out, code := runOrbital(t, "", "-r", pre, "--import", filepath.Join(dir, "nope.mjs"), e)
+		if code != 0 || out != "caught ERR_MODULE_NOT_FOUND\nbeforeExit\nexit 0\n" {
+			t.Fatalf("%s: exit %d, output %q", e, code, out)
+		}
 	}
 }
 
