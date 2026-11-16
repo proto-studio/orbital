@@ -522,6 +522,10 @@ func (e *ESM) pathOf(key string) string {
 // hookURLKey is the module url for a url a resolve hook returned: a file: URL
 // becomes its path (keeping a query or fragment as a distinct module).
 func (e *ESM) hookURLKey(raw string) (string, error) {
+	// The loader's own keys for builtins and native modules stay as they are.
+	if strings.HasPrefix(raw, "node:") || strings.HasPrefix(raw, "native:") {
+		return raw, nil
+	}
 	u, isFile := canonicalFileURL(raw)
 	if !isFile {
 		// Serialized as the URL parser would (controls and non-ASCII escaped),

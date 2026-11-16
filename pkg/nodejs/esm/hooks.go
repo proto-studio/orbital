@@ -210,13 +210,14 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 			return c.Throw("Cannot load module '" + url + "': " + lerr.Error())
 		}
 		obj, _ := c.NewObject()
-		// Like Node's default load, check the import's attributes against the
-		// format the chain settled on (context.format), or the detected one.
+		// Like Node's default load, the format the chain settled on
+		// (context.format) wins over the detected one, for the attribute check
+		// and the module.
+		if f := argString(info, 1); f != "" {
+			format = f
+		}
 		if argString(info, 3) != "" {
-			checkFormat := argString(info, 1)
-			if checkFormat == "" {
-				checkFormat = format
-			}
+			checkFormat := format
 			attrs, typeReceived := parseAttrsJSON(argString(info, 2))
 			if cerr := checkHookAttributes(e.displayURL(url), checkFormat, attrs, typeReceived); cerr != nil {
 				me := cerr.(*moduleError)

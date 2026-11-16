@@ -604,3 +604,35 @@ log.push((await import('./v.js', { with: { type: '\uDC00' } })).default);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A resolve hook's format is the module's format in the default load too; a getter
+// on the result's importAttributes, or inside attributes that need rebuilding, runs
+// once; and a setter a hook puts on TypeError.prototype doesn't touch the loader's
+// errors. Expected from Node 20.18.1.
+func TestImportAttributes_HookFormatGettersAndPrototypes(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"data.txt": `{"j":1}`,
+		"v.js":     ``,
+		"d.mjs":    `export default 1;`,
+		"hooks.mjs": `export function initialize() { Object.defineProperty(TypeError.prototype, 'code', { set() { throw new Error('setter'); }, configurable: true }); }
+export async function resolve(s, c, n) {
+  if (s === './txt') return { ...(await n('./data.txt', c)), format: 'json' };
+  if (s === './rg') { let i = 0; const r = await n('./v.js?rg', c); return Object.defineProperty({ ...r }, 'importAttributes', { enumerable: true, get() { return i++ === 0 ? { type: 'a' } : 5; } }); }
+  if (s === './sg') { let i = 0; const a = []; a[3] = 1; Object.defineProperty(a, 0, { enumerable: true, get() { return ['a', 'b'][i++]; } }); return { ...(await n('./v.js?sg', c)), importAttributes: a }; }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('v.js')) { const a = c.importAttributes; return { format: 'module', source: 'export default ' + JSON.stringify(Array.isArray(a) ? [a.length, a[0]] : a.type), shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const [s, o] of [['./txt', { with: { type: 'json' } }], ['./rg'], ['./sg'], ['./d.mjs', { with: { type: 'css' } }]]) {
+  try { log.push((await import(s, o)).default); } catch (e) { log.push(e.code); }
+}`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[{"j":1},"a",[4,"a"],"ERR_IMPORT_ASSERTION_TYPE_UNSUPPORTED"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
