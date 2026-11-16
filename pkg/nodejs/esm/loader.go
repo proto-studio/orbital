@@ -109,6 +109,9 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malfor
 	if d, err := url.PathUnescape(rest); err == nil {
 		decoded = d
 		malformed = !utf8.ValidString(d) && utf8.ValidString(rest)
+	} else {
+		// An escape that isn't "%" and two hex digits.
+		malformed = true
 	}
 	if strings.HasPrefix(rest, "/") {
 		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep, malformed
@@ -350,8 +353,10 @@ func (e *ESM) resolveIndex(dir string) string {
 // resolveToURL implements Node's default resolution and returns a stable module
 // url (an absolute path, or "node:<name>" for builtins).
 func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
-	// Node reads a specifier as a URL, which drops tabs and newlines anywhere.
-	spec := urlWhitespace.Replace(specifier)
+	// Builtins and native modules match the specifier exactly. After that Node
+	// reads it as a URL (a package name too, when it looks the package up), and
+	// the URL parser drops tabs and newlines wherever they appear.
+	spec := specifier
 
 	// Builtins (with or without node: prefix).
 	if bare, ok := e.builtinBare(spec); ok {
@@ -367,6 +372,8 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 		return "native:" + nativeName, nil
 	}
 
+	rawSpec := spec
+	spec = urlWhitespace.Replace(spec)
 	dir := e.referrerDir(referrer)
 	var attempted, encoded, suffix string
 	if isURLSpecifier(spec) {
@@ -389,7 +396,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	case winAbs(spec):
 		attempted = spec
 	default:
-		abs, suffix, err := e.resolveBare(spec, dir, referrer)
+		abs, suffix, err := e.resolveBare(spec, rawSpec, dir, referrer)
 		if err != nil {
 			return "", err
 		}
@@ -447,8 +454,8 @@ func (e *ESM) encodedSeparator(encoded, referrer string) *moduleError {
 }
 
 // validPackageTarget reports whether an "exports" target is one Node accepts:
-// "./" followed by segments none of which is empty, ".", "..", or
-// node_modules (in any case, percent-encoded or not).
+// "./" followed by segments none of which is ".", "..", or node_modules (in
+// any case, percent-encoded or not).
 func validPackageTarget(target string) bool {
 	if !strings.HasPrefix(target, "./") {
 		return false
@@ -457,8 +464,9 @@ func validPackageTarget(target string) bool {
 		if d, err := url.PathUnescape(seg); err == nil {
 			seg = d
 		}
+		// An empty segment ("dist//x") is deprecated in Node but allowed.
 		switch strings.ToLower(seg) {
-		case "", ".", "..", "node_modules":
+		case ".", "..", "node_modules":
 			return false
 		}
 	}
@@ -545,7 +553,9 @@ func splitBare(specifier string) (pkg, sub string) {
 // node_modules directory (walking up from fromDir) that contains the package
 // decides the result, and a missing package or entry is an error.
 // It also returns the query or fragment the module's url keeps (see resolvePackage).
-func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, string, error) {
+// rawSpecifier is the specifier before tabs and newlines were dropped, whose
+// package name Node's error names.
+func (e *ESM) resolveBare(specifier, rawSpecifier, fromDir, referrer string) (string, string, error) {
 	pkg, sub := splitBare(specifier)
 	dir := fromDir
 	for {
@@ -559,7 +569,8 @@ func (e *ESM) resolveBare(specifier, fromDir, referrer string) (string, string, 
 		}
 		dir = parent
 	}
-	return "", "", e.packageNotFound(pkg, referrer)
+	rawPkg, _ := splitBare(rawSpecifier)
+	return "", "", e.packageNotFound(rawPkg, referrer)
 }
 
 // resolvePackage resolves sub (".", or "./path") inside the package at pkgDir.
@@ -674,7 +685,11 @@ func resolveExportsTarget(exp interface{}) string {
 	case string:
 		return v
 	case []interface{}:
+		// Alternatives: an invalid target is skipped for the next one, as in Node.
 		for _, e := range v {
+			if s, ok := e.(string); ok && !validPackageTarget(s) {
+				continue
+			}
 			if r := resolveExportsTarget(e); r != "" {
 				return r
 			}

@@ -518,3 +518,30 @@ for (const n of [` + strings.Join(quoted, ",") + `]) log.push(await r('./' + enc
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A builtin is matched before tabs and newlines are dropped, a package name after;
+// an "exports" target may repeat a separator, an array skips invalid alternatives,
+// and a malformed escape is a URIError. Expected from Node 20.18.1.
+func TestDynamicImport_BareWhitespaceTargetsAndBadEscapes(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/pkg/package.json":  `{"type":"module"}`,
+		"node_modules/pkg/sub.js":        `export default 'sub';`,
+		"node_modules/dd/package.json":   `{"type":"module","exports":"./dist//index.mjs"}`,
+		"node_modules/dd/dist/index.mjs": `export default 'dd';`,
+		"node_modules/arr/package.json":  `{"type":"module","exports":{".":["../invalid.mjs","./valid.mjs"]}}`,
+		"node_modules/arr/valid.mjs":     `export default 'valid';`,
+		"bad%ZZ.mjs":                     `export default 'lit';`,
+		"a%2.mjs":                        `export default 'lit2';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.name, e.code, e.message.split(' imported')[0].replace(d, '<d>')]; } };
+log.push(await r('f\ns'), await r('p\nkg/sub.js'), await r('p\nkg'), await r('dd'), await r('arr'), await r('./bad%ZZ.mjs'), await r('./a%2.mjs'), await r('./x%'));`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `[["Error","ERR_MODULE_NOT_FOUND","Cannot find package 'f\ns'"],"sub",` +
+		`["Error","ERR_MODULE_NOT_FOUND","Cannot find package '<d>/node_modules/pkg/index.js'"],"dd","valid",` +
+		`["URIError",null,"URI malformed"],["URIError",null,"URI malformed"],["URIError",null,"URI malformed"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
