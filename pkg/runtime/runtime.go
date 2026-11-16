@@ -460,9 +460,16 @@ func (rt *Runtime) RunEventLoop() {
 // RunEventLoopWhile is RunEventLoop for a caller waiting on something (Node's startup
 // awaiting an --import): when the loop empties, 'beforeExit' is emitted only while
 // waiting reports true, since a listener may be what settles it.
+//
+// The loop stops as soon as waiting reports false, even with work left (an --import's
+// open handles don't hold back the entry).
 func (rt *Runtime) RunEventLoopWhile(waiting func() bool) {
 	for {
-		rt.eventLoop.Run()
+		if waiting == nil {
+			rt.eventLoop.Run()
+		} else if waiting() {
+			rt.eventLoop.RunUntil(func() bool { return !waiting() })
+		}
 		if rt.Ended() != nil || rt.execController.IsDone() {
 			return
 		}

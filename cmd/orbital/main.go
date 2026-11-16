@@ -808,8 +808,8 @@ func emitExit(rt *runtime.Runtime) (code int, set, threw bool) {
 	if ended := rt.Ended(); ended != nil {
 		exitWithError(ended)
 	}
-	// undefined when unset; any number (negative ones included) when set.
-	if v, err := rt.RunScript(`(typeof process === 'undefined' || process.exitCode === undefined) ? undefined : Number(process.exitCode)`, "[exit]"); err == nil && v != nil && !v.IsUndefined() {
+	// undefined when unset (null included); any number, negative ones too, when set.
+	if v, err := rt.RunScript(`(typeof process === 'undefined' || process.exitCode == null) ? undefined : Number(process.exitCode)`, "[exit]"); err == nil && v != nil && !v.IsUndefined() {
 		code, set = int(v.Integer()), true
 	}
 	return code, set, threw
