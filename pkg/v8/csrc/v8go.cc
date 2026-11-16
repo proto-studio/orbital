@@ -445,9 +445,13 @@ static void hostInitializeImportMeta(Local<Context> context,
             }
         }
     }
-    // A module imported with a type is cached under "<url>\x01<type>"; the
-    // type isn't part of its url.
-    std::string href = url.substr(0, url.find('\x01'));
+    // A module imported with a type is cached under "\x01<type>\x01<url>";
+    // the type isn't part of its url.
+    std::string href = url;
+    if (!href.empty() && href[0] == '\x01') {
+        size_t end = href.find('\x01', 1);
+        href = end == std::string::npos ? std::string() : href.substr(end + 1);
+    }
     if (!href.empty() && href.rfind("node:", 0) != 0 &&
         href.rfind("file://", 0) != 0 && href[0] == '/') {
         href = "file://" + href;
