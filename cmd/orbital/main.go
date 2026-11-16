@@ -647,8 +647,9 @@ func runESModule(filename string) error {
 				exitUnsettled(rt)
 			}
 			if errors.Is(err, esm.ErrPreloadFailed) {
-				// A listener handled the failure; like Node, end without the entry.
-				rt.EventLoop().Run()
+				// A listener handled the failure; like Node, end without the entry
+				// ('beforeExit' still fires as the loop runs out).
+				rt.RunEventLoop()
 				if ended := rt.Ended(); ended != nil {
 					return ended
 				}
@@ -889,8 +890,9 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 				exitUnsettled(rt)
 			}
 			if errors.Is(err, esm.ErrPreloadFailed) {
-				// A listener handled the failure; like Node, end without the entry.
-				rt.EventLoop().Run()
+				// A listener handled the failure; like Node, end without the entry
+				// ('beforeExit' still fires as the loop runs out).
+				rt.RunEventLoop()
 				if ended := rt.Ended(); ended != nil {
 					return ended
 				}
