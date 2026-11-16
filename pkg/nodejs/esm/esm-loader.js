@@ -129,8 +129,10 @@
     Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
     RangeError: RangeError, SyntaxError: SyntaxError, ReferenceError: ReferenceError, EvalError: EvalError,
   };
-  globalThis.__esmHookError = function (payload) {
+  // props, when given, is the error's own properties as structured-cloned.
+  globalThis.__esmHookError = function (payload, props) {
     var d = jsonParse(payload);
+    if (props !== undefined) d.props = props;
     var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
     var err = new Ctor(d.message);
     var keys = objectKeys(d.props || {});

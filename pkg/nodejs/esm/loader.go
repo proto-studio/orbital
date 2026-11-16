@@ -156,6 +156,37 @@ func nodePlatform() string {
 	return goruntime.GOOS
 }
 
+// canonicalFileURL reads s as the URL parser reads a file: URL: edge controls
+// and spaces trimmed, tabs and newlines dropped, the scheme in any case, a
+// backslash before the query or fragment a "/", and file:p, file:/p and
+// file:///p alike. It returns "file://<host><path><query/fragment>", and false
+// when s isn't a file: URL.
+func canonicalFileURL(s string) (string, bool) {
+	t := strings.TrimFunc(s, func(r rune) bool { return r <= ' ' })
+	t = urlWhitespace.Replace(t)
+	if len(t) < 5 || !strings.EqualFold(t[:5], "file:") {
+		return "", false
+	}
+	rest, suffix := t[5:], ""
+	if i := strings.IndexAny(rest, "?#"); i >= 0 {
+		rest, suffix = rest[:i], rest[i:]
+	}
+	rest = strings.ReplaceAll(rest, "\\", "/")
+	host := ""
+	if strings.HasPrefix(rest, "//") {
+		rest = rest[2:]
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			host, rest = rest[:i], rest[i:]
+		} else {
+			host, rest = rest, ""
+		}
+	}
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return "file://" + host + rest + suffix, true
+}
+
 // fileURLHost returns the host of a file:// URL specifier, lowercased (the
 // URL parser lowercases it), or "" when it has none.
 func fileURLHost(spec string) string {
@@ -263,11 +294,12 @@ func (e *ESM) pathOf(key string) string {
 
 // hookURLKey is the module url for a url a resolve hook returned: a file: URL
 // becomes its path (keeping a query or fragment as a distinct module).
-func (e *ESM) hookURLKey(u string) (string, error) {
-	if !strings.HasPrefix(u, "file:") {
-		return u, nil
+func (e *ESM) hookURLKey(raw string) (string, error) {
+	u, isFile := canonicalFileURL(raw)
+	if !isFile {
+		return raw, nil
 	}
-	if err := checkFileURLHost(u, u, ""); err != nil {
+	if err := checkFileURLHost(u, raw, ""); err != nil {
 		return "", err
 	}
 	path, encoded, suffix, _, malformed := urlPath(u, "/")
@@ -414,14 +446,25 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	}
 
 	rawSpec := spec
-	spec = urlWhitespace.Replace(spec)
 	dir := e.referrerDir(referrer)
 	var attempted, encoded, suffix string
 	// A relative or absolute path is told from its raw spelling (a leading tab
-	// makes it a bare name, as in Node); a file: URL after the parser's cleanup.
+	// makes it a bare name, as in Node); a file: URL as the URL parser reads it.
+	// "//host/p" is a network-path reference: against a file: base it names the
+	// file URL with that host.
+	urlSpec := spec
+	if strings.HasPrefix(rawSpec, "//") {
+		urlSpec = "file:" + spec
+	}
+	canon, isFile := canonicalFileURL(urlSpec)
 	pathLike := strings.HasPrefix(rawSpec, "./") || strings.HasPrefix(rawSpec, "../") || strings.HasPrefix(rawSpec, "/")
+	if isFile {
+		spec = canon
+	} else {
+		spec = urlWhitespace.Replace(spec)
+	}
 	switch {
-	case pathLike || strings.HasPrefix(spec, "file:"):
+	case pathLike || isFile:
 		if err := checkFileURLHost(spec, rawSpec, e.importerURL(referrer)); err != nil {
 			return "", err
 		}
@@ -471,6 +514,9 @@ type moduleError struct {
 	// hookValue, when set, is a non-error value a loader hook threw, serialized
 	// with V8's ValueSerializer for the importer to get a structured clone.
 	hookValue []byte
+	// hookProps is a hook error's own enumerable properties, serialized with
+	// V8's ValueSerializer (see __rejectionProps).
+	hookProps []byte
 	// hookPayload, when set, describes an error a loader hook threw (see
 	// __describeRejection), which the importer gets rebuilt as it was.
 	hookPayload string
@@ -756,39 +802,57 @@ func jsonString(raw json.RawMessage) string {
 // target was found, which may be invalid (even ""), for resolvePackage to
 // refuse as Node does.
 func resolveExportsTarget(exp interface{}) (target string, ok bool) {
+	t, kind := exportsTarget(exp)
+	return t, kind == targetFound
+}
+
+// What an "exports" value resolves to: nothing, a target, or null (explicitly
+// not exported), which Node keeps apart in arrays of alternatives.
+const (
+	targetAbsent = iota
+	targetFound
+	targetNull
+)
+
+func exportsTarget(exp interface{}) (string, int) {
 	switch v := exp.(type) {
+	case nil:
+		return "", targetNull
 	case string:
-		return v, true
+		return v, targetFound
 	case []interface{}:
-		// Alternatives: an invalid target is skipped for the next one, as in Node.
-		// With no valid one left, the last invalid one is returned, for its error.
-		last, sawInvalid := "", false
+		// Alternatives: an invalid target is skipped for the next one, as in
+		// Node; a null (even nested) clears an earlier invalid one. With no
+		// valid one left, the last invalid one is returned, for its error.
+		last, sawInvalid, sawNull := "", false, false
 		for _, e := range v {
-			if e == nil {
-				// null: not exported, which also clears an earlier invalid one.
-				last, sawInvalid = "", false
-				continue
+			r, kind := exportsTarget(e)
+			switch kind {
+			case targetNull:
+				last, sawInvalid, sawNull = "", false, true
+			case targetFound:
+				if validPackageTarget(r) {
+					return r, targetFound
+				}
+				last, sawInvalid = r, true
 			}
-			r, ok := resolveExportsTarget(e)
-			if !ok {
-				continue
-			}
-			if validPackageTarget(r) {
-				return r, true
-			}
-			last, sawInvalid = r, true
 		}
-		return last, sawInvalid
+		if sawInvalid {
+			return last, targetFound
+		}
+		if sawNull {
+			return "", targetNull
+		}
 	case map[string]interface{}:
 		for _, c := range exportConditions {
 			if sub, ok := v[c]; ok {
-				if r, ok := resolveExportsTarget(sub); ok {
-					return r, true
+				if r, kind := exportsTarget(sub); kind != targetAbsent {
+					return r, kind
 				}
 			}
 		}
 	}
-	return "", false
+	return "", targetAbsent
 }
 
 // resolveExports finds the target the "exports" value maps sub to; ok as in
