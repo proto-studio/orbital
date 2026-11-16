@@ -205,6 +205,13 @@ func (c *Crypto) keyAgreementFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}
+	// dh.js checks the kinds, but scripts can reach this native directly.
+	if priv.kind != "private" {
+		return ctx.Throw(dhErr("ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE", "Invalid key object type "+priv.kind+", expected private.").Error())
+	}
+	if pub.kind != "private" && pub.kind != "public" {
+		return ctx.Throw(dhErr("ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE", "Invalid key object type "+pub.kind+", expected private or public.").Error())
+	}
 	if priv.asymType != pub.asymType || (priv.asymType == "ec" && priv.crv != pub.crv) {
 		return ctx.Throw(errIncompatibleKeys(priv.asymType, pub.asymType).Error())
 	}
@@ -212,18 +219,24 @@ func (c *Crypto) keyAgreementFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	switch priv.asymType {
 	case "x25519":
 		p := pub.xPub
-		if p == nil {
+		if p == nil && pub.xPriv != nil {
 			p = pub.xPriv.PublicKey()
+		}
+		if priv.xPriv == nil || p == nil {
+			return ctx.Throw(dhErr("ERR_CRYPTO_OPERATION_FAILED", "Failed to compute shared secret").Error())
 		}
 		secret, err = priv.xPriv.ECDH(p)
 	case "ec":
 		var a *ecdh.PrivateKey
 		var b *ecdh.PublicKey
+		ecPub := pub.ecPub
+		if ecPub == nil && pub.ecPriv != nil {
+			ecPub = &pub.ecPriv.PublicKey
+		}
+		if priv.ecPriv == nil || ecPub == nil {
+			return ctx.Throw(dhErr("ERR_CRYPTO_OPERATION_FAILED", "Failed to compute shared secret").Error())
+		}
 		if a, err = priv.ecPriv.ECDH(); err == nil {
-			ecPub := pub.ecPub
-			if ecPub == nil {
-				ecPub = &pub.ecPriv.PublicKey
-			}
 			if b, err = ecPub.ECDH(); err == nil {
 				secret, err = a.ECDH(b)
 			}

@@ -72,6 +72,19 @@ results.ecdhKeyPair = (() => {
     ownAgain: outcome(() => ownAgain.computeSecret(other)),
   };
 })();
+// Private keys are exported without leading zero bytes, as OpenSSL does.
+results.ecdhPrivateExport = outcome(() => {
+  const a = crypto.createECDH('prime256v1');
+  a.setPrivateKey(Buffer.from([1]));
+  const b = crypto.createECDH('secp384r1');
+  b.setPrivateKey(Buffer.concat([Buffer.alloc(5), Buffer.alloc(43, 7)]));
+  const c = crypto.createECDH('prime256v1');
+  c.setPrivateKey(Buffer.concat([Buffer.alloc(1), Buffer.alloc(31, 9)]));
+  const d = crypto.createECDH('prime256v1');
+  d.setPrivateKey(c.getPrivateKey());
+  return [a.getPrivateKey('hex'), a.getPublicKey('hex'), b.getPrivateKey().length, c.getPrivateKey('hex'),
+    d.computeSecret(a.getPublicKey()).equals(c.computeSecret(a.getPublicKey()))];
+});
 results.ecdhErrors = {
   unknownCurve: outcome(() => crypto.createECDH('nope')),
   nistName: outcome(() => crypto.createECDH('P-256')),
