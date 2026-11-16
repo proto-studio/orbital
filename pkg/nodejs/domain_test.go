@@ -293,6 +293,14 @@ setTimeout(() => {
   c.run(() => Promise.resolve().then(() => e2.run(() => { throw new Error('inner only'); })));
 }, 10);
 `, []string{"b caught nested", "inner only caught inner only"}},
+		"owner over ambient domain": {`
+const domain = require('domain');
+const a = domain.create(), b = domain.create();
+a.on('error', (e) => note('a caught', e.message));
+b.on('error', (e) => note('b caught', e.message));
+a.enter();
+b.run(() => Promise.resolve().then(() => { throw new Error('x'); }));
+`, []string{"b caught x"}},
 		"outside any domain": {`
 require('domain').create();
 process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));

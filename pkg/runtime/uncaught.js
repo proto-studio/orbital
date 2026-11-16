@@ -266,14 +266,18 @@
   // reports an unhandled rejection to the domain that was active when the promise was
   // rejected.
   // A promise then() returned while a domain was active belongs to that domain even if it
-  // rejects later; the domain module keeps track of those promises.
+  // rejects later; the domain module keeps track of those promises. Any other rejection
+  // belongs to the domain active when it happens.
   function activeDomain(promise) {
     try {
-      const p = getProcess();
-      let d = p ? p.domain : null;
+      // The promise's own domain comes first: by the time V8 reports the rejection the
+      // reaction has returned, and whatever domain is active is an outer one.
+      let d = null;
+      const dm = globalThis.__domain_module;
+      if (dm && typeof dm._rejectionDomainFor === 'function') d = dm._rejectionDomainFor(promise);
       if (!d) {
-        const dm = globalThis.__domain_module;
-        if (dm && typeof dm._rejectionDomainFor === 'function') d = dm._rejectionDomainFor(promise);
+        const p = getProcess();
+        d = p ? p.domain : null;
       }
       return d && typeof d === 'object' && typeof d.emit === 'function' ? d : null;
     } catch (_) {
