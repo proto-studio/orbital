@@ -138,8 +138,11 @@
   // structured-cloned, a cause that is an error described the same way.
   // Like Node's deserialized errors, the result has its class's prototype and
   // own name, message, stack and (if it had one) cause, then its properties.
+  var NativeSymbol = Symbol;
   globalThis.__esmHookError = function hookError(payload, bag) {
     var d = jsonParse(payload);
+    // A symbol a hook threw.
+    if (d.symbol === true) return d.description === null ? NativeSymbol() : NativeSymbol(d.description);
     var props = d.props || {};
     if (bag !== undefined && bag !== null) props = bag.props || {};
     var Ctor = (typeof d.ctor === 'string' && apply(hasOwn, hookCtors, [d.ctor])) ? hookCtors[d.ctor] : NativeError;
