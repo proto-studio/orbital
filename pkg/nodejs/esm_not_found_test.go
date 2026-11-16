@@ -762,3 +762,30 @@ try { await import('map'); } catch (e) { log.push(e instanceof Map, e.get(1)); }
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// File URLs as the URL parser reads them (backslash authority, edge spaces, scheme
+// case, network-path references), a nested null in an exports array clearing an
+// invalid alternative, and a hook error's properties structured-cloned across.
+// Expected from Node 20.18.1 (an unresolved export falls back to the legacy entry,
+// as Orbital doesn't enforce exports yet).
+func TestDynamicImport_URLParserFormsNullsAndErrorProps(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"x.mjs":                         `export default 'x';`,
+		"node_modules/an2/package.json": `{"type":"module","exports":{".":["../bad",[null]]}}`,
+		"node_modules/an2/index.js":     `export default 'idx';`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'x') { const e = Object.assign(new Error('x'), { nan: NaN, big: 1n, code: 'C' }); e.cyc = { a: 1 }; e.cyc.me = e.cyc; throw e; }
+  return n(s, c);
+}`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return e.code; } };
+for (const s of ['file:\\\\localhost' + d.replace(/\//g, '\\') + '\\x.mjs', ' file://' + d + '/x.mjs', 'file://' + d + '/x.mjs ', 'FILE://' + d + '/x.mjs', '//localhost' + d + '/x.mjs', '//example.com' + d + '/x.mjs', 'an2']) log.push(await r(s));
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+try { await import('x'); } catch (e) { log.push([Number.isNaN(e.nan), typeof e.big, e.code, e.cyc.me === e.cyc, Object.keys(e).join()]); }`,
+	})
+	want := `["x","x","x","x","x","ERR_INVALID_FILE_URL_HOST","idx",[true,"bigint","C",true,"nan,big,code,cyc"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

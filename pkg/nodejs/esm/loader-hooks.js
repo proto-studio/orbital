@@ -40,6 +40,23 @@
     return err;
   }
 
+  // An error's own enumerable properties, for Go to structured-clone across
+  // (V8's serializer keeps NaN, BigInts and cycles, which JSON doesn't). A value
+  // that can't be cloned is left out.
+  const cloneValue = typeof structuredClone === 'function' ? structuredClone : null;
+  globalThis.__rejectionProps = function (e) {
+    const props = {};
+    const keys = objectKeys(e);
+    for (let i = 0; i < keys.length; i++) {
+      try {
+        const v = e[keys[i]];
+        if (cloneValue) cloneValue(v);
+        props[keys[i]] = v;
+      } catch (err) { /* not transferable */ }
+    }
+    return props;
+  };
+
   // Describes a rejection for Go, which rebuilds it in the application realm
   // with its class, message, stack and own enumerable properties, as Node's
   // transfer of an error from its hooks thread keeps them (so even Node's own

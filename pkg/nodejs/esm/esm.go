@@ -439,7 +439,13 @@ func (e *ESM) throwable(err error) error {
 		if serr != nil {
 			return err
 		}
-		exc, cerr := fn.Call(nil, arg)
+		args := []*v8.Value{arg}
+		if me.hookProps != nil {
+			if props, derr := ctx.DeserializeValue(me.hookProps, nil); derr == nil {
+				args = append(args, props)
+			}
+		}
+		exc, cerr := fn.Call(nil, args...)
 		if cerr != nil || exc == nil {
 			return err
 		}
@@ -586,5 +592,15 @@ func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
 		return &moduleError{msg: "a loader hook threw " + reason.String(), hookValue: data}
 	}
 	code, _ := d.Props["code"].(string)
-	return &moduleError{msg: d.Name + ": " + d.Message, code: code, hookPayload: payload}
+	me := &moduleError{msg: d.Name + ": " + d.Message, code: code, hookPayload: payload}
+	// The properties themselves cross through V8's serializer, keeping what
+	// JSON loses; the JSON copy stays as a fallback.
+	if propsFn, _ := global.Get("__rejectionProps"); propsFn != nil && propsFn.IsFunction() {
+		if props, perr := propsFn.Call(nil, reason); perr == nil && props != nil {
+			if data, serr := rt.Context().SerializeValue(props, nil); serr == nil {
+				me.hookProps = data
+			}
+		}
+	}
+	return me
 }
