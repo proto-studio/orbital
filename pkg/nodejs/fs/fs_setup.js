@@ -469,8 +469,14 @@
     checkCallback(callback);
     const encoding = encodingOf(options);
     _readFile.call(this, path, isUtf8(encoding), (err, contents) => {
-      if (err) callback(err);
-      else callback(null, decodeContents(contents, encoding));
+      if (err) return callback(err);
+      let decoded;
+      try {
+        decoded = decodeContents(contents, encoding);
+      } catch (e) {
+        return callback(e);
+      }
+      callback(null, decoded);
     });
   };
 
