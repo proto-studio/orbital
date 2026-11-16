@@ -233,8 +233,20 @@ func (v *Value) Integer() int64 {
 	return int64(C.v8go_value_to_integer(v.ctx.ptr, v.ptr))
 }
 
-// Call calls this value as a function.
+// Call calls this value as a function. When it throws, the error is a *JSError with the
+// message; see CallKeepingThrown for the value thrown.
 func (v *Value) Call(recv *Value, args ...*Value) (*Value, error) {
+	return v.call(false, recv, args)
+}
+
+// CallKeepingThrown is Call, but when the function throws, the *JSError also holds the value
+// thrown (JSError.Value), for the caller to throw again with Context.ThrowValue. The caller
+// owns that handle and releases it once done.
+func (v *Value) CallKeepingThrown(recv *Value, args ...*Value) (*Value, error) {
+	return v.call(true, recv, args)
+}
+
+func (v *Value) call(keepThrown bool, recv *Value, args []*Value) (*Value, error) {
 	if v.ptr == nil || v.ctx == nil || v.ctx.ptr == nil {
 		return nil, ErrDisposed
 	}
@@ -258,12 +270,21 @@ func (v *Value) Call(recv *Value, args ...*Value) (*Value, error) {
 	}
 
 	var errMsg *C.char
-	result := C.v8go_function_call(v.ctx.ptr, v.ptr, recvPtr, C.int(argc), (*unsafe.Pointer)(argvPtr), &errMsg)
+	var thrown unsafe.Pointer
+	var thrownOut *unsafe.Pointer
+	if keepThrown {
+		thrownOut = &thrown
+	}
+	result := C.v8go_function_call(v.ctx.ptr, v.ptr, recvPtr, C.int(argc), (*unsafe.Pointer)(argvPtr), &errMsg, thrownOut)
 
 	if errMsg != nil {
 		err := C.GoString(errMsg)
 		C.free(unsafe.Pointer(errMsg))
-		return nil, &JSError{Message: err}
+		jsErr := &JSError{Message: err}
+		if thrown != nil {
+			jsErr.Value = &Value{ptr: thrown, ctx: v.ctx}
+		}
+		return nil, jsErr
 	}
 
 	// Empty result with no captured exception == terminated/interrupted

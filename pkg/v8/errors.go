@@ -27,6 +27,9 @@ type JSError struct {
 	Message    string
 	Location   string
 	StackTrace string
+	// Value is what was thrown, when it's known: Value.CallKeepingThrown sets it, so a Go
+	// callback can throw it on unchanged with Context.ThrowValue.
+	Value *Value
 }
 
 func (e *JSError) Error() string {

@@ -1471,7 +1471,7 @@ void* v8go_callback_info_this(void* info_ptr) {
 }
 
 // Function call
-void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, int argc, void** argv, char** error) {
+void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, int argc, void** argv, char** error, void** exception) {
     if (!context_ptr || !function_ptr) return nullptr;
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
@@ -1520,8 +1520,15 @@ void* v8go_function_call(void* context_ptr, void* function_ptr, void* recv_ptr, 
             return nullptr;
         }
         if (try_catch.HasCaught()) {
-            String::Utf8Value exception(isolate, try_catch.Exception());
-            *error = strdup(*exception ? *exception : "Unknown error");
+            String::Utf8Value message(isolate, try_catch.Exception());
+            *error = strdup(*message ? *message : "Unknown error");
+            // The value thrown itself, so Go can hand it on or throw it again unchanged.
+            if (exception) {
+                ValueWrapper* thrown = new ValueWrapper();
+                thrown->isolate = isolate;
+                thrown->value.Reset(isolate, try_catch.Exception());
+                *exception = thrown;
+            }
         }
         return nullptr;
     }
@@ -1594,6 +1601,19 @@ char* v8go_json_stringify(void* context_ptr, void* value_ptr, char** error) {
 }
 
 // Exception handling
+// Throws value, which a Go callback got from a call that threw, in the context; the callback
+// then returns and the exception goes on to its caller.
+void v8go_throw_value(void* context_ptr, void* value_ptr) {
+    if (!context_ptr || !value_ptr) return;
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* val_wrapper = static_cast<ValueWrapper*>(value_ptr);
+    Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    isolate->ThrowException(val_wrapper->value.Get(isolate));
+}
+
 void* v8go_throw_exception(void* context_ptr, const char* message) {
     if (!context_ptr || !message) return nullptr;
     
