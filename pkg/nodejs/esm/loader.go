@@ -892,6 +892,7 @@ func (e *ESM) importerPath(referrer string) string {
 // importerURL is the importer's URL as Node names it on a resolution error:
 // its module URL, or the working directory's for an entry point.
 func (e *ESM) importerURL(referrer string) string {
+	referrer = untypedKey(referrer)
 	if referrer == "" {
 		return fileURL(strings.TrimSuffix(e.cwd(), "/") + "/")
 	}

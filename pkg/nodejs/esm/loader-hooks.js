@@ -547,6 +547,9 @@
   globalThis.__runResolve = async function (specifier, parentURL, attrsJSON) {
     const chain = buildChain('resolve', defaultResolve);
     const importAttributes = JSONParse(attrsJSON || '{}');
+    // A hook changing context.importAttributes in place doesn't change what is
+    // loaded; only a result's importAttributes does, as in Node.
+    const incoming = JSONParse(attrsJSON || '{}');
     const ctx = {
       parentURL: parentURL || undefined,
       conditions: ['node', 'import', 'module', 'default'],
@@ -563,10 +566,11 @@
       ownProp(err, 'code', 'ERR_INVALID_RETURN_PROPERTY_VALUE');
       throw internal(err);
     }
-    const resolvedAttributes = replaced != null ? replaced : importAttributes;
+    const resolvedAttributes = replaced != null ? replaced : incoming;
+    const format = res.format;
     return {
       url: res.url,
-      format: res.format == null ? '' : res.format,
+      format: format == null ? '' : format,
       importAttributes: stashAttrs(resolvedAttributes),
     };
   };

@@ -653,3 +653,30 @@ log.push(a.default, b.default);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A BigInt a hook throws arrives as that BigInt, mutating context.importAttributes in
+// place changes nothing, and a resolve result's format is read once. Expected from
+// Node 20.18.1.
+func TestImportAttributes_BigIntMutationAndFormatOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"v.js": ``,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'big') throw 10n;
+  if (s === './mut') { c.importAttributes.type = 'zzz'; return n('./v.js', c); }
+  if (s === './fmt') { let i = 0; const r = await n('./v.js?f', c); return Object.defineProperty({ ...r }, 'format', { enumerable: true, get() { return i++ === 0 ? 'module' : 'json'; } }); }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('v.js')) return { format: c.format === 'json' ? 'json' : 'module', source: c.format === 'json' ? '{"j":1}' : 'export default ' + JSON.stringify([u.endsWith('?f') ? c.format : null, c.importAttributes.type]), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('big'); } catch (e) { log.push(typeof e, String(e)); }
+log.push((await import('./mut')).default, (await import('./fmt')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["bigint","10",[null,null],["module",null]]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

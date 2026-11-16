@@ -97,9 +97,7 @@ func attrType(attrs []v8.ImportAttribute) (string, bool) {
 // displayURL is a module's url as Node reports it: a file: URL (with any query
 // or fragment) for a file, node:<name> for a builtin.
 func (e *ESM) displayURL(key string) string {
-	if i := strings.IndexByte(key, typeKeySep); i >= 0 {
-		key = key[:i]
-	}
+	key = untypedKey(key)
 	// Any absolute URL (node:, file:, or a scheme a hook made up) is kept.
 	if urlSchemeRe.MatchString(key) {
 		return key
@@ -111,8 +109,19 @@ func (e *ESM) displayURL(key string) string {
 	return fileURL(key)
 }
 
-// typeKeySep separates a module url from the import type in its cache key.
+// typeKeySep marks a typed cache key, "\x01<type>\x01<url>". Leading, so no
+// untyped key (a path or a URL, even one holding \x01) can look like one.
 const typeKeySep = '\x01'
+
+// untypedKey is the module url in a key, without the type a typed key adds.
+func untypedKey(key string) string {
+	if len(key) > 0 && key[0] == typeKeySep {
+		if i := strings.IndexByte(key[1:], typeKeySep); i >= 0 {
+			return key[i+2:]
+		}
+	}
+	return key
+}
 
 // typedKey is the module cache key for url imported with a type: like Node,
 // which keys modules by url and type, so a hook can load a url differently per
@@ -128,7 +137,7 @@ func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
 		return url
 	}
 	// Escaped, so the key has no NUL to cut it short in the glue.
-	key := url + string(typeKeySep) + neturl.QueryEscape(typ)
+	key := string(typeKeySep) + neturl.QueryEscape(typ) + string(typeKeySep) + url
 	if e.keyPaths == nil {
 		e.keyPaths = map[string]string{}
 	}
