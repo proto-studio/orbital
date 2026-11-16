@@ -809,6 +809,59 @@ for (const s of ['%61', '@scope', '.foo', 'a%2fb', 'a\\b', '@scope/%61', 'fo%6f'
 	}
 }
 
+// A hook error crosses as one snapshot (a nested getter runs once), its cause
+// keeps its own properties, an object that only inherits from Error.prototype
+// stays a plain object, and a replaced global String doesn't reach the coded
+// stack. Expected from Node 20.18.1.
+func TestDynamicImport_HookErrorSnapshotsCausesAndBrands(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'nested') { let reads = 0; const e = new Error('n'); e.extra = { get n() { return ++reads; } }; throw e; }
+  if (s === 'cause') throw new Error('outer', { cause: Object.assign(new TypeError('inner'), { code: 'INNER' }) });
+  if (s === 'fake') throw Object.assign(Object.create(Error.prototype), { reason: 'blocked' });
+  return n(s, c);
+}`,
+		"entry.mjs": `let missing;
+try { await import('./nope.mjs'); } catch (e) { missing = e; }
+const S = globalThis.String;
+globalThis.String = () => { throw new Error('replaced String'); };
+let header; try { header = missing.stack.split('\n')[0].slice(0, 30); } catch (x) { header = 'threw ' + x.message; }
+globalThis.String = S;
+log.push(header);
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+try { await import('nested'); } catch (e) { log.push(e.extra.n); }
+try { await import('cause'); } catch (e) { log.push([e.cause instanceof TypeError, e.cause.code, e.cause.message, Object.getOwnPropertyNames(e.cause).join()]); }
+try { await import('fake'); } catch (e) { log.push([e instanceof Error, Object.getOwnPropertyNames(e).join(), e.reason]); }`,
+	})
+	want := `["Error [ERR_MODULE_NOT_FOUND]: ",1,[true,"INNER","inner","name,message,stack,code"],[false,"reason","blocked"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// A "/\" network-path reference names a file URL host, a drive letter where a
+// file URL's host goes starts its path, a non-local host's error input is the
+// whole URL serialized, and an empty "exports" array clears an earlier invalid
+// alternative. Expected from Node 20.18.1 (where the export then isn't found;
+// Orbital, which doesn't enforce exports yet, falls back to the legacy entry).
+func TestDynamicImport_NetworkPathsDriveLettersAndEmptyTargets(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"tmp/x.mjs":                    `export default 'x';`,
+		"node_modules/ea/package.json": `{"name":"ea","exports":["../bad",[]],"main":"m.js"}`,
+		"node_modules/ea/m.js":         `module.exports = 'legacy';`,
+		"entry.mjs": `const dir = new URL('.', import.meta.url).pathname;
+for (const s of ['/\\localhost' + dir + 'tmp/x.mjs', '/\\example.com/tmp/x.mjs', 'file://C:/tmp/x.mjs', 'file://C|/tmp/x.mjs', 'file://example.com/a b', 'file://example.com/a/../b?q r#f g', 'ea']) {
+  try { log.push((await import(s)).default); } catch (e) { log.push([e.code, e.input || e.message.split(' imported')[0]]); }
+}`,
+	})
+	want := `["x",["ERR_INVALID_FILE_URL_HOST","file://example.com/tmp/x.mjs"],["ERR_MODULE_NOT_FOUND","Cannot find module '/C:/tmp/x.mjs'"],["ERR_MODULE_NOT_FOUND","Cannot find module '/C:/tmp/x.mjs'"],` +
+		`["ERR_INVALID_FILE_URL_HOST","file://example.com/a%20b"],["ERR_INVALID_FILE_URL_HOST","file://example.com/b?q%20r#f%20g"],"legacy"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.

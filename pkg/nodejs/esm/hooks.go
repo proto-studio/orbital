@@ -89,6 +89,9 @@ func (e *ESM) ensureLoaderRealm() error {
 	// current one) never has to reach into the application isolate.
 	e.loadBuiltins()
 
+	if err := installV8Clone(lrt); err != nil {
+		return fail(err)
+	}
 	if _, err := lrt.RunScript(loaderHooksJS, "loader-hooks.js"); err != nil {
 		return fail(err)
 	}
@@ -98,6 +101,42 @@ func (e *ESM) ensureLoaderRealm() error {
 
 	e.loader = &loaderRealm{rt: lrt, esm: le}
 	return nil
+}
+
+// installV8Clone installs __v8Clone in the loader realm, before loader-hooks.js
+// captures it: a structured clone made with V8's serializer, as Node's transfer
+// from its hooks thread is, so an Error is told by its brand rather than its
+// prototype chain. A value that can't be cloned throws.
+func installV8Clone(lrt *runtime.Runtime) error {
+	ctx := lrt.Context()
+	global, err := ctx.Global()
+	if err != nil {
+		return err
+	}
+	tmpl, err := lrt.Isolate().NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+		c := info.Context()
+		args := info.Args()
+		if len(args) == 0 {
+			return c.Undefined()
+		}
+		data, serr := c.SerializeValue(args[0], nil)
+		if serr != nil {
+			return c.Throw("DataCloneError: " + serr.Error())
+		}
+		out, derr := c.DeserializeValue(data, nil)
+		if derr != nil {
+			return c.Throw("DataCloneError: " + derr.Error())
+		}
+		return out
+	})
+	if err != nil {
+		return err
+	}
+	fn, err := tmpl.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	return global.Set("__v8Clone", fn)
 }
 
 // installLoaderBridges installs __goResolve / __goLoad in the loader realm.

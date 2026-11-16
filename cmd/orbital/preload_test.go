@@ -95,6 +95,7 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		"be.cjs":      "process.on('uncaughtException', (e) => console.log('caught', e.name)); process.on('beforeExit', () => console.log('beforeExit')); process.on('exit', (c) => console.log('exit', c));",
 		"missing.mjs": "import './nope.mjs';",
 		"nulltla.mjs": "process.exitCode = null; await new Promise(() => {});",
+		"strcode.mjs": "process.on('exit', (c) => console.log(typeof c, c)); process.exitCode = '7'; await new Promise(() => {});",
 		"handles.mjs": "const t = setInterval(() => {}, 1000); setTimeout(() => { clearInterval(t); console.log('cleared'); }, 300); await new Promise((r) => setTimeout(r, 20)); console.log('pre');",
 		"waits.mjs":   `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
 		"entry.mjs":   `console.log('entry');`,
@@ -135,6 +136,8 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		{[]string{"-r", p("be.cjs"), p("e2.mjs")}, "caught SyntaxError\nbeforeExit\nexit 0\n", 0},
 		// A null exitCode is unset: an unsettled await still exits 13.
 		{[]string{p("nulltla.mjs")}, "", 13},
+		// The 'exit' listeners get the code as a number.
+		{[]string{p("strcode.mjs")}, "number 7\n", 7},
 		// The entry runs once an --import settles, though its handles stay open.
 		{[]string{"--import", p("handles.mjs"), p("ok.mjs")}, "pre\nok\ncleared\n", 0},
 	}

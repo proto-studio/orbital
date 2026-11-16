@@ -592,8 +592,15 @@ func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
 		return nil
 	}
 	if d.Clone {
-		// A value that isn't an error: structured-cloned across, as Node does.
-		data, serr := rt.Context().SerializeValue(reason, nil)
+		// A value that isn't an error: structured-cloned across, as Node does,
+		// from the clone the loader realm took (so its getters ran once).
+		value := reason
+		if cloneFn, _ := global.Get("__rejectionClone"); cloneFn != nil && cloneFn.IsFunction() {
+			if c, cerr := cloneFn.Call(nil, reason); cerr == nil && c != nil {
+				value = c
+			}
+		}
+		data, serr := rt.Context().SerializeValue(value, nil)
 		if serr != nil {
 			return nil
 		}

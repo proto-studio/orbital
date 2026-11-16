@@ -59,6 +59,7 @@
   own(CodedTypeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
   var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  var NativeString = String;
   var stringIndexOf = String.prototype.indexOf;
   var stringSlice = String.prototype.slice;
   var hasOwn = Object.prototype.hasOwnProperty;
@@ -81,9 +82,9 @@
             // Like Node, the header is built from the name and message the
             // error has now (each read once), with the code it was created
             // with; the frames are the engine's.
-            var raw = String(holder.stack);
+            var raw = NativeString(holder.stack);
             var at = apply(stringIndexOf, raw, ['\n    at ']);
-            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + (at >= 0 ? apply(stringSlice, raw, [at]) : '');
+            value = NativeString(err.name) + ' [' + code + ']: ' + NativeString(err.message) + (at >= 0 ? apply(stringSlice, raw, [at]) : '');
           }
         }
         return value;
@@ -133,10 +134,11 @@
     Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
     RangeError: RangeError, SyntaxError: SyntaxError, ReferenceError: ReferenceError, EvalError: EvalError,
   };
-  // props, when given, is the error's own properties as structured-cloned.
+  // bag, when given, is the error's own properties and cause as
+  // structured-cloned, a cause that is an error described the same way.
   // Like Node's deserialized errors, the result has its class's prototype and
   // own name, message, stack and (if it had one) cause, then its properties.
-  globalThis.__esmHookError = function (payload, bag) {
+  globalThis.__esmHookError = function hookError(payload, bag) {
     var d = jsonParse(payload);
     var props = d.props || {};
     if (bag !== undefined && bag !== null) props = bag.props || {};
@@ -145,7 +147,10 @@
     own(err, 'name', d.name, false);
     own(err, 'message', d.message, false);
     own(err, 'stack', d.stack, false);
-    if (bag && bag.hasCause) own(err, 'cause', bag.cause, false);
+    if (bag && bag.hasCause) {
+      var causeError = bag.causeError;
+      own(err, 'cause', causeError ? hookError(causeError.payload, causeError.bag) : bag.cause, false);
+    }
     var keys = objectKeys(props);
     for (var i = 0; i < keys.length; i++) own(err, keys[i], props[keys[i]], true);
     return err;

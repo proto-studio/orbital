@@ -392,11 +392,25 @@ func canonicalFileURL(s string) (string, bool) {
 		} else {
 			host, rest = rest, ""
 		}
+		// A drive letter where the host goes ("file://C:/p") starts the path.
+		if isDriveLetter(host) {
+			host, rest = "", "/"+host+rest
+		}
 	}
 	if !strings.HasPrefix(rest, "/") {
 		rest = "/" + rest
 	}
+	// A drive letter opening a file URL's path is written with ":" ("C|" too).
+	if len(rest) >= 3 && isDriveLetter(rest[1:3]) && (len(rest) == 3 || rest[3] == '/') {
+		rest = "/" + rest[1:2] + ":" + rest[3:]
+	}
 	return "file://" + host + rest + suffix, true
+}
+
+// isDriveLetter reports whether s is a Windows drive letter as the URL parser
+// knows one: an ASCII letter and ":" or "|".
+func isDriveLetter(s string) bool {
+	return len(s) == 2 && (s[0]|0x20 >= 'a' && s[0]|0x20 <= 'z') && (s[1] == ':' || s[1] == '|')
 }
 
 // fileURLHost returns the host of a file:// URL specifier as the URL parser
@@ -547,14 +561,27 @@ func checkFileURLHost(u, input, module string) error {
 		}
 	}
 	if host := fileURLHost(u); host != "" && host != "localhost" {
-		// The error's input is the URL as parsed, its host serialized.
+		// The error's input is the URL as parsed: host, path (escaped, dot
+		// segments resolved), query and fragment serialized.
 		rest := u[len("file://"):]
 		if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
 			rest = rest[i:]
 		} else {
 			rest = ""
 		}
-		u = "file://" + host + rest
+		path, query, fragment := rest, "", ""
+		if i := strings.IndexByte(path, '#'); i >= 0 {
+			path, fragment = path[:i], path[i:]
+		}
+		if i := strings.IndexByte(path, '?'); i >= 0 {
+			path, query = path[:i], path[i:]
+		}
+		path = strings.ReplaceAll(path, "\\", "/")
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		u = "file://" + host + removeDotSegments(encodeURLPath(path), true) +
+			percentEncode(query, "\"#<>'") + percentEncode(fragment, "\"<>`")
 		return &moduleError{
 			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
 			code:      "ERR_INVALID_FILE_URL_HOST",
@@ -671,9 +698,10 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 	// A relative or absolute path is told from its raw spelling (a leading tab
 	// makes it a bare name, as in Node); a file: URL as the URL parser reads it.
 	// "//host/p" is a network-path reference: against a file: base it names the
-	// file URL with that host.
+	// file URL with that host. In a special URL "\\" reads as "/", so "/\\host/p"
+	// is one too.
 	urlSpec := spec
-	if strings.HasPrefix(rawSpec, "//") {
+	if strings.HasPrefix(rawSpec, "//") || strings.HasPrefix(rawSpec, "/\\") {
 		urlSpec = "file:" + spec
 	}
 	canon, isFile := canonicalFileURL(urlSpec)
@@ -1071,9 +1099,14 @@ func exportsTarget(exp interface{}) (string, int) {
 	case string:
 		return v, targetFound
 	case []interface{}:
+		// No alternatives at all is null, as in Node.
+		if len(v) == 0 {
+			return "", targetNull
+		}
 		// Alternatives: an invalid target is skipped for the next one, as in
-		// Node; a null (even nested) clears an earlier invalid one. With no
-		// valid one left, the last invalid one is returned, for its error.
+		// Node; a null (even nested, or an empty array) clears an earlier
+		// invalid one. With no valid one left, the last invalid one is returned,
+		// for its error.
 		last, sawInvalid, sawNull := "", false, false
 		for _, e := range v {
 			r, kind := exportsTarget(e)

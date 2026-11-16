@@ -41,87 +41,128 @@
     return err;
   }
 
-  // An error's own enumerable properties, for Go to structured-clone across
-  // (V8's serializer keeps NaN, BigInts and cycles, which JSON doesn't). A value
-  // that can't be cloned is left out.
-  const cloneValue = typeof structuredClone === 'function' ? structuredClone : null;
-  // An own cause (non-enumerable, as the Error constructor makes it) travels
-  // too, as Node's transfer keeps it.
+  // A thrown value crosses as Node's single transfer does: every property is
+  // read once, into a structured clone (V8's serializer keeps NaN, BigInts and
+  // cycles, which JSON doesn't), and both the JSON description and what Go
+  // serializes come from that snapshot. A value that can't be cloned is left out.
+  // V8's own structured clone (see installV8Clone in hooks.go), captured
+  // before any hook runs.
+  const cloneValue = typeof globalThis.__v8Clone === 'function' ? globalThis.__v8Clone
+    : typeof structuredClone === 'function' ? structuredClone : null;
+  delete globalThis.__v8Clone;
   const hasOwn = Object.prototype.hasOwnProperty;
   const objectDefineProperty = Object.defineProperty;
-  // Each property is read once, as Node's single serialization does: the values
-  // __describeRejection read are kept here for __rejectionProps.
-  const readProps = new WeakMap();
-  const readGet = WeakMap.prototype.get;
-  const readSet = WeakMap.prototype.set;
-  const readDelete = WeakMap.prototype.delete;
-  function ownProps(e) {
-    const read = reflectApply(readGet, readProps, [e]);
-    if (read !== undefined) {
-      reflectApply(readDelete, readProps, [e]);
-      return read;
+  const NativeString = String;
+  const stringIndexOf = String.prototype.indexOf;
+  const stringSlice = String.prototype.slice;
+  const snapshots = new WeakMap();
+  const snapGet = WeakMap.prototype.get;
+  const snapSet = WeakMap.prototype.set;
+  const snapDelete = WeakMap.prototype.delete;
+  function takeSnapshot(e) {
+    const snap = reflectApply(snapGet, snapshots, [e]);
+    if (snap !== undefined) reflectApply(snapDelete, snapshots, [e]);
+    return snap;
+  }
+
+  // The value's structured clone, which is also the brand check: only a real
+  // Error (not an object that merely inherits from Error.prototype) clones as
+  // an Error.
+  function cloneOf(v) {
+    if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return { ok: true, clone: v, isError: false };
+    if (!cloneValue) return { ok: true, clone: v, isError: reflectApply(isPrototypeOf, ErrorPrototype, [v]) };
+    try {
+      const c = cloneValue(v);
+      return { ok: true, clone: c, isError: c !== null && typeof c === 'object' && reflectApply(isPrototypeOf, ErrorPrototype, [c]) };
+    } catch (err) {
+      return { ok: false, clone: undefined, isError: false };
     }
-    const values = [];
+  }
+
+  // Describes an error: the JSON payload Go reads (class, name, message, stack
+  // and the JSON-safe properties) and the bag it serializes (the properties,
+  // and the cause, itself described when it is an error).
+  function describeError(e, depth) {
+    const jsonProps = {};
+    const props = {};
     const keys = objectKeys(e);
     for (let i = 0; i < keys.length; i++) {
+      let c;
       try {
-        ownData(values, values.length, [keys[i], e[keys[i]]]);
-      } catch (err) { /* not transferable */ }
+        c = cloneOf(e[keys[i]]);
+      } catch (err) {
+        continue;
+      }
+      if (!c.ok) continue;
+      ownData(props, keys[i], c.clone);
+      try {
+        jsonStringify(c.clone);
+        ownData(jsonProps, keys[i], c.clone);
+      } catch (err) { /* not JSON */ }
     }
-    return values;
-  }
-  globalThis.__rejectionProps = function (e) {
-    const props = {};
-    const values = ownProps(e);
-    for (let i = 0; i < values.length; i++) {
-      try {
-        if (cloneValue) cloneValue(values[i][1]);
-        ownData(props, values[i][0], values[i][1]);
-      } catch (err) { /* not transferable */ }
+    let ctor = '';
+    try { ctor = e.constructor && e.constructor.name; } catch (err) { /* none */ }
+    const name = NativeString(e.name);
+    const message = NativeString(e.message);
+    let stack = NativeString(e.stack);
+    if (reflectApply(internalHas, internalErrors, [e]) && e.code) {
+      // Node's own errors cross its hooks thread with the stack they
+      // formatted there, "Error [CODE]: ..." first.
+      const at = reflectApply(stringIndexOf, stack, ['\n    at ']);
+      stack = name + ' [' + NativeString(e.code) + ']: ' + message + (at >= 0 ? reflectApply(stringSlice, stack, [at]) : '');
     }
     const bag = { props: props, hasCause: false };
     try {
       if (reflectApply(hasOwn, e, ['cause'])) {
         const cause = e.cause;
-        if (cloneValue) cloneValue(cause);
-        ownData(bag, 'cause', cause);
-        ownData(bag, 'hasCause', true);
+        const c = cloneOf(cause);
+        if (c.isError && depth < 16) {
+          const d = describeError(cause, depth + 1);
+          ownData(bag, 'causeError', { payload: d.payload, bag: d.bag });
+          ownData(bag, 'hasCause', true);
+        } else if (c.ok) {
+          ownData(bag, 'cause', c.clone);
+          ownData(bag, 'hasCause', true);
+        }
       }
     } catch (err) { /* not transferable */ }
-    return bag;
+    const payload = jsonStringify({ ctor: ctor, name: name, message: message, stack: stack, props: jsonProps });
+    return { payload: payload, bag: bag };
+  }
+
+  // The bag for an error __describeRejection described (see describeError).
+  globalThis.__rejectionProps = function (e) {
+    const snap = takeSnapshot(e);
+    if (snap !== undefined && snap.bag !== undefined) return snap.bag;
+    return describeError(e, 0).bag;
+  };
+
+  // The structured clone of a thrown value that isn't an error, taken when it
+  // was described, for Go to serialize without reading the value again.
+  globalThis.__rejectionClone = function (e) {
+    const snap = takeSnapshot(e);
+    if (snap !== undefined && snap.clone !== undefined) return snap.clone.value;
+    return e;
   };
 
   // Describes a rejection for Go, which rebuilds it in the application realm
-  // with its class, message, stack and own enumerable properties, as Node's
-  // transfer of an error from its hooks thread keeps them (so even Node's own
-  // errors arrive as plain errors there, their code a property).
+  // with its class, message, stack, own enumerable properties and cause, as
+  // Node's transfer of an error from its hooks thread keeps them (so even
+  // Node's own errors arrive as plain errors there, their code a property).
   globalThis.__describeRejection = function (e) {
     try {
-      // Not an error: Node transfers the value itself, structured-cloned, which
-      // Go does with V8's serializer.
-      if (e === null || (typeof e !== 'object' && typeof e !== 'function') ||
-          !reflectApply(isPrototypeOf, ErrorPrototype, [e])) {
+      const c = cloneOf(e);
+      if (!c.isError) {
+        // Not an error: Node transfers the value itself, structured-cloned,
+        // which Go does with V8's serializer.
+        if (c.ok && e !== null && (typeof e === 'object' || typeof e === 'function')) {
+          reflectApply(snapSet, snapshots, [e, { clone: { value: c.clone } }]);
+        }
         return jsonStringify({ clone: true });
       }
-      const props = {};
-      const values = ownProps(e);
-      reflectApply(readSet, readProps, [e, values]);
-      for (let i = 0; i < values.length; i++) {
-        try {
-          jsonStringify(values[i][1]);
-          ownData(props, values[i][0], values[i][1]);
-        } catch (err) { /* not transferable */ }
-      }
-      let ctor = '';
-      try { ctor = e.constructor && e.constructor.name; } catch (err) { /* none */ }
-      let stack = String(e.stack);
-      if (reflectApply(internalHas, internalErrors, [e]) && e.code) {
-        // Node's own errors cross its hooks thread with the stack they
-        // formatted there, "Error [CODE]: ..." first.
-        const at = stack.indexOf('\n    at ');
-        stack = String(e.name) + ' [' + e.code + ']: ' + String(e.message) + (at >= 0 ? stack.slice(at) : '');
-      }
-      return jsonStringify({ ctor: ctor, name: String(e.name), message: String(e.message), stack: stack, props: props });
+      const d = describeError(e, 0);
+      reflectApply(snapSet, snapshots, [e, { bag: d.bag }]);
+      return d.payload;
     } catch (err) {
       return '';
     }
