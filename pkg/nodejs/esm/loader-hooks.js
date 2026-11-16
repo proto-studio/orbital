@@ -341,11 +341,14 @@
     const attrs = context && context.importAttributes;
     const r = jsonParse(globalThis.__goLoad(url, (context && context.format) || '',
       encodeAttrs(attrs), checkAttributes ? '1' : ''));
-    if (r.code) {
+    // Own properties only, so a getter a hook put on Object.prototype doesn't
+    // run (or turn a successful load into a failure).
+    const code = ownGet(r, 'code');
+    if (code) {
       // An import attribute the module's format doesn't allow (Node's
       // validateAttributes in its default load).
-      const err = new NativeTypeError(r.message);
-      ownProp(err, 'code', r.code);
+      const err = new NativeTypeError(ownGet(r, 'message'));
+      ownProp(err, 'code', code);
       throw internal(err);
     }
     return { source: r.source, format: r.format, shortCircuit: true };

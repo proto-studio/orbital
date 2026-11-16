@@ -801,3 +801,21 @@ try { await import('prim'); } catch (e) { log.push(e.code, e.message); }`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Getters a hook's initialize() puts on Object.prototype for code and message
+// don't turn a successful default load into a failure, and the attribute
+// error still comes through. Expected from Node 20.18.1.
+func TestImportAttributes_DefaultLoadIgnoresPrototypeGetters(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs":   `export default 'd';`,
+		"hooks.mjs": `export async function initialize() { for (const k of ['code', 'message']) Object.defineProperty(Object.prototype, k, { get() { throw new Error('getter ' + k); }, configurable: true }); }`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { log.push((await import('./dep.mjs')).default); } catch (e) { log.push('err', e.message); }
+try { await import('./dep.mjs?x', { with: { type: 'json' } }); } catch (e) { log.push(e.code); }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["d","ERR_IMPORT_ASSERTION_TYPE_FAILED"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
