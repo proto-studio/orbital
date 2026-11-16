@@ -357,6 +357,13 @@
   // hasOwn is captured above, with __rejectionProps.
   const ObjectDefineProperty = Object.defineProperty;
   const ObjectCreate = Object.create;
+  const ObjectGetPrototypeOf = Object.getPrototypeOf;
+  const ObjectPrototype = Object.prototype;
+  // An own property's value, or undefined: no getter a hook put on a prototype
+  // runs for a key the object lacks.
+  function ownGet(obj, key) {
+    return reflectApply(hasOwn, obj, [key]) ? obj[key] : undefined;
+  }
   const JSONStringify = JSON.stringify;
   const JSONParse = JSON.parse;
   const ArrayIsArray = Array.isArray;
@@ -402,7 +409,12 @@
     // An array's length too, so a sparse one keeps its holes. And a type with a
     // lone surrogate as its UTF-16 code units, which JSON can't lose (Go would
     // read the surrogate as U+FFFD), for the module cache key.
-    const type = attrs.type;
+    // The type from the own enumerable pairs already read, so no inherited
+    // getter (on Array.prototype, say) runs.
+    let type;
+    for (let i = 0; i < pairs.length; i++) {
+      if (pairs[i] !== undefined && pairs[i][0] === 'type') type = pairs[i][1];
+    }
     let typeKey;
     if (typeof type === 'string' && !apply(isWellFormed, type, [])) {
       typeKey = '';
@@ -431,7 +443,11 @@
       value = copy;
       cloned = true;
       const keys = ObjectKeys(attrs);
-      if (ObjectKeys(copy).length !== keys.length) {
+      // Only a plain object or array is rebuilt; a built-in container (a Map,
+      // say) keeps its clone, which drops expandos as Node's does.
+      const proto = ObjectGetPrototypeOf(attrs);
+      const plain = ArrayIsArray(attrs) || proto === ObjectPrototype || proto === null;
+      if (plain && ObjectKeys(copy).length !== keys.length) {
         // A clone can't keep an own "__proto__" key, and may fill an array's
         // holes: rebuild the container from the original's keys, taking each
         // value from the clone (so no getter runs twice).
@@ -449,7 +465,7 @@
     const encoded = JSONParse(encodeAttrs(value));
     const id = ++stashSeq;
     stashed[id] = { value: value, cloned: cloned };
-    encoded.id = id;
+    ObjectDefineProperty(encoded, 'id', { value: id, writable: true, enumerable: true, configurable: true });
     return JSONStringify(encoded);
   }
 
@@ -457,16 +473,16 @@
   // object isn't kept.
   globalThis.__dropAttrs = function (text) {
     try {
-      const encoded = JSONParse(text || '{}');
-      if (encoded.id !== undefined) delete stashed[encoded.id];
+      const id = ownGet(JSONParse(text || '{}'), 'id');
+      if (id !== undefined) delete stashed[id];
     } catch (e) { /* nothing stashed */ }
   };
 
   function unstashAttrs(text) {
-    const encoded = JSONParse(text || EMPTY);
-    if (encoded.id !== undefined && encoded.id in stashed) {
-      const entry = stashed[encoded.id];
-      delete stashed[encoded.id];
+    const id = ownGet(JSONParse(text || EMPTY), 'id');
+    if (id !== undefined && id in stashed) {
+      const entry = stashed[id];
+      delete stashed[id];
       if (entry.cloned) return entry.value;
     }
     return decodeAttrs(text);
@@ -474,19 +490,22 @@
 
   function decodeAttrs(text) {
     const encoded = JSONParse(text || EMPTY);
-    const attrs = encoded.array ? [] : {};
-    const pairs = encoded.pairs;
+    const isArray = ownGet(encoded, 'array');
+    const attrs = isArray ? [] : {};
+    const pairs = ownGet(encoded, 'pairs') || [];
     for (let i = 0; i < pairs.length; i++) {
       const k = pairs[i][0];
       const v = pairs[i][1];
       let value = v;
       if (typeof v !== 'string') {
-        value = v.undefined ? undefined : 'bigint' in v ? NativeBigInt(v.bigint) : 'json' in v ? v.json : v.text;
+        value = ownGet(v, 'undefined') ? undefined : reflectApply(hasOwn, v, ['bigint']) ? NativeBigInt(v.bigint)
+          : reflectApply(hasOwn, v, ['json']) ? v.json : ownGet(v, 'text');
       }
       // defineProperty, so a "__proto__" key stays an own attribute.
       ObjectDefineProperty(attrs, k, { value, writable: true, enumerable: true, configurable: true });
     }
-    if (encoded.array && typeof encoded.length === 'number') attrs.length = encoded.length;
+    const length = ownGet(encoded, 'length');
+    if (isArray && typeof length === 'number') attrs.length = length;
     return attrs;
   }
 
