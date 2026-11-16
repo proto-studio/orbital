@@ -506,3 +506,21 @@ for (const s of ['undef', './dep.mjs']) { try { log.push((await import(s)).defau
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A hook's initialize() replacing Object.keys or JSON in its realm doesn't hide
+// attributes from the check, as Node's loader internals don't use the hook realm's
+// globals.
+func TestImportAttributes_HookRealmGlobalsReplaced(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"x.mjs": `export default 1;`,
+		"hooks.mjs": `export function initialize() { Object.keys = () => []; JSON.stringify = () => '{}'; Array.isArray = () => true; }
+export async function resolve(s, c, n) { return n(s, c); }`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('./x.mjs', { with: { x: 'y' } }); log.push('loaded'); } catch (e) { log.push(e.code); }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
