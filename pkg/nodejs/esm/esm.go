@@ -584,6 +584,7 @@ func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
 	payload := res.String()
 	var d struct {
 		Clone   bool           `json:"clone"`
+		Symbol  bool           `json:"symbol"`
 		Name    string         `json:"name"`
 		Message string         `json:"message"`
 		Props   map[string]any `json:"props"`
@@ -605,6 +606,11 @@ func describeRejection(rt *runtime.Runtime, reason *v8.Value) *moduleError {
 			return nil
 		}
 		return &moduleError{msg: "a loader hook threw " + reason.String(), hookValue: data}
+	}
+	if d.Symbol {
+		// A symbol, which V8's serializer can't carry: rebuilt from its
+		// description by __esmHookError.
+		return &moduleError{msg: "a loader hook threw a symbol", hookPayload: payload}
 	}
 	code, _ := d.Props["code"].(string)
 	me := &moduleError{msg: d.Name + ": " + d.Message, code: code, hookPayload: payload}

@@ -864,7 +864,9 @@ for (const s of ['/\\localhost' + dir + 'tmp/x.mjs', '/\\example.com/tmp/x.mjs',
 
 // A hook error is told by its brand even when its cause can't be cloned (the
 // cause then arrives inspected), crosses as its first built-in class, and
-// keeps shared property values shared. Expected from Node 20.18.1.
+// keeps shared property values shared. Expected from Node 20.18.1, except a
+// cyclic cause: Node's transfer overflows the stack there, and Orbital sends
+// the error without the cause.
 func TestDynamicImport_HookErrorBrandsClassesAndSharing(t *testing.T) {
 	got := runLogModule(t, map[string]string{
 		"hooks.mjs": `let causeReads = 0;
@@ -875,6 +877,13 @@ export async function resolve(s, c, n) {
   if (s === 'shared') { const v = { z: 1 }; throw Object.assign(new Error('x'), { a: v, b: v }); }
   if (s === 'cgetter') { const e = new Error('g'); Object.defineProperty(e, 'cause', { enumerable: true, configurable: true, get() { return ++causeReads; } }); throw e; }
   if (s === 'cenum') { const e = new Error('outer'); e.cause = Object.assign(new TypeError('inner'), { code: 'INNER' }); throw e; }
+  if (s === 'tfn') throw function foo() {};
+  if (s === 'tsym') throw Symbol('boom');
+  if (s === 'tproxy') throw new Proxy({}, {});
+  if (s === 'badname') { const e = new Error('x'); Object.defineProperty(e, 'name', { get() { throw new Error('nope'); } }); throw e; }
+  if (s === 'tag') throw { [Symbol.toStringTag]: 'Error', reason: 'blocked' };
+  if (s === 'cyc') { const e = new Error('cyc'); e.cause = e; throw e; }
+  if (s === 'cyc2') { const a = new Error('a'), b = new Error('b'); a.cause = b; b.cause = a; throw a; }
   if (s === 'getfn') { let reads = 0; throw Object.assign(new Error('x'), { extra: { get n() { return ++reads; } }, f() {}, k: 1 }); }
   if (s === 'sub') throw new CustomTypeError('sub');
   if (s === 'proto') { const e = new Error('p'); Object.setPrototypeOf(e, RangeError.prototype); throw e; }
@@ -888,9 +897,15 @@ for (const s of ['fncause', 'fnprop', 'sub', 'proto']) {
 try { await import('shared'); } catch (e) { log.push(e.a === e.b, e.a.z); }
 try { await import('getfn'); } catch (e) { log.push(e.extra.n, typeof e.f, e.k); }
 try { await import('cgetter'); } catch (e) { log.push(e.cause, Object.keys(e).join()); }
-try { await import('cenum'); } catch (e) { log.push(e.cause instanceof TypeError, e.cause.code, Object.keys(e).join()); }`,
+try { await import('cenum'); } catch (e) { log.push(e.cause instanceof TypeError, e.cause.code, Object.keys(e).join()); }
+try { await import('tfn'); } catch (e) { log.push(e); }
+try { await import('tsym'); } catch (e) { log.push(typeof e, e.toString()); }
+try { await import('tproxy'); } catch (e) { log.push(e); }
+try { await import('badname'); } catch (e) { log.push(e instanceof Error, e.message); }
+try { await import('tag'); } catch (e) { log.push(e instanceof Error, Object.getOwnPropertyNames(e).join(), e.reason); }
+for (const s of ['cyc', 'cyc2']) { try { await import(s); } catch (e) { log.push(e.message, 'cause' in e); } }`,
 	})
-	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1,1,"undefined",1,1,"cause",true,"INNER","cause"]`
+	want := `[["TypeError","x","string","[Function: cause]","name,message,stack,cause"],["RangeError","y","undefined","undefined","name,message,stack,k"],["TypeError","sub","undefined","undefined","name,message,stack,extra"],["RangeError","p","undefined","undefined","name,message,stack"],true,1,1,"undefined",1,1,"cause",true,"INNER","cause","[Function: foo]","symbol","Symbol(boom)","{}",true,"x",false,"reason","blocked","cyc",false,"a",false]`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
