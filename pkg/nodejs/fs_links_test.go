@@ -308,3 +308,34 @@ done({ target: fs.readlinkSync(name), read: fs.readFileSync(file, 'utf8'), exist
 		t.Errorf("l\\xff = %q, %v", target, err)
 	}
 }
+
+// realpath of a link cycle fails with ELOOP, as in Node, and the paths realpath and mkdtemp
+// give, and a read stream's Buffer path, keep their bytes.
+func TestFSLinks_LoopsAndResultBytes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("loop", filepath.Join(dir, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const code = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.code; } };
+done({ plain: code(() => fs.realpathSync(%q)), native: code(() => fs.realpathSync.native(%q)) });
+`, filepath.Join(dir, "loop"), filepath.Join(dir, "loop")))
+	wantJSON(t, got, map[string]any{"plain": "ELOOP", "native": "ELOOP"})
+
+	if err := os.WriteFile(filepath.Join(dir, "r\xff"), []byte("bytes"), 0o644); err != nil {
+		t.Skipf("the filesystem refuses names that aren't UTF-8: %v", err)
+	}
+	got = runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+const name = Buffer.concat([Buffer.from(dir + '/r'), Buffer.from([0xff])]);
+const made = fs.mkdtempSync(Buffer.concat([Buffer.from(dir + '/t'), Buffer.from([0xff])]), { encoding: 'buffer' });
+const real = fs.realpathSync.native(name, { encoding: 'buffer' });
+const chunks = [];
+fs.createReadStream(name).on('data', (c) => chunks.push(c)).on('error', (e) => done({ failed: e.code })).on('end', () => done({
+  made: fs.statSync(made).isDirectory(), real: real.equals(name), streamed: Buffer.concat(chunks).toString(),
+}));
+`, dir))
+	wantJSON(t, got, map[string]any{"made": true, "real": true, "streamed": "bytes"})
+}

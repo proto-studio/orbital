@@ -604,5 +604,10 @@ func (l *LocalFilesystem) Realpath(p string) (string, error) {
 		}
 		p = wd + string(filepath.Separator) + p
 	}
-	return filepath.EvalSymlinks(p)
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil && strings.Contains(err.Error(), "too many links") {
+		// EvalSymlinks reports a cycle in words alone; the OS calls it ELOOP.
+		return "", &fs.PathError{Op: "realpath", Path: p, Err: syscall.ELOOP}
+	}
+	return real, err
 }
