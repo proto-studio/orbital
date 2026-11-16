@@ -181,7 +181,7 @@
     static abort(reason) {
       const signal = new AbortSignal();
       signal._aborted = true;
-      signal._reason = reason !== undefined ? reason : new DOMException('The operation was aborted', 'AbortError');
+      signal._reason = reason !== undefined ? reason : new DOMException('This operation was aborted', 'AbortError');
       return signal;
     }
 
@@ -250,7 +250,7 @@
       }
 
       this._signal._aborted = true;
-      this._signal._reason = reason !== undefined ? reason : new DOMException('The operation was aborted', 'AbortError');
+      this._signal._reason = reason !== undefined ? reason : new DOMException('This operation was aborted', 'AbortError');
 
       // Create abort event
       const event = new Event('abort');

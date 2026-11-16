@@ -194,9 +194,11 @@
       };
       return orig.call(this, wrapped, ...rest);
     };
-    for (const k of Object.keys(orig)) {
+    // Keep the original's own properties, symbols (util.promisify.custom) and name included.
+    for (const k of Reflect.ownKeys(orig)) {
+      if (k === 'length' || k === 'prototype' || k === 'arguments' || k === 'caller') continue;
       try {
-        wrapper[k] = orig[k];
+        Object.defineProperty(wrapper, k, Object.getOwnPropertyDescriptor(orig, k));
       } catch (e) {
         // ignore non-copyable properties
       }

@@ -1,0 +1,117 @@
+{
+  "abort": [
+    "AbortError",
+    "ABORT_ERR",
+    "The operation was aborted",
+    "AbortError: This operation was aborted"
+  ],
+  "abortAfterResolve": "done",
+  "identity": [
+    true,
+    true,
+    true,
+    true,
+    "undefined",
+    true,
+    true,
+    false,
+    "setTimeout",
+    "setImmediate"
+  ],
+  "interval": [
+    "iv",
+    "iv",
+    "iv"
+  ],
+  "intervalAbort": [
+    {
+      "done": false,
+      "value": "tick"
+    },
+    [
+      "AbortError",
+      "ABORT_ERR",
+      "The operation was aborted",
+      "enough"
+    ]
+  ],
+  "intervalValidation": [
+    "TypeError",
+    "ERR_INVALID_ARG_TYPE",
+    "The \"delay\" argument must be of type number. Received type string ('x')",
+    "no cause"
+  ],
+  "preAborted": [
+    [
+      "AbortError",
+      "ABORT_ERR",
+      "The operation was aborted",
+      "why"
+    ],
+    [
+      "AbortError",
+      "ABORT_ERR",
+      "The operation was aborted",
+      "why"
+    ]
+  ],
+  "scheduler": [
+    null,
+    null,
+    [
+      "TypeError",
+      "ERR_ILLEGAL_CONSTRUCTOR",
+      "Illegal constructor",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_THIS",
+      "Value of \"this\" must be of type Scheduler",
+      "no cause"
+    ]
+  ],
+  "sleep": [
+    "value",
+    null,
+    "iv"
+  ],
+  "validation": [
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"delay\" argument must be of type number. Received type string ('x')",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"options\" argument must be of type object. Received type string ('nope')",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"options\" argument must be of type object. Received null",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"options.signal\" property must be an instance of AbortSignal. Received type number (1)",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"options.ref\" property must be of type boolean. Received type number (1)",
+      "no cause"
+    ],
+    [
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+      "The \"options\" argument must be of type object. Received an instance of Array",
+      "no cause"
+    ]
+  ]
+}
