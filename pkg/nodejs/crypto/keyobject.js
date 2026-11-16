@@ -66,6 +66,14 @@
   // Resolve any accepted key input to a Go handle. wantPrivate selects the
   // private vs public interpretation (and lets createPublicKey derive the public
   // half of a private KeyObject).
+  // PEM given as any binary form Node takes (Buffer, TypedArray, DataView or
+  // ArrayBuffer), as a Buffer over the same bytes; null for anything else.
+  function binaryPEM(value) {
+    if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    if (value instanceof ArrayBuffer) return Buffer.from(value);
+    return null;
+  }
+
   function toHandle(input, wantPrivate) {
     if (input instanceof KeyObject) {
       if (!wantPrivate && input._type === 'private') {
@@ -77,8 +85,9 @@
     if (typeof input === 'string') {
       return crypto._createKeyFromPEM(input, wantPrivate);
     }
-    if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
-      return crypto._createKeyFromPEM(Buffer.from(input).toString('utf8'), wantPrivate);
+    const bytes = binaryPEM(input);
+    if (bytes) {
+      return crypto._createKeyFromPEM(bytes.toString('utf8'), wantPrivate);
     }
     if (input && typeof input === 'object') {
       if (input.format === 'jwk') {
@@ -88,8 +97,9 @@
       const k = input.key;
       if (k instanceof KeyObject) return toHandle(k, wantPrivate);
       if (typeof k === 'string') return crypto._createKeyFromPEM(k, wantPrivate);
-      if (Buffer.isBuffer(k) || k instanceof Uint8Array) {
-        return crypto._createKeyFromPEM(Buffer.from(k).toString('utf8'), wantPrivate);
+      const keyBytes = binaryPEM(k);
+      if (keyBytes) {
+        return crypto._createKeyFromPEM(keyBytes.toString('utf8'), wantPrivate);
       }
     }
     throw new TypeError('Invalid key object');

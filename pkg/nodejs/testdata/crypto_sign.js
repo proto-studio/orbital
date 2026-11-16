@@ -53,6 +53,25 @@ results.rsaHexOutput = outcome(() => crypto.createSign('sha256').update('message
 results.ed25519 = outcome(() => crypto.sign(null, msg, k.edPriv));
 results.ed25519FromPem = outcome(() => crypto.sign(undefined, msg, keys.edPriv));
 
+// PEM keys in any binary form: ArrayBuffer, DataView, other typed arrays, and views at an offset.
+const asArrayBuffer = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
+const binaryForms = {
+  arrayBuffer: (pem) => asArrayBuffer(Buffer.from(pem)),
+  dataView: (pem) => new DataView(asArrayBuffer(Buffer.from(pem))),
+  uint16: (pem) => new Uint16Array(asArrayBuffer(Buffer.concat([Buffer.from(pem), Buffer.alloc(Buffer.byteLength(pem) % 2)]))),
+  offsetView: (pem) => {
+    const big = Buffer.concat([Buffer.from('zz'), Buffer.from(pem), Buffer.from('zz')]);
+    return new DataView(big.buffer, big.byteOffset + 2, big.length - 4);
+  },
+};
+for (const [name, form] of Object.entries(binaryForms)) {
+  results['binaryKey_' + name] = outcome(() => {
+    const sig = crypto.sign(null, msg, form(keys.edPriv));
+    return [sig.toString('hex'), crypto.verify(null, msg, form(keys.edPub), sig), crypto.verify(null, msg, { key: form(keys.edPub) }, sig),
+      crypto.createSign('sha256').update(msg).sign({ key: form(keys.rsaPriv) }).toString('hex')];
+  });
+}
+
 // Randomized signatures: lengths, and each side verifies its own and Node's.
 const verifies = (algo, pub, sig, opts) => crypto.verify(algo, msg, opts ? { key: pub, ...opts } : pub, sig);
 results.ecdsa = outcome(() => {
