@@ -22,6 +22,7 @@ package esm
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 
 	"proto.zip/studio/orbital/pkg/runtime"
@@ -114,40 +115,41 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 		c := info.Context()
 		specifier := argString(info, 0)
 		parentURL := argString(info, 1)
-		obj, _ := c.NewObject()
+		// The result crosses as JSON, which the JS side parses into own data
+		// properties: setting them on an object here would run any setter a
+		// hook has put on Object.prototype.
+		res := map[string]any{}
 		url, rerr := e.resolveToURL(specifier, parentURL)
 		if rerr != nil {
 			// Report Node's error (message, code and the missing module's url)
 			// for the JS side to throw, so resolve hooks can catch it and retry
 			// another candidate (ts-blank-space .js -> .ts).
-			obj.Set("found", c.False())
-			mv, _ := c.NewString(rerr.Error())
-			obj.Set("message", mv)
+			res["found"] = false
+			res["message"] = rerr.Error()
 			var me *moduleError
 			if errors.As(rerr, &me) {
-				cv, _ := c.NewString(me.code)
-				obj.Set("code", cv)
-				kv, _ := c.NewString(me.kind())
-				obj.Set("kind", kv)
+				res["code"] = me.code
+				res["kind"] = me.kind()
 				if me.input != "" {
-					iv, _ := c.NewString(me.input)
-					obj.Set("input", iv)
+					res["input"] = me.input
 				}
 				if me.module != "" {
-					mv, _ := c.NewString(me.module)
-					obj.Set("module", mv)
+					res["module"] = me.module
 				}
 				if me.url != "" {
-					uv, _ := c.NewString(me.url)
-					obj.Set("url", uv)
+					res["url"] = me.url
 				}
 			}
-			return obj
+		} else {
+			res["url"] = url
+			res["found"] = true
 		}
-		uv, _ := c.NewString(url)
-		obj.Set("url", uv)
-		obj.Set("found", c.True())
-		return obj
+		data, merr := json.Marshal(res)
+		if merr != nil {
+			return c.Throw(merr.Error())
+		}
+		out, _ := c.NewString(string(data))
+		return out
 	})
 	if err != nil {
 		return err

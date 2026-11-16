@@ -59,6 +59,9 @@
   own(CodedTypeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
   var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  var stringIndexOf = String.prototype.indexOf;
+  var stringSlice = String.prototype.slice;
+  var hasOwn = Object.prototype.hasOwnProperty;
 
   // Replaces err's stack accessor with one that formats through the original
   // on first read and puts the code in the header ("Error [CODE]: ...").
@@ -79,8 +82,8 @@
             // error has now (each read once), with the code it was created
             // with; the frames are the engine's.
             var raw = String(holder.stack);
-            var at = raw.indexOf('\n    at ');
-            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + (at >= 0 ? raw.slice(at) : '');
+            var at = apply(stringIndexOf, raw, ['\n    at ']);
+            value = String(err.name) + ' [' + code + ']: ' + String(err.message) + (at >= 0 ? apply(stringSlice, raw, [at]) : '');
           }
         }
         return value;
@@ -137,7 +140,7 @@
     var d = jsonParse(payload);
     var props = d.props || {};
     if (bag !== undefined && bag !== null) props = bag.props || {};
-    var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
+    var Ctor = (typeof d.ctor === 'string' && apply(hasOwn, hookCtors, [d.ctor])) ? hookCtors[d.ctor] : NativeError;
     var err = objectCreate(Ctor.prototype);
     own(err, 'name', d.name, false);
     own(err, 'message', d.message, false);

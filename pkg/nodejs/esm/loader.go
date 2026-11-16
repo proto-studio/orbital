@@ -514,8 +514,8 @@ type moduleError struct {
 	// hookValue, when set, is a non-error value a loader hook threw, serialized
 	// with V8's ValueSerializer for the importer to get a structured clone.
 	hookValue []byte
-	// hookProps is a hook error's own enumerable properties, serialized with
-	// V8's ValueSerializer (see __rejectionProps).
+	// hookProps is a hook error's own enumerable properties and own cause,
+	// serialized with V8's ValueSerializer (see __rejectionProps).
 	hookProps []byte
 	// hookPayload, when set, describes an error a loader hook threw (see
 	// __describeRejection), which the importer gets rebuilt as it was.

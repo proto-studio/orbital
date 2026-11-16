@@ -728,6 +728,36 @@ try { await import('caused'); } catch (e) { log.push(e instanceof TypeError, e.c
 	}
 }
 
+// A hook error's properties are read once, its class survives the application
+// replacing Array.prototype.indexOf, and the loader's own errors survive a hook
+// replacing Error or adding an Object.prototype setter. Expected from Node 20.18.1.
+func TestDynamicImport_HookErrorsResistTampering(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `let n = 0;
+export async function resolve(s, c, next) {
+  if (s === 'acc') { const e = new Error('a'); Object.defineProperty(e, 'cnt', { get() { return ++n; }, enumerable: true }); throw e; }
+  if (s === 'range') throw new RangeError('r');
+  if (s === 'ctor') { globalThis.Error = class X extends Array {}; globalThis.TypeError = globalThis.Error; return next('./nope.mjs', c); }
+  if (s === 'setter') { Object.defineProperty(Object.prototype, 'code', { set(v) { throw new Error('setter ' + v); }, configurable: true }); return next('./nope.mjs', c); }
+  return next(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('acc'); } catch (e) { log.push(e.cnt); }
+const indexOf = Array.prototype.indexOf;
+Array.prototype.indexOf = () => -1;
+try { await import('range'); } catch (e) { log.push(e.constructor.name); }
+Array.prototype.indexOf = indexOf;
+for (const s of ['ctor', 'setter']) {
+  try { await import(s); } catch (e) { log.push([e.constructor.name, e.code, Object.keys(e).join(), e.stack.split('\n')[0].slice(0, 30)]); }
+}`,
+	})
+	want := `[1,"RangeError",["Error","ERR_MODULE_NOT_FOUND","code,url","Error [ERR_MODULE_NOT_FOUND]: "],["Error","ERR_MODULE_NOT_FOUND","code,url","Error [ERR_MODULE_NOT_FOUND]: "]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.

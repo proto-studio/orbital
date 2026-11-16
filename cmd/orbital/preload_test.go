@@ -80,6 +80,7 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		"tla.mjs":    `await new Promise(() => {});`,
 		"zero.cjs":   `process.on('exit', () => { process.exitCode = 0; });`,
 		"seven.cjs":  `process.on('exit', () => { process.exitCode = 7; });`,
+		"waits.mjs":  `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
 		"entry.mjs":  `console.log('entry');`,
 	}
 	for name, src := range files {
@@ -100,6 +101,9 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		// An 'exit' listener's process.exitCode replaces 13, even when it is 0.
 		{[]string{"-r", p("zero.cjs"), p("tla.mjs")}, "", 0},
 		{[]string{"-r", p("seven.cjs"), "--import", p("tla.mjs"), p("entry.mjs")}, "", 7},
+		// While an --import waits, an emptied loop emits 'beforeExit', whose
+		// listener here settles it; it fires again once the entry is done.
+		{[]string{"--import", p("waits.mjs"), p("entry.mjs")}, "beforeExit\npreloaded\nentry\nbeforeExit\n", 0},
 	}
 	for _, tc := range cases {
 		out, code := runOrbital(t, "", tc.args...)

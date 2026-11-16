@@ -462,9 +462,19 @@ func (rt *Runtime) Run(source, origin string) (*v8.Value, error) {
 // scheduled more work the loop runs again. It returns early if the runtime ends (an
 // uncaught exception or process.exit(), neither of which emits 'beforeExit') or is killed.
 func (rt *Runtime) RunEventLoop() {
+	rt.RunEventLoopWhile(nil)
+}
+
+// RunEventLoopWhile is RunEventLoop for a caller waiting on something (Node's startup
+// awaiting an --import): when the loop empties, 'beforeExit' is emitted only while
+// waiting reports true, since a listener may be what settles it.
+func (rt *Runtime) RunEventLoopWhile(waiting func() bool) {
 	for {
 		rt.eventLoop.Run()
 		if rt.Ended() != nil || rt.execController.IsDone() {
+			return
+		}
+		if waiting != nil && !waiting() {
 			return
 		}
 		rt.MakeCallback(rt.uncaught.beforeExit, nil)
