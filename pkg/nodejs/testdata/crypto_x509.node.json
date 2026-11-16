@@ -706,6 +706,15 @@
       "value": "\"127.0.0.1\\u0000\""
     }
   ],
+  "numericString": {
+    "value": [
+      "CN=123",
+      "CN=123",
+      "123",
+      true,
+      true
+    ]
+  },
   "odd": {
     "ca": {
       "value": false
