@@ -50,6 +50,7 @@ struct ContextWrapper {
         std::string resource;
         int line = 0;
         std::string source_line;
+        bool has_source_line = false; // false if V8 gave no line or it was too long
         int start = -1;
         int end = -1;
         bool compile = false; // the script didn't compile, so none of it ran
@@ -92,6 +93,7 @@ static void recordException(ContextWrapper* wrapper, Isolate* isolate, Local<Con
     if (message->GetSourceLine(context).ToLocal(&source_line) && source_line->Length() <= kMaxMessageLine) {
         String::Utf8Value line(isolate, source_line);
         m.source_line = *line ? *line : "";
+        m.has_source_line = true;
     }
     m.compile = compile;
     m.start = message->GetStartColumn(context).FromMaybe(-1);
@@ -1962,7 +1964,7 @@ int v8go_context_take_last_exception_message(void* context_ptr, char** resource,
     if (!m.has) return 0;
     *resource = strdup(m.resource.c_str());
     *line = m.line;
-    *source_line = strdup(m.source_line.c_str());
+    *source_line = m.has_source_line ? strdup(m.source_line.c_str()) : nullptr;
     *start = m.start;
     *end = m.end;
     *compile = m.compile ? 1 : 0;
@@ -2036,6 +2038,13 @@ void* v8go_compile_module(void* context_ptr, const char* source, const char* nam
     ctx_wrapper->module_cache[name] = wrapper;
     
     return wrapper;
+}
+
+int v8go_context_has_module(void* context_ptr, const char* name) {
+    if (!context_ptr || !name) return 0;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Locker locker(wrapper->isolate);
+    return wrapper->module_cache.count(std::string(name)) ? 1 : 0;
 }
 
 int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id, char** error) {

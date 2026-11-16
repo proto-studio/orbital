@@ -39,6 +39,17 @@ var ErrModuleInstantiate = errors.New("module instantiation failed")
 // ErrModuleEvaluate is returned when module evaluation fails.
 var ErrModuleEvaluate = errors.New("module evaluation failed")
 
+// HasModule reports whether the context has compiled a module under name. It then uses
+// that module for name, as an import of it, rather than compiling other text.
+func (c *Context) HasModule(name string) bool {
+	if c.ptr == nil {
+		return false
+	}
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	return C.v8go_context_has_module(c.ptr, cName) != 0
+}
+
 // CompileModule compiles JavaScript source code as an ES module.
 func (c *Context) CompileModule(source, name string) (*Module, error) {
 	if c.ptr == nil {

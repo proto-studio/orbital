@@ -2124,3 +2124,77 @@ func TestUncaughtSourceForNulModuleWithReplacedStringMethods(t *testing.T) {
 		t.Errorf("Source = %q, want it to start %q", uncaught.Source, want)
 	}
 }
+
+// A SyntaxError V8 places on an empty line still gets the header, with the empty line and
+// no caret, as Node 20.18.1 prints for the same file.
+func TestUncaughtSourceForSyntaxErrorOnEmptyLine(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	main := filepath.Join(t.TempDir(), "main.js")
+	_, runErr := inst.Runtime.Run("function f(){\n", main)
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := main + ":2\n\n\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}
+
+// A module imported again after its file changed is the module V8 already has, and the
+// header shows the text that module was compiled from.
+func TestUncaughtSourceForModuleImportedAgainAfterChange(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "dep.mjs")
+	const first = "export const f = () => { throw new Error('first'); };\n"
+	if err := os.WriteFile(dep, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.ESM.RunModule(fmt.Sprintf("globalThis.f = (await import(%q)).f;\n", "file://"+dep), filepath.Join(dir, "a.mjs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dep, []byte("\n\nexport const f = () => { throw new Error('second'); };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.ESM.RunModule(fmt.Sprintf("await import(%q);\nsetTimeout(globalThis.f, 1);\n", "file://"+dep), filepath.Join(dir, "b.mjs"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("RunModule returned %v", runErr)
+	}
+	if want := dep + ":1\n" + strings.TrimSuffix(first, "\n") + "\n"; !strings.HasPrefix(uncaught.Source, want) {
+		t.Errorf("Source = %q, want it to start %q", uncaught.Source, want)
+	}
+}
+
+// With an 'uncaughtException' handler, Run with source that doesn't compile keeps nothing
+// under its origin, and corrected source run under the same origin gets its header.
+func TestUncaughtSourceAfterHandledRunSyntaxError(t *testing.T) {
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	if _, err := inst.Runtime.RunScript("process.on('uncaughtException', () => {});\n", "[prelude]"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = inst.Runtime.Run("globalThis.later = () => { throw ; };\n", "[main]")
+	if _, err := inst.Runtime.RunScript("process.removeAllListeners('uncaughtException');\n", "[reset]"); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := inst.Runtime.Run("globalThis.later = () => { throw new Error('x'); };\nsetTimeout(later, 1);\n", "[main]")
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := "[main]:1\nglobalThis.later = () => { throw new Error('x'); };\n" + strings.Repeat(" ", 27) + "^\n"; uncaught.Source != want {
+		t.Errorf("Source = %q, want %q", uncaught.Source, want)
+	}
+}

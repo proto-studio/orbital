@@ -172,6 +172,9 @@ void* v8go_throw_range_error(void* context, const char* message);
 // ES Module operations
 void* v8go_compile_module(void* context, const char* source, const char* name, char** error);
 int v8go_module_instantiate(void* context, void* module, int resolver_id, char** error);
+// Returns 1 if the context has compiled a module under name, which it then uses for name
+// instead of compiling again; 0 if not.
+int v8go_context_has_module(void* context, const char* name);
 void* v8go_module_evaluate(void* context, void* module, char** error);
 int v8go_module_get_status(void* module);
 void* v8go_module_get_namespace(void* context, void* module);
@@ -192,8 +195,9 @@ int v8go_set_promise_reject_handler(void* context_ptr, void* function_ptr);
 void* v8go_context_take_last_script_exception(void* context_ptr);
 // Gives, once, where V8's message for that exception places it: the script's name, the
 // 1-based line, that line's text and the 0-based start and end columns (-1 if unknown), and
-// whether the script failed to compile. A very long name or line is left out.
-// Returns 0 if there is none. The caller frees *resource and *source_line.
+// whether the script failed to compile. A very long name or line is left out; a line left
+// out, or one V8 doesn't give, is NULL. Returns 0 if there is none. The caller frees
+// *resource and *source_line.
 int v8go_context_take_last_exception_message(void* context_ptr, char** resource, int* line,
                                              char** source_line, int* start, int* end,
                                              int* compile);

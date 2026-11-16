@@ -317,7 +317,8 @@ func (rt *Runtime) KeepModuleSource(name, source string) {
 }
 
 // KeepLoadedModuleSource is KeepModuleSource for the module loader, which compiles a URL
-// once: different text later under the URL replaces text whose compile failed.
+// once and calls it only for a URL V8 has no module for: different text later under the
+// URL replaces text whose compile failed.
 func (rt *Runtime) KeepLoadedModuleSource(url, source string) {
 	rt.keepModule(source, "", true, url, sourceURL(source))
 }

@@ -236,11 +236,13 @@
       const recorded = apply(weakGet, recordedSites, [err]);
       if (recorded !== undefined) site = recorded;
     }
-    // The glue leaves out a line too long to copy, and then there is nothing to show.
+    // The glue leaves out a line too long to copy, and then there is nothing to show. An
+    // empty line is shown, as Node shows it, and so is a line V8 gives no columns for,
+    // without carets.
     if (thrown && site && typeof site.file === 'string' && site.file !== '' &&
-        typeof site.sourceLine === 'string' && site.sourceLine !== '') {
+        typeof site.sourceLine === 'string') {
       const start = site.start >= 0 ? site.start : 0;
-      const end = site.end > start ? site.end : start + 1;
+      const end = site.start >= 0 && site.end > start ? site.end : start;
       const fromSite = sourceHeader(site.file, site.line, start, end, site.sourceLine);
       if (fromSite !== '') return fromSite;
     }

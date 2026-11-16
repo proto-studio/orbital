@@ -376,7 +376,10 @@ func (rt *Runtime) siteValue(msg *v8.ExceptionMessage) *v8.Value {
 		return rt.context.Undefined()
 	}
 	file, _ := rt.context.NewString(msg.ResourceName)
-	sourceLine, _ := rt.context.NewString(msg.SourceLine)
+	sourceLine := rt.context.Null()
+	if msg.HasSourceLine {
+		sourceLine, _ = rt.context.NewString(msg.SourceLine)
+	}
 	_ = site.Set("file", file)
 	_ = site.Set("line", rt.context.NewInteger(int64(msg.Line)))
 	_ = site.Set("sourceLine", sourceLine)

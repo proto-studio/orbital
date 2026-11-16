@@ -39,8 +39,11 @@ type ExceptionMessage struct {
 	ResourceName string
 	// Line is 1-based.
 	Line int
-	// SourceLine is the text of that line, as compiled.
+	// SourceLine is the text of that line, as compiled, which may be empty.
 	SourceLine string
+	// HasSourceLine reports whether there is a SourceLine: there is none when V8 gives no
+	// line or the line is too long to copy.
+	HasSourceLine bool
 	// StartColumn and EndColumn are 0-based UTF-16 offsets into SourceLine, or -1.
 	StartColumn, EndColumn int
 	// Compile reports that the script failed to compile, so none of it ran.
@@ -62,11 +65,12 @@ func (c *Context) TakeLastExceptionMessage() *ExceptionMessage {
 	defer C.free(unsafe.Pointer(resource))
 	defer C.free(unsafe.Pointer(sourceLine))
 	return &ExceptionMessage{
-		ResourceName: C.GoString(resource),
-		Line:         int(line),
-		SourceLine:   C.GoString(sourceLine),
-		StartColumn:  int(start),
-		EndColumn:    int(end),
-		Compile:      compile != 0,
+		ResourceName:  C.GoString(resource),
+		Line:          int(line),
+		SourceLine:    C.GoString(sourceLine),
+		HasSourceLine: sourceLine != nil,
+		StartColumn:   int(start),
+		EndColumn:     int(end),
+		Compile:       compile != 0,
 	}
 }
