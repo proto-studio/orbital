@@ -495,6 +495,11 @@ func (l *LocalFilesystem) hostTarget(target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A target already under the root is kept, as textualPath keeps such a path.
+	clean := filepath.Clean(target)
+	if clean == absRoot || strings.HasPrefix(clean, absRoot+string(filepath.Separator)) {
+		return target, nil
+	}
 	return filepath.Join(absRoot, target), nil
 }
 

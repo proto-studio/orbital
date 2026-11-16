@@ -145,6 +145,42 @@
   // text and raw bytes without Buffer when it is missing; with it, they use Buffer.
   const hasBuffer = () => typeof Buffer === 'function';
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // Decodes UTF-8 without Buffer, as Buffer does: a byte that doesn't fit gives U+FFFD.
+  function utf8Text(bytes) {
+    let out = '';
+    for (let i = 0; i < bytes.length;) {
+      const b = bytes[i];
+      let need = 0;
+      let cp = 0;
+      let min = 0;
+      if (b < 0x80) {
+        out += String.fromCharCode(b);
+        i++;
+        continue;
+      } else if (b >= 0xc2 && b <= 0xdf) {
+        need = 1; cp = b & 0x1f; min = 0x80;
+      } else if (b >= 0xe0 && b <= 0xef) {
+        need = 2; cp = b & 0x0f; min = 0x800;
+      } else if (b >= 0xf0 && b <= 0xf4) {
+        need = 3; cp = b & 0x07; min = 0x10000;
+      } else {
+        out += '\ufffd';
+        i++;
+        continue;
+      }
+      let j = 1;
+      for (; j <= need && i + j < bytes.length && (bytes[i + j] & 0xc0) === 0x80; j++) cp = (cp << 6) | (bytes[i + j] & 0x3f);
+      if (j <= need || cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+        out += '\ufffd';
+        i += j; // the lead byte and the continuation bytes that fit
+        continue;
+      }
+      out += String.fromCodePoint(cp);
+      i += need + 1;
+    }
+    return out;
+  }
+
   function utf8Bytes(str) {
     const out = [];
     for (let i = 0; i < str.length; i++) {
@@ -1133,6 +1169,8 @@
   // Bytes the native layer gives as a name, in the encoding options ask for.
   function bytesNamedIn(bytes, options) {
     const encoding = encodingOf(options);
+    // Without Buffer, only UTF-8 is known, as encodingOf has checked.
+    if (!hasBuffer()) return utf8Text(bytes);
     const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (encoding === 'buffer') return buffer;
     return buffer.toString(encoding || 'utf8');
