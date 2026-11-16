@@ -62,6 +62,46 @@ func (c *Crypto) storeKey(e *keyEntry) int64 {
 	return id
 }
 
+// freeKey removes a handle's entry, when its KeyObject has been collected or
+// a transient import is done with.
+func (c *Crypto) freeKey(id int64) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	delete(c.keys, id)
+}
+
+// keyFreeFunc backs _keyFree(handle).
+func (c *Crypto) keyFreeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	if args := info.Args(); len(args) > 0 {
+		c.freeKey(args[0].Integer())
+	}
+	return info.Context().Undefined()
+}
+
+// keyCountFunc backs _keyCount(): how many keys the registry holds, for tests.
+func (c *Crypto) keyCountFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	c.keyMu.Lock()
+	n := len(c.keys)
+	c.keyMu.Unlock()
+	return info.Context().NewNumber(float64(n))
+}
+
+// keyCloneFunc backs _keyClone(handle): a new handle for the same key, so
+// two KeyObjects never share one handle and each frees only its own. Key
+// entries aren't changed after they're made, so they can be shared.
+func (c *Crypto) keyCloneFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
+	args := info.Args()
+	if len(args) < 1 {
+		return ctx.Throw("keyClone: handle is required")
+	}
+	e, err := c.lookupKey(args[0].Integer())
+	if err != nil {
+		return ctx.Throw(err.Error())
+	}
+	return ctx.NewNumber(float64(c.storeKey(e)))
+}
+
 // lookupKey resolves a handle to its entry.
 func (c *Crypto) lookupKey(id int64) (*keyEntry, error) {
 	c.keyMu.Lock()

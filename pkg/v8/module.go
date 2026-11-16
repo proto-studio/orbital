@@ -146,6 +146,18 @@ func (c *Context) SetDynamicImportResolver(resolver ModuleResolveCallback) {
 	C.v8go_set_dynamic_import_resolver(c.ptr, C.int(id))
 }
 
+// PumpMessageLoop runs the tasks V8 has queued for this isolate on the
+// platform's foreground task runner, such as FinalizationRegistry cleanup
+// callbacks, and returns once none are left. It may run JavaScript, so call
+// it only on the goroutine that drives the isolate, between callbacks, never
+// from inside one.
+func (c *Context) PumpMessageLoop() {
+	if c.iso == nil || c.iso.ptr == nil {
+		return
+	}
+	C.v8go_isolate_pump_message_loop(c.iso.ptr)
+}
+
 // PerformMicrotaskCheckpoint drains V8's microtask (promise reaction) queue.
 func (c *Context) PerformMicrotaskCheckpoint() {
 	if c.iso == nil || c.iso.ptr == nil {

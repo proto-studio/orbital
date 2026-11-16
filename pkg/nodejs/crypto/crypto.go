@@ -82,6 +82,9 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_keyExportDER":        c.keyExportDERFunc,
 		"_keyExportSecret":     c.keyExportSecretFunc,
 		"_keyEquals":           c.keyEqualsFunc,
+		"_keyFree":             c.keyFreeFunc,
+		"_keyClone":            c.keyCloneFunc,
+		"_keyCount":            c.keyCountFunc,
 
 		// Callback forms whose work runs off the JS thread (async.go).
 		"_generateKeyPairAsync": c.generateKeyPairAsyncFunc,

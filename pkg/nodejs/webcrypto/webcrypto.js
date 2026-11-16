@@ -507,7 +507,12 @@
         // KeyObject bridge, then proceed as for a jwk import.
         const wantPrivate = format === 'pkcs8';
         const id = cryptoModule._createKeyFromDER(bytesToB64(u8(keyData)), wantPrivate);
-        jwk = pickJWK(JSON.parse(cryptoModule._keyExportJWK(id)));
+        try {
+          jwk = pickJWK(JSON.parse(cryptoModule._keyExportJWK(id)));
+        } finally {
+          // The key was imported only to read it as a JWK.
+          cryptoModule._keyFree(id);
+        }
       } else {
         throw new DOMException('Unsupported key format: ' + format, 'NotSupportedError');
       }
@@ -538,8 +543,13 @@
         const id = wantPrivate
           ? cryptoModule._createPrivateKeyJWK(jwkStr)
           : cryptoModule._createPublicKeyJWK(jwkStr);
-        const derB64 = cryptoModule._keyExportDER(id, wantPrivate ? 'pkcs8' : 'spki');
-        return b64ToBytes(derB64).buffer;
+        try {
+          const derB64 = cryptoModule._keyExportDER(id, wantPrivate ? 'pkcs8' : 'spki');
+          return b64ToBytes(derB64).buffer;
+        } finally {
+          // The key was imported only for this export.
+          cryptoModule._keyFree(id);
+        }
       }
       throw new DOMException('Unsupported key format: ' + format, 'NotSupportedError');
     }
