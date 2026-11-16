@@ -73,3 +73,61 @@ setTimeout(() => {
 	want["phase"] = []any{"i1", "i2", "cleanup x"}
 	wantJSON(t, got, want)
 }
+
+// Per-task semantics, as in Node 20 run with --expose-gc: a cleanup callback can
+// unregister the others with its token; each registry's ticks and promise jobs
+// run before the next registry's cleanup; an exception stops the batch and is
+// reported before its ticks; and cleanup left by the last callback runs before
+// 'beforeExit'.
+func TestFinalizationRegistry_TasksMatchNode(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `const out = {};
+// (a) unregister from a cleanup callback cancels the others with the token.
+const a = [];
+const token = {};
+const regA = new FinalizationRegistry((held) => { a.push(held, regA.unregister(token)); });
+(() => { regA.register({}, 'a1', token); regA.register({}, 'a2', token); })();
+// (b) two registries: each one's ticks and promise jobs run before the next one's cleanup.
+const b = [];
+const mk = (name) => new FinalizationRegistry(() => {
+  b.push('cleanup ' + name);
+  process.nextTick(() => b.push('tick ' + name));
+  Promise.resolve().then(() => b.push('promise ' + name));
+});
+const r1 = mk('A'), r2 = mk('B');
+(() => { r1.register({}, 1); r2.register({}, 2); })();
+// (c) an exception stops the batch; its ticks run before the next cleanup.
+const c = [];
+process.on('uncaughtException', (e) => c.push('error ' + e.message));
+const regC = new FinalizationRegistry((held) => {
+  c.push('cleanup');
+  process.nextTick(() => c.push('tick'));
+  Promise.resolve().then(() => c.push('promise'));
+  throw new Error('x');
+});
+(() => { regC.register({}, 1); regC.register({}, 2); })();
+setTimeout(() => {
+  gc();
+  setTimeout(() => {
+    out.a = a;
+    // b's registries may be cleaned in either order; check the grouping.
+    const first = b[0] && b[0].slice(-1);
+    const second = first === 'A' ? 'B' : 'A';
+    out.b = b.join() === ['cleanup', 'tick', 'promise'].map((s) => s + ' ' + first).concat(['cleanup', 'tick', 'promise'].map((s) => s + ' ' + second)).join();
+    out.c = c;
+    // (d) the last callback, an I/O completion, collects; cleanup runs before 'beforeExit'.
+    const d = [];
+    const regD = new FinalizationRegistry(() => d.push('cleanup'));
+    (() => { regD.register({}, 1); })();
+    process.once('beforeExit', () => { d.push('beforeExit'); out.d = d; done(out); });
+    require('crypto').randomBytes(4, () => gc());
+  }, 30);
+}, 10);
+`)
+	want := map[string]any{
+		"a": []any{"a2", true},
+		"b": true,
+		"c": []any{"cleanup", "error x", "tick", "promise", "cleanup", "error x", "tick", "promise"},
+		"d": []any{"cleanup", "beforeExit"},
+	}
+	wantJSON(t, got, want)
+}

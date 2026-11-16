@@ -2064,19 +2064,24 @@ void* v8go_context_take_last_script_exception(void* context_ptr) {
     return result;
 }
 
-// Runs the tasks V8 has posted to the isolate's foreground task runner, such
-// as FinalizationRegistry cleanup, without waiting for more. The caller runs
-// it on the thread that drives the isolate, between callbacks, never while
-// JavaScript is on the stack.
-void v8go_isolate_pump_message_loop(void* isolate_ptr) {
-    if (!isolate_ptr || !g_platform) return;
+// Runs at most one task V8 has posted to the isolate's foreground task
+// runner, such as one FinalizationRegistry's cleanup, without waiting, and
+// returns 1 if it ran one. The caller runs it on the thread that drives the
+// isolate, between callbacks, never while JavaScript is on the stack.
+// Microtasks don't run during the task: the caller runs them afterwards, so
+// it can run its own queues first, as Node does after each task.
+int v8go_isolate_pump_message_loop(void* isolate_ptr) {
+    if (!isolate_ptr || !g_platform) return 0;
     Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
     Locker locker(isolate);
     Isolate::Scope isolate_scope(isolate);
     HandleScope handle_scope(isolate);
-    while (v8::platform::PumpMessageLoop(g_platform.get(), isolate,
-                                         v8::platform::MessageLoopBehavior::kDoNotWait)) {
-    }
+    MicrotasksPolicy policy = isolate->GetMicrotasksPolicy();
+    isolate->SetMicrotasksPolicy(MicrotasksPolicy::kExplicit);
+    bool ran = v8::platform::PumpMessageLoop(g_platform.get(), isolate,
+                                             v8::platform::MessageLoopBehavior::kDoNotWait);
+    isolate->SetMicrotasksPolicy(policy);
+    return ran ? 1 : 0;
 }
 
 void v8go_perform_microtask_checkpoint(void* isolate_ptr) {

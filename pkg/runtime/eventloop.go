@@ -80,8 +80,8 @@ type EventLoop struct {
 	pendingWork int32 // atomic counter for pending async work
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
-	drained     func() // runs once both queues empty; see setDrainedHook
-	platform    func() // runs at the start of each poll phase; see setPlatformHook
+	drained     func()      // runs once both queues empty; see setDrainedHook
+	platform    func() bool // runs in each poll phase; see setPlatformHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -131,10 +131,10 @@ func (el *EventLoop) setDrainedHook(fn func()) {
 	el.drained = fn
 }
 
-// setPlatformHook sets a function to run on the loop's goroutine once per turn, at the
-// start of the poll phase, after the timers phase has run its whole batch. Call it before
-// the loop starts.
-func (el *EventLoop) setPlatformHook(fn func()) {
+// setPlatformHook sets a function to run on the loop's goroutine at the start of each poll
+// phase, after the timers phase has run its whole batch, and again before the loop decides
+// it has no work left. It reports whether it ran anything. Call it before the loop starts.
+func (el *EventLoop) setPlatformHook(fn func() bool) {
 	el.platform = fn
 }
 
@@ -379,8 +379,9 @@ func (el *EventLoop) run(done func() bool) bool {
 			if cancelled() {
 				return false
 			}
-			el.platform()
-			hooked = false
+			if el.platform() {
+				hooked = false
+			}
 		}
 		el.mu.Lock()
 		for {
@@ -444,6 +445,15 @@ func (el *EventLoop) run(done func() bool) bool {
 		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
 
 		if !hasPending && !el.aliveLocked() && len(el.ticks) == 0 {
+			// A callback in this turn may have left work for the platform, such as
+			// FinalizationRegistry cleanup; it runs before the loop ends, as in Node.
+			if el.platform != nil {
+				el.mu.Unlock()
+				if el.platform() {
+					continue
+				}
+				el.mu.Lock()
+			}
 			el.running = false
 			el.mu.Unlock()
 			return false

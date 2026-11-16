@@ -78,8 +78,9 @@ type uncaughtHandlers struct {
 	runScheduledTicks *v8.Value
 	queueMicrotask    *v8.Value
 	beforeExit        *v8.Value
-	// runCleanups calls the FinalizationRegistry callbacks a platform task recorded.
-	runCleanups *v8.Value
+	// beginPlatformTask and endPlatformTask bracket each platform task.
+	beginPlatformTask *v8.Value
+	endPlatformTask   *v8.Value
 	// mainBody is the native function runMain calls to run the main script.
 	mainBody *v8.Value
 }
@@ -140,7 +141,8 @@ func (rt *Runtime) installUncaught() error {
 		"runScheduledTicks": &rt.uncaught.runScheduledTicks,
 		"queueMicrotask":    &rt.uncaught.queueMicrotask,
 		"beforeExit":        &rt.uncaught.beforeExit,
-		"runCleanups":       &rt.uncaught.runCleanups,
+		"beginPlatformTask": &rt.uncaught.beginPlatformTask,
+		"endPlatformTask":   &rt.uncaught.endPlatformTask,
 	} {
 		if *dst, err = api.Get(name); err != nil {
 			return err
@@ -385,21 +387,36 @@ func (rt *Runtime) BindProcess(process *v8.Value) error {
 
 // reportRejections runs once the microtask queues are empty, which is the point where a
 // promise rejected with no handler has had its chance to get one.
+// maxPlatformTasks bounds how many platform tasks one call to
+// runPlatformTasks runs, so tasks that keep posting more can't hold the loop.
+const maxPlatformTasks = 1000
+
 // runPlatformTasks runs the tasks V8 has queued for the isolate, such as
-// FinalizationRegistry cleanup callbacks, then the ticks and promise jobs
-// they queued. The loop calls it once per turn, at the start of its poll
-// phase, on its own goroutine and never inside a callback, as Node runs
-// these tasks from libuv's poll phase.
-func (rt *Runtime) runPlatformTasks() {
-	if rt.ended() || rt.execController.IsDone() {
-		return
+// FinalizationRegistry cleanup, one at a time: each task's callbacks, then the
+// ticks and promise jobs they queued, as Node does after each task. The loop
+// calls it from its poll phase, on its own goroutine and never inside a
+// callback. It reports whether it ran any.
+func (rt *Runtime) runPlatformTasks() bool {
+	ranAny := false
+	for i := 0; i < maxPlatformTasks; i++ {
+		if rt.ended() || rt.execController.IsDone() {
+			break
+		}
+		if _, err := rt.uncaught.beginPlatformTask.Call(nil); err != nil {
+			break
+		}
+		ran := rt.context.PumpMessageLoop()
+		_, _ = rt.uncaught.endPlatformTask.Call(nil)
+		if rt.ended() {
+			rt.keepTerminating()
+			break
+		}
+		if !ran {
+			break
+		}
+		ranAny = true
 	}
-	rt.context.PumpMessageLoop()
-	// Cleanup tasks only record the callbacks to run; they run here, as callbacks.
-	_, _ = rt.uncaught.runCleanups.Call(nil)
-	if rt.ended() {
-		rt.keepTerminating()
-	}
+	return ranAny
 }
 
 func (rt *Runtime) reportRejections() {
