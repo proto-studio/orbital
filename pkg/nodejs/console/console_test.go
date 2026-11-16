@@ -546,3 +546,53 @@ func TestConsole_LogStringSpecifierKeepsNUL(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// console.log finds an array's and typed array's keys without walking their elements, which
+// for these 10-million-element ones would take about a second.
+func TestConsole_LogLargeArrayKeys(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	_, err := rt.RunScript(`
+		const list = Object.assign(new Array(10000000).fill(0), { x: 2 });
+		const bytes = Object.assign(new Uint8Array(10000000), { y: 3 });
+		globalThis.ms = Date.now();
+		console.log(list, { a: { b: { c: [], bytes } } });
+		globalThis.ms = Date.now() - globalThis.ms;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	ms, err := rt.RunScript("ms", "ms.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "... 9999900 more items,\n  x: 2\n]") || !strings.Contains(out, "{ a: { b: { c: [], bytes: [Uint8Array] } } }") {
+		t.Errorf("unexpected output %q", out[max(0, len(out)-200):])
+	}
+	if ms.Number() > 200 {
+		t.Errorf("printing took %v ms; the elements were probably walked", ms.Number())
+	}
+}
+
+// A Buffer that holds itself is marked as a cycle. (Node recurses until it runs out of stack.)
+func TestConsole_LogBufferHoldingItself(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	if _, err := rt.RunScript(`
+		// This runtime has no Buffer, so a stand-in that inspect takes for one.
+		globalThis.Buffer = class Buffer extends Uint8Array { static isBuffer(v) { return v instanceof Buffer; } };
+		const b = new Buffer(1);
+		b.self = b;
+		console.log(b);
+	`, "test.js"); err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := stdout.String(), "<ref *1> <Buffer 00, self: [Circular *1]>\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

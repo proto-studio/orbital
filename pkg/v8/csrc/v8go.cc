@@ -992,6 +992,83 @@ void* v8go_object_get_property_names(void* context_ptr, void* object_ptr) {
     return wrapper;
 }
 
+// Own enumerable keys of an object other than its array indices: strings, then symbols, as
+// Node's getOwnNonIndexProperties lists them for util.inspect. Indices are skipped while
+// collecting, so an array's elements aren't walked.
+void* v8go_object_get_own_non_index_keys(void* context_ptr, void* object_ptr) {
+    if (!context_ptr || !object_ptr) return nullptr;
+
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    ValueWrapper* obj_wrapper = static_cast<ValueWrapper*>(object_ptr);
+
+    Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+
+    Local<Value> obj_value = obj_wrapper->value.Get(isolate);
+    if (!obj_value->IsObject()) return nullptr;
+
+    // A proxy's trap may throw; the caller gets nothing, with no exception left pending.
+    TryCatch try_catch(isolate);
+    MaybeLocal<Array> maybe_keys = obj_value.As<Object>()->GetPropertyNames(
+        context, KeyCollectionMode::kOwnOnly, PropertyFilter::ONLY_ENUMERABLE,
+        IndexFilter::kSkipIndices, KeyConversionMode::kConvertToString);
+    if (maybe_keys.IsEmpty()) return nullptr;
+
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, maybe_keys.ToLocalChecked());
+    return wrapper;
+}
+
+// A JavaScript function answering what v8go_object_get_own_non_index_keys does for its argument
+// (undefined for anything but an object, or when listing its keys throws). It runs in C++, so calling it from JavaScript keeps
+// no native wrapper for its result.
+static void OwnNonIndexKeysCallback(const FunctionCallbackInfo<Value>& info) {
+    if (info.Length() < 1 || !info[0]->IsObject()) return;
+    Isolate* isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    // A proxy's trap may throw; the function then answers undefined instead of throwing.
+    TryCatch try_catch(isolate);
+    Local<Array> keys;
+    if (info[0].As<Object>()->GetPropertyNames(
+            context, KeyCollectionMode::kOwnOnly, PropertyFilter::ONLY_ENUMERABLE,
+            IndexFilter::kSkipIndices, KeyConversionMode::kConvertToString).ToLocal(&keys)) {
+        info.GetReturnValue().Set(keys);
+    }
+}
+
+void* v8go_own_non_index_keys_function(void* context_ptr) {
+    if (!context_ptr) return nullptr;
+
+    ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = ctx_wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = ctx_wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+
+    Local<Function> fn;
+    if (!Function::New(context, OwnNonIndexKeysCallback).ToLocal(&fn)) return nullptr;
+    ValueWrapper* wrapper = new ValueWrapper();
+    wrapper->isolate = isolate;
+    wrapper->value.Reset(isolate, fn);
+    return wrapper;
+}
+
+// Releases a value handed to Go, which mustn't use it afterwards.
+void v8go_value_release(void* value_ptr) {
+    if (!value_ptr) return;
+    ValueWrapper* wrapper = static_cast<ValueWrapper*>(value_ptr);
+    Locker locker(wrapper->isolate);
+    wrapper->value.Reset();
+    delete wrapper;
+}
+
 int v8go_array_length(void* context_ptr, void* array_ptr) {
     if (!context_ptr || !array_ptr) return 0;
     

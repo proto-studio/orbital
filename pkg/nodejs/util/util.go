@@ -26,15 +26,19 @@ func (u *Util) Name() string {
 
 // Register sets up the util module.
 func (u *Util) Register(rt *runtime.Runtime) error {
-	setupCode := `
-		(function() {
-			// util.js formats with the code it shares with console, passed in as inspectShared.
-			const utilModule = (function (inspectShared) { return (
-` + utilJS + `
-); })(` + inspectjs.JS + `);
-			globalThis.__util_module = utilModule;
-		})();
-	`
-	_, err := rt.RunScript(setupCode, "util_setup.js")
+	// util.js formats with the code it shares with console, passed in as inspectShared.
+	shared, err := inspectjs.Load(rt)
+	if err != nil {
+		return err
+	}
+	setup, err := rt.RunScript(`(function (inspectShared) {
+		globalThis.__util_module = (
+`+utilJS+`
+);
+	})`, "util_setup.js")
+	if err != nil {
+		return err
+	}
+	_, err = setup.Call(nil, shared)
 	return err
 }

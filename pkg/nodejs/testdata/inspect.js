@@ -267,3 +267,72 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   for (const a of [args, more]) { console.log(u.format(...a)); console.log(...a); console.log(u.formatWithOptions({ depth: 5 }, ...a)); }
   console.log('%s', -12345678901234567890n, 'tail', 3n);
 }
+// An array's or typed array's own enumerable keys other than indices print after its elements,
+// strings then symbols, and make an empty one print in full.
+{
+  const sym = Symbol('k');
+  const a = [1, 2]; a.x = 4; a[sym] = 3;
+  const loop = Object.assign(new Uint8Array(1), { note: 'n' });
+  loop.self = loop;
+  const odd = [1, 2]; odd['4294967295'] = 1; odd['-1'] = 2; odd['01'] = 3;
+  const holey = [, 1]; holey.k = 2;
+  const seven = Object.assign([1, 2, 3, 4, 5, 6, 7], { note: 'n' });
+  const sevenMore = Object.assign(Array.from({ length: 120 }, (_, i) => i), { note: 'n' });
+  const accessor = Object.defineProperty([1], 'g', { get() { return 1; }, enumerable: true });
+  const hidden = Object.defineProperty([1], 'h', { value: 1, enumerable: false });
+  show(loop, a, Object.assign([], { x: 1 }), odd, seven, sevenMore, accessor, hidden,
+    Object.assign(new Uint8Array(2), { x: 1 }), Object.assign(new Uint8Array(0), { x: 1 }),
+    Object.assign(new Float64Array([1.5, 2, 3, 4, 5, 6, 7]), { y: 's' }), Object.assign(Buffer.alloc(2), { x: 1 }),
+    Object.assign(Buffer.alloc(0), { x: 1 }), { a: { b: { c: Object.assign([], { x: 1 }), d: Object.assign(new Uint8Array(0), { x: 1 }), e: [], f: new Uint8Array(0) } } },
+    { a: { b: [Object.assign([1], { inner: { deep: 1 } })] } });
+  console.log(u.inspect(Object.assign([3, 1], { b: 1, a: 2 }), { sorted: true }), u.inspect(Object.assign([1, 2, 3], { x: 1 }), { maxArrayLength: 1 }));
+}
+// A left-out element isn't read even when keys put the entries in columns, and with compact:
+// true an array's keys keep their values on their line.
+{
+  const a = [1, 2]; Object.defineProperty(a, 1, { get() { throw new Error('read'); } }); Object.assign(a, { k1: 1, k2: 2, k3: 3, k4: 4, k5: 5 });
+  console.log(u.inspect(a, { maxArrayLength: 1 }));
+  console.log(u.inspect(Object.assign([], { x: [1, 2] }), { compact: true, breakLength: 20, maxArrayLength: 1 }));
+  console.log(u.inspect(Object.assign([1], { x: 'y'.repeat(30) }), { compact: true, breakLength: 20 }));
+  console.log(u.inspect(Object.assign(new Uint8Array(1), { x: 'y'.repeat(30) }), { compact: true, breakLength: 20 }));
+  console.log(u.inspect(Object.assign([1], { x: { deep: 'z'.repeat(30), more: [1, 2, 3] } }), { compact: true, breakLength: 30 }));
+}
+// A typed array's elements show as they were before its keys were formatted, even when
+// formatting a key changes or detaches them.
+{
+  const detached = new Uint8Array([1]);
+  // Node 20 has no ArrayBuffer.prototype.transfer; structuredClone with transfer detaches there.
+  const detach = (buffer) => (typeof ArrayBuffer.prototype.transfer === 'function'
+    ? buffer.transfer() : structuredClone(buffer, { transfer: [buffer] }));
+  detached.x = { [u.inspect.custom]() { detach(detached.buffer); return 'field'; } };
+  const changed = new Uint8Array([7, 8]);
+  changed.y = { [u.inspect.custom]() { changed[0] = 99; return 'changed'; } };
+  console.log(u.inspect(detached), u.inspect(changed));
+  // A detached array is empty, and a child's constructor getter, which Node never calls, can't
+  // change what its parent shows. An array proxy whose ownKeys trap throws prints its elements.
+  const gone = new Uint8Array([1]);
+  detach(gone.buffer);
+  const parent = new Uint8Array([1, 2]);
+  const child = new Uint8Array(1);
+  Object.defineProperty(child, 'constructor', { get() { parent[0] = 9; return Uint8Array; } });
+  parent.kid = child;
+  show(gone, parent);
+  console.log(u.inspect(new Proxy([1, 2], { ownKeys() { throw new Error('trap'); } })));
+}
+// An array's keys are listed after its elements are read, so a proxy's ownKeys trap that
+// changes an element doesn't change what's shown. (Node inspects a proxy's target and never
+// runs the trap; that is #201.)
+{
+  const target = [1];
+  const changing = new Proxy(target, { ownKeys(t) { t[0] = 9; return Reflect.ownKeys(t); } });
+  console.log(u.inspect(changing));
+}
+// An array emptied while its elements are formatted still lists its keys, and an empty typed
+// array, which formats no entries, doesn't count as a level of them.
+{
+  const emptied = [{ [u.inspect.custom]() { emptied.length = 0; return 'item'; } }];
+  emptied[Symbol('s')] = 3;
+  console.log(u.inspect(emptied));
+  console.log(u.inspect({ a: new Uint8Array(0) }, { compact: 1 }), u.inspect({ x: { y: { a: new Uint8Array(0) } } }));
+  console.log({ x: { y: { a: new Uint8Array(0) } } });
+}
