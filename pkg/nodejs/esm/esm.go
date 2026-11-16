@@ -518,5 +518,6 @@ func codedError(reason *v8.Value) *moduleError {
 		url:       objString(reason, "url"),
 		typeError: name == "TypeError",
 		uriError:  name == "URIError",
+		input:     objString(reason, "input"),
 	}
 }

@@ -38,6 +38,7 @@
       // The missing module's url lets resolve hooks rewrite the extension and
       // retry (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).
       if (r.url) err.url = r.url;
+      if (r.input) err.input = r.input;
       throw err;
     }
     return { url: r.url, format: (context && context.format) || null, shortCircuit: true };
