@@ -50,7 +50,7 @@ func TestFSLinks_WithRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "beside.txt"), []byte("beside"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runJS(t, &runtime.Config{Filesystem: runtime.NewLocalFilesystem(root)}, `
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewLocalFilesystem(root)}, fmt.Sprintf(`
 const fs = require('fs');
 const code = (fn) => { try { const v = fn(); return v === undefined ? 'ok' : v; } catch (e) { return e.code; } };
 fs.mkdirSync('/d');
@@ -73,6 +73,7 @@ done({
   mkdtemp: code(() => /^\/tmp-[A-Za-z0-9]{6}$/.test(fs.mkdtempSync('/tmp-'))),
   mkdtempBeside: code(() => fs.mkdtempSync('/beside/x-')),
   unlinkBeside: code(() => fs.unlinkSync('/beside')),
+  hostPathTarget: code(() => { fs.symlinkSync(%q + '/d/f', '/hostabs'); return fs.readFileSync('/hostabs', 'utf8'); }),
   cpLink: code(() => {
     fs.mkdirSync('src');
     fs.writeFileSync('src/f', 'linked');
@@ -81,13 +82,13 @@ done({
     return [fs.readlinkSync('dest/link'), fs.readFileSync('dest/link', 'utf8')].join(' ');
   }),
 });
-`)
+`, root))
 	wantJSON(t, got, map[string]any{
 		"absolute": "inside", "readlinkAbsolute": "/d/f", "realpath": "/d/f", "realpathRoot": "/",
 		"relative": "inside", "beside": "EACCES", "besideLstat": true, "besideReadlink": "../beside.txt",
 		"besideRealpath": "EACCES", "besideWrite": "EACCES", "besideHardLink": "EACCES", "hardLinkMade": false,
 		"hardLink": "inside", "linkInBeside": "EACCES", "mkdtemp": true, "mkdtempBeside": "EACCES",
-		"unlinkBeside": "ok", "cpLink": "/src/f linked",
+		"unlinkBeside": "ok", "cpLink": "/src/f linked", "hostPathTarget": "inside",
 	})
 	if data, err := os.ReadFile(filepath.Join(base, "beside.txt")); err != nil || string(data) != "beside" {
 		t.Errorf("beside.txt = %q, %v; want it unchanged", data, err)

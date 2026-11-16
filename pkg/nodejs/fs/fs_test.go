@@ -1,6 +1,9 @@
 package fs
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/nodejs/buffer"
@@ -320,5 +323,28 @@ func TestFSWithoutBuffer(t *testing.T) {
 	}
 	if string(data) != want {
 		t.Errorf("file holds %x, want %x", data, want)
+	}
+}
+
+// readlink works without the buffer module, decoding the target as UTF-8.
+func TestFSWithoutBufferReadlink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("tést-\xff", filepath.Join(dir, "l")); err != nil {
+		t.Skipf("the filesystem refuses the name: %v", err)
+	}
+	rt, err := runtime.New(&runtime.Config{Filesystem: runtime.NewLocalFilesystem("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if err := New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.RunScript(fmt.Sprintf(`__fs_module.readlinkSync(%q) === 'tést-�'`, filepath.Join(dir, "l")), "test.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "true" {
+		t.Errorf("readlinkSync without Buffer = %s", result.String())
 	}
 }
