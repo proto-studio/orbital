@@ -1045,3 +1045,51 @@ func TestHTTPEventOrder_MatchesNode(t *testing.T) {
 	got := runJS(t, &runtime.Config{}, string(script))
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
+
+// Requests whose ends are held back until the handler's callbacks have run are all completed
+// when the client half-closes, and a malformed request after one of them is reported with
+// the packet it came in.
+func TestHTTP_DeferredRequestEnds(t *testing.T) {
+	result := runJS(t, &runtime.Config{}, `
+const http = require('http');
+const net = require('net');
+const req = (path) => 'POST ' + path + ' HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nbody';
+(async () => {
+  const out = {};
+  out.halfClosed = await new Promise((resolve) => {
+    const seen = [];
+    const server = http.createServer((q, p) => { q.resume(); q.on('end', () => { seen.push(q.url); p.end('ok'); }); });
+    server.on('clientError', (e) => seen.push('clientError ' + e.code));
+    server.listen(0, '127.0.0.1', () => {
+      const c = net.connect({ port: server.address().port, host: '127.0.0.1', allowHalfOpen: true }, () => {
+        c.end(req('/1') + req('/2') + req('/3') + req('/4'));
+      });
+      c.resume();
+      c.on('close', () => { server.close(); resolve(seen); });
+    });
+  });
+  out.badAfterBody = await new Promise((resolve) => {
+    const packet = 'POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nxBOGUS\r\n\r\n';
+    const server = http.createServer((q, p) => { q.resume(); q.on('end', () => p.end()); });
+    server.on('clientError', (e, socket) => {
+      socket.destroy();
+      server.close();
+      resolve({ code: e.code, rawPacket: String(e.rawPacket), bytesParsed: e.bytesParsed });
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const c = net.connect(server.address().port, '127.0.0.1', () => c.write(packet));
+      c.on('error', () => {});
+      c.resume();
+    });
+  });
+  done(out);
+})();`)
+	wantJSON(t, result, map[string]any{
+		"halfClosed": []any{"/1", "/2", "/3", "/4"},
+		"badAfterBody": map[string]any{
+			"code":        "HPE_INVALID_METHOD",
+			"rawPacket":   "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nxBOGUS\r\n\r\n",
+			"bytesParsed": float64(58),
+		},
+	})
+}
