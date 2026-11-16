@@ -1,0 +1,90 @@
+{
+  "array": [
+    "data string a",
+    "data string b",
+    "tick",
+    "end",
+    "promise",
+    "close"
+  ],
+  "asyncGenerator": [
+    "promise",
+    "tick",
+    "data string x",
+    "data string y",
+    "end",
+    "close"
+  ],
+  "buffer": [
+    "promise",
+    "data buffer buf",
+    "tick",
+    "end",
+    "close"
+  ],
+  "destroyCalls": [
+    "throw stop",
+    "return"
+  ],
+  "forAwait": [
+    1,
+    2,
+    3
+  ],
+  "generator": [
+    "promise",
+    "data number 1",
+    "data number 2",
+    "data number 3",
+    "tick",
+    "end",
+    "close"
+  ],
+  "notIterable": [
+    "TypeError",
+    "ERR_INVALID_ARG_TYPE",
+    "The \"iterable\" argument must be an instance of Iterable. Received type number (5)"
+  ],
+  "nullArg": [
+    "TypeError",
+    "ERR_INVALID_ARG_TYPE",
+    "The \"iterable\" argument must be an instance of Iterable. Received null"
+  ],
+  "nullValue": [
+    "promise",
+    "data string a",
+    "tick",
+    "error ERR_STREAM_NULL_VALUES May not write null values to stream",
+    "close"
+  ],
+  "promiseValues": [
+    "promise",
+    "tick",
+    "data string p1",
+    "data string plain",
+    "data string p2",
+    "end",
+    "close"
+  ],
+  "string": [
+    "promise",
+    "data string abc",
+    "tick",
+    "end",
+    "close"
+  ],
+  "stringNotObjectMode": [
+    "promise",
+    "data buffer abc",
+    "tick",
+    "end",
+    "close"
+  ],
+  "throwing": [
+    "promise",
+    "data string ok",
+    "tick",
+    "error undefined gen failed",
+    "close"
+  ]
+}
