@@ -87,3 +87,35 @@ func TestRuntime_RunOnceRunsPlatformTasks(t *testing.T) {
 		t.Errorf("%d of 20 cleanup callbacks ran through RunOnce", v.Integer())
 	}
 }
+
+// RunUntil checks its predicate after each platform task, as after any other
+// callback: once one registry's cleanup satisfies it, the next doesn't run.
+func TestRuntime_RunUntilChecksAfterEachPlatformTask(t *testing.T) {
+	rt, err := New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if _, err := rt.RunScript(`
+		globalThis.cleaned = 0;
+		const r1 = new FinalizationRegistry(() => { cleaned++; });
+		const r2 = new FinalizationRegistry(() => { cleaned++; });
+		(() => { r1.register({}, 1); r2.register({}, 2); })();
+		gc();
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int64 {
+		v, err := rt.RunScript(`cleaned`, "count.js")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.Integer()
+	}
+	if !rt.EventLoop().RunUntil(func() bool { return count() >= 1 }) {
+		t.Fatal("RunUntil didn't report its predicate satisfied")
+	}
+	if n := count(); n != 1 {
+		t.Errorf("%d cleanups ran before RunUntil returned, want 1", n)
+	}
+}

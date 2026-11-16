@@ -81,7 +81,7 @@ type EventLoop struct {
 	ctx         context.Context
 	cancelCtx   context.CancelFunc
 	drained     func()      // runs once both queues empty; see setDrainedHook
-	platform    func() bool // runs in each poll phase; see setPlatformHook
+	platform    func() bool // runs one platform task; see setPlatformHook
 }
 
 // NewEventLoop creates a new event loop.
@@ -131,11 +131,36 @@ func (el *EventLoop) setDrainedHook(fn func()) {
 	el.drained = fn
 }
 
-// setPlatformHook sets a function to run on the loop's goroutine at the start of each poll
-// phase, after the timers phase has run its whole batch, and again before the loop decides
-// it has no work left. It reports whether it ran anything. Call it before the loop starts.
+// setPlatformHook sets a function that runs one platform task on the loop's goroutine and
+// reports whether there was one. The loop runs them at the start of each poll phase, after
+// the timers phase has run its whole batch, and again before it waits or ends. Call it
+// before the loop starts.
 func (el *EventLoop) setPlatformHook(fn func() bool) {
 	el.platform = fn
+}
+
+// maxPlatformTasks bounds how many platform tasks runPlatform runs in one go, so tasks that
+// keep posting more can't hold the loop.
+const maxPlatformTasks = 1000
+
+// runPlatform runs the platform tasks queued so far, one at a time. After each, as after any
+// callback, the ticks it queued and the drained hook run, and then done is checked. It
+// reports whether it ran any, and whether done was satisfied. el.mu must not be held.
+func (el *EventLoop) runPlatform(ctx context.Context, done func() bool) (ran, finished bool) {
+	if el.platform == nil {
+		return false, false
+	}
+	for i := 0; i < maxPlatformTasks; i++ {
+		if ctx.Err() != nil || !el.platform() {
+			break
+		}
+		ran = true
+		el.runTicks(ctx)
+		if done != nil && done() {
+			return true, true
+		}
+	}
+	return ran, false
 }
 
 // runDrainedLocked runs the drained hook, and reports whether that queued more callbacks.
@@ -375,13 +400,13 @@ func (el *EventLoop) run(done func() bool) bool {
 
 		// Poll phase, without waiting: the tasks V8 has queued for the isolate, then the
 		// I/O completions and ticks queued so far.
-		if el.platform != nil {
-			if cancelled() {
-				return false
-			}
-			if el.platform() {
-				hooked = false
-			}
+		if cancelled() {
+			return false
+		}
+		if ran, fin := el.runPlatform(ctx, finished); fin {
+			return true
+		} else if ran {
+			hooked = true
 		}
 		el.mu.Lock()
 		for {
@@ -447,13 +472,13 @@ func (el *EventLoop) run(done func() bool) bool {
 		if !hasPending && !el.aliveLocked() && len(el.ticks) == 0 {
 			// A callback in this turn may have left work for the platform, such as
 			// FinalizationRegistry cleanup; it runs before the loop ends, as in Node.
-			if el.platform != nil {
-				el.mu.Unlock()
-				if el.platform() {
-					continue
-				}
-				el.mu.Lock()
+			el.mu.Unlock()
+			if ran, fin := el.runPlatform(ctx, finished); fin {
+				return true
+			} else if ran {
+				continue
 			}
+			el.mu.Lock()
 			el.running = false
 			el.mu.Unlock()
 			return false
@@ -461,6 +486,19 @@ func (el *EventLoop) run(done func() bool) bool {
 
 		// Anything queued since the poll, or a timer already due, is handled by the next
 		// turn without waiting.
+		if len(el.ticks) > 0 || len(el.microtasks) > 0 || len(el.immediates) > 0 {
+			el.mu.Unlock()
+			continue
+		}
+		// Likewise before waiting: platform work a callback left runs now, not when
+		// something unrelated wakes the loop.
+		el.mu.Unlock()
+		if ran, fin := el.runPlatform(ctx, finished); fin {
+			return true
+		} else if ran {
+			continue
+		}
+		el.mu.Lock()
 		if len(el.ticks) > 0 || len(el.microtasks) > 0 || len(el.immediates) > 0 {
 			el.mu.Unlock()
 			continue
@@ -609,9 +647,11 @@ func (el *EventLoop) wake() {
 
 // RunOnce processes one iteration of the event loop.
 func (el *EventLoop) RunOnce() bool {
-	// The tasks V8 has queued for the isolate, such as FinalizationRegistry cleanup,
-	// as the loop's poll phase runs them.
-	platformRan := el.platform != nil && el.platform()
+	// The ticks already queued, then the tasks V8 has queued for the isolate, such as
+	// FinalizationRegistry cleanup, as Run does.
+	ctx := el.contextForTicks()
+	el.runTicks(ctx)
+	platformRan, _ := el.runPlatform(ctx, nil)
 
 	el.mu.Lock()
 
