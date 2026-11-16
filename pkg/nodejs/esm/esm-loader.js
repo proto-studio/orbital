@@ -149,7 +149,7 @@
     own(err, 'stack', d.stack, false);
     if (bag && bag.hasCause) {
       var causeError = bag.causeError;
-      own(err, 'cause', causeError ? hookError(causeError.payload, causeError.bag) : bag.cause, false);
+      own(err, 'cause', causeError ? hookError(causeError.payload, causeError.bag) : bag.cause, bag.causeEnumerable === true);
     }
     var keys = objectKeys(props);
     for (var i = 0; i < keys.length; i++) own(err, keys[i], props[keys[i]], true);

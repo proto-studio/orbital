@@ -132,9 +132,18 @@
   function describeError(e, depth) {
     const raw = {};
     const keys = objectKeys(e);
+    // An enumerable cause is read here, once, and crosses as the cause below
+    // (still enumerable), not among the properties.
+    let causeRead = false;
+    let causeValue;
     for (let i = 0; i < keys.length; i++) {
       try {
         const v = e[keys[i]];
+        if (keys[i] === 'cause') {
+          causeRead = true;
+          causeValue = v;
+          continue;
+        }
         // A function or symbol can't cross, and would fail the clone below
         // after it had read the other values: left out first.
         if (typeof v === 'function' || typeof v === 'symbol') continue;
@@ -173,8 +182,9 @@
     }
     const bag = { props: props, hasCause: false };
     try {
-      if (reflectApply(hasOwn, e, ['cause'])) {
-        const cause = e.cause;
+      if (causeRead || reflectApply(hasOwn, e, ['cause'])) {
+        const cause = causeRead ? causeValue : e.cause;
+        if (causeRead) ownData(bag, 'causeEnumerable', true);
         if (isErrorBrand(cause) && depth < 16) {
           const d = describeError(cause, depth + 1);
           ownData(bag, 'causeError', { payload: d.payload, bag: d.bag });
