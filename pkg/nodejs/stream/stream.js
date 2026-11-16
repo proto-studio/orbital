@@ -830,50 +830,182 @@
 		return iterator;
 	}
 
-	Readable.from = function(iterable, options) {
+	// The "Received ..." part of Node's ERR_INVALID_ARG_TYPE message.
+	function describeReceived(value) {
+		if (value == null) return ' Received ' + value;
+		if (typeof value === 'function') return ' Received function ' + value.name;
+		if (typeof value === 'object') {
+			if (value.constructor && value.constructor.name) return ' Received an instance of ' + value.constructor.name;
+			return ' Received ' + Object.prototype.toString.call(value);
+		}
+		let shown = typeof value === 'string' ? "'" + value + "'" : String(value);
+		if (typeof value === 'bigint') shown += 'n';
+		if (shown.length > 28) shown = shown.slice(0, 25) + '...';
+		return ' Received type ' + typeof value + ' (' + shown + ')';
+	}
+
+	// Readable.from follows Node 20.18.1's lib/internal/streams/from.js: a sync iterable is
+	// read and pushed synchronously, and only promises and async iterables are awaited.
+	Readable.from = function(iterable, opts) {
 		if (typeof iterable === 'string' || iterable instanceof Buffer) {
-			const single = iterable;
-			iterable = [single];
-			options = { objectMode: false, ...options };
+			return new Readable({
+				objectMode: true,
+				...opts,
+				read() {
+					this.push(iterable);
+					this.push(null);
+				},
+			});
 		}
-		const iter = iterable[Symbol.asyncIterator] ? iterable[Symbol.asyncIterator]()
-			: iterable[Symbol.iterator] ? iterable[Symbol.iterator]() : null;
-		if (!iter) {
-			throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE', 'The "iterable" argument must be an instance of Iterable');
+
+		let iterator;
+		let isAsync;
+		if (iterable && iterable[Symbol.asyncIterator]) {
+			isAsync = true;
+			iterator = iterable[Symbol.asyncIterator]();
+		} else if (iterable && iterable[Symbol.iterator]) {
+			isAsync = false;
+			iterator = iterable[Symbol.iterator]();
+		} else {
+			throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+				'The "iterable" argument must be an instance of Iterable.' + describeReceived(iterable));
 		}
-		const readable = new Readable({ objectMode: true, highWaterMark: 1, ...options });
+
+		const readable = new Readable({
+			objectMode: true,
+			highWaterMark: 1,
+			...opts,
+		});
+
+		// Keeps _read from starting another iteration before the last one finished.
 		let reading = false;
+		let isAsyncValues = false;
+		const nullValues = () => codedError(TypeError, 'ERR_STREAM_NULL_VALUES', 'May not write null values to stream');
+
 		readable._read = function() {
-			if (reading) return;
-			reading = true;
-			next();
+			if (!reading) {
+				reading = true;
+				if (isAsync) {
+					nextAsync();
+				} else if (isAsyncValues) {
+					nextSyncWithAsyncValues();
+				} else {
+					nextSyncWithSyncValues();
+				}
+			}
 		};
-		readable._destroy = function(err, cb) {
-			const finish = () => cb(err);
-			if (iter.return) Promise.resolve(iter.return()).then(finish, finish);
-			else finish();
+
+		readable._destroy = function(error, cb) {
+			close(error).then(
+				() => process.nextTick(cb, error), // nextTick in case cb throws
+				(e) => process.nextTick(cb, e || error),
+			);
 		};
-		async function next() {
-			while (true) {
+
+		async function close(error) {
+			const hadError = error !== undefined && error !== null;
+			const hasThrow = typeof iterator.throw === 'function';
+			if (hadError && hasThrow) {
+				const { value, done } = await iterator.throw(error);
+				await value;
+				if (done) {
+					return;
+				}
+			}
+			if (typeof iterator.return === 'function') {
+				const { value } = await iterator.return();
+				await value;
+			}
+		}
+
+		function nextSyncWithSyncValues() {
+			for (;;) {
 				try {
-					const { value, done } = await iter.next();
+					const { value, done } = iterator.next();
 					if (done) {
 						readable.push(null);
 						return;
 					}
-					const chunk = value && typeof value.then === 'function' ? await value : value;
-					if (chunk === null) {
-						reading = false;
-						throw codedError(TypeError, 'ERR_STREAM_NULL_VALUES', 'May not write null values to stream');
+					if (value && typeof value.then === 'function') {
+						return changeToAsyncValues(value);
 					}
-					if (!readable.push(chunk)) {
+					if (value === null) {
 						reading = false;
-						return;
+						throw nullValues();
 					}
+					if (readable.push(value)) {
+						continue;
+					}
+					reading = false;
 				} catch (err) {
 					readable.destroy(err);
+				}
+				break;
+			}
+		}
+
+		async function changeToAsyncValues(value) {
+			isAsyncValues = true;
+			try {
+				const res = await value;
+				if (res === null) {
+					reading = false;
+					throw nullValues();
+				}
+				if (readable.push(res)) {
+					nextSyncWithAsyncValues();
 					return;
 				}
+				reading = false;
+			} catch (err) {
+				readable.destroy(err);
+			}
+		}
+
+		async function nextSyncWithAsyncValues() {
+			for (;;) {
+				try {
+					const { value, done } = iterator.next();
+					if (done) {
+						readable.push(null);
+						return;
+					}
+					const res = (value && typeof value.then === 'function') ? await value : value;
+					if (res === null) {
+						reading = false;
+						throw nullValues();
+					}
+					if (readable.push(res)) {
+						continue;
+					}
+					reading = false;
+				} catch (err) {
+					readable.destroy(err);
+				}
+				break;
+			}
+		}
+
+		async function nextAsync() {
+			for (;;) {
+				try {
+					const { value, done } = await iterator.next();
+					if (done) {
+						readable.push(null);
+						return;
+					}
+					if (value === null) {
+						reading = false;
+						throw nullValues();
+					}
+					if (readable.push(value)) {
+						continue;
+					}
+					reading = false;
+				} catch (err) {
+					readable.destroy(err);
+				}
+				break;
 			}
 		}
 		return readable;
