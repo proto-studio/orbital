@@ -301,6 +301,22 @@ b.on('error', (e) => note('b caught', e.message));
 a.enter();
 b.run(() => Promise.resolve().then(() => { throw new Error('x'); }));
 `, []string{"b caught x"}},
+		"exited before throwing": {`
+const domain = require('domain');
+const d = domain.create();
+d.on('error', (e) => note('domain caught', e.message));
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
+d.run(() => Promise.resolve().then(() => { d.exit(); throw new Error('outside'); }));
+setTimeout(() => {
+  const Native = Promise;
+  class Fake { constructor(fn) { this.v = undefined; fn((v) => { this.v = v; }, () => {}); } then(f) { return new Fake((res) => res(f(this.v))); } }
+  globalThis.Promise = Fake;
+  domain.create();
+  try { new Fake((r) => r(1)).then((v) => note('fake then', v)); } catch (e) { note('fake then threw', e.message); }
+  globalThis.Promise = Native;
+  Native.resolve(2).then((v) => note('native then', v));
+}, 10);
+`, []string{"unhandledRejection outside", "fake then 1", "native then 2"}},
 		"outside any domain": {`
 require('domain').create();
 process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));
