@@ -402,3 +402,41 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   ];
   for (const fn of fns) console.log(u.inspect(fn));
 }
+// What user code throws while console.log formats, a toString or Symbol.toPrimitive under %s,
+// a toJSON under %j, or a proxy's trap, is thrown on unchanged and nothing is printed.
+{
+  const trap = { getOwnPropertyDescriptor() { throw new Error('trap'); }, get() { throw new Error('trap'); } };
+  const attempts = [
+    () => console.log('%s', new Proxy({ toString() { return 'T'; } }, trap)),
+    () => console.log('%s', { toString() { throw new Error('toString'); } }),
+    () => console.log('%j', { toJSON() { throw new RangeError('toJSON'); } }),
+    () => console.log('%j %s', { ok: 1 }, { toString() { throw 42; } }),
+    () => console.error('%s', { [Symbol.toPrimitive]() { throw new TypeError('prim'); } }),
+  ];
+  for (const attempt of attempts) {
+    try {
+      attempt();
+      console.log('no throw');
+    } catch (e) {
+      console.log('threw', typeof e === 'object' ? `${e.constructor.name}: ${e.message}` : e);
+    }
+  }
+  console.log('%j', { a: 1 }, 'after');
+  const loop = {}; loop.self = loop;
+  console.log('%j', loop);
+  // Formatting stops at the first throw, so no later argument is converted, and a %d whose
+  // valueOf throws throws too.
+  const seen = [];
+  for (const attempt of [
+    () => console.log('%j %s', { toJSON() { throw 42; } }, { toString() { seen.push('converted'); return 'x'; } }),
+    () => console.log('%d', { valueOf() { throw new Error('valueOf'); } }),
+  ]) {
+    try {
+      attempt();
+      seen.push('no throw');
+    } catch (e) {
+      seen.push('threw ' + (typeof e === 'object' ? e.message : e));
+    }
+  }
+  console.log(seen.join(' | '));
+}

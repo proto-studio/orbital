@@ -57,12 +57,13 @@
     field: inspectShared.field,
     keys: inspectShared.keys,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
-    // other error JSON.stringify throws leaves it answering nothing.
+    // other error JSON.stringify throws, like a toJSON's own, is thrown on, as in Node.
     json: (value) => {
       try {
         return String(JSON.stringify(value));
       } catch (e) {
-        return e instanceof TypeError && e.message.split('\n')[0] === circularMessage ? '[Circular]' : null;
+        if (e instanceof TypeError && e.message.split('\n')[0] === circularMessage) return '[Circular]';
+        throw e;
       }
     },
     cut: inspectShared.cut,

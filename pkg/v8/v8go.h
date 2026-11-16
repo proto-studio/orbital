@@ -157,7 +157,7 @@ void* v8go_callback_info_arg(void* info, int index);
 void* v8go_callback_info_this(void* info);
 
 // Function call
-void* v8go_function_call(void* context, void* function, void* recv, int argc, void** argv, char** error);
+void* v8go_function_call(void* context, void* function, void* recv, int argc, void** argv, char** error, void** exception);
 
 // JSON operations
 void* v8go_json_parse(void* context, const char* json, char** error);
@@ -173,6 +173,7 @@ void* v8go_promise_result(void* context, void* promise);
 
 // Exception handling
 void* v8go_throw_exception(void* context, const char* message);
+void v8go_throw_value(void* context, void* value);
 void* v8go_throw_type_error(void* context, const char* message);
 void* v8go_throw_range_error(void* context, const char* message);
 

@@ -596,3 +596,26 @@ func TestConsole_LogBufferHoldingItself(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// What the console runs into while describing a value, unlike what a value's own conversion
+// throws, isn't thrown on: a proxy whose ownKeys trap throws still prints.
+func TestConsole_LogKeepsDescriptionErrorsInside(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rt := setupRuntime(t, &stdout, &stderr)
+	defer rt.Dispose()
+
+	_, err := rt.RunScript(`
+		try {
+			console.log(new Proxy({ a: 1 }, { ownKeys() { throw 42; } }));
+			console.log('no throw');
+		} catch (e) {
+			console.log('threw ' + e);
+		}
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got := stdout.String(); !strings.HasSuffix(got, "no throw\n") {
+		t.Errorf("got %q, want the console call not to throw", got)
+	}
+}

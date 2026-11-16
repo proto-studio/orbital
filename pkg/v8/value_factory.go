@@ -83,6 +83,15 @@ func (c *Context) NewArray(length int) (*Value, error) {
 	return newValue(ptr, c), nil
 }
 
+// ThrowValue throws v in c, typically what a call made by a Go callback threw: once the
+// callback returns, its caller sees the exception, as if the call had thrown it there.
+func (c *Context) ThrowValue(v *Value) {
+	if c == nil || c.ptr == nil || v == nil || v.ptr == nil {
+		return
+	}
+	C.v8go_throw_value(c.ptr, v.ptr)
+}
+
 // Throw schedules a JavaScript Error with the given message to be thrown when
 // control returns to V8. It is intended for use inside a function callback:
 // call Throw and return its result (or nil) so the pending exception

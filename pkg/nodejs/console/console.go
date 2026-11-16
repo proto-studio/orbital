@@ -3,6 +3,7 @@ package console
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -35,6 +36,10 @@ type Console struct {
 	tracked int
 	// shallow is set while %s prints an object, which it does with a depth of 0.
 	shallow bool
+	// thrown is what user code threw while the console was formatting, like a toJSON under %j
+	// or a toString under %s. As in Node, formatting stops, nothing is written, and the console
+	// method throws it.
+	thrown *v8.Value
 
 	// splitNUL is the function compiled from splitAtNUL.
 	splitNUL *v8.Value
@@ -131,7 +136,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.log
-	logFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("log")))
+	logFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.createLogFunc("log"))))
 	if err != nil {
 		return err
 	}
@@ -154,7 +159,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.warn
-	warnFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("warn")))
+	warnFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.createLogFunc("warn"))))
 	if err != nil {
 		return err
 	}
@@ -167,7 +172,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.error
-	errorFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("error")))
+	errorFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.createLogFunc("error"))))
 	if err != nil {
 		return err
 	}
@@ -180,7 +185,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.assert
-	assertFn, err := iso.NewFunctionTemplate(c.released(c.assertFunc))
+	assertFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.assertFunc)))
 	if err != nil {
 		return err
 	}
@@ -193,7 +198,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.clear
-	clearFn, err := iso.NewFunctionTemplate(c.released(c.clearFunc))
+	clearFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.clearFunc)))
 	if err != nil {
 		return err
 	}
@@ -206,7 +211,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.count
-	countFn, err := iso.NewFunctionTemplate(c.released(c.countFunc))
+	countFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.countFunc)))
 	if err != nil {
 		return err
 	}
@@ -219,7 +224,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.countReset
-	countResetFn, err := iso.NewFunctionTemplate(c.released(c.countResetFunc))
+	countResetFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.countResetFunc)))
 	if err != nil {
 		return err
 	}
@@ -232,7 +237,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.time
-	timeFn, err := iso.NewFunctionTemplate(c.released(c.timeFunc))
+	timeFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.timeFunc)))
 	if err != nil {
 		return err
 	}
@@ -245,7 +250,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.timeEnd
-	timeEndFn, err := iso.NewFunctionTemplate(c.released(c.timeEndFunc))
+	timeEndFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.timeEndFunc)))
 	if err != nil {
 		return err
 	}
@@ -258,7 +263,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.timeLog
-	timeLogFn, err := iso.NewFunctionTemplate(c.released(c.timeLogFunc))
+	timeLogFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.timeLogFunc)))
 	if err != nil {
 		return err
 	}
@@ -271,7 +276,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.trace
-	traceFn, err := iso.NewFunctionTemplate(c.released(c.traceFunc))
+	traceFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.traceFunc)))
 	if err != nil {
 		return err
 	}
@@ -284,7 +289,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.table
-	tableFn, err := iso.NewFunctionTemplate(c.released(c.tableFunc))
+	tableFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.tableFunc)))
 	if err != nil {
 		return err
 	}
@@ -297,7 +302,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.dir
-	dirFn, err := iso.NewFunctionTemplate(c.released(c.dirFunc))
+	dirFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.dirFunc)))
 	if err != nil {
 		return err
 	}
@@ -315,7 +320,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.group
-	groupFn, err := iso.NewFunctionTemplate(c.released(c.groupFunc))
+	groupFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.groupFunc)))
 	if err != nil {
 		return err
 	}
@@ -333,7 +338,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.groupEnd
-	groupEndFn, err := iso.NewFunctionTemplate(c.released(c.groupEndFunc))
+	groupEndFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.groupEndFunc)))
 	if err != nil {
 		return err
 	}
@@ -346,7 +351,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.profile (no-op stub)
-	noopFn, err := iso.NewFunctionTemplate(c.released(c.noopFunc))
+	noopFn, err := iso.NewFunctionTemplate(c.released(c.rethrowing(c.noopFunc)))
 	if err != nil {
 		return err
 	}
@@ -447,18 +452,73 @@ func (c *Console) inspectCall(name string, args ...*v8.Value) (string, bool) {
 
 // inspectValue calls a function from console_inspect.js and returns its result.
 func (c *Console) inspectValue(name string, args ...*v8.Value) *v8.Value {
-	if c.inspect == nil {
+	// Once user code has thrown, nothing more is formatted: the method throws instead.
+	if c.inspect == nil || c.thrown != nil {
 		return nil
 	}
 	fn, err := c.inspect.Get(name)
 	if err != nil || fn == nil || !fn.IsFunction() {
 		return nil
 	}
-	result, err := fn.Call(nil, args...)
+	result, err := fn.CallKeepingThrown(nil, args...)
 	if err != nil {
+		var jsErr *v8.JSError
+		if errors.As(err, &jsErr) && jsErr.Value != nil {
+			if coercions[name] {
+				c.thrown = jsErr.Value
+			} else {
+				// Not passed on, so its handle is released now.
+				jsErr.Value.Release()
+			}
+		}
 		return nil
 	}
 	return result
+}
+
+// coercions are the console_inspect.js functions that convert a value as Node's format does,
+// by calling its toString, Symbol.toPrimitive, valueOf or toJSON: what those throw, Node's
+// console methods throw too. What the others run into while describing a value is no error
+// of the value's, and is left out as before.
+var coercions = map[string]bool{"text": true, "json": true, "decimal": true, "integer": true, "float": true}
+
+// out is where the console writes: its writer, or nowhere once user code has thrown, since
+// the method then throws rather than printing.
+func (c *Console) out() runtime.Writer {
+	if c.thrown != nil {
+		return discard{}
+	}
+	return c.writer
+}
+
+// discard writes nothing.
+type discard struct{}
+
+func (discard) Log(string)   {}
+func (discard) Warn(string)  {}
+func (discard) Error(string) {}
+func (discard) Clear()       {}
+
+// rethrowing wraps cb, a console method, so that what user code threw while it formatted,
+// which stopped it, is thrown again to its caller, as Node's console methods let it through.
+// It goes inside released, whose scope would otherwise release the thrown value before it's
+// thrown.
+func (c *Console) rethrowing(cb v8.FunctionCallback) v8.FunctionCallback {
+	return func(info *v8.FunctionCallbackInfo) *v8.Value {
+		// A console call made while another formats, from a getter say, has its own.
+		saved := c.thrown
+		c.thrown = nil
+		result := cb(info)
+		thrown := c.thrown
+		c.thrown = saved
+		if thrown != nil {
+			info.Context().ThrowValue(thrown)
+			// V8 holds the exception now; the handle is no longer needed.
+			thrown.Release()
+			return nil
+		}
+		return result
+	}
 }
 
 // indent indents each line of message by the current group's indentation.
@@ -477,11 +537,11 @@ func (c *Console) createLogFunc(level string) v8.FunctionCallback {
 
 		switch level {
 		case "warn":
-			c.writer.Warn(message)
+			c.out().Warn(message)
 		case "error":
-			c.writer.Error(message)
+			c.out().Error(message)
 		default:
-			c.writer.Log(message)
+			c.out().Log(message)
 		}
 		return nil
 	}
@@ -539,7 +599,7 @@ func (c *Console) formatLog(args []*v8.Value) string {
 					if argi < len(args) {
 						if s, ok := c.inspectCall("json", args[argi]); ok {
 							b.WriteString(s)
-						} else {
+						} else if c.thrown == nil {
 							b.WriteString(c.formatValue(args[argi]))
 						}
 						argi++
@@ -568,8 +628,13 @@ func (c *Console) formatLog(args []*v8.Value) string {
 					b.WriteByte(spec)
 				}
 				i++ // consumed the specifier character
+				// What user code threw stops the formatting, as in Node: no later argument
+				// is converted.
+				if c.thrown != nil {
+					return ""
+				}
 			}
-			for ; argi < len(args); argi++ {
+			for ; argi < len(args) && c.thrown == nil; argi++ {
 				b.WriteByte(' ')
 				b.WriteString(c.formatValue(args[argi]))
 			}
@@ -579,6 +644,9 @@ func (c *Console) formatLog(args []*v8.Value) string {
 
 	parts := make([]string, len(args))
 	for i, arg := range args {
+		if c.thrown != nil {
+			break
+		}
 		parts[i] = c.formatValue(arg)
 	}
 	return strings.Join(parts, " ")
@@ -1308,7 +1376,7 @@ func (c *Console) assertFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if len(parts) == 1 {
 			parts = append(parts, "runtime.assert")
 		}
-		c.writer.Error(strings.Join(parts, " "))
+		c.out().Error(strings.Join(parts, " "))
 	}
 	return nil
 }
@@ -1327,7 +1395,7 @@ func (c *Console) countFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	c.counts[label]++
-	c.writer.Log(fmt.Sprintf("%s: %s", label, c.formatter.FormatValue(c.counts[label], runtime.TypeNumber)))
+	c.out().Log(fmt.Sprintf("%s: %s", label, c.formatter.FormatValue(c.counts[label], runtime.TypeNumber)))
 	return nil
 }
 
@@ -1341,7 +1409,7 @@ func (c *Console) countResetFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if _, exists := c.counts[label]; exists {
 		delete(c.counts, label)
 	} else {
-		c.writer.Warn(fmt.Sprintf("Warning: Count for '%s' does not exist", label))
+		c.out().Warn(fmt.Sprintf("Warning: Count for '%s' does not exist", label))
 	}
 	return nil
 }
@@ -1354,7 +1422,7 @@ func (c *Console) timeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	if _, exists := c.timers[label]; exists {
-		c.writer.Warn(fmt.Sprintf("Warning: Label '%s' already exists for runtime.time()", label))
+		c.out().Warn(fmt.Sprintf("Warning: Label '%s' already exists for runtime.time()", label))
 		return nil
 	}
 
@@ -1371,13 +1439,13 @@ func (c *Console) timeEndFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	start, exists := c.timers[label]
 	if !exists {
-		c.writer.Warn(fmt.Sprintf("Warning: No such label '%s' for runtime.timeEnd()", label))
+		c.out().Warn(fmt.Sprintf("Warning: No such label '%s' for runtime.timeEnd()", label))
 		return nil
 	}
 
 	elapsed := time.Since(start)
 	delete(c.timers, label)
-	c.writer.Log(fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), runtime.TypeNumber)))
+	c.out().Log(fmt.Sprintf("%s: %sms", label, c.formatter.FormatValue(elapsed.Milliseconds(), runtime.TypeNumber)))
 	return nil
 }
 
@@ -1391,7 +1459,7 @@ func (c *Console) timeLogFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	start, exists := c.timers[label]
 	if !exists {
-		c.writer.Warn(fmt.Sprintf("Warning: No such label '%s' for runtime.timeLog()", label))
+		c.out().Warn(fmt.Sprintf("Warning: No such label '%s' for runtime.timeLog()", label))
 		return nil
 	}
 
@@ -1400,7 +1468,7 @@ func (c *Console) timeLogFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	for i := 1; i < len(args); i++ {
 		parts = append(parts, c.formatValue(args[i]))
 	}
-	c.writer.Log(strings.Join(parts, " "))
+	c.out().Log(strings.Join(parts, " "))
 	return nil
 }
 
@@ -1412,7 +1480,7 @@ func (c *Console) traceFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	for _, arg := range args {
 		parts = append(parts, c.formatValue(arg))
 	}
-	c.writer.Error(indent + strings.Join(parts, " "))
+	c.out().Error(indent + strings.Join(parts, " "))
 	// Note: In a full implementation, we'd capture the JS stack trace here
 	return nil
 }
@@ -1431,10 +1499,10 @@ func (c *Console) tableFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if data.IsArray() {
 		length := data.ArrayLength()
 		if length == 0 {
-			c.writer.Log(indent + "┌─────────┬────────┐")
-			c.writer.Log(indent + "│ (index) │ Values │")
-			c.writer.Log(indent + "├─────────┼────────┤")
-			c.writer.Log(indent + "└─────────┴────────┘")
+			c.out().Log(indent + "┌─────────┬────────┐")
+			c.out().Log(indent + "│ (index) │ Values │")
+			c.out().Log(indent + "├─────────┼────────┤")
+			c.out().Log(indent + "└─────────┴────────┘")
 			return nil
 		}
 
@@ -1462,9 +1530,9 @@ func (c *Console) tableFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 
 		// Print table
-		c.writer.Log(fmt.Sprintf("%s┌─%s─┬─%s─┐", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
-		c.writer.Log(fmt.Sprintf("%s│ %s │ %s │", indent, padRight("(index)", maxIdxWidth), padRight("Values", maxValWidth)))
-		c.writer.Log(fmt.Sprintf("%s├─%s─┼─%s─┤", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
+		c.out().Log(fmt.Sprintf("%s┌─%s─┬─%s─┐", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
+		c.out().Log(fmt.Sprintf("%s│ %s │ %s │", indent, padRight("(index)", maxIdxWidth), padRight("Values", maxValWidth)))
+		c.out().Log(fmt.Sprintf("%s├─%s─┼─%s─┤", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
 
 		for i, val := range values {
 			idxStr := c.formatter.FormatValue(i, runtime.TypeNumber)
@@ -1473,15 +1541,15 @@ func (c *Console) tableFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			// Pad based on plain text width
 			idxPadded := idxStr + strings.Repeat(" ", maxIdxWidth-len(plainIdx))
 			valPadded := val + strings.Repeat(" ", maxValWidth-len(plainVal))
-			c.writer.Log(fmt.Sprintf("%s│ %s │ %s │", indent, idxPadded, valPadded))
+			c.out().Log(fmt.Sprintf("%s│ %s │ %s │", indent, idxPadded, valPadded))
 		}
 
-		c.writer.Log(fmt.Sprintf("%s└─%s─┴─%s─┘", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
+		c.out().Log(fmt.Sprintf("%s└─%s─┴─%s─┘", indent, strings.Repeat("─", maxIdxWidth), strings.Repeat("─", maxValWidth)))
 		return nil
 	}
 
 	// For objects, just use a formatted output
-	c.writer.Log(indent + c.formatValue(data))
+	c.out().Log(indent + c.formatValue(data))
 	return nil
 }
 
@@ -1493,7 +1561,7 @@ func (c *Console) dirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	// console.dir quotes a top-level string, as util.inspect does.
-	c.writer.Log(c.indent(c.formatValueQuotedWithDepth(args[0], topDepth+1)))
+	c.out().Log(c.indent(c.formatValueQuotedWithDepth(args[0], topDepth+1)))
 	return nil
 }
 
@@ -1507,7 +1575,7 @@ func (c *Console) groupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		for i, arg := range args {
 			parts[i] = c.formatValue(arg)
 		}
-		c.writer.Log(indent + strings.Join(parts, " "))
+		c.out().Log(indent + strings.Join(parts, " "))
 	}
 
 	c.groupDepth++
