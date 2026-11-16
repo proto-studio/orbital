@@ -545,3 +545,20 @@ log.push(await r('f\ns'), await r('p\nkg/sub.js'), await r('p\nkg'), await r('dd
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// An exports array skips an alternative whose condition resolves to an invalid
+// target, and an escaped "localhost" host is localhost. Expected from Node 20.18.1.
+func TestDynamicImport_NestedTargetAlternativesAndEscapedHost(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"node_modules/arr2/package.json": `{"type":"module","exports":{".":[{"node":"../invalid.mjs"},"./valid.mjs"]}}`,
+		"node_modules/arr2/valid.mjs":    `export default 'valid2';`,
+		"x.mjs":                          `export default 'x';`,
+		"entry.mjs": `const d = import.meta.url.slice('file://'.length).replace(/\/[^/]*$/, '');
+const r = async (s) => { try { return (await import(s)).default; } catch (e) { return [e.code, e.message]; } };
+log.push(await r('arr2'), await r('file://%6cocalhost' + d + '/x.mjs'));`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["valid2","x"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

@@ -294,7 +294,13 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 	}
 	source, url, err := e.resolveAndLoad(entry, "")
 	if err != nil {
-		return nil, e.endedOr(err)
+		if ended := e.rt.Ended(); ended != nil {
+			return nil, ended
+		}
+		// Like Node, a missing entry is an uncaught exception, which an
+		// 'uncaughtException' listener from a preload can handle.
+		e.linkErr = nil
+		return nil, e.linkFailed(e.throwable(err))
 	}
 
 	return e.runModule(source, url, true)

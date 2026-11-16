@@ -137,6 +137,10 @@ func fileURLHost(spec string) string {
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 		rest = rest[:i]
 	}
+	// The URL parser decodes a host's escapes (file://%6cocalhost is localhost).
+	if d, err := url.PathUnescape(rest); err == nil {
+		rest = d
+	}
 	return strings.ToLower(rest)
 }
 
@@ -687,10 +691,7 @@ func resolveExportsTarget(exp interface{}) string {
 	case []interface{}:
 		// Alternatives: an invalid target is skipped for the next one, as in Node.
 		for _, e := range v {
-			if s, ok := e.(string); ok && !validPackageTarget(s) {
-				continue
-			}
-			if r := resolveExportsTarget(e); r != "" {
+			if r := resolveExportsTarget(e); r != "" && validPackageTarget(r) {
 				return r
 			}
 		}

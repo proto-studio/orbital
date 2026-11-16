@@ -51,3 +51,17 @@ func TestImportPreload_HandledEvaluationFailureStopsStartup(t *testing.T) {
 		}
 	}
 }
+
+// A missing entry module is an uncaught exception too, which a preload's listener can
+// handle, as in Node.
+func TestEntry_MissingModuleIsUncaught(t *testing.T) {
+	dir := t.TempDir()
+	pre := filepath.Join(dir, "pre.cjs")
+	if err := os.WriteFile(pre, []byte(`process.on('uncaughtException', (e) => console.log('caught', e.code)); process.on('exit', (c) => console.log('exit', c));`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runOrbital(t, "", "-r", pre, filepath.Join(dir, "nope.mjs"))
+	if code != 0 || out != "caught ERR_MODULE_NOT_FOUND\nexit 0\n" {
+		t.Fatalf("exit %d, output %q", code, out)
+	}
+}
