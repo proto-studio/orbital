@@ -2,6 +2,7 @@ package crypto
 
 import (
 	gocrypto "crypto"
+	"crypto/dsa" //nolint:staticcheck // Node verifies DSA SPKACs.
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -274,18 +275,26 @@ func parseSPKAC(text []byte) (*spkacSigned, *spkacPKAC, error) {
 }
 
 var spkacSigHashes = map[string]gocrypto.Hash{
-	"1.2.840.113549.1.1.4":  gocrypto.MD5,
-	"1.2.840.113549.1.1.5":  gocrypto.SHA1,
-	"1.2.840.113549.1.1.14": gocrypto.SHA224,
-	"1.2.840.113549.1.1.11": gocrypto.SHA256,
-	"1.2.840.113549.1.1.12": gocrypto.SHA384,
-	"1.2.840.113549.1.1.13": gocrypto.SHA512,
-	"1.2.840.10045.4.1":     gocrypto.SHA1,
-	"1.2.840.10045.4.3.1":   gocrypto.SHA224,
-	"1.2.840.10045.4.3.2":   gocrypto.SHA256,
-	"1.2.840.10045.4.3.3":   gocrypto.SHA384,
-	"1.2.840.10045.4.3.4":   gocrypto.SHA512,
-	"1.3.101.112":           0, // Ed25519 signs the message itself
+	"1.2.840.113549.1.1.4":   gocrypto.MD5,
+	"1.2.840.113549.1.1.5":   gocrypto.SHA1,
+	"1.2.840.113549.1.1.14":  gocrypto.SHA224,
+	"1.2.840.113549.1.1.11":  gocrypto.SHA256,
+	"1.2.840.113549.1.1.12":  gocrypto.SHA384,
+	"1.2.840.113549.1.1.13":  gocrypto.SHA512,
+	"1.2.840.10045.4.1":      gocrypto.SHA1,
+	"1.2.840.10045.4.3.1":    gocrypto.SHA224,
+	"1.2.840.10045.4.3.2":    gocrypto.SHA256,
+	"1.2.840.10045.4.3.3":    gocrypto.SHA384,
+	"1.2.840.10045.4.3.4":    gocrypto.SHA512,
+	"1.2.840.10040.4.3":      gocrypto.SHA1,
+	"2.16.840.1.101.3.4.3.1": gocrypto.SHA224,
+	"2.16.840.1.101.3.4.3.2": gocrypto.SHA256,
+	"1.3.101.112":            0, // Ed25519 signs the message itself
+}
+
+// isDSASigAlg reports whether an OID is a DSA signature algorithm.
+func isDSASigAlg(oid string) bool {
+	return oid == "1.2.840.10040.4.3" || oid == "2.16.840.1.101.3.4.3.1" || oid == "2.16.840.1.101.3.4.3.2"
 }
 
 func verifySPKAC(signed *spkacSigned, pub any) bool {
@@ -311,6 +320,20 @@ func verifySPKAC(signed *spkacSigned, pub any) bool {
 		return strings.HasPrefix(oid, "1.2.840.113549.1.1.") && rsa.VerifyPKCS1v15(k, h, sum, sig) == nil
 	case *ecdsa.PublicKey:
 		return strings.HasPrefix(oid, "1.2.840.10045.4.") && ecdsa.VerifyASN1(k, sum, sig)
+	case *dsa.PublicKey:
+		// Go's standard library still verifies DSA, which OpenSSL accepts here.
+		var rs struct{ R, S *big.Int }
+		if !isDSASigAlg(oid) {
+			return false
+		}
+		if rest, err := asn1.Unmarshal(sig, &rs); err != nil || len(rest) != 0 || rs.R == nil || rs.S == nil {
+			return false
+		}
+		// dsa.Verify takes at most the subgroup's size of the digest.
+		if n := (k.Q.BitLen() + 7) / 8; len(sum) > n {
+			sum = sum[:n]
+		}
+		return dsa.Verify(k, sum, rs.R, rs.S)
 	}
 	return false
 }
@@ -338,9 +361,10 @@ func (c *Crypto) spkacFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	case "publicKey":
 		if err == nil {
-			if pub, perr := x509.ParsePKIXPublicKey(pkac.SPKI.FullBytes); perr == nil {
-				der, _ := x509.MarshalPKIXPublicKey(pub)
-				out = base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+			// The key as the SPKAC carries it: re-encoding it fails for key
+			// types crypto/x509 reads but won't write, such as DSA.
+			if _, perr := x509.ParsePKIXPublicKey(pkac.SPKI.FullBytes); perr == nil {
+				out = base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkac.SPKI.FullBytes}))
 			}
 		}
 	case "verify":
