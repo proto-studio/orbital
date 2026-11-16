@@ -212,17 +212,24 @@
   // The KeyObject for a WebCrypto CryptoKey, or null for anything else, so
   // node:crypto functions take CryptoKeys as Node's do. webcrypto.js keeps a
   // CryptoKey's material as a JWK.
+  // Each CryptoKey is converted once; the KeyObject is reused after.
+  const fromCryptoKey = new WeakMap();
   crypto._fromCryptoKey = function (value) {
     if (value === null || typeof value !== 'object' || Object.prototype.toString.call(value) !== '[object CryptoKey]' ||
         !value._jwk || typeof value._jwk !== 'object') {
       return null;
     }
+    let key = fromCryptoKey.get(value);
+    if (key) return key;
     const jwk = value._jwk;
     if (jwk.kty === 'oct') {
-      return createSecretKey(Buffer.from(jwk.k || '', 'base64url'));
+      key = createSecretKey(Buffer.from(jwk.k || '', 'base64url'));
+    } else {
+      const s = JSON.stringify(jwk);
+      key = wrap(value.type === 'private' ? crypto._createPrivateKeyJWK(s) : crypto._createPublicKeyJWK(s));
     }
-    const s = JSON.stringify(jwk);
-    return wrap(value.type === 'private' ? crypto._createPrivateKeyJWK(s) : crypto._createPublicKeyJWK(s));
+    fromCryptoKey.set(value, key);
+    return key;
   };
 
   crypto.KeyObject = KeyObject;
