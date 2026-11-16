@@ -25,6 +25,52 @@
     return hooks.length;
   };
 
+  // The loader's own errors (Node's internal ones), as against errors a hook
+  // throws, which reach the importer as they are.
+  const internalErrors = new WeakSet();
+  const internalAdd = WeakSet.prototype.add;
+  const internalHas = WeakSet.prototype.has;
+  const reflectApply = Reflect.apply;
+  const objectKeys = Object.keys;
+  const jsonStringify = JSON.stringify;
+  function internal(err) {
+    reflectApply(internalAdd, internalErrors, [err]);
+    return err;
+  }
+
+  // Describes a rejection for Go, which rebuilds it in the application realm
+  // with its class, message, stack and own enumerable properties, as Node's
+  // transfer of an error from its hooks thread keeps them (so even Node's own
+  // errors arrive as plain errors there, their code a property).
+  globalThis.__describeRejection = function (e) {
+    try {
+      if (e === null || (typeof e !== 'object' && typeof e !== 'function')) {
+        return jsonStringify({ primitive: true, value: e === undefined ? null : e, undef: e === undefined });
+      }
+      const props = {};
+      const keys = objectKeys(e);
+      for (let i = 0; i < keys.length; i++) {
+        try {
+          const v = e[keys[i]];
+          jsonStringify(v);
+          props[keys[i]] = v;
+        } catch (err) { /* not transferable */ }
+      }
+      let ctor = '';
+      try { ctor = e.constructor && e.constructor.name; } catch (err) { /* none */ }
+      let stack = String(e.stack);
+      if (reflectApply(internalHas, internalErrors, [e]) && e.code) {
+        // Node's own errors cross its hooks thread with the stack they
+        // formatted there, "Error [CODE]: ..." first.
+        const at = stack.indexOf('\n    at ');
+        stack = String(e.name) + ' [' + e.code + ']: ' + String(e.message) + (at >= 0 ? stack.slice(at) : '');
+      }
+      return jsonStringify({ ctor: ctor, name: String(e.name), message: String(e.message), stack: stack, props: props });
+    } catch (err) {
+      return '';
+    }
+  };
+
   // Default (terminal) resolve: bridge to the Go default loader. Returns a url
   // string, or throws a Node-shaped ERR_MODULE_NOT_FOUND so resolve hooks that
   // probe alternatives (e.g. .js -> .ts) can catch and retry.
@@ -39,7 +85,8 @@
       // retry (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).
       if (r.url) err.url = r.url;
       if (r.input) err.input = r.input;
-      throw err;
+      if (r.module) err.module = r.module;
+      throw internal(err);
     }
     return { url: r.url, format: (context && context.format) || null, shortCircuit: true };
   }
