@@ -211,3 +211,31 @@ const fs = require('fs');
 `)
 	wantJSON(t, got, map[string]any{"same": true})
 }
+
+// A FileHandle closed while a read on its FIFO waits lets the read finish first, and opendir
+// rejects a bad encoding.
+func TestFS_CloseWaitsForPipeReads(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	got := runJS(t, &runtime.Config{Timeout: 10 * time.Second}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+(async () => {
+  const handle = await fs.promises.open(dir + '/fifo', 'r+');
+  const writer = fs.openSync(dir + '/fifo', 'w');
+  const reading = handle.read(Buffer.alloc(1), 0, 1, null);
+  const closing = handle.close();
+  setTimeout(() => fs.writeSync(writer, 'x'), 50);
+  const r = await reading;
+  await closing;
+  fs.closeSync(writer);
+  let encoding = null;
+  await fs.promises.opendir(dir, { encoding: 'bogus' }).catch((e) => { encoding = e.code; });
+  done({ read: r.buffer.toString(), encoding });
+})().catch((e) => done({ failed: String(e) }));
+`, dir))
+	wantJSON(t, got, map[string]any{"read": "x", "encoding": "ERR_INVALID_ARG_VALUE"})
+}

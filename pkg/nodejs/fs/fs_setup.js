@@ -1293,6 +1293,7 @@
   };
   fs.opendir = function (path, options, callback) {
     const [args, cb] = withCallback(arguments);
+    encodingOf(args[1]); // a bad encoding throws now, as in Node, not in the callback
     const recursive = isRecursive(args[1]);
     fs.readdir(args[0], { withFileTypes: true }, (err, entries) => {
       if (err) return cb(opendirError(err, true));
