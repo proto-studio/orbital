@@ -364,6 +364,12 @@
   const clone = typeof structuredClone === 'function' ? structuredClone : null;
   const EMPTY = '{"array":false,"pairs":[]}';
   const isWellFormed = String.prototype.isWellFormed;
+  const charCodeAt = String.prototype.charCodeAt;
+  const HEX = '0123456789abcdef';
+  // A UTF-16 code unit as four hex digits, with no method a hook could replace.
+  function hexUnit(u) {
+    return HEX[(u >> 12) & 15] + HEX[(u >> 8) & 15] + HEX[(u >> 4) & 15] + HEX[u & 15];
+  }
   const apply = Reflect.apply;
 
   // Attributes cross to Go as JSON [key, value] pairs. A value that isn't a
@@ -400,7 +406,9 @@
     let typeKey;
     if (typeof type === 'string' && !apply(isWellFormed, type, [])) {
       typeKey = '';
-      for (let i = 0; i < type.length; i++) typeKey += (type.charCodeAt(i) + 0x10000).toString(16).slice(1);
+      for (let i = 0; i < type.length; i++) {
+        typeKey += hexUnit(apply(charCodeAt, type, [i]));
+      }
     }
     return JSONStringify({ array: isArray, length: isArray ? attrs.length : undefined, typeKey: typeKey, pairs: pairs });
   }
