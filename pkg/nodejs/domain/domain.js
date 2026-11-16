@@ -89,7 +89,10 @@
   // 'error' listeners rather than as an unhandledRejection. catch() and finally() go through then(). Node follows promises with
   // a V8 promise hook, which also covers await; here await is not followed. then() is only
   // replaced once a domain is created, so programs without domains keep the native one.
-  const promiseThen = Promise.prototype.then;
+  // The native Promise as it is now, before program code runs: the wrapper goes on its
+  // prototype even if a program later puts another Promise on the global object.
+  const NativePromise = Promise;
+  const promiseThen = NativePromise.prototype.then;
   // The promises then() returned while a domain was active, and that domain. Such a
   // promise rejects when its reaction throws, returns a promise or thenable that rejects,
   // or resolves it with itself, by which time the domain is no longer active; the
@@ -111,7 +114,8 @@
       try {
         return apply(fn, this, [value]);
       } catch (err) {
-        if (exports.active) owner.domain = exports.active;
+        // No domain active at the throw (the reaction exited it) means none owns it.
+        owner.domain = exports.active || null;
         throw err;
       } finally {
         // The domain ends with the reaction, so later jobs run outside it.
@@ -121,7 +125,7 @@
   }
 
   function installPromises() {
-    Object.defineProperty(Promise.prototype, 'then', {
+    Object.defineProperty(NativePromise.prototype, 'then', {
       value: {
         then(onFulfilled, onRejected) {
           const domain = exports.active;
