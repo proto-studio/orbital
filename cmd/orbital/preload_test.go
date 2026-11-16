@@ -65,3 +65,41 @@ func TestEntry_MissingModuleIsUncaught(t *testing.T) {
 		t.Fatalf("exit %d, output %q", code, out)
 	}
 }
+
+// A link error in the entry's graph (a dependency's syntax, a missing export) is an
+// uncaught exception a listener can handle, and a top-level await that never
+// settles ends the program with exit code 13, after the 'exit' listeners, as in Node.
+func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"pre.cjs":    `process.on('uncaughtException', (e) => console.log('caught', e.name, e.message)); process.on('exit', (c) => console.log('exit', c));`,
+		"badsyn.mjs": `export default (`,
+		"e1.mjs":     `import './badsyn.mjs';`,
+		"dep.mjs":    `export const a = 1;`,
+		"e2.mjs":     `import { b } from './dep.mjs';`,
+		"tla.mjs":    `await new Promise(() => {});`,
+		"entry.mjs":  `console.log('entry');`,
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := func(n string) string { return filepath.Join(dir, n) }
+	cases := []struct {
+		args []string
+		out  string
+		code int
+	}{
+		{[]string{"-r", p("pre.cjs"), p("e1.mjs")}, "caught SyntaxError Unexpected end of input\nexit 0\n", 0},
+		{[]string{"-r", p("pre.cjs"), p("e2.mjs")}, "caught SyntaxError The requested module './dep.mjs' does not provide an export named 'b'\nexit 0\n", 0},
+		{[]string{"-r", p("pre.cjs"), p("tla.mjs")}, "exit 0\n", 13},
+		{[]string{"-r", p("pre.cjs"), "--import", p("tla.mjs"), p("entry.mjs")}, "exit 0\n", 13},
+	}
+	for _, tc := range cases {
+		out, code := runOrbital(t, "", tc.args...)
+		if code != tc.code || out != tc.out {
+			t.Errorf("%v: exit %d, output %q; want %d, %q", tc.args, code, out, tc.code, tc.out)
+		}
+	}
+}

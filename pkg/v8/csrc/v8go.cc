@@ -2066,7 +2066,7 @@ void* v8go_compile_module(void* context_ptr, const char* source, const char* nam
     return wrapper;
 }
 
-int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id, char** error) {
+int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id, char** error, void** exception) {
     if (!context_ptr || !module_ptr) return 0;
     
     ContextWrapper* ctx_wrapper = static_cast<ContextWrapper*>(context_ptr);
@@ -2094,8 +2094,14 @@ int v8go_module_instantiate(void* context_ptr, void* module_ptr, int resolver_id
     
     if (result.IsNothing() || !result.FromJust()) {
         if (try_catch.HasCaught()) {
-            String::Utf8Value exception(isolate, try_catch.Exception());
-            *error = strdup(*exception ? *exception : "Module instantiation failed");
+            String::Utf8Value text(isolate, try_catch.Exception());
+            *error = strdup(*text ? *text : "Module instantiation failed");
+            if (exception) {
+                ValueWrapper* thrown = new ValueWrapper();
+                thrown->isolate = isolate;
+                thrown->value.Reset(isolate, try_catch.Exception());
+                *exception = thrown;
+            }
         }
         return 0;
     }

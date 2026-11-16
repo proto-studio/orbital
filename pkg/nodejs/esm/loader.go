@@ -14,6 +14,7 @@ package esm
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	pathpkg "path"
@@ -120,6 +121,31 @@ func urlPath(spec, dir string) (path, encoded, suffix string, encodedSep, malfor
 		return filepath.Clean(decoded), pathpkg.Clean(rest), suffix, encodedSep, malformed
 	}
 	return filepath.Join(dir, decoded), pathpkg.Join(escapePath(dir), rest), suffix, encodedSep, malformed
+}
+
+// validFileHost reports whether raw, a file: URL's authority as written, is a
+// host the URL parser accepts there: its escapes decode to UTF-8, it holds no
+// credentials or port (a decoded "@" or ":" too), no forbidden host character
+// (space, "#", "%", "<", ">", "?", "[", "\\", "]", "^", "|", controls), and a
+// bracketed one is an IPv6 address.
+func validFileHost(raw string) bool {
+	d, err := url.PathUnescape(raw)
+	if err != nil || !utf8.ValidString(d) {
+		return false
+	}
+	if strings.HasPrefix(raw, "[") {
+		if !strings.HasSuffix(raw, "]") {
+			return false
+		}
+		ip := net.ParseIP(raw[1 : len(raw)-1])
+		return ip != nil && strings.Contains(raw, ":")
+	}
+	for i := 0; i < len(d); i++ {
+		if c := d[i]; c <= ' ' || c == 0x7f || strings.IndexByte("#%/:<>?@[\\]^|", c) >= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // nodePlatform is process.platform for this OS.
@@ -279,15 +305,7 @@ func checkFileURLHost(u, input, module string) error {
 		if i := strings.IndexAny(raw, "/\\?#"); i >= 0 {
 			raw = raw[:i]
 		}
-		// Credentials or a port make it invalid too: a file: URL can't have them.
-		hostPart := raw
-		if strings.HasPrefix(hostPart, "[") {
-			if i := strings.IndexByte(hostPart, ']'); i >= 0 {
-				hostPart = hostPart[i+1:]
-			}
-		}
-		if d, err := url.PathUnescape(raw); err != nil || !utf8.ValidString(d) ||
-			strings.ContainsAny(raw, "@") || strings.Contains(hostPart, ":") {
+		if !validFileHost(raw) {
 			return &moduleError{msg: "Invalid URL", code: "ERR_INVALID_URL", typeError: true, input: input}
 		}
 	}

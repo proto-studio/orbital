@@ -174,7 +174,8 @@ void* v8go_throw_range_error(void* context, const char* message);
 
 // ES Module operations
 void* v8go_compile_module(void* context, const char* source, const char* name, char** error);
-int v8go_module_instantiate(void* context, void* module, int resolver_id, char** error);
+// On failure *exception is set to the thrown value (a ValueWrapper*), if any.
+int v8go_module_instantiate(void* context, void* module, int resolver_id, char** error, void** exception);
 void* v8go_module_evaluate(void* context, void* module, char** error);
 int v8go_module_get_status(void* module);
 void* v8go_module_get_namespace(void* context, void* module);

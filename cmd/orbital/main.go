@@ -643,6 +643,9 @@ func runESModule(filename string) error {
 			if ended := rt.Ended(); ended != nil {
 				return ended
 			}
+			if errors.Is(err, esm.ErrUnsettledTopLevelAwait) {
+				exitUnsettled(rt)
+			}
 			if errors.Is(err, esm.ErrPreloadFailed) {
 				// A listener handled the failure; like Node, end without the entry.
 				rt.EventLoop().Run()
@@ -659,6 +662,9 @@ func runESModule(filename string) error {
 	// Run the ES module. RunModuleFile surfaces top-level throws (including a
 	// module that rejects during evaluation) as an error with the JS stack.
 	_, err = esmLoader.RunModuleFile(absPath)
+	if errors.Is(err, esm.ErrUnsettledTopLevelAwait) {
+		exitUnsettled(rt)
+	}
 	if err != nil {
 		return err
 	}
@@ -765,6 +771,9 @@ func runESModuleSource(source, origin string) error {
 	tmpFile.Close()
 
 	_, err = esmLoader.RunModuleFile(tmpFile.Name())
+	if errors.Is(err, esm.ErrUnsettledTopLevelAwait) {
+		exitUnsettled(rt)
+	}
 	if err != nil {
 		return fmt.Errorf("module error: %w", err)
 	}
@@ -803,6 +812,15 @@ func finalizeExit(rt *runtime.Runtime) {
 		rt.Dispose()
 		os.Exit(code)
 	}
+}
+
+// exitUnsettled ends the program as Node does when a module's top-level await
+// never settles: the 'exit' listeners run, then the exit code is 13 unless the
+// program set another.
+func exitUnsettled(rt *runtime.Runtime) {
+	finalizeExit(rt)
+	rt.Dispose()
+	os.Exit(13)
 }
 
 func runCode(source, origin string) error {
@@ -849,6 +867,9 @@ func runCodeWithPath(source, origin, filename, dirname string) error {
 		if err := esmLoader.Preload(mod); err != nil {
 			if ended := rt.Ended(); ended != nil {
 				return ended
+			}
+			if errors.Is(err, esm.ErrUnsettledTopLevelAwait) {
+				exitUnsettled(rt)
 			}
 			if errors.Is(err, esm.ErrPreloadFailed) {
 				// A listener handled the failure; like Node, end without the entry.

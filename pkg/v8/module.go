@@ -66,6 +66,16 @@ func (c *Context) CompileModule(source, name string) (*Module, error) {
 	return &Module{ptr: ptr, ctx: c}, nil
 }
 
+// LinkError is a failed Instantiate with the value the module graph threw (a
+// SyntaxError in a dependency, a missing export, a resolver's error).
+type LinkError struct {
+	JSError
+	exc *Value
+}
+
+// Exception returns the thrown value.
+func (e *LinkError) Exception() *Value { return e.exc }
+
 // Instantiate links the module and its dependencies.
 // The resolver callback is called for each import to load the imported module.
 func (m *Module) Instantiate(resolver ModuleResolveCallback) error {
@@ -77,13 +87,17 @@ func (m *Module) Instantiate(resolver ModuleResolveCallback) error {
 	m.resolverID = resolverID
 
 	var errMsg *C.char
-	result := C.v8go_module_instantiate(m.ctx.ptr, m.ptr, C.int(resolverID), &errMsg)
+	var thrown unsafe.Pointer
+	result := C.v8go_module_instantiate(m.ctx.ptr, m.ptr, C.int(resolverID), &errMsg, &thrown)
 
 	if result == 0 {
 		unregisterModuleResolver(resolverID)
 		if errMsg != nil {
 			err := C.GoString(errMsg)
 			C.free(unsafe.Pointer(errMsg))
+			if thrown != nil {
+				return &LinkError{JSError: JSError{Message: err}, exc: &Value{ptr: thrown, ctx: m.ctx}}
+			}
 			return &JSError{Message: err}
 		}
 		return ErrModuleInstantiate
