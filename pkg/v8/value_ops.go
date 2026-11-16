@@ -59,7 +59,7 @@ func (v *Value) Get(key string) (*Value, error) {
 	if ptr == nil {
 		return nil, nil
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}, nil
+	return newValue(ptr, v.ctx), nil
 }
 
 // GetIndex gets an indexed property from this value (must be an array/object).
@@ -72,7 +72,7 @@ func (v *Value) GetIndex(idx int) (*Value, error) {
 	if ptr == nil {
 		return nil, nil
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}, nil
+	return newValue(ptr, v.ctx), nil
 }
 
 // Has checks if a property exists on this value (must be an object).
@@ -109,7 +109,7 @@ func (v *Value) GetPropertyNames() (*Value, error) {
 	if ptr == nil {
 		return nil, nil
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}, nil
+	return newValue(ptr, v.ctx), nil
 }
 
 // GetOwnNonIndexKeys returns an array of the object's own enumerable keys other than array
@@ -124,7 +124,7 @@ func (v *Value) GetOwnNonIndexKeys() (*Value, error) {
 	if ptr == nil {
 		return nil, nil
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}, nil
+	return newValue(ptr, v.ctx), nil
 }
 
 // OwnNonIndexKeysFunction returns a JavaScript function that answers GetOwnNonIndexKeys for
@@ -137,7 +137,7 @@ func (c *Context) OwnNonIndexKeysFunction() (*Value, error) {
 	if ptr == nil {
 		return nil, errors.New("v8: could not make the own non-index keys function")
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // Release frees the native handle behind v, which must not be used afterwards. Values Go reads
@@ -231,5 +231,5 @@ func (v *Value) Call(recv *Value, args ...*Value) (*Value, error) {
 		return nil, ErrExecutionTerminated
 	}
 
-	return &Value{ptr: result, ctx: v.ctx}, nil
+	return newValue(result, v.ctx), nil
 }

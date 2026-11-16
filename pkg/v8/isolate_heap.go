@@ -9,6 +9,7 @@ import "C"
 import (
 	"errors"
 	"runtime"
+	"weak"
 )
 
 // IsolateOptions configures CreateParams for a new isolate.
@@ -45,6 +46,7 @@ func NewIsolateWithOptions(opts IsolateOptions) (*Isolate, error) {
 
 	iso := &Isolate{ptr: ptr}
 	runtime.SetFinalizer(iso, (*Isolate).release)
+	isolates.Store(ptr, weak.Make(iso))
 	return iso, nil
 }
 

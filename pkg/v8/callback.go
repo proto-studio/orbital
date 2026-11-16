@@ -202,7 +202,7 @@ func (ft *FunctionTemplate) GetFunction(ctx *Context) (*Value, error) {
 		return nil, ErrFailedToCreate
 	}
 
-	return &Value{ptr: ptr, ctx: ctx}, nil
+	return newValue(ptr, ctx), nil
 }
 
 // ObjectTemplate represents a V8 ObjectTemplate for creating objects with predefined properties.
@@ -255,35 +255,51 @@ func (ot *ObjectTemplate) NewInstance(ctx *Context) (*Value, error) {
 		return nil, ErrFailedToCreate
 	}
 
-	return &Value{ptr: ptr, ctx: ctx}, nil
+	return newValue(ptr, ctx), nil
 }
 
 //export goCallbackHandler
-func goCallbackHandler(ctxPtr unsafe.Pointer, callbackID C.int, infoPtr unsafe.Pointer) unsafe.Pointer {
+func goCallbackHandler(ctxPtr, isoPtr unsafe.Pointer, callbackID C.int, infoPtr unsafe.Pointer) unsafe.Pointer {
+	// The Context the callback runs in, which takes over the wrapper made for this call and
+	// frees it once nothing the callback kept uses it.
+	ctx := adoptContext(ctxPtr, isoPtr)
+	// On the isolate's thread, so wrappers earlier callbacks left can be freed safely.
+	if ctx.iso != nil {
+		ctx.iso.freeUnused()
+	}
+
 	cb := getCallback(int(callbackID))
 	if cb == nil {
 		return nil
 	}
 
+	// What the callback makes may outlive any release scope open around the call, as a timer
+	// keeps the function it's given, so none of it falls in one.
+	var result *Value
+	keepValues(isoPtr, func() { result = runCallback(cb, ctx, infoPtr) })
+	if result == nil {
+		return nil
+	}
+	return result.ptr
+}
+
+// runCallback calls cb with the arguments infoPtr holds, in the context ctxPtr.
+func runCallback(cb FunctionCallback, ctx *Context, infoPtr unsafe.Pointer) *Value {
 	// Get callback info from C
 	argc := int(C.v8go_callback_info_length(infoPtr))
 	args := make([]*Value, argc)
 
-	// We need to find the context wrapper - for now we'll create a temporary one
-	// In a real implementation, we'd maintain a context registry
-	ctx := &Context{ptr: ctxPtr}
-
 	for i := 0; i < argc; i++ {
 		argPtr := C.v8go_callback_info_arg(infoPtr, C.int(i))
 		if argPtr != nil {
-			args[i] = &Value{ptr: argPtr, ctx: ctx}
+			args[i] = newValue(argPtr, ctx)
 		}
 	}
 
 	thisPtr := C.v8go_callback_info_this(infoPtr)
 	var this *Value
 	if thisPtr != nil {
-		this = &Value{ptr: thisPtr, ctx: ctx}
+		this = newValue(thisPtr, ctx)
 	}
 
 	info := &FunctionCallbackInfo{
@@ -292,11 +308,7 @@ func goCallbackHandler(ctxPtr unsafe.Pointer, callbackID C.int, infoPtr unsafe.P
 		this: this,
 	}
 
-	result := cb(info)
-	if result == nil {
-		return nil
-	}
-	return result.ptr
+	return cb(info)
 }
 
 //export goModuleResolve

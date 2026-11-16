@@ -11,25 +11,25 @@ import "unsafe"
 // Undefined returns the undefined value for this context.
 func (c *Context) Undefined() *Value {
 	ptr := C.v8go_undefined(c.ptr)
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // Null returns the null value for this context.
 func (c *Context) Null() *Value {
 	ptr := C.v8go_null(c.ptr)
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // True returns the boolean true value for this context.
 func (c *Context) True() *Value {
 	ptr := C.v8go_true(c.ptr)
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // False returns the boolean false value for this context.
 func (c *Context) False() *Value {
 	ptr := C.v8go_false(c.ptr)
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // NewBoolean creates a new boolean value.
@@ -39,19 +39,19 @@ func (c *Context) NewBoolean(val bool) *Value {
 		b = 1
 	}
 	ptr := C.v8go_new_boolean(c.ptr, b)
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // NewNumber creates a new number value.
 func (c *Context) NewNumber(val float64) *Value {
 	ptr := C.v8go_new_number(c.ptr, C.double(val))
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // NewInteger creates a new integer value.
 func (c *Context) NewInteger(val int64) *Value {
 	ptr := C.v8go_new_integer(c.ptr, C.long(val))
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // NewString creates a new string value.
@@ -62,7 +62,7 @@ func (c *Context) NewString(val string) (*Value, error) {
 	if ptr == nil {
 		return nil, ErrFailedToCreate
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // NewObject creates a new empty object.
@@ -71,7 +71,7 @@ func (c *Context) NewObject() (*Value, error) {
 	if ptr == nil {
 		return nil, ErrFailedToCreate
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // NewArray creates a new array with the given length.
@@ -80,7 +80,7 @@ func (c *Context) NewArray(length int) (*Value, error) {
 	if ptr == nil {
 		return nil, ErrFailedToCreate
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // Throw schedules a JavaScript Error with the given message to be thrown when
@@ -94,7 +94,7 @@ func (c *Context) Throw(message string) *Value {
 	if ptr == nil {
 		return nil
 	}
-	return &Value{ptr: ptr, ctx: c}
+	return newValue(ptr, c)
 }
 
 // Global returns the global object for this context.
@@ -106,5 +106,5 @@ func (c *Context) Global() (*Value, error) {
 	if ptr == nil {
 		return nil, ErrFailedToCreate
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }

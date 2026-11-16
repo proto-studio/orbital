@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-extern void* goCallbackHandler(void* ctx, int callbackID, void* info);
+extern void* goCallbackHandler(void* ctx, void* isolate, int callbackID, void* info);
 // On failure goModuleResolve returns nonzero and may set *errorOut to a
 // ValueWrapper* holding the exception to throw (the resolver's own error object).
 extern int goModuleResolve(int resolverID, char* specifier, char* referrer,

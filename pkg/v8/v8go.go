@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"sync"
 	"unsafe"
+	"weak"
 )
 
 var (
@@ -51,6 +52,27 @@ type Isolate struct {
 	ptr             unsafe.Pointer
 	mu              sync.Mutex
 	nearHeapLimitID int // Go registry id for AddNearHeapLimitCallback; 0 = none
+
+	// unused holds the context wrappers made for Go callbacks that nothing uses any more.
+	// Their finalizers run on a goroutine of their own, while the isolate may be busy or being
+	// disposed, so they're freed on the isolate's own thread instead: when the next callback
+	// starts, or when the isolate is disposed.
+	unused struct {
+		sync.Mutex
+		ptrs []unsafe.Pointer
+	}
+}
+
+// freeUnused frees the callback context wrappers nothing uses any more. It runs on the thread
+// using the isolate.
+func (i *Isolate) freeUnused() {
+	i.unused.Lock()
+	ptrs := i.unused.ptrs
+	i.unused.ptrs = nil
+	i.unused.Unlock()
+	for _, ptr := range ptrs {
+		C.v8go_context_dispose(ptr)
+	}
 }
 
 // NewIsolate creates a new V8 isolate with default create params.
@@ -71,6 +93,8 @@ func (i *Isolate) release() {
 			unregisterNearHeapLimitCallback(i.nearHeapLimitID)
 			i.nearHeapLimitID = 0
 		}
+		isolates.Delete(i.ptr)
+		i.freeUnused()
 		C.v8go_isolate_dispose(i.ptr)
 		i.ptr = nil
 	}
@@ -101,17 +125,56 @@ func (i *Isolate) NewContext() (*Context, error) {
 	return ctx, nil
 }
 
+// adoptContext makes a Context owning ptr, the native context wrapper made for a Go callback,
+// in the isolate isoPtr. Its finalizer frees the wrapper once nothing the callback kept uses it.
+func adoptContext(ptr, isoPtr unsafe.Pointer) *Context {
+	ctx := &Context{ptr: ptr, iso: isolateFor(isoPtr)}
+	runtime.SetFinalizer(ctx, (*Context).releaseLater)
+	return ctx
+}
+
+// releaseLater hands c's wrapper to its isolate to free on its own thread (see
+// Isolate.unused). A wrapper whose isolate is unknown or gone is left alone.
+func (c *Context) releaseLater() {
+	if c.ptr == nil || c.iso == nil {
+		return
+	}
+	c.iso.unused.Lock()
+	c.iso.unused.ptrs = append(c.iso.unused.ptrs, c.ptr)
+	c.iso.unused.Unlock()
+	c.ptr = nil
+}
+
+// isolates maps each native isolate this package made to its Isolate, weakly.
+var isolates sync.Map // unsafe.Pointer -> weak.Pointer[Isolate]
+
+// isolateFor answers the Isolate for the native isolate ptr, or nil when it's gone.
+func isolateFor(ptr unsafe.Pointer) *Isolate {
+	if w, ok := isolates.Load(ptr); ok {
+		return w.(weak.Pointer[Isolate]).Value()
+	}
+	return nil
+}
+
 // Dispose releases the context resources.
 func (c *Context) Dispose() {
 	c.release()
 }
 
 func (c *Context) release() {
-	if c.ptr != nil {
-		C.v8go_context_dispose(c.ptr)
-		c.ptr = nil
+	if c.ptr == nil {
+		return
 	}
+	ptr := c.ptr
+	c.ptr = nil
+	// Once its isolate is disposed, the context and everything in it are gone with it; a
+	// Context with no known isolate can't safely reach it either.
+	if c.iso == nil || c.iso.ptr == nil {
+		return
+	}
+	C.v8go_context_dispose(ptr)
 }
+
 
 // RunScript compiles and runs a JavaScript script in this context.
 func (c *Context) RunScript(source, origin string) (*Value, error) {
@@ -141,7 +204,7 @@ func (c *Context) RunScript(source, origin string) (*Value, error) {
 		return nil, ErrExecutionTerminated
 	}
 
-	return &Value{ptr: result, ctx: c}, nil
+	return newValue(result, c), nil
 }
 
 // Value represents a JavaScript value.

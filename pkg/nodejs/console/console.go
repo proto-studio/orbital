@@ -100,6 +100,20 @@ func (c *Console) Name() string {
 	return "console"
 }
 
+// released wraps cb, a console method, which answers nothing, so that the handles of the
+// values it reads while printing, its arguments among them, are released when it returns. A
+// printed value's every key and entry is one, and kept, they'd add up with every call.
+func (c *Console) released(cb v8.FunctionCallback) v8.FunctionCallback {
+	return func(info *v8.FunctionCallbackInfo) *v8.Value {
+		info.Context().ReleaseAfter(func() { cb(info) })
+		for _, arg := range info.Args() {
+			arg.Release()
+		}
+		info.This().Release()
+		return nil
+	}
+}
+
 // Register sets up the console global object.
 func (c *Console) Register(rt *runtime.Runtime) error {
 	if err := c.installErrorClass(rt); err != nil {
@@ -117,7 +131,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.log
-	logFn, err := iso.NewFunctionTemplate(c.createLogFunc("log"))
+	logFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("log")))
 	if err != nil {
 		return err
 	}
@@ -140,7 +154,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.warn
-	warnFn, err := iso.NewFunctionTemplate(c.createLogFunc("warn"))
+	warnFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("warn")))
 	if err != nil {
 		return err
 	}
@@ -153,7 +167,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.error
-	errorFn, err := iso.NewFunctionTemplate(c.createLogFunc("error"))
+	errorFn, err := iso.NewFunctionTemplate(c.released(c.createLogFunc("error")))
 	if err != nil {
 		return err
 	}
@@ -166,7 +180,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.assert
-	assertFn, err := iso.NewFunctionTemplate(c.assertFunc)
+	assertFn, err := iso.NewFunctionTemplate(c.released(c.assertFunc))
 	if err != nil {
 		return err
 	}
@@ -179,7 +193,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.clear
-	clearFn, err := iso.NewFunctionTemplate(c.clearFunc)
+	clearFn, err := iso.NewFunctionTemplate(c.released(c.clearFunc))
 	if err != nil {
 		return err
 	}
@@ -192,7 +206,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.count
-	countFn, err := iso.NewFunctionTemplate(c.countFunc)
+	countFn, err := iso.NewFunctionTemplate(c.released(c.countFunc))
 	if err != nil {
 		return err
 	}
@@ -205,7 +219,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.countReset
-	countResetFn, err := iso.NewFunctionTemplate(c.countResetFunc)
+	countResetFn, err := iso.NewFunctionTemplate(c.released(c.countResetFunc))
 	if err != nil {
 		return err
 	}
@@ -218,7 +232,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.time
-	timeFn, err := iso.NewFunctionTemplate(c.timeFunc)
+	timeFn, err := iso.NewFunctionTemplate(c.released(c.timeFunc))
 	if err != nil {
 		return err
 	}
@@ -231,7 +245,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.timeEnd
-	timeEndFn, err := iso.NewFunctionTemplate(c.timeEndFunc)
+	timeEndFn, err := iso.NewFunctionTemplate(c.released(c.timeEndFunc))
 	if err != nil {
 		return err
 	}
@@ -244,7 +258,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.timeLog
-	timeLogFn, err := iso.NewFunctionTemplate(c.timeLogFunc)
+	timeLogFn, err := iso.NewFunctionTemplate(c.released(c.timeLogFunc))
 	if err != nil {
 		return err
 	}
@@ -257,7 +271,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.trace
-	traceFn, err := iso.NewFunctionTemplate(c.traceFunc)
+	traceFn, err := iso.NewFunctionTemplate(c.released(c.traceFunc))
 	if err != nil {
 		return err
 	}
@@ -270,7 +284,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.table
-	tableFn, err := iso.NewFunctionTemplate(c.tableFunc)
+	tableFn, err := iso.NewFunctionTemplate(c.released(c.tableFunc))
 	if err != nil {
 		return err
 	}
@@ -283,7 +297,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.dir
-	dirFn, err := iso.NewFunctionTemplate(c.dirFunc)
+	dirFn, err := iso.NewFunctionTemplate(c.released(c.dirFunc))
 	if err != nil {
 		return err
 	}
@@ -301,7 +315,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.group
-	groupFn, err := iso.NewFunctionTemplate(c.groupFunc)
+	groupFn, err := iso.NewFunctionTemplate(c.released(c.groupFunc))
 	if err != nil {
 		return err
 	}
@@ -319,7 +333,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.groupEnd
-	groupEndFn, err := iso.NewFunctionTemplate(c.groupEndFunc)
+	groupEndFn, err := iso.NewFunctionTemplate(c.released(c.groupEndFunc))
 	if err != nil {
 		return err
 	}
@@ -332,7 +346,7 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 	}
 
 	// runtime.profile (no-op stub)
-	noopFn, err := iso.NewFunctionTemplate(c.noopFunc)
+	noopFn, err := iso.NewFunctionTemplate(c.released(c.noopFunc))
 	if err != nil {
 		return err
 	}

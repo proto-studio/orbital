@@ -96,7 +96,7 @@ func (m *Module) Instantiate(resolver ModuleResolveCallback) error {
 			err := C.GoString(errMsg)
 			C.free(unsafe.Pointer(errMsg))
 			if thrown != nil {
-				return &LinkError{JSError: JSError{Message: err}, exc: &Value{ptr: thrown, ctx: m.ctx}}
+				return &LinkError{JSError: JSError{Message: err}, exc: newValue(thrown, m.ctx)}
 			}
 			return &JSError{Message: err}
 		}
@@ -130,7 +130,7 @@ func (m *Module) Evaluate() (*Value, error) {
 		return nil, ErrModuleEvaluate
 	}
 
-	return &Value{ptr: ptr, ctx: m.ctx}, nil
+	return newValue(ptr, m.ctx), nil
 }
 
 // SetDynamicImportResolver installs the host callback for dynamic import()
@@ -192,7 +192,7 @@ func (v *Value) PromiseResult() *Value {
 	if ptr == nil {
 		return nil
 	}
-	return &Value{ptr: ptr, ctx: v.ctx}
+	return newValue(ptr, v.ctx)
 }
 
 // Status returns the current status of the module.
@@ -215,7 +215,7 @@ func (m *Module) GetNamespace() (*Value, error) {
 		return nil, ErrFailedToCreate
 	}
 
-	return &Value{ptr: ptr, ctx: m.ctx}, nil
+	return newValue(ptr, m.ctx), nil
 }
 
 // GetModuleRequests returns the list of import specifiers this module requests.
