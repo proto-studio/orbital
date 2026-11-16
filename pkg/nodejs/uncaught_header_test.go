@@ -142,6 +142,20 @@ func TestUncaughtHeaderMatchesNode(t *testing.T) {
 			},
 			want: "DIR/dep.js:1\nlet x = ;\n        ^\n",
 		},
+		"syntax error at the end of a required module": {
+			files: map[string]string{
+				"main.js": "require(\"DIR/dep.js\");\n",
+				"dep.js":  "const o = {\n  a: 1,",
+			},
+			want: "DIR/dep.js:2\n  a: 1,\n       \n",
+		},
+		"stray brace in a required module": {
+			files: map[string]string{
+				"main.js": "require(\"DIR/dep.js\");\n",
+				"dep.js":  "}\n",
+			},
+			want: "DIR/dep.js:1\n}\n^\n",
+		},
 		"required module with a NUL character": {
 			files: map[string]string{
 				"main.js": "require(\"DIR/dep.js\")();\n",

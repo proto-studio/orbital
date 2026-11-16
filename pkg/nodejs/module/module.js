@@ -282,24 +282,21 @@
 					);
 				}
 
-				// Wrap in function to provide module scope. The trailing
-				// sourceURL makes stack traces reference the real file path
-				// instead of an anonymous eval frame. A BOM the file had stays in
-				// the wrapper, where it is only whitespace: Node prints the line
-				// above a fatal exception with it, and counts it in the caret.
-				const wrapper = moduleWrapperPrefix + (hadBOM ? '\uFEFF' : '') +
-					source +
-					'\n})\n//# sourceURL=' + resolved;
+				// A BOM the file had stays in the text compiled, where it is only
+				// whitespace: Node prints the line above a fatal exception with it,
+				// and counts it in the caret.
+				const body = (hadBOM ? '\uFEFF' : '') + source;
 
-				// Compile as a script named after the file, so import() in the module
-				// resolves relative to it. A SyntaxError comes from there, placed in the
-				// module. Source with a NUL character is compiled by eval instead, since
-				// it cannot cross to the native side.
+				// Compile as the body of the module's function, as Node does, named
+				// after the file, so import() in the module resolves relative to it and
+				// a SyntaxError is placed in the module's own lines. Source with a NUL
+				// character can't cross to the native side, so eval compiles it in a
+				// wrapper instead; the trailing sourceURL names it after the file.
 				let compiledWrapper = source.indexOf('\0') === -1
-					? __compileModuleWrapper(wrapper, resolved)
+					? __compileModuleWrapper(body, resolved)
 					: undefined;
 				if (typeof compiledWrapper !== 'function') {
-					compiledWrapper = (0, eval)(wrapper);
+					compiledWrapper = (0, eval)(moduleWrapperPrefix + body + '\n})\n//# sourceURL=' + resolved);
 				}
 
 				compiledWrapper.call(

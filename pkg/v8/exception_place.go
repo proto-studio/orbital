@@ -106,3 +106,30 @@ func (c *Context) RunScriptRethrowing(source, origin string) *Value {
 	}
 	return &Value{ptr: result, ctx: c}
 }
+
+// CompileFunctionRethrowing compiles source as the body of a function with the given
+// parameters, named origin, from inside a native function, as Node compiles a CommonJS
+// module: the source's lines and columns are the function's own. If it doesn't compile,
+// it returns nil and leaves the SyntaxError pending for the JavaScript that called the
+// native function, with V8's message for it as it was.
+func (c *Context) CompileFunctionRethrowing(source, origin string, params ...string) *Value {
+	if c.ptr == nil {
+		return nil
+	}
+	cSource := C.CString(source)
+	cOrigin := C.CString(origin)
+	defer C.free(unsafe.Pointer(cSource))
+	defer C.free(unsafe.Pointer(cOrigin))
+	cParams := C.malloc(C.size_t(len(params)+1) * C.size_t(unsafe.Sizeof(uintptr(0))))
+	defer C.free(cParams)
+	list := unsafe.Slice((**C.char)(cParams), len(params)+1)
+	for i, p := range params {
+		list[i] = C.CString(p)
+		defer C.free(unsafe.Pointer(list[i]))
+	}
+	result := C.v8go_context_compile_function_rethrowing(c.ptr, cSource, cOrigin, (**C.char)(cParams), C.int(len(params)))
+	if result == nil {
+		return nil
+	}
+	return &Value{ptr: result, ctx: c}
+}

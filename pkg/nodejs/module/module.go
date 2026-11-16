@@ -105,19 +105,19 @@ func (m *Module) requireFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return result
 }
 
-// compileWrapperFunc evaluates a module's function wrapper (args: wrapper source,
-// filename) as a script whose name is the module's filename and returns the
-// function. V8 hands that name to import() as the referrer, so a module's import()
-// calls resolve relative to its own file; code compiled by eval would report the
-// script that called eval instead. A wrapper that doesn't compile throws its SyntaxError to
-// the caller, placed in the module, as Node places it.
+// compileWrapperFunc compiles a module's source as the body of its function (args: source,
+// filename), named after the module's file, and returns the function. V8 hands that name
+// to import() as the referrer, so a module's import() calls resolve relative to its own
+// file. Source that doesn't compile throws its SyntaxError to the caller, placed in the
+// module's own lines, as Node places it.
 func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 2 {
 		return ctx.Undefined()
 	}
-	fn := ctx.RunScriptRethrowing(args[0].String(), args[1].String())
+	fn := ctx.CompileFunctionRethrowing(args[0].String(), args[1].String(),
+		"exports", "require", "module", "__filename", "__dirname")
 	if fn == nil || !fn.IsFunction() {
 		return ctx.Undefined()
 	}
@@ -125,7 +125,7 @@ func (m *Module) compileWrapperFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 }
 
 // moduleWrapperPrefix is how module.js opens the function a CommonJS module runs in, on
-// the module's first line.
+// the module's first line, when eval compiles it.
 const moduleWrapperPrefix = "(function(exports, require, module, __filename, __dirname) {"
 
 // resolveFunc resolves a module path.
