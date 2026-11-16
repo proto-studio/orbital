@@ -404,36 +404,13 @@ func (el *EventLoop) run(done func() bool) bool {
 			// CancelAllTimers reaches the batch through this while it runs.
 			el.checkBatch = batch
 			el.mu.Unlock()
-			for i, task := range batch {
-				if task.cancelled.Load() {
-					continue
-				}
-				el.mu.Lock()
-				stop := el.shouldStop || ctx.Err() != nil
-				if stop {
-					// Keep the rest for a later Run, as the timers stay in their heap.
-					el.immediates = append(batch[i:], el.immediates...)
-					el.checkBatch = nil
-				}
-				el.mu.Unlock()
-				if stop {
-					break
-				}
-				task.fn()
+			if el.runCheckBatch(ctx, batch, func() bool {
 				el.runTicks(ctx)
 				hooked = true
-				if finished() {
-					// The rest of the batch runs ahead of anything queued since, next time.
-					el.mu.Lock()
-					el.immediates = append(batch[i+1:], el.immediates...)
-					el.checkBatch = nil
-					el.mu.Unlock()
-					return true
-				}
+				return finished()
+			}) {
+				return true
 			}
-			el.mu.Lock()
-			el.checkBatch = nil
-			el.mu.Unlock()
 			continue
 		}
 
@@ -510,6 +487,41 @@ func (el *EventLoop) run(done func() bool) bool {
 			close(stop)
 		}
 	}
+}
+
+// runCheckBatch runs a batch of immediates, calling after once each has run; it stops,
+// reporting true, when after does. Whatever hasn't run when it stops, when the loop is
+// stopped or cancelled, or when a callback panics goes back to the front of the queue, so
+// a later Run runs it before anything queued since.
+func (el *EventLoop) runCheckBatch(ctx context.Context, batch []*Task, after func() bool) bool {
+	next := 0
+	defer func() {
+		el.mu.Lock()
+		if next < len(batch) {
+			el.immediates = append(append([]*Task(nil), batch[next:]...), el.immediates...)
+		}
+		el.checkBatch = nil
+		el.mu.Unlock()
+	}()
+	for next < len(batch) {
+		task := batch[next]
+		if task.cancelled.Load() {
+			next++
+			continue
+		}
+		el.mu.Lock()
+		stop := el.shouldStop || ctx.Err() != nil
+		el.mu.Unlock()
+		if stop {
+			return false
+		}
+		next++
+		task.fn()
+		if after() {
+			return true
+		}
+	}
+	return false
 }
 
 // contextForTicks is the loop's context, for runTicks outside run.
@@ -608,14 +620,14 @@ func (el *EventLoop) RunOnce() bool {
 	if len(el.immediates) > 0 {
 		batch := el.immediates
 		el.immediates = nil
+		el.checkBatch = batch
 		el.mu.Unlock()
-		for _, task := range batch {
-			if !task.cancelled.Load() {
-				task.fn()
-				// As between any two callbacks, the ticks the immediate queued run first.
-				el.runTicks(el.contextForTicks())
-			}
-		}
+		ctx := el.contextForTicks()
+		el.runCheckBatch(ctx, batch, func() bool {
+			// As between any two callbacks, the ticks the immediate queued run first.
+			el.runTicks(ctx)
+			return false
+		})
 		el.mu.Lock()
 		ran = true
 	}
