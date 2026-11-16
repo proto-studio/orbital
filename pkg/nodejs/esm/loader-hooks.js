@@ -65,43 +65,99 @@
     return snap;
   }
 
-  // The value's structured clone, which is also the brand check: only a real
-  // Error (not an object that merely inherits from Error.prototype) clones as
-  // an Error.
-  function cloneOf(v) {
-    if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return { ok: true, clone: v, isError: false };
-    if (!cloneValue) return { ok: true, clone: v, isError: reflectApply(isPrototypeOf, ErrorPrototype, [v]) };
+  // An Error by brand, as Node's transfer tells one (Object.prototype.toString),
+  // so an object that merely inherits from Error.prototype is not one, and an
+  // Error is one whatever its properties hold.
+  const objectToString = Object.prototype.toString;
+  const objectGetPrototypeOf = Object.getPrototypeOf;
+  const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  const functionToString = Function.prototype.toString;
+  function isErrorBrand(v) {
+    if (v === null || typeof v !== 'object') return false;
     try {
-      const c = cloneValue(v);
-      return { ok: true, clone: c, isError: c !== null && typeof c === 'object' && reflectApply(isPrototypeOf, ErrorPrototype, [c]) };
+      return reflectApply(objectToString, v, []) === '[object Error]';
     } catch (err) {
-      return { ok: false, clone: undefined, isError: false };
+      return false;
+    }
+  }
+
+  // The built-in class an error crosses as: the first one on its prototype
+  // chain, so a subclass of TypeError arrives as a TypeError.
+  const builtinErrors = ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'EvalError', 'URIError'];
+  function builtinClass(e) {
+    let p = e;
+    for (let depth = 0; depth < 64; depth++) {
+      try {
+        p = objectGetPrototypeOf(p);
+      } catch (err) {
+        break;
+      }
+      if (p === null) break;
+      try {
+        const d = objectGetOwnPropertyDescriptor(p, 'constructor');
+        if (d && typeof d.value === 'function') {
+          const name = d.value.name;
+          for (let i = 0; i < builtinErrors.length; i++) {
+            if (builtinErrors[i] === name) return name;
+          }
+        }
+      } catch (err) { /* keep looking */ }
+    }
+    return 'Error';
+  }
+
+  // How Node's transfer shows a value it can't clone (util.inspect's form).
+  function inspected(v) {
+    try {
+      if (typeof v === 'function') {
+        let src = '';
+        try { src = reflectApply(functionToString, v, []); } catch (err) { /* native */ }
+        const name = v.name;
+        if (reflectApply(stringSlice, src, [0, 6]) === 'class ' || src === 'class') {
+          return '[class ' + (name ? NativeString(name) : '(anonymous)') + ']';
+        }
+        return name ? '[Function: ' + NativeString(name) + ']' : '[Function (anonymous)]';
+      }
+      return NativeString(v);
+    } catch (err) {
+      return '';
     }
   }
 
   // Describes an error: the JSON payload Go reads (class, name, message, stack
   // and the JSON-safe properties) and the bag it serializes (the properties,
-  // and the cause, itself described when it is an error).
+  // and the cause, itself described when it is an error). The properties are
+  // read once and cloned as one graph, so values they share stay shared; when
+  // that fails, each is cloned alone and one that can't be is left out.
   function describeError(e, depth) {
-    const jsonProps = {};
-    const props = {};
+    const raw = {};
     const keys = objectKeys(e);
     for (let i = 0; i < keys.length; i++) {
-      let c;
       try {
-        c = cloneOf(e[keys[i]]);
-      } catch (err) {
-        continue;
+        ownData(raw, keys[i], e[keys[i]]);
+      } catch (err) { /* unreadable */ }
+    }
+    let props;
+    try {
+      props = cloneValue ? cloneValue(raw) : raw;
+    } catch (err) {
+      props = {};
+      const rawKeys = objectKeys(raw);
+      for (let i = 0; i < rawKeys.length; i++) {
+        try {
+          ownData(props, rawKeys[i], cloneValue ? cloneValue(raw[rawKeys[i]]) : raw[rawKeys[i]]);
+        } catch (err2) { /* not transferable */ }
       }
-      if (!c.ok) continue;
-      ownData(props, keys[i], c.clone);
+    }
+    const jsonProps = {};
+    const propKeys = objectKeys(props);
+    for (let i = 0; i < propKeys.length; i++) {
       try {
-        jsonStringify(c.clone);
-        ownData(jsonProps, keys[i], c.clone);
+        jsonStringify(props[propKeys[i]]);
+        ownData(jsonProps, propKeys[i], props[propKeys[i]]);
       } catch (err) { /* not JSON */ }
     }
-    let ctor = '';
-    try { ctor = e.constructor && e.constructor.name; } catch (err) { /* none */ }
+    const ctor = builtinClass(e);
     const name = NativeString(e.name);
     const message = NativeString(e.message);
     let stack = NativeString(e.stack);
@@ -115,15 +171,19 @@
     try {
       if (reflectApply(hasOwn, e, ['cause'])) {
         const cause = e.cause;
-        const c = cloneOf(cause);
-        if (c.isError && depth < 16) {
+        if (isErrorBrand(cause) && depth < 16) {
           const d = describeError(cause, depth + 1);
           ownData(bag, 'causeError', { payload: d.payload, bag: d.bag });
-          ownData(bag, 'hasCause', true);
-        } else if (c.ok) {
-          ownData(bag, 'cause', c.clone);
-          ownData(bag, 'hasCause', true);
+        } else {
+          let c;
+          try {
+            c = cloneValue ? cloneValue(cause) : cause;
+          } catch (err) {
+            c = inspected(cause);
+          }
+          ownData(bag, 'cause', c);
         }
+        ownData(bag, 'hasCause', true);
       }
     } catch (err) { /* not transferable */ }
     const payload = jsonStringify({ ctor: ctor, name: name, message: message, stack: stack, props: jsonProps });
@@ -151,12 +211,13 @@
   // Node's own errors arrive as plain errors there, their code a property).
   globalThis.__describeRejection = function (e) {
     try {
-      const c = cloneOf(e);
-      if (!c.isError) {
+      if (!isErrorBrand(e)) {
         // Not an error: Node transfers the value itself, structured-cloned,
-        // which Go does with V8's serializer.
-        if (c.ok && e !== null && (typeof e === 'object' || typeof e === 'function')) {
-          reflectApply(snapSet, snapshots, [e, { clone: { value: c.clone } }]);
+        // which Go does with V8's serializer, from this one clone.
+        if (e !== null && (typeof e === 'object' || typeof e === 'function') && cloneValue) {
+          try {
+            reflectApply(snapSet, snapshots, [e, { clone: { value: cloneValue(e) } }]);
+          } catch (err) { /* Go reports it can't be cloned */ }
         }
         return jsonStringify({ clone: true });
       }
