@@ -728,3 +728,25 @@ try { await import('./nope.mjs'); } catch (e) { log.push(e.code); }`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A type with a lone surrogate and a literal string spelling its tagged key form
+// stay distinct modules at the same URL. Expected from Node 20.18.1.
+func TestImportAttributes_SurrogateKeysDistinctFromControlStrings(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s.startsWith('mem:')) return { url: 'mem:x', importAttributes: { type: s === 'mem:a' ? '\uD800' : s === 'mem:b' ? '\x02d800' : '\x02\x02d800' }, shortCircuit: true };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u === 'mem:x') return { format: 'module', source: 'export default ' + JSON.stringify(escape(c.importAttributes.type)), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['mem:a', 'mem:b', 'mem:c', 'mem:a']) log.push((await import(s)).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["%uD800","%02d800","%02%02d800","%uD800"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

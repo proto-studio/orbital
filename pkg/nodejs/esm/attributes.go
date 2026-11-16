@@ -180,19 +180,26 @@ func (e *ESM) recordAttrCheck(key string, err error) {
 // keyAttrs returns the attributes to key a hook's module by: the type's exact
 // UTF-16 units (typeKey in loader-hooks.js's encoding) in place of its text,
 // which may have lost a lone surrogate on the way.
+//
+// That form is "\x02" and hex digits. An ordinary type starting with "\x02"
+// gets one more, so it can't spell a tagged form (or another ordinary type),
+// and every other type keys as itself.
 func keyAttrs(attrs []v8.ImportAttribute, encoded string) []v8.ImportAttribute {
 	var e struct {
 		TypeKey *string `json:"typeKey"`
 	}
-	if json.Unmarshal([]byte(encoded), &e) != nil || e.TypeKey == nil {
-		return attrs
+	if json.Unmarshal([]byte(encoded), &e) != nil {
+		e.TypeKey = nil
 	}
 	out := make([]v8.ImportAttribute, len(attrs))
 	for i, a := range attrs {
 		if a.Key == "type" {
-			// Tagged with \x02, which the keys' escaping of an ordinary type
-			// never leaves in it.
-			a.Value = "\x02" + *e.TypeKey
+			switch {
+			case e.TypeKey != nil:
+				a.Value = "\x02" + *e.TypeKey
+			case strings.HasPrefix(a.Value, "\x02"):
+				a.Value = "\x02" + a.Value
+			}
 		}
 		out[i] = a
 	}
