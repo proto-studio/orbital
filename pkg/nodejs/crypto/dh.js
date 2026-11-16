@@ -169,7 +169,10 @@
     getPrivateKey(encoding) {
       const s = this[kState];
       if (!s.priv) throw codedError(Error, 'ERR_CRYPTO_OPERATION_FAILED', 'Failed to get ECDH private key');
-      return encode(Buffer.from(s.priv), encoding);
+      // OpenSSL exports the scalar without leading zero bytes.
+      let i = 0;
+      while (i < s.priv.length - 1 && s.priv[i] === 0) i++;
+      return encode(Buffer.from(s.priv.subarray(i)), encoding);
     },
     getPublicKey(encoding, format) {
       const s = this[kState];
