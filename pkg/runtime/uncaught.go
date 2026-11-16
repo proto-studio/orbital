@@ -165,7 +165,10 @@ func (rt *Runtime) installUncaught() error {
 		return err
 	}
 
-	rt.eventLoop.setDrainedHook(rt.reportRejections)
+	rt.eventLoop.setDrainedHook(func() {
+		rt.runPlatformTasks()
+		rt.reportRejections()
+	})
 	return nil
 }
 
@@ -381,6 +384,18 @@ func (rt *Runtime) BindProcess(process *v8.Value) error {
 
 // reportRejections runs once the microtask queues are empty, which is the point where a
 // promise rejected with no handler has had its chance to get one.
+// runPlatformTasks runs the tasks V8 has queued for the isolate, such as
+// FinalizationRegistry cleanup callbacks, then the promise jobs they queued.
+// The loop calls it between callbacks, on its own goroutine, as Node runs
+// these tasks between turns of its loop.
+func (rt *Runtime) runPlatformTasks() {
+	if rt.ended() || rt.execController.IsDone() {
+		return
+	}
+	rt.context.PumpMessageLoop()
+	rt.context.PerformMicrotaskCheckpoint()
+}
+
 func (rt *Runtime) reportRejections() {
 	for rt.rejectionsPending && !rt.ended() && !rt.execController.IsDone() {
 		rt.rejectionsPending = false

@@ -8,10 +8,17 @@
 
   const crypto = __crypto_module;
   const kHandle = Symbol('kKeyObjectHandle');
+  // A KeyObject's native key is freed when the KeyObject is collected. Each
+  // KeyObject has a handle of its own (see toHandle), so freeing one never
+  // affects another.
+  const registry = typeof FinalizationRegistry === 'function'
+    ? new FinalizationRegistry((id) => crypto._keyFree(id))
+    : null;
 
   class KeyObject {
     constructor(id) {
       this[kHandle] = id;
+      if (registry) registry.register(this, id);
       const info = JSON.parse(crypto._keyInfo(id));
       this._type = info.type;
       this._asym = info.asymmetricKeyType;
@@ -80,7 +87,7 @@
         const jwk = crypto._keyExportJWK(input[kHandle]);
         return crypto._createPublicKeyJWK(jwk);
       }
-      return input[kHandle];
+      return crypto._keyClone(input[kHandle]);
     }
     if (typeof input === 'string') {
       return crypto._createKeyFromPEM(input, wantPrivate);

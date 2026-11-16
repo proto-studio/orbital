@@ -2064,6 +2064,21 @@ void* v8go_context_take_last_script_exception(void* context_ptr) {
     return result;
 }
 
+// Runs the tasks V8 has posted to the isolate's foreground task runner, such
+// as FinalizationRegistry cleanup, without waiting for more. The caller runs
+// it on the thread that drives the isolate, between callbacks, never while
+// JavaScript is on the stack.
+void v8go_isolate_pump_message_loop(void* isolate_ptr) {
+    if (!isolate_ptr || !g_platform) return;
+    Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    while (v8::platform::PumpMessageLoop(g_platform.get(), isolate,
+                                         v8::platform::MessageLoopBehavior::kDoNotWait)) {
+    }
+}
+
 void v8go_perform_microtask_checkpoint(void* isolate_ptr) {
     if (!isolate_ptr) return;
     Isolate* isolate = static_cast<Isolate*>(isolate_ptr);
