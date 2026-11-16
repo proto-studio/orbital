@@ -122,8 +122,15 @@ func (e *ESM) installRegisterBridge() error {
 	return global.Set("__esmRegister", fn)
 }
 
-// RunModule compiles and runs an ES module from source.
+// RunModule compiles and runs an ES module from source, and runs the event loop until it
+// has no work left. It doesn't emit 'beforeExit': that belongs to a program's entry point.
 func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
+	return e.runModule(source, filename, false)
+}
+
+// runModule runs an ES module. For the program's entry, the loop emits 'beforeExit' each
+// time it runs out of work, as Node's does.
+func (e *ESM) runModule(source, filename string, entry bool) (*v8.Value, error) {
 	if e.rt == nil {
 		return nil, errors.New("esm: runtime not initialized")
 	}
@@ -160,9 +167,13 @@ func (e *ESM) RunModule(source, filename string) (*v8.Value, error) {
 		e.rt.WatchModuleEvaluation(result)
 	}
 
-	// Run any pending async operations (timers, microtasks, top-level await), and emit
-	// 'beforeExit' when they run out.
-	e.rt.RunEventLoop()
+	// Run any pending async operations (timers, microtasks, top-level await). For the
+	// entry, 'beforeExit' is emitted when they run out.
+	if entry {
+		e.rt.RunEventLoop()
+	} else {
+		e.rt.EventLoop().Run()
+	}
 	if ended := e.rt.Ended(); ended != nil {
 		return nil, ended
 	}
@@ -226,7 +237,7 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 		return nil, e.endedOr(err)
 	}
 
-	return e.RunModule(source, url)
+	return e.runModule(source, url, true)
 }
 
 // Preload imports a module specifier (bare or path) before the entry runs,

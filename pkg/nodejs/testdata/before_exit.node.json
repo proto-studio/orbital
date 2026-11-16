@@ -18,6 +18,12 @@
     "caught in timer",
     "beforeExit"
   ],
+  "rejection_handler.js": [
+    "beforeExit 0",
+    "unhandledRejection from beforeExit",
+    "timer",
+    "beforeExit 1"
+  ],
   "reschedule.js": [
     "beforeExit 0 0",
     "timer 1",
