@@ -18,6 +18,18 @@
     "SIGTERM"
   ],
   "argv0": "custom0",
+  "argv0_named_shell": "named",
+  "argv0_named_shell_spawnargs": [
+    "named",
+    "-c",
+    "echo $0"
+  ],
+  "argv0_shell": "custom",
+  "argv0_shell_spawnargs": [
+    "custom",
+    "-c",
+    "/bin/echo $0"
+  ],
   "attached_leader": false,
   "bad_timeout": "ERR_OUT_OF_RANGE",
   "bad_timeout_ran": false,

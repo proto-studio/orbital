@@ -32,6 +32,13 @@ async function main() {
 
   results.argv0 = await outputOf(cp.spawn('sh', ['-c', 'echo $0'], { argv0: 'custom0' }));
   results.spawnargs = cp.spawn('true', ['x'], { argv0: 'named' }).spawnargs;
+  // argv0 names the shell when the command runs through one.
+  const shelled = cp.spawn('/bin/echo', ['$0'], { shell: true, argv0: 'custom' });
+  results.argv0_shell_spawnargs = shelled.spawnargs;
+  results.argv0_shell = await outputOf(shelled);
+  const namedShell = cp.spawn('echo $0', [], { shell: '/bin/sh', argv0: 'named' });
+  results.argv0_named_shell_spawnargs = namedShell.spawnargs;
+  results.argv0_named_shell = await outputOf(namedShell);
   results.env_path = await outputOf(cp.spawn('orbital-only-here', [], { env: { PATH: toolDir + ':/usr/bin:/bin' } }));
   // A relative PATH entry is relative to the child's working directory.
   const path = require('path');

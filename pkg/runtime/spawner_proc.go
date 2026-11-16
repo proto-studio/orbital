@@ -151,6 +151,9 @@ func (s *RealProcessSpawner) Spawn(ctx context.Context, command string, args []s
 			}
 		}
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", shellCmd)
+		if options.Argv0 != "" {
+			cmd.Args[0] = options.Argv0
+		}
 	} else {
 		// As in Node, a bare name is looked up on the PATH the child is given, if any.
 		path := command
