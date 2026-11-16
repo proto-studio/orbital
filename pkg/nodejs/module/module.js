@@ -9,6 +9,13 @@
 	delete globalThis.__compileModuleWrapper;
 	delete globalThis.__moduleWrapperCompiled;
 
+	// The string methods that build the text kept for a module, taken before any script
+	// runs, so that a script replacing them doesn't change what the loader keeps.
+	const uncurry = Function.prototype.call.bind(Function.prototype.bind, Function.prototype.call);
+	const stringIndexOf = uncurry(String.prototype.indexOf);
+	const stringReplace = uncurry(String.prototype.replace);
+	const fromCharCode = String.fromCharCode;
+
 	// Module cache. Node exposes this as `require.cache` / `Module._cache`: a
 	// plain object keyed by a module's resolved filename. Using a real object
 	// (not a Map) is required for Node compatibility — libraries and test suites
@@ -304,10 +311,10 @@
 					// use stands in, and the line is shown up to there, as Node shows it up
 					// to the NUL.
 					let nulMark = '\uFFFF';
-					for (let c = 0xE000; source.indexOf(nulMark) !== -1 && c <= 0xF8FF; c++) {
-						nulMark = String.fromCharCode(c);
+					for (let c = 0xE000; stringIndexOf(source, nulMark) !== -1 && c <= 0xF8FF; c++) {
+						nulMark = fromCharCode(c);
 					}
-					const kept = (hadBOM ? '\uFEFF' : '') + source.replace(/\0/g, nulMark);
+					const kept = (hadBOM ? '\uFEFF' : '') + stringReplace(source, /\0/g, nulMark);
 					moduleWrapperCompiled(resolved, kept, false, nulMark);
 					let compiled = false;
 					try {

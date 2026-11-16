@@ -1534,3 +1534,30 @@ func TestUncaughtSourceURLAgesWithItsScript(t *testing.T) {
 		t.Errorf("Source = %q, want %q", uncaught.Source, want)
 	}
 }
+
+// The text kept for a module with a NUL character is built with the string methods as
+// they were before any script ran.
+func TestUncaughtSourceForNulModuleWithReplacedStringMethods(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "nul.js")
+	if err := os.WriteFile(file, []byte("/*\x00*/ module.exports = () => { throw new Error('nul'); };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	script := "String.fromCharCode = () => 'mark';\n" +
+		"String.prototype.replace = () => 'x';\n" +
+		"String.prototype.indexOf = () => -1;\n" +
+		fmt.Sprintf("setTimeout(require(%q), 1);\n", file)
+	_, runErr := inst.Runtime.Run(script, filepath.Join(dir, "main.js"))
+	var uncaught *runtime.UncaughtError
+	if !errors.As(runErr, &uncaught) {
+		t.Fatalf("Run returned %v", runErr)
+	}
+	if want := file + ":1\n/*\n"; !strings.HasPrefix(uncaught.Source, want) {
+		t.Errorf("Source = %q, want it to start %q", uncaught.Source, want)
+	}
+}

@@ -3,6 +3,7 @@ package runtime
 import (
 	"hash/fnv"
 	"strings"
+	"unicode/utf8"
 
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -299,8 +300,19 @@ func (rt *Runtime) KeepModuleSource(name, source string) {
 // KeepModuleSourceWithNUL is KeepModuleSource for text in which the character nul stands
 // for the NUL characters of the module's source, which can't reach Go as they are. The
 // header shows a line up to there, as Node shows it up to the NUL.
+// nul is one character, U+FFFF or from the private use area U+E000 to U+F8FF; text with
+// any other marker isn't kept.
 func (rt *Runtime) KeepModuleSourceWithNUL(name, source, nul string) {
+	if !validNulMark(nul) {
+		return
+	}
 	rt.keepModule(source, nul, name, sourceURL(source))
+}
+
+// validNulMark reports whether nul is a character the module loader uses to stand for NUL.
+func validNulMark(nul string) bool {
+	r, size := utf8.DecodeRuneInString(nul)
+	return size == len(nul) && (r == 0xFFFF || (r >= 0xE000 && r <= 0xF8FF))
 }
 
 // ForgetModuleSource removes what KeepModuleSource kept for a module that then failed to
