@@ -7,6 +7,9 @@
   "exit_code.js": [
     "beforeExit 3 3"
   ],
+  "exit_code_string.js": [
+    "beforeExit number 0 true"
+  ],
   "exit_in_listener.js": [
     "beforeExit 0",
     "exit 5"
