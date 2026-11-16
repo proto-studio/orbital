@@ -152,3 +152,36 @@ func TestRunTicks_PanicKeepsTheLock(t *testing.T) {
 	// The lock is usable afterwards.
 	el.EnqueueTick(func() {})
 }
+
+// An immediate that panics leaves the rest of its batch for the next Run, for an embedder
+// that recovers.
+func TestRun_PanicKeepsTheRestOfTheBatch(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() { ran = append(ran, "a"); panic("a") })
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	func() {
+		defer func() { _ = recover() }()
+		el.Run()
+	}()
+	el.Run()
+	if got := fmt.Sprint(ran); got != "[a b]" {
+		t.Fatalf("ran %s, want [a b]", got)
+	}
+}
+
+// The same holds for RunOnce.
+func TestRunOnce_PanicKeepsTheRestOfTheBatch(t *testing.T) {
+	el := NewEventLoop()
+	var ran []string
+	el.SetImmediate(func() { ran = append(ran, "a"); panic("a") })
+	el.SetImmediate(func() { ran = append(ran, "b") })
+	func() {
+		defer func() { _ = recover() }()
+		el.RunOnce()
+	}()
+	el.RunOnce()
+	if got := fmt.Sprint(ran); got != "[a b]" {
+		t.Fatalf("ran %s, want [a b]", got)
+	}
+}
