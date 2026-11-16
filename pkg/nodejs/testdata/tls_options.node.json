@@ -107,12 +107,43 @@
   },
   "contexts": {
     "ciphersAllExcluded": "ok",
+    "ciphersAllLeavesNullSuites": "ok",
     "ciphersExcludeGroup": "ok",
+    "ciphersGroupExcludedAgain": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersHighExcludedAgain": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersJoinExcludedAgain": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
     "ciphersJoined": "ok",
     "ciphersJoinedOpenSSLOnly": "ok",
     "ciphersKeywordAndName": "ok",
     "ciphersKeywords": "ok",
     "ciphersMedium": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersNameExcludedAgain": {
+      "code": "ERR_SSL_NO_CIPHER_MATCH",
+      "library": "SSL routines",
+      "message": "error:0A0000B9:SSL routines::no cipher match",
+      "reason": "no cipher match"
+    },
+    "ciphersNameRemovedAgain": {
       "code": "ERR_SSL_NO_CIPHER_MATCH",
       "library": "SSL routines",
       "message": "error:0A0000B9:SSL routines::no cipher match",
