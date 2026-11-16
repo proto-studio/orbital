@@ -84,25 +84,56 @@
     owner[name] = wrapped;
   }
 
-  // Promise reactions registered while a domain is active run inside it. If one throws, the
-  // domain stays active until the reaction's job is over, so the rejection that follows is
-  // recorded against it and reported to its 'error' listeners rather than as an
-  // unhandledRejection. catch() and finally() go through then(). Node follows promises with
+  // Promise reactions registered while a domain is active run inside it. If one throws, or
+  // returns a promise that rejects, the rejection that follows is attributed to the domain
+  // and reported to its 'error' listeners rather than as an unhandledRejection. catch() and finally() go through then(). Node follows promises with
   // a V8 promise hook, which also covers await; here await is not followed. then() is only
   // replaced once a domain is created, so programs without domains keep the native one.
   const promiseThen = Promise.prototype.then;
+  // The domain a rejection belongs to, by reason, for rejections that happen after the
+  // reaction returned: the promise a throwing reaction rejects, or the one adopting a
+  // rejected promise the reaction returned. The rejection tracker asks for it.
+  const rejectionDomains = new WeakMap();
+  let primitiveRejection = null;
+
+  function noteRejection(domain, reason) {
+    if ((typeof reason === 'object' && reason !== null) || typeof reason === 'function') {
+      rejectionDomains.set(reason, domain);
+    } else {
+      primitiveRejection = { domain, reason };
+    }
+  }
+
+  exports._takeRejectionDomain = function(reason) {
+    if ((typeof reason === 'object' && reason !== null) || typeof reason === 'function') {
+      const domain = rejectionDomains.get(reason);
+      if (domain) rejectionDomains.delete(reason);
+      return domain || null;
+    }
+    if (primitiveRejection !== null && Object.is(primitiveRejection.reason, reason)) {
+      const domain = primitiveRejection.domain;
+      primitiveRejection = null;
+      return domain;
+    }
+    return null;
+  };
+
   function bindReaction(domain, fn) {
     if (typeof fn !== 'function') return fn;
     return function domainReaction(value) {
       domain.enter();
-      let threw = true;
       try {
         const ret = apply(fn, this, [value]);
-        threw = false;
+        if (ret instanceof Promise) {
+          apply(promiseThen, ret, [undefined, (reason) => noteRejection(domain, reason)]);
+        }
         return ret;
+      } catch (err) {
+        noteRejection(domain, err);
+        throw err;
       } finally {
-        if (threw) queueUpdate(() => domain.exit());
-        else domain.exit();
+        // The domain ends with the reaction, so later jobs run outside it.
+        domain.exit();
       }
     };
   }

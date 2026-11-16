@@ -259,6 +259,17 @@ process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
 process.on('uncaughtException', (e, o) => note('uncaught', e.message, o));
 d.run(() => Promise.reject(new Error('nolistener')));
 `, []string{"uncaught nolistener uncaughtException"}},
+		"after the reaction": {`
+const d = require('domain').create();
+d.on('error', (e) => note('domain caught', e.message));
+process.on('unhandledRejection', (r) => note('unhandledRejection', r.message));
+d.run(() => {
+  Promise.resolve().then(() => { throw new Error('thrown'); }).catch(() => note('thrown caught by catch'));
+});
+Promise.resolve().then(() => note('unrelated sees domain', process.domain === d));
+d.run(() => Promise.resolve().then(() => Promise.reject(new Error('adopted'))));
+d.run(() => Promise.resolve().then(() => { throw new Error('plain throw'); }));
+`, []string{"unrelated sees domain false", "thrown caught by catch", "domain caught plain throw", "domain caught adopted"}},
 		"outside any domain": {`
 require('domain').create();
 process.on('unhandledRejection', (r) => note('unhandledRejection', r.message, typeof Promise.prototype.then));
