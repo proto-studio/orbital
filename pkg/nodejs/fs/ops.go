@@ -208,7 +208,8 @@ func (f *FS) registerOps(regFn func(string, v8.FunctionCallback) error) error {
 			return err
 		}
 	}
-	return nil
+	// The asynchronous close of a pipe also waits for the reads queued on it before it.
+	return regFn("__closeAsync", f.asyncCall(f.closeAfterReadsOp))
 }
 
 func trimUnderscores(name string) string {
@@ -395,6 +396,24 @@ func (f *FS) openOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 		f.fdMu.Unlock()
 		return opResult{value: func(ctx *v8.Context) *v8.Value { return ctx.NewInteger(int64(fd)) }}
 	}, -1, nil
+}
+
+// closeAfterReadsOp is closeOp for fs.close and FileHandle.close: on a pipe, socket or
+// device, whose reads queue apart (readLane), it first lets the reads made before it finish,
+// as Node's close waits for them. closeSync doesn't wait, as Node's doesn't.
+func (f *FS) closeAfterReadsOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
+	work, fd, thrown := f.closeOp(ctx, args)
+	if thrown != nil {
+		return nil, fd, thrown
+	}
+	return func() opResult {
+		if lane := f.readLane(fd); lane != fd {
+			reads := make(chan struct{})
+			f.schedule(lane, func() { close(reads) })
+			<-reads
+		}
+		return work()
+	}, fd, nil
 }
 
 func (f *FS) closeOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
