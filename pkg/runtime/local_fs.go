@@ -515,10 +515,26 @@ func (l *LocalFilesystem) scriptPath(p string) string {
 	if err != nil {
 		return p
 	}
-	if rel, ok := l.underRoot(p, absRoot); ok {
-		return filepath.Clean(string(filepath.Separator) + rel)
+	// Only the root's own prefix is taken off; the rest stays as written, since cleaning a
+	// ".." after a link or a trailing "/" would change which file the target names.
+	for _, root := range l.rootSpellings(absRoot) {
+		prefix := strings.TrimSuffix(root, string(filepath.Separator)) + string(filepath.Separator)
+		if p == root {
+			return string(filepath.Separator)
+		}
+		if rest, ok := strings.CutPrefix(p, prefix); ok {
+			return string(filepath.Separator) + rest
+		}
 	}
 	return p
+}
+
+// rootSpellings gives the root as configured and with its links resolved.
+func (l *LocalFilesystem) rootSpellings(absRoot string) []string {
+	if real, err := filepath.EvalSymlinks(absRoot); err == nil && real != absRoot {
+		return []string{absRoot, real}
+	}
+	return []string{absRoot}
 }
 
 // Symlink makes path a symbolic link to target. The link is checked like any other path

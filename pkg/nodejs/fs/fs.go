@@ -291,7 +291,7 @@ func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	path := args[0].String()
+	path := stringArg(args, 0)
 	data, err := f.fs().ReadFile(path)
 	if err != nil {
 		return fsFailure(ctx, err, readSyscall(err), path)
@@ -314,7 +314,7 @@ func (f *FS) writeFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return info.Context().Throw(err.Error())
 	}
 
-	path := args[0].String()
+	path := stringArg(args, 0)
 	if failed, err := f.writeWithFlags(path, data, argAt(args, 2), modeArg(args, 3)); err != nil {
 		return fsFailure(info.Context(), err, failed, path)
 	}
@@ -329,7 +329,7 @@ func (f *FS) existsSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.False()
 	}
 
-	if f.fs().Exists(args[0].String()) {
+	if f.fs().Exists(stringArg(args, 0)) {
 		return ctx.True()
 	}
 	return ctx.False()
@@ -388,7 +388,7 @@ func (f *FS) statSync(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	if len(args) < 1 {
 		return nil
 	}
-	path := args[0].String()
+	path := stringArg(args, 0)
 	stat, err := f.statFor(syscallName)(path)
 	if err != nil {
 		return fsFailure(ctx, err, syscallName, path)
@@ -641,7 +641,7 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	path := args[0].String()
+	path := stringArg(args, 0)
 	asText := args[1].Boolean()
 	callback := args[2]
 
@@ -680,7 +680,7 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	path := args[0].String()
+	path := stringArg(args, 0)
 	encoded := args[1].String()
 	flags, flagsOK := parseOpenFlags(args[2])
 	perm := modeArg(args, 3)
@@ -773,7 +773,7 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	if len(args) < 2 {
 		return nil
 	}
-	path := args[0].String()
+	path := stringArg(args, 0)
 	callback := args[len(args)-1]
 	if !callback.IsFunction() {
 		return nil
@@ -810,7 +810,7 @@ func (f *FS) readStreamOpenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 1 {
 		return nil
 	}
-	path := args[0].String()
+	path := stringArg(args, 0)
 
 	start := int64(-1)
 	if len(args) >= 2 && args[1] != nil && args[1].IsNumber() {
