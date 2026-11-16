@@ -116,6 +116,41 @@
     "message": "error:02000079:rsa routines::oaep decoding error",
     "name": "Error"
   },
+  "oaep_blake2b512": {
+    "code": "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE",
+    "message": "error:0200006E:rsa routines::data too large for key size",
+    "name": "Error"
+  },
+  "oaep_blake2s256": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaep_md5-sha1": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaep_ripemd160": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaep_shake128": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
+  "oaep_shake256": {
+    "value": [
+      "secret message",
+      "secret message"
+    ]
+  },
   "pkcs1Encrypt": {
     "value": 128
   },
