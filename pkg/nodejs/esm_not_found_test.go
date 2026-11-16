@@ -710,6 +710,24 @@ try { await import('./nope.mjs'); } catch (e) { log.push(String(e).slice(0, 26),
 	}
 }
 
+// A hook error arrives with own name, message, stack and cause, in that order,
+// its cause cloned across with it. Expected from Node 20.18.1.
+func TestDynamicImport_HookErrorCause(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'caused') throw new TypeError('outer', { cause: new Error('inner') });
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('caused'); } catch (e) { log.push(e instanceof TypeError, e.cause.message, Object.getOwnPropertyNames(e).join(), Object.keys(e).join()); }`,
+	})
+	want := `[true,"inner","name,message,stack,cause",""]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.

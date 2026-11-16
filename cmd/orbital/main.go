@@ -818,9 +818,27 @@ func finalizeExit(rt *runtime.Runtime) {
 // never settles: the 'exit' listeners run, then the exit code is 13 unless the
 // program set another.
 func exitUnsettled(rt *runtime.Runtime) {
-	finalizeExit(rt)
+	codeVal, err := rt.RunScript(`(function () {
+		try {
+			if (typeof process !== 'undefined' && typeof process.emit === 'function' && !process._exiting) {
+				process._exiting = true;
+				process.emit('exit', process.exitCode || 0);
+			}
+		} catch (e) {}
+		// 13 unless the program (an 'exit' listener included) set a code.
+		return (typeof process === 'undefined' || process.exitCode === undefined) ? 13 : Number(process.exitCode);
+	})();`, "[exit]")
+	// An 'exit' listener can call process.exit, which ends the runtime with its own code.
+	if exit := rt.ExitError(); exit != nil {
+		rt.Dispose()
+		os.Exit(exit.Code)
+	}
+	code := 13
+	if err == nil && codeVal != nil {
+		code = int(codeVal.Integer())
+	}
 	rt.Dispose()
-	os.Exit(13)
+	os.Exit(code)
 }
 
 func runCode(source, origin string) error {

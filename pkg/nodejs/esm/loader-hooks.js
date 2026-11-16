@@ -44,6 +44,9 @@
   // (V8's serializer keeps NaN, BigInts and cycles, which JSON doesn't). A value
   // that can't be cloned is left out.
   const cloneValue = typeof structuredClone === 'function' ? structuredClone : null;
+  // An own cause (non-enumerable, as the Error constructor makes it) travels
+  // too, as Node's transfer keeps it.
+  const hasOwn = Object.prototype.hasOwnProperty;
   globalThis.__rejectionProps = function (e) {
     const props = {};
     const keys = objectKeys(e);
@@ -54,7 +57,16 @@
         props[keys[i]] = v;
       } catch (err) { /* not transferable */ }
     }
-    return props;
+    const bag = { props: props, hasCause: false };
+    try {
+      if (reflectApply(hasOwn, e, ['cause'])) {
+        const cause = e.cause;
+        if (cloneValue) cloneValue(cause);
+        bag.cause = cause;
+        bag.hasCause = true;
+      }
+    } catch (err) { /* not transferable */ }
+    return bag;
   };
 
   // Describes a rejection for Go, which rebuilds it in the application realm
