@@ -1286,9 +1286,8 @@
   // round, as Node checks the top pair and each pair inside a directory.
   function checkPair(srcStat, destStat, src, dest) {
     if (!destStat) return;
-    const path = pathModule();
     // The paths are compared too, for a filesystem that reports no inode numbers.
-    if (path.resolve(src) === path.resolve(dest) ||
+    if (fsResolve(src) === fsResolve(dest) ||
         (srcStat.ino && srcStat.ino === destStat.ino && srcStat.dev === destStat.dev)) {
       throw cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest', 'EINVAL', 22, 'src and dest cannot be the same', dest);
     }

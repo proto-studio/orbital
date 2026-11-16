@@ -50,9 +50,11 @@ const fs = require('fs');
 fs.writeFileSync('/f', 'keep');
 let code = null;
 try { fs.cpSync('/f', '/./f'); } catch (e) { code = e.code; }
-fs.cp('/f', '/f', (e) => done({ sync: code, async: e && e.code, contents: fs.readFileSync('/f', 'utf8') }));
+let relative = null;
+try { fs.cpSync('/f', 'f'); } catch (e) { relative = e.code; }
+fs.cp('/f', '/f', (e) => done({ sync: code, relative, async: e && e.code, contents: fs.readFileSync('/f', 'utf8') }));
 `)
-	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "contents": "keep"})
+	wantJSON(t, got, map[string]any{"sync": "ERR_FS_CP_EINVAL", "relative": "ERR_FS_CP_EINVAL", "async": "ERR_FS_CP_EINVAL", "contents": "keep"})
 }
 
 // cp refuses to copy a directory into itself through a link to it, as Node does, rather than
