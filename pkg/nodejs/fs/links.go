@@ -30,7 +30,12 @@ func stringValue(s string) func(ctx *v8.Context) *v8.Value {
 
 // symlinkOp backs symlink(target, path). Its errors name both, as Node's do.
 func (f *FS) symlinkOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
-	target, path := stringArg(args, 0), stringArg(args, 1)
+	// The target comes as base64 of its bytes, which need not be UTF-8.
+	raw, err := base64.StdEncoding.DecodeString(stringArg(args, 0))
+	if err != nil {
+		return nil, -1, ctx.Throw(err.Error())
+	}
+	target, path := string(raw), stringArg(args, 1)
 	fsys := f.fs()
 	return func() opResult {
 		l, err := linkFS(fsys)
