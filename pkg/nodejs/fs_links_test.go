@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"testing"
 	"time"
 
@@ -68,6 +69,7 @@ done({
   besideWrite: code(() => fs.writeFileSync('/beside', 'changed')),
   besideHardLink: code(() => fs.linkSync('/beside', '/hard')),
   hardLinkMade: fs.existsSync('/hard'),
+  hardRead: code(() => fs.readFileSync('/hard', 'utf8')),
   hardLink: code(() => { fs.linkSync('/abs', '/hard2'); return fs.readFileSync('/hard2', 'utf8'); }),
   linkInBeside: code(() => fs.symlinkSync('/d/f', '/beside/x')),
   mkdtemp: code(() => /^\/tmp-[A-Za-z0-9]{6}$/.test(fs.mkdtempSync('/tmp-'))),
@@ -83,10 +85,16 @@ done({
   }),
 });
 `, root))
+	// link(2) follows a final link on macOS, where the target beside the root is refused, and
+	// links the link itself on Linux, where reading through the new name is refused instead.
+	besideHardLink, hardRead := "EACCES", "ENOENT"
+	if goruntime.GOOS == "linux" {
+		besideHardLink, hardRead = "ok", "EACCES"
+	}
 	wantJSON(t, got, map[string]any{
 		"absolute": "inside", "readlinkAbsolute": "/d/f", "realpath": "/d/f", "realpathRoot": "/",
 		"relative": "inside", "beside": "EACCES", "besideLstat": true, "besideReadlink": "../beside.txt",
-		"besideRealpath": "EACCES", "besideWrite": "EACCES", "besideHardLink": "EACCES", "hardLinkMade": false,
+		"besideRealpath": "EACCES", "besideWrite": "EACCES", "besideHardLink": besideHardLink, "hardLinkMade": false, "hardRead": hardRead,
 		"hardLink": "inside", "linkInBeside": "EACCES", "mkdtemp": true, "mkdtempBeside": "EACCES",
 		"unlinkBeside": "ok", "cpLink": "/src/f linked", "hostPathTarget": "inside",
 	})
@@ -173,4 +181,28 @@ const fs = require('fs');
 done({ hex: fs.readlinkSync(%q, { encoding: 'buffer' }).toString('hex'), latin1: fs.readlinkSync(%q, 'latin1') });
 `, filepath.Join(dir, "l"), filepath.Join(dir, "l")))
 	wantJSON(t, got, map[string]any{"hex": "61ff62", "latin1": "a\u00ffb"})
+}
+
+// link treats a symbolic link as the platform's link(2) does, as Node does: macOS links the
+// file it leads to, Linux the link itself.
+func TestFSLinks_LinkOfALink(t *testing.T) {
+	for _, rooted := range []bool{false, true} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "f"), []byte("f"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("f", filepath.Join(dir, "alias")); err != nil {
+			t.Fatal(err)
+		}
+		cfg, prefix := &runtime.Config{}, dir
+		if rooted {
+			cfg, prefix = &runtime.Config{Filesystem: runtime.NewLocalFilesystem(dir)}, ""
+		}
+		got := runJS(t, cfg, fmt.Sprintf(`
+const fs = require('fs');
+fs.linkSync(%q + '/alias', %q + '/copy');
+done({ isLink: fs.lstatSync(%q + '/copy').isSymbolicLink(), data: fs.readFileSync(%q + '/copy', 'utf8') });
+`, prefix, prefix, prefix, prefix))
+		wantJSON(t, got, map[string]any{"isLink": goruntime.GOOS == "linux", "data": "f"})
+	}
 }

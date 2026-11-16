@@ -555,7 +555,7 @@ func (l *LocalFilesystem) Readlink(path string) (string, error) {
 }
 
 // Link makes path another name for the file existing names. A symbolic link at existing is
-// followed, so the new name always names the file the walk reached.
+// treated as the platform's link(2) treats it.
 func (l *LocalFilesystem) Link(existing, path string) error {
 	if l.Root != "" {
 		return l.rootedLink(existing, path)
@@ -564,9 +564,8 @@ func (l *LocalFilesystem) Link(existing, path string) error {
 	if err != nil {
 		return err
 	}
-	if real, err := filepath.EvalSymlinks(from); err == nil {
-		from = real
-	}
+	// link(2) itself decides what a link at existing means, as it does for Node: macOS
+	// links the file it leads to, Linux the link itself.
 	to, err := l.resolvePath(path)
 	if err != nil {
 		return err

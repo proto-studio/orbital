@@ -39,3 +39,6 @@ const searchFlag = 0x40000000
 
 // mkdirKeepsSticky says whether mkdir sets the sticky bit it is given. macOS's doesn't.
 const mkdirKeepsSticky = false
+
+// linkFollowsFinal says whether link(2) follows a final symbolic link. macOS's does.
+const linkFollowsFinal = true

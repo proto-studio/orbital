@@ -34,10 +34,11 @@ func (l *LocalFilesystem) rootedReadlink(p string) (string, error) {
 	return target, w.fail("readlink", err)
 }
 
-// rootedLink links the file the walk of existing reaches, following a link there, so the
-// new name names that file. linkat is given no flag, so it doesn't follow a link itself.
+// rootedLink links what the walk of existing reaches.
 func (l *LocalFilesystem) rootedLink(existing, p string) error {
-	from, err := l.walkTo(existing, walkOptions{followFinal: true})
+	// As link(2) does, a final link is followed on macOS and linked itself on Linux. Either
+	// way linkat gets no flag, so it never follows a link the walk didn't.
+	from, err := l.walkTo(existing, walkOptions{followFinal: linkFollowsFinal})
 	if err != nil {
 		return err
 	}
