@@ -152,7 +152,7 @@ func asn1StringValue(v asn1.RawValue) (s string, opaque bool) {
 		return sb.String(), false
 	case 12: // UTF8String
 		return string(v.Bytes), false
-	case 19, 22, 26: // Printable, IA5, Visible: ASCII
+	case 18, 19, 22, 26: // Numeric, Printable, IA5, Visible: ASCII
 		return string(v.Bytes), false
 	case 20: // T61String, read as Latin-1
 		var sb strings.Builder
