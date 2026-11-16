@@ -680,3 +680,29 @@ log.push((await import('./mut')).default, (await import('./fmt')).default);`,
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A hook's initialize() replacing String.prototype.charCodeAt doesn't merge the
+// cache keys of types that differ only in a lone surrogate.
+func TestImportAttributes_SurrogateKeysIgnoreReplacedMethods(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"v.js": ``,
+		"hooks.mjs": `export function initialize() { String.prototype.charCodeAt = () => 0; Number.prototype.toString = () => '0'; }
+export async function resolve(s, c, n) {
+  if (s === './s1') return { ...(await n('./v.js', c)), importAttributes: { type: '\uD800' } };
+  if (s === './s2') return { ...(await n('./v.js', c)), importAttributes: { type: '\uD801' } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.includes('v.js')) return { format: 'module', source: 'export default ' + JSON.stringify(c.importAttributes.type), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const a = await import('./s1'), b = await import('./s2');
+log.push(a === b);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[false]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
