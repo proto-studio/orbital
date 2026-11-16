@@ -169,7 +169,7 @@ func (e *ESM) runModule(source, filename string, entry bool) (*v8.Value, error) 
 
 	e.linkErr = nil
 	if err := mod.Instantiate(e.resolveModule); err != nil {
-		return nil, e.linkFailed(err)
+		return nil, e.linkFailed(err, entry)
 	}
 
 	result, err := mod.Evaluate()
@@ -230,7 +230,7 @@ func (e *ESM) endedOr(err error) error {
 // not be resolved the way Node does: as an uncaught exception, printed with the
 // error's stack, code and url (and seen by 'uncaughtException' listeners).
 // Other link failures (and a program that already ended) return as they are.
-func (e *ESM) linkFailed(err error) error {
+func (e *ESM) linkFailed(err error, entry bool) error {
 	if ended := e.rt.Ended(); ended != nil {
 		return ended
 	}
@@ -255,7 +255,13 @@ func (e *ESM) linkFailed(err error) error {
 	}
 	e.rt.WatchModuleEvaluation(p)
 	e.rt.Context().PerformMicrotaskCheckpoint()
-	e.rt.EventLoop().Run()
+	// For the program's entry the loop emits 'beforeExit' as it runs out, as
+	// Node's does after a handled failure.
+	if entry {
+		e.rt.RunEventLoop()
+	} else {
+		e.rt.EventLoop().Run()
+	}
 	if ended := e.rt.Ended(); ended != nil {
 		return ended
 	}
@@ -312,7 +318,7 @@ func (e *ESM) RunModuleFile(filename string) (*v8.Value, error) {
 		// Like Node, a missing entry is an uncaught exception, which an
 		// 'uncaughtException' listener from a preload can handle.
 		e.linkErr = nil
-		return nil, e.linkFailed(e.throwable(err))
+		return nil, e.linkFailed(e.throwable(err), true)
 	}
 
 	return e.runModule(source, url, true)

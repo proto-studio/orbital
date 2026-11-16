@@ -17,12 +17,13 @@ import (
 	"net"
 	"net/url"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 var (
@@ -121,22 +122,49 @@ func urlPath(spec, dir string) (path, lexical, encoded, suffix string, encodedSe
 		// An escape that isn't "%" and two hex digits.
 		malformed = true
 	}
+	// encoded is the URL's path as the URL parser serializes it: escapes kept
+	// as written, what the path percent-encode set covers encoded, dot segments
+	// (encoded ones too) resolved and repeated separators kept.
 	if strings.HasPrefix(rest, "/") {
-		lexical = removeDotSegments(decoded)
-		return filepath.Clean(lexical), lexical, pathpkg.Clean(rest), suffix, encodedSep, malformed
+		lexical = removeDotSegments(decoded, false)
+		encoded = removeDotSegments(encodeURLPath(rest), true)
+		return filepath.Clean(lexical), lexical, encoded, suffix, encodedSep, malformed
 	}
-	lexical = removeDotSegments(strings.TrimSuffix(filepath.ToSlash(dir), "/") + "/" + decoded)
-	return filepath.Clean(lexical), lexical, pathpkg.Join(escapePath(dir), rest), suffix, encodedSep, malformed
+	lexical = removeDotSegments(strings.TrimSuffix(filepath.ToSlash(dir), "/")+"/"+decoded, false)
+	encoded = removeDotSegments(strings.TrimSuffix(escapePath(dir), "/")+"/"+encodeURLPath(rest), true)
+	return filepath.Clean(lexical), lexical, encoded, suffix, encodedSep, malformed
+}
+
+// encodeURLPath percent-encodes what the URL parser encodes in a path:
+// controls, space, non-ASCII bytes and " < > ` { }. Escapes stay as written.
+func encodeURLPath(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c <= ' ' || c >= 0x7f || strings.IndexByte("\"<>`{}", c) >= 0 {
+			fmt.Fprintf(&b, "%%%02X", c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // removeDotSegments resolves the "." and ".." segments of p, an absolute URL
 // path, as the URL parser does: ".." drops the segment before it, even an
-// empty one, and empty segments (repeated separators) are otherwise kept.
-func removeDotSegments(p string) string {
+// empty one, and empty segments (repeated separators) are otherwise kept. For
+// an encoded path, "%2e" is a "." too.
+func removeDotSegments(p string, encoded bool) string {
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	out := make([]string, 0, len(segs))
 	for i, s := range segs {
 		last := i == len(segs)-1
+		if encoded {
+			s2 := strings.ReplaceAll(strings.ReplaceAll(s, "%2e", "."), "%2E", ".")
+			if s2 == "." || s2 == ".." {
+				s = s2
+			}
+		}
 		switch s {
 		case "..":
 			if len(out) > 0 {
@@ -157,30 +185,94 @@ func removeDotSegments(p string) string {
 }
 
 // validFileHost reports whether raw, a file: URL's authority as written, is a
-// host the URL parser accepts there: its escapes decode to UTF-8, it holds no
-// credentials or port (a decoded "@" or ":" too), no forbidden host character
-// (space, "#", "%", "<", ">", "?", "[", "\\", "]", "^", "|", controls), and a
-// bracketed one is an IPv6 address.
+// host the URL parser accepts there (see parseFileHost).
 func validFileHost(raw string) bool {
+	_, ok := parseFileHost(raw)
+	return ok
+}
+
+// hostProfile is the URL standard's domain-to-ASCII: UTS 46 with
+// nontransitional mapping, without STD3 rules, hyphen checks or DNS lengths.
+var hostProfile = idna.New(idna.MapForLookup(), idna.Transitional(false), idna.StrictDomainName(false),
+	idna.CheckHyphens(false), idna.CheckJoiners(true), idna.BidiRule(), idna.VerifyDNSLength(false))
+
+// parseFileHost reads raw, a file: URL's authority as written, as the URL
+// parser reads a host, and returns it serialized: a bracketed IPv6 address
+// compressed, otherwise the escapes decoded and the domain mapped to ASCII
+// (lowercase, punycode), which may not hold credentials, a port or another
+// forbidden character, and which, ending in a number, must be an IPv4 address
+// (then given in dotted form). It reports false when the URL parser would fail.
+func parseFileHost(raw string) (string, bool) {
+	if strings.HasPrefix(raw, "[") {
+		if !strings.HasSuffix(raw, "]") || !strings.Contains(raw, ":") {
+			return "", false
+		}
+		ip := net.ParseIP(raw[1 : len(raw)-1]).To16()
+		if ip == nil {
+			return "", false
+		}
+		return "[" + ipv6String(ip) + "]", true
+	}
 	d, err := url.PathUnescape(raw)
 	if err != nil || !utf8.ValidString(d) {
-		return false
+		return "", false
 	}
-	if strings.HasPrefix(raw, "[") {
-		if !strings.HasSuffix(raw, "]") {
-			return false
-		}
-		ip := net.ParseIP(raw[1 : len(raw)-1])
-		return ip != nil && strings.Contains(raw, ":")
+	host, err := hostProfile.ToASCII(d)
+	if err != nil {
+		return "", false
 	}
-	for i := 0; i < len(d); i++ {
-		if c := d[i]; c <= ' ' || c == 0x7f || strings.IndexByte("#%/:<>?@[\\]^|", c) >= 0 {
-			return false
+	for i := 0; i < len(host); i++ {
+		if c := host[i]; c <= ' ' || c == 0x7f || strings.IndexByte("#%/:<>?@[\\]^|", c) >= 0 {
+			return "", false
 		}
 	}
 	// A host ending in a number is an IPv4 address, and must parse as one.
-	_, numeric, ok := ipv4Host(strings.ToLower(d))
-	return !numeric || ok
+	if addr, numeric, ok := ipv4Host(host); numeric {
+		return addr, ok
+	}
+	return host, true
+}
+
+// ipv6String serializes a 16-byte address as the URL parser does: lowercase
+// hex pieces, the first longest run of two or more zero pieces as "::" (an
+// embedded IPv4 address included, unlike net.IP's String).
+func ipv6String(ip net.IP) string {
+	var pieces [8]uint16
+	for i := range pieces {
+		pieces[i] = uint16(ip[2*i])<<8 | uint16(ip[2*i+1])
+	}
+	start, length := -1, 1
+	for i := 0; i < 8; {
+		if pieces[i] != 0 {
+			i++
+			continue
+		}
+		j := i
+		for j < 8 && pieces[j] == 0 {
+			j++
+		}
+		if j-i > length {
+			start, length = i, j-i
+		}
+		i = j
+	}
+	var b strings.Builder
+	for i := 0; i < 8; i++ {
+		if i == start {
+			if i == 0 {
+				b.WriteString("::")
+			} else {
+				b.WriteByte(':')
+			}
+			i += length - 1
+			continue
+		}
+		fmt.Fprintf(&b, "%x", pieces[i])
+		if i < 7 {
+			b.WriteByte(':')
+		}
+	}
+	return b.String()
 }
 
 // ipv4Host reads host as the URL parser does when it ends in a number (its last
@@ -307,8 +399,9 @@ func canonicalFileURL(s string) (string, bool) {
 	return "file://" + host + rest + suffix, true
 }
 
-// fileURLHost returns the host of a file:// URL specifier, lowercased (the
-// URL parser lowercases it), or "" when it has none.
+// fileURLHost returns the host of a file:// URL specifier as the URL parser
+// serializes it (see parseFileHost), or "" when it has none. A host it can't
+// parse comes back lowercased.
 func fileURLHost(spec string) string {
 	if !strings.HasPrefix(spec, "file://") {
 		return ""
@@ -317,9 +410,8 @@ func fileURLHost(spec string) string {
 	if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
 		rest = rest[:i]
 	}
-	// The URL parser decodes a host's escapes (file://%6cocalhost is localhost).
-	if d, err := url.PathUnescape(rest); err == nil {
-		rest = d
+	if host, ok := parseFileHost(rest); ok {
+		return host
 	}
 	return strings.ToLower(rest)
 }
@@ -455,16 +547,14 @@ func checkFileURLHost(u, input, module string) error {
 		}
 	}
 	if host := fileURLHost(u); host != "" && host != "localhost" {
-		// The error's input is the URL as parsed: a numeric host in dotted form.
-		if addr, numeric, ok := ipv4Host(host); numeric && ok {
-			rest := u[len("file://"):]
-			if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
-				rest = rest[i:]
-			} else {
-				rest = ""
-			}
-			u = "file://" + addr + rest
+		// The error's input is the URL as parsed, its host serialized.
+		rest := u[len("file://"):]
+		if i := strings.IndexAny(rest, "/\\?#"); i >= 0 {
+			rest = rest[i:]
+		} else {
+			rest = ""
 		}
+		u = "file://" + host + rest
 		return &moduleError{
 			msg:       `File URL host must be "localhost" or empty on ` + nodePlatform(),
 			code:      "ERR_INVALID_FILE_URL_HOST",
@@ -607,7 +697,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 			return "", uriMalformed()
 		}
 	case winAbs(spec):
-		attempted, lexical = spec, spec
+		attempted, lexical, encoded = spec, spec, strings.TrimPrefix(fileURL(spec), "file://")
 	default:
 		abs, suffix, err := e.resolveBare(spec, rawSpec, dir, referrer)
 		if err != nil {
@@ -620,7 +710,7 @@ func (e *ESM) resolveToURL(specifier, referrer string) (string, error) {
 		abs = e.resolveIndex(attempted)
 	}
 	if abs == "" {
-		err := e.moduleNotFound(lexical, referrer)
+		err := e.moduleNotFound(lexical, encoded, referrer)
 		err.url += suffix
 		return "", err
 	}
@@ -721,12 +811,13 @@ func uriMalformed() *moduleError {
 	return &moduleError{msg: "URI malformed", uriError: true}
 }
 
-// moduleNotFound is Node's error for a module file that does not exist.
-func (e *ESM) moduleNotFound(path, referrer string) *moduleError {
+// moduleNotFound is Node's error for a module file that does not exist: its
+// message names the file path, its url the URL path as resolved (see urlPath).
+func (e *ESM) moduleNotFound(path, encoded, referrer string) *moduleError {
 	return &moduleError{
 		msg:  "Cannot find module '" + path + "' imported from " + e.importerPath(referrer),
 		code: "ERR_MODULE_NOT_FOUND",
-		url:  fileURL(path),
+		url:  "file://" + encoded,
 	}
 }
 
@@ -798,6 +889,28 @@ func splitBare(specifier string) (pkg, sub string) {
 	return specifier[:idx], "./" + specifier[idx+1:]
 }
 
+// validPackageName reports whether a bare specifier's package name is one
+// Node's parsePackageName accepts: a scope ("@scope") needs a name after it,
+// and the name can't start with "." or hold "%" or "\\".
+func validPackageName(specifier string) bool {
+	sep := strings.IndexByte(specifier, '/')
+	if strings.HasPrefix(specifier, "@") {
+		if sep == -1 {
+			return false
+		}
+		if next := strings.IndexByte(specifier[sep+1:], '/'); next >= 0 {
+			sep += 1 + next
+		} else {
+			sep = -1
+		}
+	}
+	name := specifier
+	if sep >= 0 {
+		name = specifier[:sep]
+	}
+	return !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, "%\\")
+}
+
 // resolveBare resolves a package specifier the way Node does: the first
 // node_modules directory (walking up from fromDir) that contains the package
 // decides the result, and a missing package or entry is an error.
@@ -805,6 +918,13 @@ func splitBare(specifier string) (pkg, sub string) {
 // rawSpecifier is the specifier before tabs and newlines were dropped, whose
 // package name Node's error names.
 func (e *ESM) resolveBare(specifier, rawSpecifier, fromDir, referrer string) (string, string, error) {
+	if !validPackageName(rawSpecifier) {
+		return "", "", &moduleError{
+			msg:       `Invalid module "` + rawSpecifier + `" is not a valid package name imported from ` + e.importerPath(referrer),
+			code:      "ERR_INVALID_MODULE_SPECIFIER",
+			typeError: true,
+		}
+	}
 	pkg, sub := splitBare(specifier)
 	dir := fromDir
 	for {
@@ -857,7 +977,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 									return r, suffix, nil
 								}
 							}
-							err := e.moduleNotFound(lexical, referrer)
+							err := e.moduleNotFound(lexical, encoded, referrer)
 							err.url += suffix
 							return "", "", err
 						}
@@ -883,7 +1003,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 			}
 		}
 	}
-	target, lexical, suffix := pkgDir, pkgDir, ""
+	target, lexical, encodedTarget, suffix := pkgDir, pkgDir, "", ""
 	if sub != "." {
 		// As a URL path relative to the package: decoded, with the suffix kept
 		// apart, and refused if it encodes a separator.
@@ -894,7 +1014,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 		if malformed {
 			return "", "", uriMalformed()
 		}
-		target, lexical, suffix = path, lex, sfx
+		target, lexical, encodedTarget, suffix = path, lex, encoded, sfx
 	}
 	if r := e.resolveFile(target); r != "" {
 		return r, suffix, nil
@@ -905,7 +1025,7 @@ func (e *ESM) resolvePackage(pkgDir, sub, referrer string) (string, string, erro
 		}
 	}
 	if sub != "." {
-		err := e.moduleNotFound(lexical, referrer)
+		err := e.moduleNotFound(lexical, encodedTarget, referrer)
 		err.url += suffix
 		return "", "", err
 	}

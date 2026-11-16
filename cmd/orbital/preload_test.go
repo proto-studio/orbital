@@ -92,6 +92,10 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		"handled.cjs": "process.on('uncaughtException', (e) => console.log('caught', e.message)); process.on('exit', () => { throw new Error('boom'); });",
 		"ok.mjs":      "console.log('ok');",
 		"neg.cjs":     "process.on('exit', () => { process.exitCode = -1; });",
+		"be.cjs":      "process.on('uncaughtException', (e) => console.log('caught', e.name)); process.on('beforeExit', () => console.log('beforeExit')); process.on('exit', (c) => console.log('exit', c));",
+		"missing.mjs": "import './nope.mjs';",
+		"nulltla.mjs": "process.exitCode = null; await new Promise(() => {});",
+		"handles.mjs": "const t = setInterval(() => {}, 1000); setTimeout(() => { clearInterval(t); console.log('cleared'); }, 300); await new Promise((r) => setTimeout(r, 20)); console.log('pre');",
 		"waits.mjs":   `await new Promise((r) => process.on('beforeExit', () => { console.log('beforeExit'); r(); })); console.log('preloaded');`,
 		"entry.mjs":   `console.log('entry');`,
 	}
@@ -125,6 +129,14 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		// A negative exitCode is still one the program set: -1 exits 255.
 		{[]string{"-r", p("neg.cjs"), p("ok.mjs")}, "ok\n", 255},
 		{[]string{"-r", p("neg.cjs"), p("tla.mjs")}, "", 255},
+		// After a handled link failure in the entry's graph, 'beforeExit' fires.
+		{[]string{"-r", p("be.cjs"), p("missing.mjs")}, "caught Error\nbeforeExit\nexit 0\n", 0},
+		{[]string{"-r", p("be.cjs"), p("e1.mjs")}, "caught SyntaxError\nbeforeExit\nexit 0\n", 0},
+		{[]string{"-r", p("be.cjs"), p("e2.mjs")}, "caught SyntaxError\nbeforeExit\nexit 0\n", 0},
+		// A null exitCode is unset: an unsettled await still exits 13.
+		{[]string{p("nulltla.mjs")}, "", 13},
+		// The entry runs once an --import settles, though its handles stay open.
+		{[]string{"--import", p("handles.mjs"), p("ok.mjs")}, "pre\nok\ncleared\n", 0},
 	}
 	for _, tc := range cases {
 		out, code := runOrbital(t, "", tc.args...)

@@ -781,6 +781,34 @@ for (const s of ['./dir//missing.mjs', './dir/./x//../missing.mjs', './/dir///m.
 	}
 }
 
+// File URL hosts are serialized as the URL parser does (IDNA, punycode, case,
+// escapes, compressed IPv6), so one that maps to localhost loads; a missing
+// module's url keeps the path's escapes; and an invalid package name is refused
+// before any lookup. Expected from Node 20.18.1.
+func TestDynamicImport_HostSerializationEscapesAndPackageNames(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"x.mjs": `export default 'x';`,
+		"entry.mjs": `const base = new URL('.', import.meta.url).href, path = base.slice(7);
+for (const h of ['\uff4c\uff4f\uff43\uff41\uff4c\uff48\uff4f\uff53\uff54', '\u2113ocalhost', 'LOCALHOST']) log.push((await import('file://' + h + path + 'x.mjs')).default);
+for (const u of ['file://%E2%98%83/tmp/x', 'file://\u2603/tmp/x', 'file://[0:0:0:0:0:0:0:1]/tmp/x', 'file://[::ffff:1.2.3.4]/tmp/x', 'file://FOO.com/tmp/x', 'file://%66oo/tmp/x']) {
+  try { await import(u); } catch (e) { log.push([e.code, e.input]); }
+}
+for (const s of ['./%61_missing.mjs', './%7e%41b.mjs', './sp ace//\u00e9"<>{}|^.mjs', './%7E/../q%20.mjs', './%2e%2e/%2E/z.mjs']) {
+  try { await import(s); } catch (e) { log.push(e.url.replace(base, '<b>').replace(base.slice(0, base.lastIndexOf('/', base.length - 2) + 1), '<p>')); }
+}
+for (const s of ['%61', '@scope', '.foo', 'a%2fb', 'a\\b', '@scope/%61', 'fo%6f']) {
+  try { await import(s); } catch (e) { log.push([e.constructor.name, e.code, e.message.split(' imported')[0]]); }
+}`,
+	})
+	want := `["x","x","x",["ERR_INVALID_FILE_URL_HOST","file://xn--n3h/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://xn--n3h/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://[::1]/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://[::ffff:102:304]/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://foo.com/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://foo/tmp/x"],` +
+		`"<b>%61_missing.mjs","<b>%7e%41b.mjs","<b>sp%20ace//%C3%A9%22%3C%3E%7B%7D|^.mjs","<b>q%20.mjs","<p>z.mjs",` +
+		`["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"%61\" is not a valid package name"],["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"@scope\" is not a valid package name"],["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \".foo\" is not a valid package name"],` +
+		`["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"a%2fb\" is not a valid package name"],["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"a\\b\" is not a valid package name"],["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"@scope/%61\" is not a valid package name"],["TypeError","ERR_INVALID_MODULE_SPECIFIER","Invalid module \"fo%6f\" is not a valid package name"]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 // A non-error value a hook throws arrives as that value, and a file: URL host
 // is checked against the URL grammar (decoded delimiters, forbidden characters,
 // IPv6). Expected from Node 20.18.1.
