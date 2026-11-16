@@ -139,11 +139,10 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   because the rejection tears the connection down before `'end'` is delivered.
 - **A 204 or 304 response never has a body,** as the HTTP spec says. Node reads one if it
   has a `Content-Length`.
-- **A request's `'end'` can come before its response's `'finish'` where Node's comes after.**
-  Node handles the end of a request in a later callback than its headers and body, after the
-  `process.nextTick` callbacks the handler queued have run; Orbital handles them together. A
-  handler that calls `res.write` and then `res.end`, for example, sees the request end first.
-  (#172)
+- **A response written in parts can finish a turn later than in Node.** For a request with
+  no body, a handler that calls `res.write` and then `res.end` sees the request's `'end'`
+  before the response's `'finish'`. Node completes those writes when the socket is uncorked,
+  before the request ends.
 - **`server.listen(handle)` takes only a handle with an `fd`,** not a `net.Server` or
   `net.Socket` object. (#128)
 - **`net.connect` with an IPv6 zone** (`fe80::1%en0`) fails with `ENOTFOUND`, because a zone

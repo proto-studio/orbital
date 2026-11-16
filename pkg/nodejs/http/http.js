@@ -75,6 +75,12 @@
       this.type = type;
       this.handlers = handlers;
       this.maxHeaderSize = (options && options.maxHeaderSize) || kMaxHeaderSize;
+      // Node's server parser reports a message's end in a later callback than the body that
+      // came with it, after the callbacks the handler queued have run. With this set, a
+      // message whose body arrived in the same execute waits for resume() to complete.
+      this.deferCompleteAfterBody = !!(options && options.deferCompleteAfterBody);
+      this.completePending = false;
+      this.bodySeen = false;
       this.pending = null;
       this.failed = null;
       this.reset();
@@ -103,7 +109,9 @@
 
     consume(data) {
       this.pending = this.pending && this.pending.length ? Buffer.concat([this.pending, data]) : data;
-      while (this.pending && this.pending.length > 0) {
+      if (this.completePending) return null;
+      this.bodySeen = false;
+      while (this.pending && this.pending.length > 0 && !this.completePending) {
         if (this.state === 'head') {
           if (!this.parseHead()) return null;
         } else if (this.state === 'body') {
@@ -128,11 +136,19 @@
       return this.state === 'upgraded' ? Buffer.alloc(0) : null;
     }
 
+    // Completes a message whose end was held back, and parses what came after it.
+    resume() {
+      if (!this.completePending) return null;
+      this.completePending = false;
+      this.handlers.onComplete();
+      return this.execute(Buffer.alloc(0));
+    }
+
     // The peer has closed. A body with no framing ends here.
     finish() {
       if (this.failed) return null;
       if (this.state === 'body' && this.untilClose) {
-        this.complete();
+        this.complete(true);
         return null;
       }
       if (this.state === 'head' && (!this.pending || this.pending.length === 0)) return null;
@@ -352,6 +368,7 @@
       if (this.untilClose) {
         const chunk = this.pending;
         this.pending = null;
+        if (chunk.length) this.bodySeen = true;
         this.handlers.onBody(chunk);
         return;
       }
@@ -359,6 +376,7 @@
       const chunk = this.pending.slice(0, take);
       this.pending = this.pending.slice(take);
       this.remaining -= take;
+      if (chunk.length) this.bodySeen = true;
       this.handlers.onBody(chunk);
       if (this.remaining === 0) this.complete();
     }
@@ -388,6 +406,7 @@
       const chunk = this.pending.slice(0, take);
       this.pending = this.pending.slice(take);
       this.remaining -= take;
+      if (chunk.length) this.bodySeen = true;
       this.handlers.onBody(chunk);
       if (this.remaining === 0) this.state = 'chunk-end';
     }
@@ -441,13 +460,18 @@
       }
     }
 
-    complete() {
+    complete(atEOF) {
       const wasUpgraded = this.state === 'upgraded';
       this.state = this.closeAfter ? 'closed' : 'head';
       this.remaining = 0;
       this.chunked = false;
       this.untilClose = false;
-      if (!wasUpgraded) this.handlers.onComplete();
+      if (wasUpgraded) return;
+      if (this.deferCompleteAfterBody && this.bodySeen && !atEOF) {
+        this.completePending = true;
+        return;
+      }
+      this.handlers.onComplete();
     }
   }
 
@@ -566,9 +590,13 @@
         this.aborted = true;
         this.emit('aborted');
       }
-      if (this.socket && !this.socket.destroyed && this.aborted) this.socket.destroy(err);
-      // As in Node, a premature close is only an error if someone is listening for it.
-      cb(this.listenerCount('error') === 0 ? null : err);
+      const aborted = this.socket && !this.socket.destroyed && this.aborted;
+      if (aborted) this.socket.destroy(err);
+      // As in Node, a premature close is only an error if someone is listening for it, and
+      // a server's request that wasn't aborted finishes closing on the next tick.
+      const done = () => cb(this.listenerCount('error') === 0 ? null : err);
+      if (aborted || !this[kServerRequest]) done();
+      else process.nextTick(done);
     }
 
     // Discards the body, so the connection can move on to the next message.
@@ -580,6 +608,8 @@
       }
     }
   }
+
+  const kServerRequest = Symbol('kServerRequest');
 
   function readStart(socket) {
     if (socket && socket.readable) socket.resume();
@@ -2242,11 +2272,14 @@
           req.push(null);
         }
       }
-    }, { maxHeaderSize: server.maxHeaderSize });
+    }, { maxHeaderSize: server.maxHeaderSize, deferCompleteAfterBody: true });
 
     function onRequestHeaders(info) {
       conn.headersStartedAt = 0;
       const req = new server.IncomingMessage(socket);
+      // As in Node, a request closes as soon as it has been read, whatever its response does.
+      req._readableState.autoDestroy = true;
+      req[kServerRequest] = true;
       req.httpVersionMajor = info.major;
       req.httpVersionMinor = info.minor;
       req.httpVersion = `${info.major}.${info.minor}`;
@@ -2344,9 +2377,6 @@
         res.destroyed = true;
         res._closed = true;
         res.emit('close');
-        // As in Node, the request closes after its response, and not before it has been read.
-        if (req.readableEnded) req.destroy();
-        else req.once('end', () => req.destroy());
       });
 
       if (res._last) {
@@ -2371,15 +2401,7 @@
           req.destroy(connResetException('aborted'));
           continue;
         }
-        // A fully read request has nothing to abort; Node has already closed it.
-        const res = req[kResponse];
-        if (res && res.finished && !res._closed) {
-          // Its response has ended and only waits for the write callback, which the peer's FIN
-          // can beat. Node's 'finish' comes at once for such a write, so the response closes first.
-          res.once('close', () => req.destroy());
-        } else {
-          req.destroy();
-        }
+        // A fully read request has nothing to abort. It closes after its 'end', as below.
       }
       conn.active.clear();
     }
@@ -2396,7 +2418,8 @@
       }
     };
 
-    socket.on('data', (data) => {
+    // Runs the parser on data, or resumes it when data is null.
+    const feed = (data) => {
       if (conn.upgraded && !conn.pendingUpgrade) return;
       if (conn.keepAliveTimeoutSet) {
         socket.setTimeout(server.timeout || 0);
@@ -2408,11 +2431,11 @@
       }
       let leftover;
       try {
-        leftover = parser.execute(data);
+        leftover = data === null ? parser.resume() : parser.execute(data);
       } catch (err) {
         if (!isParseError(err)) throw err;
-        err.bytesParsed = data.length;
-        err.rawPacket = data;
+        err.bytesParsed = data ? data.length : 0;
+        err.rawPacket = data || Buffer.alloc(0);
         let status = 400;
         if (err.code === 'HPE_HEADER_OVERFLOW') status = 431;
         conn.parserError(err, status);
@@ -2435,9 +2458,25 @@
         req.upgrade = true;
         server.emit(event, req, socket, leftover);
       }
-    });
+      if (parser.completePending) scheduleResume();
+    };
+
+    // The end of a request that came with its body is reported after the callbacks queued
+    // until now have run, as Node's parser does.
+    let resumeScheduled = false;
+    const scheduleResume = () => {
+      if (resumeScheduled) return;
+      resumeScheduled = true;
+      http._defer(() => {
+        resumeScheduled = false;
+        if (parser.completePending) feed(null);
+      });
+    };
+
+    socket.on('data', (data) => feed(data));
 
     socket.on('end', () => {
+      if (parser.completePending) feed(null);
       const finishErr = parser.finish();
       if (finishErr) {
         conn.parserError(finishErr, 400);

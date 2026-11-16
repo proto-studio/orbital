@@ -57,6 +57,16 @@ func (h *HTTP) Register(rt *runtime.Runtime) error {
 	}
 	httpObj.Set("_doRequest", doRequestVal)
 
+	deferFn, err := iso.NewFunctionTemplate(h.deferFunc)
+	if err != nil {
+		return err
+	}
+	deferVal, err := deferFn.GetFunction(ctx)
+	if err != nil {
+		return err
+	}
+	httpObj.Set("_defer", deferVal)
+
 	if err := rt.SetGlobal("__http_module", httpObj); err != nil {
 		return err
 	}
@@ -253,4 +263,21 @@ func (h *HTTP) createStatusCodesObject(ctx *v8.Context) *v8.Value {
 		obj.Set(fmt.Sprintf("%d", code), msg)
 	}
 	return obj
+}
+
+// deferFunc(callback) runs callback as its own task, after the process.nextTick callbacks
+// and promise reactions queued by the current one, and before timers and immediates. Node's
+// HTTP parser reports a request's end that way.
+func (h *HTTP) deferFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 1 || !args[0].IsFunction() {
+		return nil
+	}
+	callback := args[0]
+	h.rt.EventLoop().EnqueueMicrotask(func() {
+		ctx := h.rt.Context()
+		h.rt.MakeCallback(callback, ctx.Undefined())
+		ctx.PerformMicrotaskCheckpoint()
+	})
+	return nil
 }

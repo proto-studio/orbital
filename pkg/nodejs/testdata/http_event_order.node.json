@@ -1,42 +1,94 @@
 {
   "GET endAfterData": [
     "req end",
-    "res finish"
+    "req close",
+    "res finish",
+    "res close"
   ],
   "GET endInImmediate": [
     "req end",
-    "res finish"
+    "req close",
+    "res finish",
+    "res close"
+  ],
+  "GET endInTick": [
+    "req end",
+    "res finish",
+    "res close",
+    "req close"
   ],
   "GET endOnRequestEnd": [
     "req end",
-    "res finish"
+    "res finish",
+    "res close",
+    "req close"
   ],
   "GET endThenResume": [
     "res finish",
-    "req end"
+    "res close",
+    "req end",
+    "req close"
   ],
   "GET resumeThenEnd": [
     "res finish",
-    "req end"
+    "req end",
+    "res close",
+    "req close"
   ],
   "POST endAfterData": [
     "req end",
-    "res finish"
+    "req close",
+    "res finish",
+    "res close"
   ],
   "POST endInImmediate": [
     "req end",
-    "res finish"
+    "req close",
+    "res finish",
+    "res close"
+  ],
+  "POST endInTick": [
+    "res finish",
+    "res close",
+    "req end",
+    "req close"
   ],
   "POST endOnRequestEnd": [
     "req end",
-    "res finish"
+    "res finish",
+    "res close",
+    "req close"
   ],
   "POST endThenResume": [
     "res finish",
-    "req end"
+    "res close",
+    "req end",
+    "req close"
   ],
   "POST resumeThenEnd": [
     "res finish",
-    "req end"
+    "res close",
+    "req end",
+    "req close"
+  ],
+  "POST writeThenEnd": [
+    "res finish",
+    "res close",
+    "req end",
+    "req close"
+  ],
+  "pipelined": [
+    "handler /a complete=false",
+    "data /a complete=false",
+    "tick /a complete=false",
+    "microtask /a complete=false",
+    "handler /b complete=false",
+    "end /a",
+    "data /b complete=false",
+    "tick /b complete=false",
+    "microtask /b complete=false",
+    "end /b",
+    "immediate /a complete=true",
+    "immediate /b complete=true"
   ]
 }
