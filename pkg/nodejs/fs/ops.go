@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"os"
@@ -224,11 +225,20 @@ func trimUnderscores(name string) string {
 	return name
 }
 
+// stringArg reads a path or other string argument. A path whose bytes aren't UTF-8 comes as
+// { __pathBytes: base64 }, since a string can't carry them (fs_setup.js, asPaths).
 func stringArg(args []*v8.Value, i int) string {
-	if i < len(args) && args[i] != nil {
-		return args[i].String()
+	if i >= len(args) || args[i] == nil {
+		return ""
 	}
-	return ""
+	if args[i].IsObject() {
+		if b, err := args[i].Get("__pathBytes"); err == nil && b != nil && b.IsString() {
+			if raw, err := base64.StdEncoding.DecodeString(b.String()); err == nil {
+				return string(raw)
+			}
+		}
+	}
+	return args[i].String()
 }
 
 func intAt(args []*v8.Value, i int) int64 {

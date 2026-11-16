@@ -1225,9 +1225,12 @@
     e.message = "ENOENT: no such file or directory, " + syscall + " '" + p + "'";
     return e;
   }
+  // Node's JavaScript realpath makes the path absolute and cleans it first; the native one
+  // leaves ".." to apply after the links ahead of it.
+  const lexical = (p) => (typeof p === 'string' && pathModule() ? fsResolve(p) : p);
   fs.realpathSync = function (path, options) {
     try {
-      return realpathNativeSync(path, options);
+      return realpathNativeSync(lexical(pathString(path)), options);
     } catch (e) {
       throw asJsRealpathError(e, path);
     }
@@ -1235,6 +1238,7 @@
   fs.realpathSync.native = realpathNativeSync;
   fs.realpath = function (path, options, callback) {
     const [args, cb] = withCallback(arguments);
+    args[0] = lexical(pathString(args[0]));
     realpathNative(...args, (err, real) => (err ? cb(asJsRealpathError(err, args[0])) : cb(null, real)));
   };
   fs.realpath.native = realpathNative;
@@ -1936,8 +1940,14 @@
       args = Array.prototype.slice.call(args);
       names.forEach((argName, i) => {
         if (argName === null || typeof args[i] === 'number') return; // left as is, or a descriptor
-        args[i] = pathString(args[i]);
+        const given = args[i];
+        args[i] = pathString(given);
         checkPath(args[i], argName);
+        // A Buffer path whose bytes aren't UTF-8 crosses as its bytes, which a string would lose.
+        if (ArrayBuffer.isView(given) && hasBuffer()) {
+          const bytes = viewBytes(given);
+          if (!Buffer.from(args[i]).equals(bytes)) args[i] = { __pathBytes: base64Of(bytes) };
+        }
       });
       return args;
     };

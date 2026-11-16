@@ -223,3 +223,74 @@ done({ code, hex: fs.readlinkSync(dir + '/l', 'buffer').toString('hex') });
 		t.Errorf("link target = %q, %v", target, err)
 	}
 }
+
+// realpath.native applies a ".." after a link to where the link leads, while realpath cleans
+// the path first, as Node's two do.
+func TestFSLinks_DotDotAfterALink(t *testing.T) {
+	dir := t.TempDir()
+	for name, data := range map[string]string{"b/f": "bf", "f": "f"} {
+		if err := os.MkdirAll(filepath.Join(dir, "b", "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("b/sub", filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const dir = %q;
+done({ native: fs.realpathSync.native(dir + '/alias/../f').slice(dir.length), js: fs.realpathSync(dir + '/alias/../f').slice(dir.length) });
+`, real))
+	wantJSON(t, got, map[string]any{"native": "/b/f", "js": "/f"})
+}
+
+// With a root, a link target is stored as written, so a ".." after a link and a trailing "/"
+// keep their meaning.
+func TestFSLinks_RootedTargetAsWritten(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "b", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"b/f": "bf", "f": "f"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("b/sub", filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewLocalFilesystem(dir)}, `
+const fs = require('fs');
+const code = (fn) => { try { return fn(); } catch (e) { return e.code; } };
+fs.symlinkSync('/alias/../f', '/through');
+fs.symlinkSync('/f/', '/slash');
+done({ through: code(() => fs.readFileSync('/through', 'utf8')), slash: code(() => fs.readFileSync('/slash', 'utf8')) });
+`)
+	wantJSON(t, got, map[string]any{"through": "bf", "slash": "ENOTDIR"})
+}
+
+// A Buffer path keeps its bytes, though they aren't UTF-8, where the filesystem takes them.
+func TestFSLinks_BufferPathBytes(t *testing.T) {
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe\xff")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		t.Skipf("the filesystem refuses names that aren't UTF-8: %v", err)
+	}
+	got := runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+const name = Buffer.concat([Buffer.from(%q + '/l'), Buffer.from([0xff])]);
+fs.symlinkSync('t', name);
+done({ target: fs.readlinkSync(name) });
+`, dir))
+	wantJSON(t, got, map[string]any{"target": "t"})
+	if target, err := os.Readlink(filepath.Join(dir, "l\xff")); err != nil || target != "t" {
+		t.Errorf("l\\xff = %q, %v", target, err)
+	}
+}
