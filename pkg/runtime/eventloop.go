@@ -458,6 +458,17 @@ func (el *EventLoop) run(done func() bool) bool {
 			continue
 		}
 
+		// Platform work a callback in this turn left, such as FinalizationRegistry cleanup,
+		// runs before the loop decides whether to wait or end, as in Node. The decision
+		// below is then made from the state after it, under the lock.
+		el.mu.Unlock()
+		if ran, fin := el.runPlatform(ctx, finished); fin {
+			return true
+		} else if ran {
+			continue
+		}
+		el.mu.Lock()
+
 		// Cancelled timers are not work: they must not keep the loop alive until
 		// their deadline. Once the earliest timer is live, one live timer exists.
 		for el.timers.Len() > 0 && el.timers[0].cancelled.Load() {
@@ -470,15 +481,6 @@ func (el *EventLoop) run(done func() bool) bool {
 		hasPending := atomic.LoadInt32(&el.pendingWork) > 0
 
 		if !hasPending && !el.aliveLocked() && len(el.ticks) == 0 {
-			// A callback in this turn may have left work for the platform, such as
-			// FinalizationRegistry cleanup; it runs before the loop ends, as in Node.
-			el.mu.Unlock()
-			if ran, fin := el.runPlatform(ctx, finished); fin {
-				return true
-			} else if ran {
-				continue
-			}
-			el.mu.Lock()
 			el.running = false
 			el.mu.Unlock()
 			return false
@@ -486,19 +488,6 @@ func (el *EventLoop) run(done func() bool) bool {
 
 		// Anything queued since the poll, or a timer already due, is handled by the next
 		// turn without waiting.
-		if len(el.ticks) > 0 || len(el.microtasks) > 0 || len(el.immediates) > 0 {
-			el.mu.Unlock()
-			continue
-		}
-		// Likewise before waiting: platform work a callback left runs now, not when
-		// something unrelated wakes the loop.
-		el.mu.Unlock()
-		if ran, fin := el.runPlatform(ctx, finished); fin {
-			return true
-		} else if ran {
-			continue
-		}
-		el.mu.Lock()
 		if len(el.ticks) > 0 || len(el.microtasks) > 0 || len(el.immediates) > 0 {
 			el.mu.Unlock()
 			continue
@@ -710,6 +699,13 @@ func (el *EventLoop) RunOnce() bool {
 
 	hasWork := el.hasReferencedTimerLocked() || atomic.LoadInt32(&el.pendingWork) > 0
 	el.mu.Unlock()
+	if !hasWork {
+		// A callback this call ran may have left platform work, such as FinalizationRegistry
+		// cleanup; run it rather than report the loop idle with it still queued.
+		if again, _ := el.runPlatform(ctx, nil); again {
+			return true
+		}
+	}
 	return hasWork
 }
 
