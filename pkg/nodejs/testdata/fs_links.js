@@ -52,6 +52,16 @@ async function main() {
     fs.linkSync(pathToFileURL(file('f')), pathToFileURL(file('hu')));
     return [fs.readlinkSync(pathToFileURL(file('lu'))), fs.readFileSync(file('hu'), 'utf8'), local(fs.realpathSync(pathToFileURL(file('lu'))))];
   });
+  attempt('url_paths_everywhere', () => {
+    const { pathToFileURL } = require('url');
+    const u = pathToFileURL(file('f'));
+    fs.chmodSync(u, 0o640);
+    fs.utimesSync(u, 1000, 2000);
+    return [fs.readFileSync(u, 'utf8'), (fs.statSync(u).mode & 0o777).toString(8), fs.statSync(u).mtimeMs, fs.existsSync(u),
+      fs.readdirSync(pathToFileURL(file('d'))), fs.existsSync(new URL('http://x/y'))];
+  });
+  attempt('url_encoded_slash', () => fs.symlinkSync('/x', new URL('file://' + file('a%2Fb'))));
+  attempt('url_wrong_scheme', () => fs.readFileSync(new URL('http://example.com/f')));
   attempt('readlink_file', () => fs.readlinkSync(file('f')));
   attempt('readlink_missing', () => fs.readlinkSync(file('nope')));
   attempt('lstat_link', () => kind(fs.lstatSync(file('l'))));
