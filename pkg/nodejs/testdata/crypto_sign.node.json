@@ -12,6 +12,158 @@
       "callback"
     ]
   ],
+  "digest_blake2b512": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerify": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerifyOnly": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "stream": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    }
+  },
+  "digest_blake2s256": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerify": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerifyOnly": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "stream": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    }
+  },
+  "digest_md5-sha1": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "value": true
+    },
+    "rsaVerify": {
+      "value": true
+    },
+    "rsaVerifyOnly": {
+      "value": false
+    },
+    "stream": {
+      "value": 128
+    }
+  },
+  "digest_ripemd160": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "value": true
+    },
+    "rsaVerify": {
+      "value": true
+    },
+    "rsaVerifyOnly": {
+      "value": false
+    },
+    "stream": {
+      "value": 128
+    }
+  },
+  "digest_shake128": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerify": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerifyOnly": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "stream": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    }
+  },
+  "digest_shake256": {
+    "ecdsa": {
+      "value": true
+    },
+    "ecdsaP1363": {
+      "value": true
+    },
+    "pss": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerify": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "rsaVerifyOnly": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    },
+    "stream": {
+      "code": "ERR_OSSL_DIGEST_NOT_ALLOWED",
+      "message": "error:1C8000AE:Provider routines::digest not allowed",
+      "name": "Error"
+    }
+  },
   "ecdsa": {
     "value": [
       64,
@@ -149,6 +301,9 @@
   "rsaOneShotSha1": {
     "value": "ab3362362f5943d8a26b08d87d02a4095a65fcf55e8b1370232639b7e84c7969a67c6aca3a74e5dee48da4690417d30f1477a2752428f1cb1f7d3b0009dc4a5ed0166d5da162678d39ca8a2659ccb0a01e96759c5c8fbfdce77d4e32f19a150b8acd578fc45188c1678b891c99d075e58f0ea9c26aaf7a2424bfbb8fcba37e2a"
   },
+  "rsaPkcs1_RSA-RIPEMD160": {
+    "value": "b7eac39ccbeb49afc2ce0e628e1a7226e13e4a315978e59ad9e0d3b7e2ba3652da7b27684dfd9d32db26fd9fc82ce5cfc2d87e1b2941074fcc4506ed2e9c52d10ec274929286b89a4c4c034dfbe22a37b4ac46ec3054996376c099e95492c375f51d696d1ae1e71c88c1c2a5c407c0c19bd6fb145f24bb876077aeafcfb65d76"
+  },
   "rsaPkcs1_RSA-SHA256": {
     "value": "2abde8d71cb8c9b36c6ca27606fceea1b6480f12c7bce275c7c13bfccab2716eb41fc7af01dabebea1282ba70f86ef7bb2d78a4adbffe565965e82e21b31067e749d395641a81a25c904434c10b40d35aa1d964785959cb362a9cb709fa50b9ee0d4e686567cb062672a57a6b85fb3fa30649dc973c2357ddbcf478020d2d25b"
   },
@@ -157,6 +312,12 @@
   },
   "rsaPkcs1_md5": {
     "value": "0fb5dff6957d51dda5df27e2e4d4d910f90c2bd2b754a94acc31068da3a061444358767804e6fc28c1deb32aed0fb3c4a55fc9d74801390da184e955d42b7b06adc8cb98fd128ca6ab871f4d08c6cd866c05604c0b45b2e97053fcb99f4ffdc8a5417145fb257b1a2a1111a873ad9eb528e054b9e82985655728761ae8495fe9"
+  },
+  "rsaPkcs1_md5-sha1": {
+    "value": "710b3a6df9c399e7cc5236e00d641dc789915a97c2f3a5cd4bccb6ae49b2c43abe84f2c182fecfc8bdb3ccab503afe79522c7f70f99165a24f3095a862dd7610275908ae48e959e4a18a10c06e997aa576462dc4b90139f4e3aa0688da12bccad068c90ac9703e00e5f1da35c6e932aa115b12653329bb5e9ee0b3bb78915614"
+  },
+  "rsaPkcs1_ripemd160": {
+    "value": "b7eac39ccbeb49afc2ce0e628e1a7226e13e4a315978e59ad9e0d3b7e2ba3652da7b27684dfd9d32db26fd9fc82ce5cfc2d87e1b2941074fcc4506ed2e9c52d10ec274929286b89a4c4c034dfbe22a37b4ac46ec3054996376c099e95492c375f51d696d1ae1e71c88c1c2a5c407c0c19bd6fb145f24bb876077aeafcfb65d76"
   },
   "rsaPkcs1_sha1": {
     "value": "ab3362362f5943d8a26b08d87d02a4095a65fcf55e8b1370232639b7e84c7969a67c6aca3a74e5dee48da4690417d30f1477a2752428f1cb1f7d3b0009dc4a5ed0166d5da162678d39ca8a2659ccb0a01e96759c5c8fbfdce77d4e32f19a150b8acd578fc45188c1678b891c99d075e58f0ea9c26aaf7a2424bfbb8fcba37e2a"
@@ -169,6 +330,9 @@
   },
   "rsaPkcs1_sha3-256": {
     "value": "86fc552fedc30212cca6521262acebd93d22fe57f02e1783b1700fb0116bebcdd60fa2890a0c69d30bc8366b0702fcdd363f6189425156f063694536a2a5e4920bb42387f9344cd1f71add810d5d40392967df97661691a73384a5b1bf64eae98e7cdfe475eb84ae1cb1954ac2a783a4ac2ebdb63f9d96d35920d6d388102f5a"
+  },
+  "rsaPkcs1_sha3-512": {
+    "value": "b43312ce36d24b24bb60ae23216997e864a0cc0ed0ac45b17fa80c47dcbe31721f1b60c74243aa3c706849c73615a9e8a6e94dd2f16e69ed847553be046e86b316e6694d5448243ac7750beb1617259c085a0db4773e60b275ae83eac5095db131179d73a9f29d4744f494e4caf9b0d8b4b3ca8d1b8ba8264746360105a0d08a"
   },
   "rsaPkcs1_sha512": {
     "value": "6547a4105f95218bd6b98d2419edf690363a0cb90fad06ee0c63450a86b891019de9082b3179024bb905fc105f183bff2eee6c7f4366e1a4ba3ebc135ea91be2e531b4a5f75b5a42d6223d8001116c1bc2876633dee73f0f09a2b156471cddf2593a6fdb46504faa23f5501eae2c64f0a4ec2636d155a2988f474bd5d63b4328"

@@ -3,8 +3,10 @@ package crypto
 import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	_ "embed"
 	"encoding/asn1"
 	"encoding/base64"
@@ -35,12 +37,58 @@ type signError struct{ code, message string }
 func (e *signError) Error() string { return e.code + "|" + e.message }
 
 var (
-	errUnsupportedOp  = &signError{"ERR_CRYPTO_UNSUPPORTED_OPERATION", "Unsupported crypto operation"}
-	errInvalidDigest  = &signError{"ERR_OSSL_INVALID_DIGEST", "error:1C80007A:Provider routines::invalid digest"}
-	errIllegalPadding = &signError{"ERR_OSSL_RSA_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE", "error:1C8000A5:Provider routines::illegal or unsupported padding mode"}
-	errDigestTooBig   = &signError{"ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY", "error:02000070:rsa routines::digest too big for rsa key"}
-	errSigFailed      = &signError{"", "Sign failed"}
+	errUnsupportedOp    = &signError{"ERR_CRYPTO_UNSUPPORTED_OPERATION", "Unsupported crypto operation"}
+	errInvalidDigest    = &signError{"ERR_OSSL_INVALID_DIGEST", "error:1C80007A:Provider routines::invalid digest"}
+	errIllegalPadding   = &signError{"ERR_OSSL_RSA_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE", "error:1C8000A5:Provider routines::illegal or unsupported padding mode"}
+	errDigestTooBig     = &signError{"ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY", "error:02000070:rsa routines::digest too big for rsa key"}
+	errSigFailed        = &signError{"", "Sign failed"}
+	errDigestNotAllowed = &signError{"ERR_OSSL_DIGEST_NOT_ALLOWED", "error:1C8000AE:Provider routines::digest not allowed"}
 )
+
+// Go's crypto.MD5SHA1 has no implementation registered; registering
+// digests.go's lets crypto/rsa sign with it (PKCS#1 v1.5 with no DigestInfo
+// prefix, and PSS), as OpenSSL does.
+func init() {
+	if !gocrypto.MD5SHA1.Available() {
+		gocrypto.RegisterHash(gocrypto.MD5SHA1, func() hash.Hash { return &md5Sha1{md5.New(), sha1.New()} })
+	}
+}
+
+// rsaDigests are the digests OpenSSL signs with RSA: those with a
+// DigestInfo encoding. Others it refuses with "digest not allowed".
+var rsaDigests = map[gocrypto.Hash]bool{
+	gocrypto.MD5: true, gocrypto.SHA1: true, gocrypto.MD5SHA1: true, gocrypto.RIPEMD160: true,
+	gocrypto.SHA224: true, gocrypto.SHA256: true, gocrypto.SHA384: true, gocrypto.SHA512: true,
+	gocrypto.SHA512_224: true, gocrypto.SHA512_256: true,
+	gocrypto.SHA3_224: true, gocrypto.SHA3_256: true, gocrypto.SHA3_384: true, gocrypto.SHA3_512: true,
+}
+
+// ripemd160Prefix is the DigestInfo header OpenSSL uses for RIPEMD-160
+// (OID 1.3.36.3.2.1 with NULL parameters). crypto/rsa's uses the ISO OID
+// 1.0.10118.3.0.49, which Node's signatures don't carry.
+var ripemd160Prefix = []byte{0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x24, 0x03, 0x02, 0x01, 0x05, 0x00, 0x04, 0x14}
+
+// pkcs1Input is the hash and data for crypto/rsa's PKCS#1 v1.5 functions:
+// for RIPEMD-160 the DigestInfo is built here and passed with hash 0, which
+// crypto/rsa signs as it is.
+func pkcs1Input(id gocrypto.Hash, sum []byte) (gocrypto.Hash, []byte) {
+	if id == gocrypto.RIPEMD160 {
+		return 0, append(append([]byte{}, ripemd160Prefix...), sum...)
+	}
+	return id, sum
+}
+
+// rsaDigest is digestFor for RSA keys.
+func rsaDigest(name string) (gocrypto.Hash, func() hash.Hash, error) {
+	id, h, ok := digestFor(name)
+	if !ok {
+		return 0, nil, errInvalidDigest
+	}
+	if !rsaDigests[id] {
+		return 0, nil, errDigestNotAllowed
+	}
+	return id, h, nil
+}
 
 // digestFor returns the hash for a digest name, with "" meaning the default
 // OpenSSL picks (SHA-256) for RSA and ECDSA.
@@ -61,7 +109,8 @@ func hashID(h func() hash.Hash) gocrypto.Hash {
 	sample := h()
 	for _, id := range []gocrypto.Hash{gocrypto.MD5, gocrypto.SHA1, gocrypto.SHA224, gocrypto.SHA256, gocrypto.SHA384,
 		gocrypto.SHA512, gocrypto.SHA512_224, gocrypto.SHA512_256, gocrypto.SHA3_224, gocrypto.SHA3_256,
-		gocrypto.SHA3_384, gocrypto.SHA3_512} {
+		gocrypto.SHA3_384, gocrypto.SHA3_512, gocrypto.MD5SHA1, gocrypto.RIPEMD160, gocrypto.BLAKE2b_512,
+		gocrypto.BLAKE2s_256} {
 		if !id.Available() {
 			continue
 		}
@@ -184,15 +233,19 @@ func signWith(priv any, data []byte, p signParams) ([]byte, error) {
 		if p.digest != "" {
 			return nil, errInvalidDigest
 		}
+		if len(k) != ed25519.PrivateKeySize {
+			return nil, errSigFailed
+		}
 		return ed25519.Sign(k, data), nil
 	case *rsa.PrivateKey:
-		id, h, ok := digestFor(p.digest)
-		if !ok || id == 0 {
-			return nil, errInvalidDigest
+		id, h, err := rsaDigest(p.digest)
+		if err != nil {
+			return nil, err
 		}
 		sum := digestOf(h, data)
 		switch p.padding {
 		case rsaPKCS1Padding:
+			id, sum := pkcs1Input(id, sum)
 			sig, err := rsa.SignPKCS1v15(rand.Reader, k, id, sum)
 			if err != nil {
 				return nil, errDigestTooBig
@@ -246,15 +299,20 @@ func verifyWith(pub any, data, sig []byte, p signParams) (bool, error) {
 		if p.digest != "" {
 			return false, errInvalidDigest
 		}
+		// ed25519.Verify panics on a key of the wrong size.
+		if len(k) != ed25519.PublicKeySize {
+			return false, nil
+		}
 		return ed25519.Verify(k, data, sig), nil
 	case *rsa.PublicKey:
-		id, h, ok := digestFor(p.digest)
-		if !ok || id == 0 {
-			return false, errInvalidDigest
+		id, h, err := rsaDigest(p.digest)
+		if err != nil {
+			return false, err
 		}
 		sum := digestOf(h, data)
 		switch p.padding {
 		case rsaPKCS1Padding:
+			id, sum := pkcs1Input(id, sum)
 			return rsa.VerifyPKCS1v15(k, id, sum, sig) == nil, nil
 		case rsaPSSPadding:
 			if p.saltLength == 0 {

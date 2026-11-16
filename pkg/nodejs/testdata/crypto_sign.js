@@ -41,7 +41,8 @@ for (const [name, pem] of Object.entries(keys)) {
 }
 
 // Deterministic signatures, compared byte for byte.
-for (const digest of ['sha1', 'sha256', 'SHA384', 'sha512', 'RSA-SHA256', 'sha256WithRSAEncryption', 'sha3-256', 'md5']) {
+for (const digest of ['sha1', 'sha256', 'SHA384', 'sha512', 'RSA-SHA256', 'sha256WithRSAEncryption', 'sha3-256', 'md5',
+  'sha3-512', 'ripemd160', 'RSA-RIPEMD160', 'md5-sha1']) {
   results['rsaPkcs1_' + digest] = outcome(() => crypto.createSign(digest).update(msg).sign(k.rsaPriv));
 }
 results.rsaOneShotDefaultDigest = outcome(() => crypto.sign(undefined, msg, k.rsaPriv));
@@ -65,6 +66,20 @@ results.ecdsa = outcome(() => {
     crypto.createVerify('sha256').update(msg).verify(k.ecPub, der),
     crypto.createSign('sha512').update(msg).sign(k.ecPriv).length > 60];
 });
+// Digests from golang.org/x/crypto and the SHAKE functions: RSA takes only those with a
+// DigestInfo encoding (and MD5-SHA1); ECDSA takes any.
+for (const digest of ['ripemd160', 'md5-sha1', 'blake2b512', 'blake2s256', 'shake128', 'shake256']) {
+  const pss = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING };
+  results['digest_' + digest] = {
+    rsaVerify: outcome(() => crypto.verify(digest, msg, k.rsaPub, crypto.sign(digest, msg, k.rsaPriv))),
+    rsaVerifyOnly: outcome(() => crypto.verify(digest, msg, k.rsaPub, Buffer.alloc(128))),
+    pss: outcome(() => verifies(digest, k.rsaPub, crypto.sign(digest, msg, { key: k.rsaPriv, ...pss }), pss)),
+    stream: outcome(() => crypto.createSign(digest).update(msg).sign(k.rsaPriv).length),
+    ecdsa: outcome(() => verifies(digest, k.ecPub, crypto.sign(digest, msg, k.ecPriv))),
+    ecdsaP1363: outcome(() => crypto.createVerify(digest).update(msg).verify({ key: k.ecPub, dsaEncoding: 'ieee-p1363' },
+      crypto.createSign(digest).update(msg).sign({ key: k.ecPriv, dsaEncoding: 'ieee-p1363' }))),
+  };
+}
 results.pss = outcome(() => {
   const pss = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING };
   const own = crypto.sign('sha256', msg, { key: k.rsaPriv, ...pss });

@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -30,5 +31,26 @@ func TestSign_PSSNoSaltSigningRefused(t *testing.T) {
 	}
 	if _, err := signWith(key, []byte("x"), signParams{digest: "sha256", padding: rsaPSSPadding, saltLength: 0}); err != errUnsupportedOp {
 		t.Errorf("got %v, want %v", err, errUnsupportedOp)
+	}
+}
+
+// Ed25519 JWKs with keys of the wrong size are refused at import, and a
+// short key reaching verification or signing is an error, not a panic.
+func TestSign_Ed25519WrongKeySize(t *testing.T) {
+	seed := "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+	for _, j := range []*jwk{
+		{Kty: "OKP", Crv: "Ed25519", X: ""},
+		{Kty: "OKP", Crv: "Ed25519", X: "AAAA"},
+		{Kty: "OKP", Crv: "Ed25519", X: seed, D: "AAAA"},
+	} {
+		if _, err := jwkToEntry(j, j.D != ""); err == nil {
+			t.Errorf("%+v imported", *j)
+		}
+	}
+	if ok, err := verifyWith(ed25519.PublicKey{}, []byte("x"), make([]byte, 64), signParams{}); ok || err != nil {
+		t.Errorf("verify with an empty key: %v, %v", ok, err)
+	}
+	if _, err := signWith(ed25519.PrivateKey{1}, []byte("x"), signParams{}); err == nil {
+		t.Error("signed with a 1-byte key")
 	}
 }

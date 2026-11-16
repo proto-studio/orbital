@@ -403,12 +403,19 @@ func jwkToEntry(j *jwk, wantPrivate bool) (*keyEntry, error) {
 		}
 		switch j.Crv {
 		case "Ed25519":
+			// ed25519's functions panic on keys of the wrong size.
+			if len(x) != ed25519.PublicKeySize {
+				return nil, errors.New("invalid Ed25519 public key length")
+			}
 			if !wantPrivate || j.D == "" {
 				return &keyEntry{kind: "public", asymType: "ed25519", crv: "Ed25519", edPub: ed25519.PublicKey(x)}, nil
 			}
 			d, err := b64uDecode(j.D)
 			if err != nil {
 				return nil, err
+			}
+			if len(d) != ed25519.SeedSize {
+				return nil, errors.New("invalid Ed25519 private key length")
 			}
 			return &keyEntry{kind: "private", asymType: "ed25519", crv: "Ed25519", edPriv: ed25519.NewKeyFromSeed(d)}, nil
 		case "X25519":
