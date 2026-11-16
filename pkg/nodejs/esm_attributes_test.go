@@ -459,3 +459,31 @@ try { await import('./nope.mjs'); } catch (e) { log.push(e instanceof Error, e.c
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A resolve hook's undefined type is the implicit type for the module map, so a
+// short-circuiting load hook can supply the module; the default load refuses it.
+// Expected from Node 20.18.1.
+func TestImportAttributes_UndefinedHookType(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs":  `export default 1;`,
+		"dep2.mjs": `export default 2;`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === './u1') return { ...(await n('./dep.mjs', c)), importAttributes: { type: undefined } };
+  if (s === './u2') return { ...(await n('./dep2.mjs', c)), importAttributes: { type: undefined } };
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('dep.mjs')) return { format: 'module', source: 'export default "short:" + ' + JSON.stringify(Object.keys(c.importAttributes)), shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['./u1', './u2']) { try { log.push((await import(s)).default); } catch (e) { log.push(e.code, e.message); } }`,
+	})
+	got := runLogModuleIn(t, dir)
+	want := `["short:type","ERR_INVALID_ARG_TYPE","The \"type\" argument must be of type string. Received undefined"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
