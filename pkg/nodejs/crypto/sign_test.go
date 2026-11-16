@@ -54,3 +54,15 @@ func TestSign_Ed25519WrongKeySize(t *testing.T) {
 		t.Error("signed with a 1-byte key")
 	}
 }
+
+// An RSA JWK exponent too large for crypto/rsa is refused rather than
+// wrapped around to a negative int.
+func TestSign_RSAJWKExponentTooLarge(t *testing.T) {
+	j := &jwk{Kty: "RSA", N: "Dw", E: "__________8"}
+	if _, err := jwkToEntry(j, false); err == nil {
+		t.Error("imported e = 2^64-1")
+	}
+	if verifyPSSNoSalt(&rsa.PublicKey{N: big.NewInt(15), E: -1}, sha256.New, make([]byte, 32), []byte{0}) {
+		t.Error("verified with e = -1")
+	}
+}

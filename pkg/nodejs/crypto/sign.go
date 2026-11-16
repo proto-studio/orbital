@@ -188,7 +188,7 @@ func verifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bo
 		return false
 	}
 	s := new(big.Int).SetBytes(sig)
-	if s.Cmp(k.N) >= 0 {
+	if s.Cmp(k.N) >= 0 || k.E < 1 || k.N.Sign() <= 0 {
 		return false
 	}
 	emBits := k.N.BitLen() - 1

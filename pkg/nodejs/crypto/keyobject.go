@@ -345,7 +345,14 @@ func jwkToEntry(j *jwk, wantPrivate bool) (*keyEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		pub := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(eb).Int64())}
+		// crypto/rsa keeps the exponent in an int, and crypto/x509 refuses
+		// DER keys whose exponent is above 2^31-1; JWKs get the same limit
+		// instead of wrapping around.
+		e := new(big.Int).SetBytes(eb)
+		if e.BitLen() > 31 {
+			return nil, errors.New("RSA public exponent is too large")
+		}
+		pub := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(e.Int64())}
 		if !wantPrivate || j.D == "" {
 			return &keyEntry{kind: "public", asymType: "rsa", rsaPub: pub}, nil
 		}
