@@ -347,62 +347,80 @@
     return { source: r.source, format: r.format, shortCircuit: true };
   }
 
+  // Captured now, like the error constructors, so a hook's initialize()
+  // replacing them can't change how attributes cross to Go.
+  const ObjectKeys = Object.keys;
+  const ObjectDefineProperty = Object.defineProperty;
+  const ObjectCreate = Object.create;
+  const JSONStringify = JSON.stringify;
+  const JSONParse = JSON.parse;
+  const ArrayIsArray = Array.isArray;
+  const NativeBigInt = BigInt;
+  const clone = typeof structuredClone === 'function' ? structuredClone : null;
+  const EMPTY = '{"array":false,"pairs":[]}';
+
   // Attributes cross to Go as JSON [key, value] pairs. A value that isn't a
-  // string goes as { text, received, json?, undefined? }: its string form (what
-  // Node prints for an unknown key), how Node describes it in a type error, and
-  // what to rebuild it from for the load hooks' context.
+  // string goes as { text, received, json?, undefined?, bigint? }: its string
+  // form (what Node prints for an unknown key), how Node describes it in a type
+  // error, and what to rebuild it from for the load hooks' context.
   // The pairs travel as { array, pairs }, so an array a hook returned comes back
   // as an array.
   function encodeAttrs(attrs) {
-    if (attrs == null || typeof attrs !== 'object') return '{"array":false,"pairs":[]}';
-    return JSON.stringify({ array: Array.isArray(attrs), pairs: Object.keys(attrs).map((k) => {
+    if (attrs == null || typeof attrs !== 'object') return EMPTY;
+    const keys = ObjectKeys(attrs);
+    const pairs = [];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
       const v = attrs[k];
-      if (typeof v === 'string') return [k, v];
+      if (typeof v === 'string') {
+        pairs[i] = [k, v];
+        continue;
+      }
       const other = { text: formatted(v), received: received(v) };
       if (v === undefined) other.undefined = true;
-      else if (typeof v === 'bigint') other.bigint = String(v);
+      else if (typeof v === 'bigint') other.bigint = safeString(v);
       else if (v === null || typeof v === 'number' || typeof v === 'boolean') other.json = v;
       else if (typeof v === 'object') {
-        try { other.json = JSON.parse(JSON.stringify(v)); } catch (e) { /* not representable */ }
+        try { other.json = JSONParse(JSONStringify(v)); } catch (e) { /* not representable */ }
       }
-      return [k, other];
-    }) });
+      pairs[i] = [k, other];
+    }
+    return JSONStringify({ array: ArrayIsArray(attrs), pairs: pairs });
   }
 
   // The resolved attributes object itself stays in this realm until its load,
   // so the load hooks get a structured clone of it, as Node gives them (a Date
   // stays a Date, a Map a Map), rather than what survives the JSON trip to Go.
-  const stashed = new Map();
+  const stashed = ObjectCreate(null);
   let stashSeq = 0;
-  const clone = typeof structuredClone === 'function' ? structuredClone : null;
 
   function stashAttrs(attrs) {
     const id = ++stashSeq;
-    stashed.set(id, attrs);
-    const encoded = JSON.parse(encodeAttrs(attrs));
+    stashed[id] = attrs;
+    const encoded = JSONParse(encodeAttrs(attrs));
     encoded.id = id;
-    return JSON.stringify(encoded);
+    return JSONStringify(encoded);
   }
 
   // Go calls this when it refuses a resolution before its load, so the stashed
   // object isn't kept.
   globalThis.__dropAttrs = function (text) {
     try {
-      const encoded = JSON.parse(text || '{}');
-      if (encoded.id !== undefined) stashed.delete(encoded.id);
+      const encoded = JSONParse(text || '{}');
+      if (encoded.id !== undefined) delete stashed[encoded.id];
     } catch (e) { /* nothing stashed */ }
   };
 
   function unstashAttrs(text) {
-    const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
-    if (encoded.id !== undefined && stashed.has(encoded.id)) {
-      const attrs = stashed.get(encoded.id);
-      stashed.delete(encoded.id);
+    const encoded = JSONParse(text || EMPTY);
+    if (encoded.id !== undefined && encoded.id in stashed) {
+      const attrs = stashed[encoded.id];
+      delete stashed[encoded.id];
       if (clone && attrs !== null && typeof attrs === 'object') {
         try {
           const copy = clone(attrs);
           // A clone can't keep an own "__proto__" key; rebuild then instead.
-          if (Object.keys(copy).length === Object.keys(attrs).length) return copy;
+          if (ObjectKeys(copy).length === ObjectKeys(attrs).length) return copy;
         } catch (e) { /* not cloneable: rebuild below */ }
       }
     }
@@ -410,15 +428,18 @@
   }
 
   function decodeAttrs(text) {
-    const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
+    const encoded = JSONParse(text || EMPTY);
     const attrs = encoded.array ? [] : {};
-    for (const [k, v] of encoded.pairs) {
+    const pairs = encoded.pairs;
+    for (let i = 0; i < pairs.length; i++) {
+      const k = pairs[i][0];
+      const v = pairs[i][1];
       let value = v;
       if (typeof v !== 'string') {
-        value = v.undefined ? undefined : 'bigint' in v ? BigInt(v.bigint) : 'json' in v ? v.json : v.text;
+        value = v.undefined ? undefined : 'bigint' in v ? NativeBigInt(v.bigint) : 'json' in v ? v.json : v.text;
       }
       // defineProperty, so a "__proto__" key stays an own attribute.
-      Object.defineProperty(attrs, k, { value, writable: true, enumerable: true, configurable: true });
+      ObjectDefineProperty(attrs, k, { value, writable: true, enumerable: true, configurable: true });
     }
     return attrs;
   }
@@ -487,7 +508,7 @@
 
   globalThis.__runResolve = async function (specifier, parentURL, attrsJSON) {
     const chain = buildChain('resolve', defaultResolve);
-    const importAttributes = JSON.parse(attrsJSON || '{}');
+    const importAttributes = JSONParse(attrsJSON || '{}');
     const ctx = {
       parentURL: parentURL || undefined,
       conditions: ['node', 'import', 'module', 'default'],
