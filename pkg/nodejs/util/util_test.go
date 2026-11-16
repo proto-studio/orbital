@@ -485,17 +485,20 @@ func TestUtil_InspectLargeTypedArrayPastDepth(t *testing.T) {
 	}
 }
 
-// Listing an array's symbol keys mustn't walk its elements, as Object.keys would. Walking 10
-// million keys takes about half a second; listing the symbols takes under a millisecond.
-func TestUtil_InspectLargeArraySymbols(t *testing.T) {
+// Listing an array's keys after its elements mustn't walk the elements, as Object.keys would.
+// Walking 10 million keys takes about half a second; skipping them takes under a millisecond.
+func TestUtil_InspectLargeArrayKeys(t *testing.T) {
 	rt := setupRuntime(t)
 	defer rt.Dispose()
 
 	result, err := rt.RunScript(`
 		const list = new Array(10000000).fill(0);
 		list[Symbol('k')] = 1;
+		list.x = 2;
+		const bytes = Object.assign(new Uint8Array(10000000), { y: 3 });
 		const start = Date.now();
-		const text = __util_module.inspect(list, { maxArrayLength: 1 });
+		const text = __util_module.inspect(list, { maxArrayLength: 1 }) + ' ' +
+			__util_module.inspect({ a: { b: { c: [], bytes } } }, { maxArrayLength: 1 });
 		JSON.stringify({ text, ms: Date.now() - start });
 	`, "test.js")
 	if err != nil {
@@ -508,7 +511,7 @@ func TestUtil_InspectLargeArraySymbols(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.String()), &got); err != nil {
 		t.Fatalf("decoding %q: %v", result.String(), err)
 	}
-	if want := "[ 0, ... 9999999 more items, [Symbol(k)]: 1 ]"; got.Text != want {
+	if want := "[ 0, ... 9999999 more items, x: 2, [Symbol(k)]: 1 ] { a: { b: { c: [], bytes: [Uint8Array] } } }"; got.Text != want {
 		t.Errorf("got %q, want %q", got.Text, want)
 	}
 	if got.Ms > 100 {
@@ -632,6 +635,28 @@ func TestUtil_InspectLongPrototypeChainKinds(t *testing.T) {
 		"Object <Object <Complex prototype>>(1) [ 0 ]\n" +
 		"{ a: { b: { c: [Object <Complex prototype>] } } }"
 	if got := result.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Elements left out of a short array aren't read, and a typed array takes more keys than a
+// function takes arguments. The text matches Node's.
+func TestUtil_InspectArrayEdges(t *testing.T) {
+	rt := setupRuntime(t)
+	defer rt.Dispose()
+
+	result, err := rt.RunScript(`
+		const list = [1, 2];
+		Object.defineProperty(list, 1, { get() { throw new Error('read'); } });
+		const bytes = new Uint8Array(0);
+		for (let i = 0; i < 150000; i++) bytes['k' + i] = i;
+		const text = __util_module.inspect(bytes, { breakLength: Infinity });
+		__util_module.inspect(list, { maxArrayLength: 1 }) + ' ' + text.slice(0, 30) + ' ' + text.length;
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("RunScript failed: %v", err)
+	}
+	if got, want := result.String(), "[ 1, ... 1 more item ] Uint8Array(0) [\n  k0: 0,       2556504"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

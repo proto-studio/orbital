@@ -360,8 +360,15 @@ func (c *Console) Register(rt *runtime.Runtime) error {
 		return err
 	}
 	// console_inspect.js formats with the code it shares with util, passed in as inspectShared.
-	c.inspect, err = rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })("+inspectjs.JS+")", "console_inspect.js")
+	shared, err := inspectjs.Load(rt)
 	if err != nil {
+		return err
+	}
+	makeInspect, err := rt.RunScript("(function (inspectShared) { return (\n"+consoleInspectJS+"\n); })", "console_inspect.js")
+	if err != nil {
+		return err
+	}
+	if c.inspect, err = makeInspect.Call(nil, shared); err != nil {
 		return err
 	}
 
@@ -767,10 +774,16 @@ func (c *Console) formatArray(v *v8.Value) string {
 // formatArrayWithDepth formats an array at depth, showing at most maxArrayLength elements.
 func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 	length := v.ArrayLength()
+	// The keys printed after the elements. An empty array without any prints as [].
+	var keys []*v8.Value
+	// Their handles are released once printed, as they're made anew for each array.
+	defer func() { releaseAll(keys) }()
 	if length == 0 {
-		// What goes before the bracket: a subclass's name, say. reduceArray adds it otherwise.
-		prefix, _ := c.inspectCall("arrayPrefix", v, c.integer(c.level(depth)))
-		return prefix + "[]"
+		if keys = c.nonIndexKeys(v); len(keys) == 0 {
+			// What goes before the bracket: a subclass's name, say. reduceArray adds it otherwise.
+			prefix, _ := c.inspectCall("arrayPrefix", v, c.integer(c.level(depth)))
+			return prefix + "[]"
+		}
 	}
 	circular, done := c.track(v)
 	if done == nil {
@@ -783,7 +796,6 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 		}
 		return "[Array]"
 	}
-
 	c.enter(depth)
 	shown := length
 	if n := c.inspectValue("shown", c.integer(length)); n != nil && n.IsNumber() {
@@ -807,9 +819,14 @@ func (c *Console) formatArrayWithDepth(v *v8.Value, depth int) string {
 			parts = append(parts, more)
 		}
 	}
-	parts = append(parts, c.formatProperties(v, c.keyList(c.inspectValue("symbols", v)), depth)...)
+	// A nonempty array's keys are looked for once its elements are read, as Node does, since
+	// listing them can run a proxy's trap; past the depth limit, where it's only named, never.
+	if length > 0 {
+		keys = c.nonIndexKeys(v)
+	}
+	parts = append(parts, c.formatProperties(v, keys, depth)...)
 	ref := c.leave()
-	if s, ok := c.reduceJS("reduceArray", parts, c.integer(c.level(depth)), c.boolean(numbers), c.refArg(ref), v); ok {
+	if s, ok := c.reduceJS("reduceArray", parts, c.integer(c.level(depth)), c.boolean(numbers), c.refArg(ref), v, c.integer(shown)); ok {
 		return s
 	}
 	return withRef(ref, multilineBraces("[", "]", parts))
@@ -837,7 +854,7 @@ func (c *Console) formatObjectWithDepth(v *v8.Value, depth int) string {
 			return s
 		}
 	}
-	if s, ok := c.inspectCall("view", v, c.integer(c.level(depth))); ok {
+	if s, ok := c.formatView(v, depth); ok {
 		return s
 	}
 	if s, ok := c.formatBinary(v, depth); ok {
@@ -958,6 +975,58 @@ func (c *Console) formatCollection(v *v8.Value, depth int) (string, bool) {
 // enumerable symbols.
 func (c *Console) propertyNames(v *v8.Value) []*v8.Value {
 	return c.keyList(c.inspectValue("keys", v))
+}
+
+// formatView prints a typed array or Buffer with inspect's view, its keys after its elements.
+// It reports false for anything else.
+func (c *Console) formatView(v *v8.Value, depth int) (string, bool) {
+	// The elements are read first: formatting a key may change or detach them, and Node shows
+	// them as they were.
+	start := c.inspectValue("viewStart", v, c.integer(c.level(depth)))
+	// The snapshot, and what's read from it, are made anew for each value printed, so their
+	// handles are released once it's printed.
+	defer start.Release()
+	if start == nil || !start.IsObject() {
+		return "", false
+	}
+	shot, err := start.Get("shot")
+	defer shot.Release()
+	if err != nil || shot == nil {
+		return "", false
+	}
+	keys, _ := start.Get("keys")
+	defer keys.Release()
+	// A Buffer is printed whole even past the depth limit, so there its keys, which may hold
+	// the Buffer itself, are left out to bound the recursion.
+	if keys != nil && keys.IsArray() && keys.ArrayLength() > 0 && depth > 0 {
+		// Before the fields, which set the level of entries being formatted to their own.
+		c.enter(depth)
+		list := c.keyList(keys)
+		fields, ok := c.stringArray(c.formatProperties(v, list, depth))
+		releaseAll(list)
+		if !ok {
+			return "", false
+		}
+		// Done with its entries, so it's left here, its <ref *N> going first.
+		return c.inspectCall("viewEnd", shot, c.integer(c.level(depth)), fields, c.refArg(c.leave()))
+	}
+	return c.inspectCall("viewEnd", shot, c.integer(c.level(depth)))
+}
+
+// releaseAll releases the handles of values, which the caller is done with.
+func releaseAll(values []*v8.Value) {
+	for _, v := range values {
+		v.Release()
+	}
+}
+
+// nonIndexKeys lists v's own enumerable keys other than array indices, found without walking
+// its elements. The array holding them is released once read, as one is made per array printed.
+func (c *Console) nonIndexKeys(v *v8.Value) []*v8.Value {
+	extra, _ := v.GetOwnNonIndexKeys()
+	keys := c.keyList(extra)
+	extra.Release()
+	return keys
 }
 
 // keyList is the keys in names, an array.
@@ -1132,20 +1201,29 @@ func withRef(ref *v8.Value, s string) string {
 
 // reduceJS calls the console_inspect.js function name with parts as an array, followed by args.
 func (c *Console) reduceJS(name string, parts []string, args ...*v8.Value) (string, bool) {
-	if c.ctx == nil {
+	arr, ok := c.stringArray(parts)
+	if !ok {
 		return "", false
+	}
+	return c.inspectCall(name, append([]*v8.Value{arr}, args...)...)
+}
+
+// stringArray makes a JavaScript array of parts to pass to console_inspect.js.
+func (c *Console) stringArray(parts []string) (*v8.Value, bool) {
+	if c.ctx == nil {
+		return nil, false
 	}
 	arr, err := c.ctx.NewArray(len(parts))
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	for i, part := range parts {
 		s, err := c.ctx.NewString(part)
 		if err != nil || arr.SetIndex(i, s) != nil {
-			return "", false
+			return nil, false
 		}
 	}
-	return c.inspectCall(name, append([]*v8.Value{arr}, args...)...)
+	return arr, true
 }
 
 // assertFunc implements runtime.assert.

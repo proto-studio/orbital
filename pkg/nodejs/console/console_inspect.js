@@ -30,7 +30,14 @@
     more: inspectShared.more,
     // shown is how many of length items to print.
     shown: (length) => Math.min(length, ctx.maxArrayLength),
-    view: (value, level) => inspectShared.view(value, ctx, level),
+    // viewStart reads a typed array's or Buffer's elements at level, before its keys are
+    // formatted, answering { shot, keys } with the keys to print after them, or null for anything
+    // else. viewEnd prints the shot with fields, those keys formatted, and ref first.
+    viewStart: (value, level) => {
+      const shot = inspectShared.snapshot(value, ctx, level);
+      return shot === null ? null : { shot, keys: inspectShared.extraKeys(value) };
+    },
+    viewEnd: (shot, level, fields, ref) => inspectShared.finish(shot, ctx, level, fields, ref),
     // binary, collection and scalar describe a value at level.
     binary: (value, level) => inspectShared.binary(value, ctx.maxArrayLength, ctx.depth - level),
     collection: (value, level) => inspectShared.collection(value, ctx.maxArrayLength, ctx.depth - level),
@@ -49,7 +56,6 @@
     float: (value) => inspectShared.numeric('f', value),
     field: inspectShared.field,
     keys: inspectShared.keys,
-    symbols: inspectShared.symbols,
     // json is printf's %j: JSON.stringify, or [Circular] for a value that holds itself. Any
     // other error JSON.stringify throws leaves it answering nothing.
     json: (value) => {
@@ -78,9 +84,10 @@
     },
     reduce: (output, open, close, level, base, ref) => inspectShared.reduce(ctx, output, open, close, level, { base, ref }),
     // reduceArray and reduceObject lay out the entries of an array or plain object, value, named
-    // before its bracket or brace when Node names it, as a subclass is, with ref first.
-    reduceArray: (output, level, numbers, ref, value) =>
-      inspectShared.reduce(ctx, output, arrayPrefix(value, level) + '[', ']', level, { array: true, numbers, ref }),
+    // before its bracket or brace when Node names it, as a subclass is, with ref first. An array
+    // shows its first shown elements.
+    reduceArray: (output, level, numbers, ref, value, shown) =>
+      inspectShared.reduce(ctx, output, arrayPrefix(value, level) + '[', ']', level, { array: true, numbers, ref, value, shown }),
     reduceObject: (output, level, value, ref) =>
       inspectShared.reduce(ctx, output, objectPrefix(value, level) + '{', '}', level, { ref }),
     objectPrefix,

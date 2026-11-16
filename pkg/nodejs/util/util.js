@@ -203,7 +203,7 @@
 			if (coll !== null) return formatCollection(value, coll, currentDepth);
 			if (value instanceof Promise) return 'Promise { <pending> }';
 			if (bin !== null) return formatBinary(value, bin, currentDepth);
-			if (ArrayBuffer.isView(value)) return inspectShared.view(value, layout, currentDepth);
+			if (ArrayBuffer.isView(value)) return formatView(value, currentDepth);
 			return formatObject(value, currentDepth);
 		}
 
@@ -217,7 +217,15 @@
 
 		function formatArray(arr, depth) {
 			const prefix = inspectShared.arrayPrefix(arr, layout.depth - depth);
-			if (arr.length === 0) return prefix + '[]';
+			// An empty array prints as [] unless it has keys. Otherwise the keys are listed after
+			// the elements are read, as Node does, since listing them can run a proxy's trap.
+			// Whether it was empty is kept: formatting an element may change its length.
+			const empty = arr.length === 0;
+			let extra = [];
+			if (empty) {
+				extra = inspectShared.extraKeys(arr);
+				if (extra.length === 0) return prefix + '[]';
+			}
 			layout.currentDepth = depth;
 
 			const items = [];
@@ -235,10 +243,26 @@
 				items.push(inspectShared.more(arr.length - maxLen));
 			}
 			const elements = items.length;
-			for (const key of inspectShared.symbols(arr)) items.push(formatProperty(arr, key, depth));
+			if (!empty) extra = inspectShared.extraKeys(arr);
+			for (const key of extra) items.push(formatProperty(arr, key, depth, true));
 			sortOutput(items, elements);
 
-			return reduce(items, prefix + '[', ']', depth, { array: true, numbers });
+			return reduce(items, prefix + '[', ']', depth, { array: true, numbers, value: arr, shown: maxLen });
+		}
+
+		// formatView prints a typed array or Buffer with its keys after its elements.
+		function formatView(value, depth) {
+			// Formatted after view reads the elements, as Node does; then done with its entries,
+			// the value is left here, its <ref *N> going first. Like the elements, the keys count
+			// toward the levels of entries formatted only when there are some.
+			const fields = () => {
+				const keys = inspectShared.extraKeys(value);
+				if (keys.length > 0) layout.currentDepth = depth;
+				const list = keys.map(key => formatProperty(value, key, depth, true));
+				sortOutput(list);
+				return list;
+			};
+			return inspectShared.view(value, layout, depth, fields, leave);
 		}
 
 		// sortOutput sorts the entries of output from start on, as Node does with the sorted
@@ -381,15 +405,15 @@
 
 		// formatProperty prints key of obj, an object at depth: an accessor as a label, which with
 		// the getters option holds what the getter returns.
-		function formatProperty(obj, key, depth) {
+		function formatProperty(obj, key, depth, array = false) {
 			const f = inspectShared.field(obj, key);
-			if (!('label' in f)) return inspectShared.entry(layout, f.name, inspectValue(f.value, depth + 1));
+			if (!('label' in f)) return inspectShared.entry(layout, f.name, inspectValue(f.value, depth + 1), array);
 			const desc = Object.getOwnPropertyDescriptor(obj, key);
 			const getters = opts.getters;
 			if (desc.get === undefined || !(getters === true ||
 					(getters === 'get' && desc.set === undefined) ||
 					(getters === 'set' && desc.set !== undefined))) {
-				return inspectShared.entry(layout, f.name, f.label);
+				return inspectShared.entry(layout, f.name, f.label, array);
 			}
 			// The label without its brackets.
 			const label = f.label.slice(1, -1);
@@ -402,7 +426,7 @@
 			} catch (e) {
 				value = `[${label}: <Inspection threw (${e && e.message})>]`;
 			}
-			return inspectShared.entry(layout, f.name, value);
+			return inspectShared.entry(layout, f.name, value, array);
 		}
 
 		// formatKeys prints first, then the own enumerable keys of value, an object at depth,

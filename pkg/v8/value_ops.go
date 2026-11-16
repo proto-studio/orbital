@@ -6,7 +6,10 @@ package v8
 */
 import "C"
 
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // Set sets a property on this value (must be an object).
 func (v *Value) Set(key string, val *Value) error {
@@ -107,6 +110,45 @@ func (v *Value) GetPropertyNames() (*Value, error) {
 		return nil, nil
 	}
 	return &Value{ptr: ptr, ctx: v.ctx}, nil
+}
+
+// GetOwnNonIndexKeys returns an array of the object's own enumerable keys other than array
+// indices: its string keys, then its symbols. Unlike Object.keys, it doesn't walk an array's
+// elements to skip them.
+func (v *Value) GetOwnNonIndexKeys() (*Value, error) {
+	if v.ptr == nil || v.ctx == nil || v.ctx.ptr == nil {
+		return nil, ErrDisposed
+	}
+
+	ptr := C.v8go_object_get_own_non_index_keys(v.ctx.ptr, v.ptr)
+	if ptr == nil {
+		return nil, nil
+	}
+	return &Value{ptr: ptr, ctx: v.ctx}, nil
+}
+
+// OwnNonIndexKeysFunction returns a JavaScript function that answers GetOwnNonIndexKeys for
+// its argument. It runs natively, so calling it from JavaScript keeps nothing alive in Go.
+func (c *Context) OwnNonIndexKeysFunction() (*Value, error) {
+	if c.ptr == nil {
+		return nil, ErrDisposed
+	}
+	ptr := C.v8go_own_non_index_keys_function(c.ptr)
+	if ptr == nil {
+		return nil, errors.New("v8: could not make the own non-index keys function")
+	}
+	return &Value{ptr: ptr, ctx: c}, nil
+}
+
+// Release frees the native handle behind v, which must not be used afterwards. Values Go reads
+// many times over, like one GetOwnNonIndexKeys result per array printed, are released once read
+// so they don't accumulate.
+func (v *Value) Release() {
+	if v == nil || v.ptr == nil {
+		return
+	}
+	C.v8go_value_release(v.ptr)
+	v.ptr = nil
 }
 
 // IsObject returns true if the value is an object.

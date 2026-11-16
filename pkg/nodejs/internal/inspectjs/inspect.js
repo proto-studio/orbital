@@ -1,8 +1,9 @@
 // The parts of Node's util.inspect that the console and util modules both need: quoting strings
 // and object keys, printing Buffers, typed arrays, ArrayBuffers, DataViews, Maps, Sets, Dates
 // and RegExps, and laying a value's entries out on lines. They share one copy, and each loads it itself, since an embedder
-// can register either one without the other. Evaluates to
-// { context, quote, string, key, symbols, keys, primitive, numeric, stringSpec, more, view, binary,
+// can register either one without the other. Evaluates to a function that takes the native
+// helpers inspectjs.go makes, ownNonIndexKeys, and returns { context, quote, string, key,
+// keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot, finish, binary,
 // collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
@@ -11,7 +12,7 @@
 // of an object, array, Map, Set or Error, the caller sets currentDepth to its level; reduce
 // then knows how many levels of objects the value holds. Lines that a value spans are indented
 // relative to the value itself: reduce indents an entry's lines along with the entry.
-(function () {
+(function (ownNonIndexKeys) {
   // META[c] is how util.inspect writes control character c (0x00-0x1F) inside a quoted string:
   // \b, \t, \n, \f and \r for those five, and \xNN for the rest.
   const META = [
@@ -107,11 +108,31 @@
   }
 
   // keys lists the keys util.inspect prints for value: its own enumerable string keys, then its
-  // symbols. Not for arrays or typed arrays, whose elements are keys too.
+  // symbols. For arrays and typed arrays, whose elements are keys too, see extraKeys.
   function keys(value) {
     const names = Object.keys(value);
     const syms = symbols(value);
     return syms.length === 0 ? names : names.concat(syms);
+  }
+
+  // extraKeys lists the keys util.inspect prints after an array's or typed array's elements:
+  // its own enumerable keys other than indices, strings then symbols. ownNonIndexKeys skips the
+  // indices without walking them, as Object.keys would.
+  function extraKeys(value) {
+    // The native helper answers nothing when listing throws, like a proxy's trap can.
+    const found = ownNonIndexKeys(value);
+    return Array.isArray(found) ? found : [];
+  }
+
+  // numbersAt reports whether value's elements from start up to end are all numbers or
+  // BigInts. When Node lays an array out in columns, it aligns them on the right when the
+  // elements at the positions of all its entries are, counting the entries for left-out items
+  // and keys; see reduce.
+  function numbersAt(value, start, end) {
+    for (let i = start; i < end; i++) {
+      if (typeof value[i] !== 'number' && typeof value[i] !== 'bigint') return false;
+    }
+    return true;
   }
 
   // A primitive other than a string, as util.inspect prints one: a BigInt keeps its n suffix,
@@ -168,26 +189,60 @@
   const more = (n) => `... ${n} more item${n > 1 ? 's' : ''}`;
 
   // view prints a Buffer as <Buffer 01 02> and any other typed array at level as
-  // Name(length) [ ... ], showing at most 50 bytes or maxArrayLength elements. It answers null
-  // for anything else, including a DataView.
-  function view(value, ctx = context(), level = 0) {
+  // Name(length) [ ... ], showing at most 50 bytes or maxArrayLength elements, then fields, the
+  // entries the caller formatted for its extraKeys, with ref, the value's <ref *N> when one of
+  // them holds it, first. It answers null for anything else, including a DataView. fields and
+  // ref may be functions, called once the elements are read: formatting a field may change the
+  // elements, or detach them, and Node shows them as they were. Callers that can't pass
+  // functions use its two halves, snapshot and finish.
+  function view(value, ctx = context(), level = 0, fields = [], ref = '') {
+    const shot = snapshot(value, ctx, level);
+    if (shot === null) return null;
+    const list = typeof fields === 'function' ? fields() : fields;
+    return finish(shot, ctx, level, list, typeof ref === 'function' ? ref() : ref);
+  }
+
+  // snapshot reads what view shows of a typed array's or Buffer's elements, or answers null for
+  // anything else.
+  function snapshot(value, ctx = context(), level = 0) {
     if (!ArrayBuffer.isView(value) || value instanceof DataView) return null;
-    if (typeof Buffer === 'function' && Buffer.isBuffer(value)) {
-      const hex = [];
-      for (let i = 0; i < Math.min(value.length, 50); i++) hex.push(value[i].toString(16).padStart(2, '0'));
-      const extra = value.length - 50;
-      return '<Buffer ' + hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') + '>';
-    }
     // Read through %TypedArray%.prototype, which a typed array without a prototype lacks.
     const length = typedArrayLength.call(value);
-    const name = prefix(value, typedArrayTag.call(value), `(${length})`, ctx.depth - level);
-    if (length === 0) return `${name} []`;
-    ctx.currentDepth = level;
+    if (typeof Buffer === 'function' && Buffer.isBuffer(value)) {
+      const hex = [];
+      for (let i = 0; i < Math.min(length, 50); i++) hex.push(value[i].toString(16).padStart(2, '0'));
+      const extra = length - 50;
+      return { buffer: true, length, text: hex.join(' ') + (extra > 0 ? ` ... ${extra} more byte${extra > 1 ? 's' : ''}` : '') };
+    }
+    // An empty one formats no entries, so it doesn't count as a level of them.
+    if (length > 0) ctx.currentDepth = level;
     const shown = Math.min(Math.max(0, ctx.maxArrayLength), length);
-    const output = Array.from(typedArraySubarray.call(value, 0, shown), primitive);
+    // Read by index, as Node does: subarray would look up the array's constructor, which may be
+    // a getter, and fails on a detached array even for no elements.
+    const output = [];
+    for (let i = 0; i < shown; i++) output.push(primitive(value[i]));
     if (length > shown) output.push(more(length - shown));
-    return reduce(ctx, output, `${name} [`, ']', level, { array: true, numbers: true });
+    // Named through the prototype chain's descriptors, as Node does, so no getter runs.
+    return { buffer: false, value, name: prefix(value, typedArrayTag.call(value), `(${length})`, ctx.depth - level), length, shown, output };
   }
+
+  // finish prints what snapshot read, followed by fields, with mark (a <ref *N>, or '') first.
+  function finish(shot, ctx, level, fields = [], mark = '') {
+    const ref = mark === '' ? '' : mark + ' ';
+    if (shot.buffer) {
+      // Node lists a Buffer's keys on the same line, after a comma when it has bytes.
+      const text = shot.text + (fields.length > 0 ? (shot.length > 0 ? ', ' : '') + fields.join(', ') : '');
+      return `${ref}<Buffer ${text}>`;
+    }
+    if (shot.length === 0 && fields.length === 0) return `${ref}${shot.name} []`;
+    const output = shot.output;
+    // Appended one by one: spreading them into push would pass one argument each.
+    for (let i = 0; i < fields.length; i++) output.push(fields[i]);
+    return reduce(ctx, output, `${shot.name} [`, ']', level,
+      { array: true, numbers: true, value: shot.value, shown: shot.shown, ref: mark });
+  }
+
+
 
   // Brand checks: each getter throws for anything but its own kind of object, so they only run
   // on objects that may be one.
@@ -209,7 +264,6 @@
   const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
   const typedArrayTag = getter(TypedArrayPrototype, Symbol.toStringTag);
   const typedArrayLength = getter(TypedArrayPrototype, 'length');
-  const typedArraySubarray = TypedArrayPrototype.subarray;
   const isDataView = (value) => ArrayBuffer.isView(value) && typedArrayTag.call(value) === undefined;
   // Whether value may be a Ctor: it inherits from Ctor, or from no Object of this realm, like one
   // with a null prototype or from another realm. It spares ordinary objects the brand checks,
@@ -464,12 +518,12 @@
     // Only the name is needed, so no bytes are read.
     const bin = binary(value, 0, -1);
     if (bin !== null) return `[${bin.name}]`;
-    if (Array.isArray(value)) return value.length === 0 ? null : cutLabel(value, 'Array');
-    // Before counting keys: a typed array's keys are its elements, so counting them would walk
-    // every byte of a value that only gets a name.
+    // An array's or typed array's keys are its elements, so they're never listed in full.
+    if (Array.isArray(value)) return value.length === 0 && extraKeys(value).length === 0 ? null : cutLabel(value, 'Array');
     if (ArrayBuffer.isView(value)) {
       const buffer = typeof Buffer === 'function' && Buffer.isBuffer(value);
-      return buffer || typedArrayLength.call(value) === 0 ? null : cutLabel(value, typedArrayTag.call(value));
+      const empty = typedArrayLength.call(value) === 0 && extraKeys(value).length === 0;
+      return buffer || empty ? null : cutLabel(value, typedArrayTag.call(value));
     }
     const bare = keys(value).length === 0;
     if (isMap(value)) return mapSize.call(value) === 0 && bare ? null : cutLabel(value, 'Map');
@@ -649,6 +703,7 @@
       15
     );
     if (columns <= 1) return output;
+    if (typeof numbers === 'function') numbers = numbers();
     const maxLineLength = [];
     for (let i = 0; i < columns; i++) {
       let lineLength = 0;
@@ -694,9 +749,10 @@
 
   // entry joins an object's key, already quoted, with its formatted value. With compact: true,
   // Node indents a value's lines three spaces in from the key's, rather than two, and starts the
-  // value on a line of its own when it's wider than breakLength.
-  function entry(ctx, name, value) {
-    if (ctx.compact !== true) return `${name}: ${value}`;
+  // value on a line of its own when it's wider than breakLength; but not for an array's or typed
+  // array's keys (array), which stay on the key's line.
+  function entry(ctx, name, value, array = false) {
+    if (ctx.compact !== true || array) return `${name}: ${value}`;
     const nested = value.replace(/\n/g, '\n ');
     return width(value) > ctx.breakLength ? `${name}:\n ${nested}` : `${name}: ${nested}`;
   }
@@ -705,12 +761,15 @@
   const indent = (entry) => entry.replace(/\n/g, '\n  ');
 
   // reduce joins the entries of a value at level between open and close as util.inspect does.
-  // base, like an Error's stack, goes before open, and ref, a value's <ref *N>, before both. Arrays' entries are grouped in columns, with
-  // numbers (all numbers or BigInts) aligned right. The
-  // entries go on one line when none spans lines, the value holds fewer than compact levels of
-  // objects, and the line fits in breakLength. Otherwise each goes on its own line, indented
+  // base, like an Error's stack, goes before open, and ref, a value's <ref *N>, before both.
+  // Arrays' entries are grouped in columns, with numbers aligned right: numbers says whether the
+  // shown elements of the array, value, are all numbers or BigInts, and, only when they're
+  // grouped, the elements from shown up to the number of entries are checked too, as Node does.
+  // The entries go on one line when none spans lines, the value holds fewer than compact levels
+  // of objects, and the line fits in breakLength. Otherwise each goes on its own line, indented
   // two spaces.
-  function reduce(ctx, output, open, close, level, { base = '', array = false, numbers = false, ref = '' } = {}) {
+  function reduce(ctx, output, open, close, level,
+    { base = '', array = false, numbers = false, value = undefined, shown = 0, ref = '' } = {}) {
     if (ref !== '') {
       // Node puts it in the base, which counts toward the line's length, except with compact:
       // true, where it goes in the brace.
@@ -721,7 +780,12 @@
     if (ctx.compact !== true) {
       if (typeof ctx.compact === 'number' && ctx.compact >= 1) {
         const entries = output.length;
-        if (array && entries > 6) output = group(ctx, output, level, numbers);
+        if (array && entries > 6) {
+          // Asked only once the entries do go in columns, as Node reads elements past the
+          // shown ones only then.
+          const right = () => numbers && (value === undefined || numbersAt(value, shown, output.length));
+          output = group(ctx, output, level, right);
+        }
         // Grouped rows stay on lines of their own. Node allows 10 more columns.
         if (ctx.currentDepth - level < ctx.compact && entries === output.length &&
             fits(ctx, output, output.length + level * 2 + open.length + base.length + 10, base)) {
@@ -739,7 +803,7 @@
   }
 
   return {
-    context, quote, string, key, symbols, keys, primitive, numeric, stringSpec, more, view, binary, collection, scalar,
-    isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix
+    context, quote, string, key, keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot,
+    finish, binary, collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix
   };
-})()
+})

@@ -131,6 +131,9 @@ void* v8go_object_get_idx(void* context, void* object, int idx);
 int v8go_object_has(void* context, void* object, const char* key);
 int v8go_object_delete(void* context, void* object, const char* key);
 void* v8go_object_get_property_names(void* context, void* object);
+void* v8go_object_get_own_non_index_keys(void* context, void* object);
+void* v8go_own_non_index_keys_function(void* context);
+void v8go_value_release(void* value);
 
 // Array operations  
 int v8go_array_length(void* context, void* array);
