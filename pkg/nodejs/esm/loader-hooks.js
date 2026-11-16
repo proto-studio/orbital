@@ -511,7 +511,7 @@
   }
 
   function safeString(v) {
-    try { return String(v); } catch (e) { return ''; }
+    try { return NativeString(v); } catch (e) { return ''; }
   }
 
   // A value as Node's error messages print it (util.format's %s).
@@ -526,7 +526,7 @@
 
   // How Node's ERR_INVALID_ARG_TYPE describes the value it received.
   function received(v) {
-    if (v == null) return String(v);
+    if (v == null) return NativeString(v);
     if (typeof v === 'function') return v.name ? 'function ' + v.name : 'function';
     if (typeof v === 'object') {
       const ctor = v.constructor && v.constructor.name;
@@ -534,7 +534,7 @@
       return 'an instance of ' + (ctor || 'Object');
     }
     let shown = typeof v === 'bigint' ? v + 'n' : safeString(v);
-    if (shown.length > 25) shown = shown.slice(0, 25) + '...';
+    if (shown.length > 25) shown = reflectApply(stringSlice, shown, [0, 25]) + '...';
     return 'type ' + typeof v + ' (' + shown + ')';
   }
 
@@ -567,8 +567,8 @@
   function describe(value) {
     if (value == null) return '' + value;
     if (typeof value === 'function' && value.name) return 'function ' + value.name;
-    let shown = typeof value === 'string' ? "'" + value + "'" : String(value);
-    if (shown.length > 28) shown = shown.slice(0, 25) + '...';
+    let shown = typeof value === 'string' ? "'" + value + "'" : NativeString(value);
+    if (shown.length > 28) shown = reflectApply(stringSlice, shown, [0, 25]) + '...';
     return 'type ' + typeof value + ' (' + shown + ')';
   }
 

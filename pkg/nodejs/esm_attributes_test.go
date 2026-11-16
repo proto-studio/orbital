@@ -780,3 +780,24 @@ for (const s of ['arr', 'map', 'id', './dep.mjs?after']) { try { log.push((await
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A hook's initialize() replacing String doesn't reach the loader's own
+// resolve-result errors. Expected from Node 20.18.1.
+func TestImportAttributes_ResultErrorsIgnoreReplacedString(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 1;`,
+		"hooks.mjs": `export async function initialize() { globalThis.String = () => { throw new Error('replaced String'); }; }
+export async function resolve(s, c, n) {
+  if (s === 'prim') { const r = await n('./dep.mjs', c); return { ...r, importAttributes: 5 }; }
+  return n(s, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+try { await import('prim'); } catch (e) { log.push(e.code, e.message); }`,
+	})
+	want := `["ERR_INVALID_RETURN_PROPERTY_VALUE","Expected an object to be returned for the \"importAttributes\" from the \"node:internal/modules/esm/resolve 'resolve'\" hook but got type number (5)."]`
+	if got := runLogModuleIn(t, dir); got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
