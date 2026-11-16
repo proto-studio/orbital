@@ -342,7 +342,9 @@ func (e *ESM) Preload(specifier string) error {
 	}
 	e.rt.WatchModuleEvaluation(p)
 	e.rt.Context().PerformMicrotaskCheckpoint()
-	e.rt.EventLoop().Run()
+	// While the import is pending, an emptied loop emits 'beforeExit', as
+	// Node's does while startup waits on it: a listener can settle the await.
+	e.rt.RunEventLoopWhile(func() bool { return p.PromiseState() == v8.PromisePending })
 	if ended := e.rt.Ended(); ended != nil {
 		return ended
 	}

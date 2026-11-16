@@ -33,6 +33,7 @@
   const reflectApply = Reflect.apply;
   const objectKeys = Object.keys;
   const jsonStringify = JSON.stringify;
+  const jsonParse = JSON.parse;
   const isPrototypeOf = Object.prototype.isPrototypeOf;
   const ErrorPrototype = Error.prototype;
   function internal(err) {
@@ -47,14 +48,35 @@
   // An own cause (non-enumerable, as the Error constructor makes it) travels
   // too, as Node's transfer keeps it.
   const hasOwn = Object.prototype.hasOwnProperty;
-  globalThis.__rejectionProps = function (e) {
-    const props = {};
+  const objectDefineProperty = Object.defineProperty;
+  // Each property is read once, as Node's single serialization does: the values
+  // __describeRejection read are kept here for __rejectionProps.
+  const readProps = new WeakMap();
+  const readGet = WeakMap.prototype.get;
+  const readSet = WeakMap.prototype.set;
+  const readDelete = WeakMap.prototype.delete;
+  function ownProps(e) {
+    const read = reflectApply(readGet, readProps, [e]);
+    if (read !== undefined) {
+      reflectApply(readDelete, readProps, [e]);
+      return read;
+    }
+    const values = [];
     const keys = objectKeys(e);
     for (let i = 0; i < keys.length; i++) {
       try {
-        const v = e[keys[i]];
-        if (cloneValue) cloneValue(v);
-        props[keys[i]] = v;
+        ownData(values, values.length, [keys[i], e[keys[i]]]);
+      } catch (err) { /* not transferable */ }
+    }
+    return values;
+  }
+  globalThis.__rejectionProps = function (e) {
+    const props = {};
+    const values = ownProps(e);
+    for (let i = 0; i < values.length; i++) {
+      try {
+        if (cloneValue) cloneValue(values[i][1]);
+        ownData(props, values[i][0], values[i][1]);
       } catch (err) { /* not transferable */ }
     }
     const bag = { props: props, hasCause: false };
@@ -62,8 +84,8 @@
       if (reflectApply(hasOwn, e, ['cause'])) {
         const cause = e.cause;
         if (cloneValue) cloneValue(cause);
-        bag.cause = cause;
-        bag.hasCause = true;
+        ownData(bag, 'cause', cause);
+        ownData(bag, 'hasCause', true);
       }
     } catch (err) { /* not transferable */ }
     return bag;
@@ -82,12 +104,12 @@
         return jsonStringify({ clone: true });
       }
       const props = {};
-      const keys = objectKeys(e);
-      for (let i = 0; i < keys.length; i++) {
+      const values = ownProps(e);
+      reflectApply(readSet, readProps, [e, values]);
+      for (let i = 0; i < values.length; i++) {
         try {
-          const v = e[keys[i]];
-          jsonStringify(v);
-          props[keys[i]] = v;
+          jsonStringify(values[i][1]);
+          ownData(props, values[i][0], values[i][1]);
         } catch (err) { /* not transferable */ }
       }
       let ctor = '';
@@ -108,18 +130,26 @@
   // Default (terminal) resolve: bridge to the Go default loader. Returns a url
   // string, or throws a Node-shaped ERR_MODULE_NOT_FOUND so resolve hooks that
   // probe alternatives (e.g. .js -> .ts) can catch and retry.
+  // Captured before any hook runs, so a hook replacing the globals or adding
+  // setters to their prototypes can't change the loader's own errors.
+  const NativeError = Error;
+  const NativeTypeError = TypeError;
+  const NativeURIError = URIError;
+  function ownData(obj, key, value) {
+    objectDefineProperty(obj, key, { value: value, writable: true, enumerable: true, configurable: true });
+  }
   function defaultResolve(specifier, context) {
     const parentURL = (context && context.parentURL) || '';
-    const r = globalThis.__goResolve(specifier, parentURL);
+    const r = jsonParse(globalThis.__goResolve(specifier, parentURL));
     if (!r.found) {
-      const Ctor = r.kind === 'TypeError' ? TypeError : r.kind === 'URIError' ? URIError : Error;
+      const Ctor = r.kind === 'TypeError' ? NativeTypeError : r.kind === 'URIError' ? NativeURIError : NativeError;
       const err = new Ctor(r.message);
-      if (r.code) err.code = r.code;
+      if (r.code) ownData(err, 'code', r.code);
       // The missing module's url lets resolve hooks rewrite the extension and
       // retry (e.g. ts-blank-space maps a missing ".js" to its ".ts" source).
-      if (r.url) err.url = r.url;
-      if (r.input) err.input = r.input;
-      if (r.module) err.module = r.module;
+      if (r.url) ownData(err, 'url', r.url);
+      if (r.input) ownData(err, 'input', r.input);
+      if (r.module) ownData(err, 'module', r.module);
       throw internal(err);
     }
     return { url: r.url, format: (context && context.format) || null, shortCircuit: true };
