@@ -378,7 +378,9 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	if err != nil {
 		return "", "", err
 	}
-	if attrs == nil {
+	// An entry point is keyed by the type its resolve hooks gave it, if any,
+	// so a later import resolving to that url and type is the same module.
+	if attrs == nil && len(resolvedList) == 0 {
 		return final, url, nil
 	}
 	return final, e.typedKey(url, format, keyList), nil

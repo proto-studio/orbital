@@ -125,24 +125,16 @@ func untypedKey(key string) string {
 
 // typedKey is the module cache key for url imported with a type: like Node,
 // which keys modules by url and type, so a hook can load a url differently per
-// type. import.meta.url leaves the type out. File-backed JSON is the exception:
-// Node keeps its value per file, so every import of it shares the first.
+// type. import.meta.url leaves the type out. (A file's JSON value is still
+// shared across its types; see finalize.)
 func (e *ESM) typedKey(url, format string, attrs []v8.ImportAttribute) string {
 	typ, ok := attrType(attrs)
 	// No type and the implicit one are the same module, as in attrCheckKey.
-	// Node keeps a JSON file's value in the CommonJS cache by path; a hook's
-	// custom-URL JSON gets a job per type like anything else.
-	fileJSON := format == "json" && !urlSchemeRe.MatchString(url)
-	if !fileJSON && (!ok || typ == implicitType) {
+	if !ok || typ == implicitType {
 		return url
 	}
 	// Escaped, so the key has no NUL to cut it short in the glue.
 	key := string(typeKeySep) + neturl.QueryEscape(typ) + string(typeKeySep) + url
-	if fileJSON {
-		// One key for every type, still apart from the url's untyped
-		// (JavaScript) module: "\x02", which an escaped type never holds.
-		key = string(typeKeySep) + "\x02" + string(typeKeySep) + url
-	}
 	if e.keyPaths == nil {
 		e.keyPaths = map[string]string{}
 	}
