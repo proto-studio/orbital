@@ -532,6 +532,42 @@ void* v8go_context_run_script_rethrowing(void* context_ptr, const char* source, 
     return value;
 }
 
+void* v8go_context_compile_function_rethrowing(void* context_ptr, const char* source, const char* origin,
+                                               const char** params, int param_count) {
+    if (!context_ptr || !source) return nullptr;
+    ContextWrapper* wrapper = static_cast<ContextWrapper*>(context_ptr);
+    Isolate* isolate = wrapper->isolate;
+    Locker locker(isolate);
+    Isolate::Scope isolate_scope(isolate);
+    HandleScope handle_scope(isolate);
+    Local<Context> context = wrapper->context.Get(isolate);
+    Context::Scope context_scope(context);
+    TryCatch try_catch(isolate);
+    std::vector<Local<String>> names;
+    for (int i = 0; i < param_count; i++) {
+        Local<String> name;
+        if (!String::NewFromUtf8(isolate, params[i]).ToLocal(&name)) return nullptr;
+        names.push_back(name);
+    }
+    Local<String> source_str;
+    if (!String::NewFromUtf8(isolate, source).ToLocal(&source_str)) return nullptr;
+    ScriptOrigin script_origin(String::NewFromUtf8(isolate, origin ? origin : "").ToLocalChecked());
+    ScriptCompiler::Source script_source(source_str, script_origin);
+    Local<Function> fn;
+    if (!ScriptCompiler::CompileFunction(context, &script_source, param_count,
+                                         names.empty() ? nullptr : names.data(), 0, nullptr)
+             .ToLocal(&fn)) {
+        // Left pending for the JavaScript that called the native function, with V8's
+        // message for it as it was.
+        if (try_catch.HasCaught() && try_catch.CanContinue()) try_catch.ReThrow();
+        return nullptr;
+    }
+    ValueWrapper* value = new ValueWrapper();
+    value->isolate = isolate;
+    value->value.Reset(isolate, fn);
+    return value;
+}
+
 void* v8go_context_run_script(void* context_ptr, const char* source, const char* origin, char** error) {
     if (!context_ptr || !source) return nullptr;
     
