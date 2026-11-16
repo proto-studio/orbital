@@ -327,11 +327,11 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 			`The "type" argument must be of type string. Received `+typeReceived)
 	}
 
-	// The default load checks the attributes, except for an entry point and a
-	// (url, type) pair already checked: Node reuses that first module job, and
-	// its outcome, without loading again.
+	// The default load checks the attributes, except for an entry point the
+	// resolve hooks gave none and a (url, type) pair already checked: Node
+	// reuses that first module job, and its outcome, without loading again.
 	check, key := "", ""
-	if attrs != nil {
+	if attrs != nil || len(resolvedList) > 0 {
 		key = attrCheckKey(url, keyList)
 		if prior, seen := e.attrChecks[key]; seen {
 			if prior != nil {

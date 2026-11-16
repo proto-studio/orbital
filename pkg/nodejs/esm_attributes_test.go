@@ -819,3 +819,22 @@ try { await import('./dep.mjs?x', { with: { type: 'json' } }); } catch (e) { log
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// A file a load hook serves as JSON for one type and as JavaScript without a
+// type gives two modules. Expected from Node 20.18.1.
+func TestImportAttributes_TypedJSONApartFromUntypedModule(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"f.mjs": `export default 'js';`,
+		"hooks.mjs": `export async function load(u, c, n) {
+  if (u.endsWith('f.mjs') && c.importAttributes.type === 'a') return { format: 'json', source: '{"j":1}', shortCircuit: true };
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+log.push((await import('./f.mjs', { with: { type: 'a' } })).default, (await import('./f.mjs')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[{"j":1},"js"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
