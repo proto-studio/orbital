@@ -349,7 +349,8 @@
   function beforeExit() {
     const p = getProcess();
     if (dead || !p || p._exiting) return;
-    p.emit('beforeExit', p.exitCode || 0);
+    // Node passes a number even when exitCode was set to a numeric string.
+    p.emit('beforeExit', Number(p.exitCode) || 0);
   }
 
   return {
