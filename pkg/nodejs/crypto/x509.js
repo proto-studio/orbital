@@ -5,6 +5,7 @@
 
   const crypto = __crypto_module;
   const kInfo = Symbol('kX509Info');
+  const kCache = Symbol('kX509Cache');
 
   // Flags for _x509Check, as x509.go numbers them.
   const ALWAYS_CHECK_SUBJECT = 1;
@@ -129,6 +130,12 @@
     return out;
   }
 
+  function cached(cert, name, make) {
+    const cache = cert[kCache];
+    if (!cache.has(name)) cache.set(name, make());
+    return cache.get(name);
+  }
+
   class X509Certificate {
     constructor(buffer) {
       if (typeof buffer === 'string') buffer = Buffer.from(buffer);
@@ -139,6 +146,7 @@
       const info = JSON.parse(crypto._x509Parse(bytes.toString('base64')));
       if (info.errorCode) throw codedError(Error, info.errorCode, info.errorMessage);
       this[kInfo] = info;
+      this[kCache] = new Map();
     }
 
     get subject() { return this[kInfo].subject === '' ? undefined : this[kInfo].subject; }
@@ -151,10 +159,11 @@
     get fingerprint() { return this[kInfo].fingerprint; }
     get fingerprint256() { return this[kInfo].fingerprint256; }
     get fingerprint512() { return this[kInfo].fingerprint512; }
-    get keyUsage() { return this[kInfo].keyUsage === null ? undefined : this[kInfo].keyUsage.slice(); }
+    get keyUsage() { return cached(this, 'keyUsage', () => (this[kInfo].keyUsage === null ? undefined : this[kInfo].keyUsage.slice())); }
     get serialNumber() { return this[kInfo].serialNumber; }
-    get raw() { return Buffer.from(this[kInfo].raw, 'base64'); }
-    get publicKey() { return crypto.createPublicKey(spkiPEM(this[kInfo].spki)); }
+    // Node computes these once per certificate and returns the same object after.
+    get raw() { return cached(this, 'raw', () => Buffer.from(this[kInfo].raw, 'base64')); }
+    get publicKey() { return cached(this, 'publicKey', () => crypto.createPublicKey(spkiPEM(this[kInfo].spki))); }
     get ca() { return this[kInfo].ca; }
 
     toString() { return this[kInfo].pem; }

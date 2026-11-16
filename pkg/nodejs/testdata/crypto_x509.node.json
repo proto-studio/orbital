@@ -111,6 +111,12 @@
       "value": "Jan  5 03:04:05 2060 GMT"
     }
   },
+  "cachedGetters": [
+    true,
+    true,
+    true,
+    false
+  ],
   "checkEmail": [
     [
       "admin@example.com",
@@ -301,6 +307,12 @@
     "message": "The \"otherCert\" argument must be an instance of X509Certificate. Received type string ('x')",
     "name": "TypeError"
   },
+  "checkIssuedHashName": [
+    "CN=\\# example ca",
+    "CN=\\# EXAMPLE CA",
+    true,
+    true
+  ],
   "checkIssuedMore": [
     true,
     true,
@@ -346,6 +358,14 @@
     }
   ],
   "digests": {
+    "BLAKE2S-256": [
+      "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982",
+      "0018bfddc0c878b3e270c6e59b35af01e164a42d89499c9447a90b58a4d60eb3"
+    ],
+    "RMD160": [
+      "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc",
+      "67fdce738ebfc7372bcd38f03c023b5746724d18"
+    ],
     "RSA-SHA256": [
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab"
@@ -354,9 +374,25 @@
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
       "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab"
     ],
+    "blake2b512": [
+      "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923",
+      "05cc4815438d5cfe68fff446b8df57828cc96189de4b4e928e3f06d815d64e5bc15124a02ffd39859b3e2476da03bc0235ca86df623af2a5631779809e9fd04a"
+    ],
+    "md5-sha1": [
+      "900150983cd24fb0d6963f7d28e17f72a9993e364706816aba3e25717850c26c9cd0d89d",
+      "a76e5cc4bdaa99b87cc7de69e0606e7d74fd2771909f120bb3b9a4649bb99bea2b4cec32"
+    ],
     "md5WithRSAEncryption": [
       "900150983cd24fb0d6963f7d28e17f72",
       "d2fe98063f876b03193afb49b4979591"
+    ],
+    "ripemd160": [
+      "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc",
+      "67fdce738ebfc7372bcd38f03c023b5746724d18"
+    ],
+    "ripemd160WithRSA": [
+      "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc",
+      "67fdce738ebfc7372bcd38f03c023b5746724d18"
     ],
     "sha-256": [
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
@@ -788,6 +824,70 @@
       "CN=a\n1.2.3.4=b",
       "CN=a\\011.2.3.4=b"
     ]
+  },
+  "shake": {
+    "copy": {
+      "value": [
+        "3590d7cf18ba3fea38f3a8df51ef85c1",
+        "3590d7cf18ba",
+        "3590d7cf"
+      ]
+    },
+    "default128": {
+      "value": "5881092dd818bf5cf8a3ddb793fbcba7"
+    },
+    "default256": {
+      "value": "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739"
+    },
+    "fractionLength": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"options.outputLength\" is out of range. It must be an integer. Received 1.5",
+      "name": "RangeError"
+    },
+    "hmac": {
+      "message": "error:00000000:lib(0)::reason(0)",
+      "name": "Error"
+    },
+    "hugeLength": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"options.outputLength\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received 4294967296",
+      "name": "RangeError"
+    },
+    "length0": {
+      "value": ""
+    },
+    "length100": {
+      "value": "SDNmYBNgqHccaGMIDMQRTY20RTD48eHuT5TqN+eLVznVoVvvGGpThsdXRMBSfh+qn4cm5GKhKk/rBr2IAedR5BOFFBIE8ymXn9MEehPFZXckraZNJHAVezzcKIYglE14283b2Q=="
+    },
+    "length5": {
+      "value": "5881092dd8"
+    },
+    "negativeLength": {
+      "code": "ERR_OUT_OF_RANGE",
+      "message": "The value of \"options.outputLength\" is out of range. It must be \u003e= 0 \u0026\u0026 \u003c= 4294967295. Received -1",
+      "name": "RangeError"
+    },
+    "nullOptions": {
+      "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "sha256Length32": {
+      "value": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    "sha256Length5": {
+      "code": "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH",
+      "message": "error:030000B2:digital envelope routines::not XOF or invalid length",
+      "name": "Error"
+    },
+    "stringLength": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"options.outputLength\" property must be of type number. Received type string ('5')",
+      "name": "TypeError"
+    },
+    "unknownWithBadLength": {
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"options.outputLength\" property must be of type number. Received type string ('x')",
+      "name": "TypeError"
+    }
   },
   "trusted": {
     "value": [

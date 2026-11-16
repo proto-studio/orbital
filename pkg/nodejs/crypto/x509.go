@@ -107,6 +107,9 @@ type nameAttr struct {
 	Key   string `json:"k"`
 	Value string `json:"v"`
 	rdn   int
+	// opaque marks a value that isn't a string type, shown as "#" and
+	// its DER in hex; names compare such values as they are.
+	opaque bool
 }
 
 func parseName(raw []byte) ([]nameAttr, error) {
@@ -124,39 +127,41 @@ func parseName(raw []byte) ([]nameAttr, error) {
 			return nil, err
 		}
 		for _, atv := range atvs {
-			out = append(out, nameAttr{Key: attrName(atv.Type), Value: asn1StringValue(atv.Value), rdn: i})
+			v, opaque := asn1StringValue(atv.Value)
+			out = append(out, nameAttr{Key: attrName(atv.Type), Value: v, rdn: i, opaque: opaque})
 		}
 	}
 	return out, nil
 }
 
-// asn1StringValue converts an ASN.1 string to UTF-8 as OpenSSL does.
-func asn1StringValue(v asn1.RawValue) string {
+// asn1StringValue converts an ASN.1 string to UTF-8 as OpenSSL does. Other
+// types come back as "#" and their DER in hex, with opaque set.
+func asn1StringValue(v asn1.RawValue) (s string, opaque bool) {
 	switch v.Tag {
 	case 30: // BMPString: UTF-16BE
 		var sb strings.Builder
 		for i := 0; i+1 < len(v.Bytes); i += 2 {
 			sb.WriteRune(rune(v.Bytes[i])<<8 | rune(v.Bytes[i+1]))
 		}
-		return sb.String()
+		return sb.String(), false
 	case 28: // UniversalString: UTF-32BE
 		var sb strings.Builder
 		for i := 0; i+3 < len(v.Bytes); i += 4 {
 			sb.WriteRune(rune(v.Bytes[i])<<24 | rune(v.Bytes[i+1])<<16 | rune(v.Bytes[i+2])<<8 | rune(v.Bytes[i+3]))
 		}
-		return sb.String()
+		return sb.String(), false
 	case 12: // UTF8String
-		return string(v.Bytes)
+		return string(v.Bytes), false
 	case 19, 22, 26: // Printable, IA5, Visible: ASCII
-		return string(v.Bytes)
+		return string(v.Bytes), false
 	case 20: // T61String, read as Latin-1
 		var sb strings.Builder
 		for _, b := range v.Bytes {
 			sb.WriteRune(rune(b))
 		}
-		return sb.String()
+		return sb.String(), false
 	}
-	return "#" + strings.ToUpper(hex.EncodeToString(v.FullBytes))
+	return "#" + strings.ToUpper(hex.EncodeToString(v.FullBytes)), true
 }
 
 // escape2253 escapes a value as OpenSSL's ASN1_STRFLGS_ESC_2253 and
@@ -861,7 +866,7 @@ func canonicalName(attrs []nameAttr) string {
 		j := i
 		var vals [][2]string
 		for ; j < len(attrs) && attrs[j].rdn == attrs[i].rdn; j++ {
-			vals = append(vals, [2]string{attrs[j].Key, canonicalValue(attrs[j].Value)})
+			vals = append(vals, [2]string{attrs[j].Key, canonicalValue(attrs[j])})
 		}
 		sort.Slice(vals, func(a, b int) bool {
 			if vals[a][0] != vals[b][0] {
@@ -877,9 +882,10 @@ func canonicalName(attrs []nameAttr) string {
 	return string(b)
 }
 
-func canonicalValue(v string) string {
-	if strings.HasPrefix(v, "#") {
-		return v
+func canonicalValue(a nameAttr) string {
+	v := a.Value
+	if a.opaque {
+		return "#" + v
 	}
 	isSpace := func(c byte) bool { return c == ' ' || (c >= '\t' && c <= '\r') }
 	var sb strings.Builder
