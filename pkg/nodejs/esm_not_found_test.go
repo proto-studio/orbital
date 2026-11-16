@@ -614,3 +614,19 @@ log.push(err2.stack.split('\n')[0].slice(0, 40));`,
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A file: URL host with a malformed or non-UTF-8 escape is an invalid URL, and a
+// program's own stack formatter's result is kept as it is. Expected from Node 20.18.1.
+func TestDynamicImport_InvalidHostAndCustomFormatter(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"entry.mjs": `for (const u of ['file://%ZZ/tmp/x.mjs', 'file://%FF/tmp/x.mjs']) { try { await import(u); } catch (e) { log.push([e.name, e.code, e.message, e.input, Object.keys(e).join()]); } }
+let err; try { await import('./nope.mjs'); } catch (e) { err = e; }
+Error.prepareStackTrace = () => 'Error: custom';
+log.push(err.stack);
+delete Error.prepareStackTrace;`,
+	})
+	want := `[["TypeError","ERR_INVALID_URL","Invalid URL","file://%ZZ/tmp/x.mjs","code,input"],["TypeError","ERR_INVALID_URL","Invalid URL","file://%FF/tmp/x.mjs","code,input"],"Error: custom"]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

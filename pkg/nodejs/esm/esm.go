@@ -39,9 +39,6 @@ type ESM struct {
 	rejected *v8.Value
 	// keyPaths maps a module url carrying a query or fragment to its file.
 	keyPaths map[string]string
-	// linkHandled records that linkFailed's error went to an
-	// 'uncaughtException' listener.
-	linkHandled bool
 	// linkErr is the last error object a failed resolution threw, which is what
 	// a failed Instantiate threw.
 	linkErr *v8.Value
@@ -247,7 +244,6 @@ func (e *ESM) linkFailed(err error) error {
 		return ended
 	}
 	// An 'uncaughtException' listener handled it; Node carries on too.
-	e.linkHandled = true
 	return nil
 }
 
@@ -317,28 +313,29 @@ func (e *ESM) Preload(specifier string) error {
 	if err := e.ensureLoader(); err != nil {
 		return err
 	}
-	source, url, err := e.resolveAndLoad(specifier, "")
+	// Like Node, which runs import() on each --import: resolution, link,
+	// syntax and evaluation failures all reject it with the real error, and a
+	// rejection is reported as an uncaught exception. The script has no name,
+	// so the module resolves from the working directory.
+	p, err := e.rt.RunScript("import("+jsQuote(specifier)+")", "")
 	if err != nil {
-		if ended := e.rt.Ended(); ended != nil {
-			return ended
-		}
-		// Like Node, an --import that fails to resolve is an uncaught exception.
-		e.linkErr = nil
-		e.linkHandled = false
-		thrown := e.throwable(err)
-		if err := e.linkFailed(thrown); err != nil || !e.linkHandled {
-			return err
-		}
-		return ErrPreloadFailed
+		return e.endedOr(err)
 	}
-	e.linkHandled = false
-	result, err := e.RunModule(source, url)
-	if err != nil {
-		return err
+	if p == nil || !p.IsPromise() {
+		return errors.New("esm: --import " + specifier + " did not start")
 	}
-	// A link error, or a throw or rejection while it ran, that a listener handled.
-	if e.linkHandled || (result != nil && result.IsPromise() && result.PromiseState() == v8.PromiseRejected) {
+	e.rt.WatchModuleEvaluation(p)
+	e.rt.Context().PerformMicrotaskCheckpoint()
+	e.rt.EventLoop().Run()
+	if ended := e.rt.Ended(); ended != nil {
+		return ended
+	}
+	switch p.PromiseState() {
+	case v8.PromiseRejected:
+		// An 'uncaughtException' listener handled it.
 		return ErrPreloadFailed
+	case v8.PromisePending:
+		return errors.New("esm: --import " + specifier + " never finished loading")
 	}
 	return nil
 }
@@ -411,7 +408,7 @@ func (e *ESM) throwable(err error) error {
 		return err
 	}
 	ctx := e.rt.Context()
-	args := make([]*v8.Value, 3, 4)
+	args := make([]*v8.Value, 3, 5)
 	for i, s := range []string{me.msg, me.code, me.url} {
 		v, serr := ctx.NewString(s)
 		if serr != nil {
@@ -423,7 +420,11 @@ func (e *ESM) throwable(err error) error {
 	if kerr != nil {
 		return err
 	}
-	args = append(args, kind)
+	input, ierr := ctx.NewString(me.input)
+	if ierr != nil {
+		return err
+	}
+	args = append(args, kind, input)
 	exc, cerr := mk.Call(nil, args...)
 	if cerr != nil || exc == nil {
 		return err

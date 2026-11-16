@@ -57,9 +57,11 @@
     defineProperty(err, 'stack', {
       get: function () {
         if (!done) {
+          // A program's own formatter's result is kept as it is.
+          var custom = typeof NativeError.prepareStackTrace === 'function';
           value = apply(desc.get, err, []);
           done = true;
-          if (typeof value === 'string' && value.indexOf(name + ': ') === 0) {
+          if (!custom && typeof value === 'string' && value.indexOf(name + ': ') === 0) {
             value = name + ' [' + code + ']: ' + value.slice(name.length + 2);
           }
         }
@@ -75,7 +77,7 @@
   }
 
   // kind is the error's class: "Error", "TypeError" or "URIError".
-  globalThis.__esmModuleError = function (message, code, url, kind) {
+  globalThis.__esmModuleError = function (message, code, url, kind, input) {
     var isTypeError = kind === 'TypeError';
     var err = isTypeError ? new NativeTypeError(message)
       : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
@@ -92,6 +94,7 @@
       setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);
     }
     if (url) own(err, 'url', url, true);
+    if (input) own(err, 'input', input, true);
     return err;
   };
 
