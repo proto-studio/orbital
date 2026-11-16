@@ -635,7 +635,8 @@
 
         const start = typeof options.start === 'number' ? options.start : -1;
         const end = typeof options.end === 'number' ? options.end : -1;
-        const res = fs._readStreamOpen(String(path), start, end);
+        // A Buffer path in the path wrapper's byte form goes on as it is, for the native side.
+        const res = fs._readStreamOpen(path && typeof path === 'object' && path.__pathBytes ? path : String(path), start, end);
         if (!res || res.error) {
           this.destroy(fs.__makeFsError(
             (res && res.error) || 'open failed',
@@ -1206,12 +1207,12 @@
     }
     return checkedPath(prefix, 'prefix');
   }
-  defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), checkedEncoding(options)], 'mkdtemp', (path, [, options]) => namedIn(path, options));
+  defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), checkedEncoding(options)], 'mkdtemp', (path, [, options]) => bytesNamedIn(bytesOf(path), options));
 
   // realpath.native names realpath in its errors, as the C call does. Plain realpath, like
   // Node's JavaScript one, reports a missing path from lstat, or a link to one from stat, by
   // its absolute path.
-  defineCall('realpath', (path, options) => [checkedPath(path, 'path'), checkedEncoding(options)], 'realpath', (real, [, options]) => namedIn(real, options));
+  defineCall('realpath', (path, options) => [checkedPath(path, 'path'), checkedEncoding(options)], 'realpath', (real, [, options]) => bytesNamedIn(bytesOf(real), options));
   const realpathNativeSync = fs.realpathSync;
   const realpathNative = fs.realpath;
   function asJsRealpathError(e, path) {

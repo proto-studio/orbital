@@ -81,7 +81,8 @@ func (f *FS) linkOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 	}, -1, nil
 }
 
-// realpathOp backs realpath(path). A Filesystem without links resolves nothing, so the path
+// realpathOp backs realpath(path), giving the path as base64 of its bytes, which need not be
+// UTF-8. A Filesystem without links resolves nothing, so the path
 // need only exist.
 func (f *FS) realpathOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
 	path := stringArg(args, 0)
@@ -92,20 +93,20 @@ func (f *FS) realpathOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int
 			if _, err := fsys.Stat(path); err != nil {
 				return failed(err, "realpath", path)
 			}
-			return opResult{value: stringValue(path)}
+			return opResult{value: stringValue(base64.StdEncoding.EncodeToString([]byte(path)))}
 		}
 		real, err := l.Realpath(path)
 		if err != nil {
 			return failed(err, "realpath", path)
 		}
-		return opResult{value: stringValue(real)}
+		return opResult{value: stringValue(base64.StdEncoding.EncodeToString([]byte(real)))}
 	}, -1, nil
 }
 
 const tempChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 // mkdtempOp backs mkdtemp(prefix): it makes a directory named prefix and six random letters
-// and digits, with mode 0o700, and gives its path. Errors name prefix + "XXXXXX", as Node's do.
+// and digits, with mode 0o700, and gives its path as base64 of its bytes. Errors name prefix + "XXXXXX", as Node's do.
 func (f *FS) mkdtempOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
 	prefix := stringArg(args, 0)
 	fsys := f.fs()
@@ -127,7 +128,7 @@ func (f *FS) mkdtempOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int,
 			if err != nil {
 				return failed(err, "mkdtemp", prefix+"XXXXXX")
 			}
-			return opResult{value: stringValue(path)}
+			return opResult{value: stringValue(base64.StdEncoding.EncodeToString([]byte(path)))}
 		}
 		return failed(syscall.EEXIST, "mkdtemp", prefix+"XXXXXX")
 	}, -1, nil
