@@ -82,5 +82,22 @@ results.errors = {
   ecKey: outcome(() => crypto.publicEncrypt(crypto.createPublicKey(fx.ecPub), msg)),
 };
 
-if (globalThis.done) done(results);
-else process.stdout.write(JSON.stringify(results));
+// WebCrypto CryptoKeys work as keys, directly or as options.key.
+async function main() {
+  const subtle = globalThis.crypto.subtle;
+  const algo = { name: 'RSA-OAEP', hash: 'SHA-256' };
+  const ckPub = await subtle.importKey('jwk', pub.export({ format: 'jwk' }), algo, true, ['encrypt']);
+  const ckPriv = await subtle.importKey('jwk', priv.export({ format: 'jwk' }), algo, true, ['decrypt']);
+  results.cryptoKeys = {
+    roundTrip: outcome(() => crypto.privateDecrypt(ckPriv, crypto.publicEncrypt(ckPub, msg)).toString()),
+    nodeCiphertext: outcome(() => crypto.privateDecrypt({ key: ckPriv }, Buffer.from(fx.oaep, 'base64')).toString()),
+    privateAsPublic: outcome(() => crypto.privateDecrypt(priv, crypto.publicEncrypt({ key: ckPriv }, msg)).toString()),
+    publicAsPrivate: outcome(() => crypto.privateDecrypt(ckPub, Buffer.from(fx.oaep, 'base64'))),
+  };
+  return results;
+}
+
+main().then((value) => {
+  if (globalThis.done) done(value);
+  else process.stdout.write(JSON.stringify(value));
+});

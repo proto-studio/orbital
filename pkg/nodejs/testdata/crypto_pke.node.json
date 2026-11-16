@@ -1,4 +1,20 @@
 {
+  "cryptoKeys": {
+    "nodeCiphertext": {
+      "value": "secret message"
+    },
+    "privateAsPublic": {
+      "value": "secret message"
+    },
+    "publicAsPrivate": {
+      "code": "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+      "message": "Invalid key object type public, expected private.",
+      "name": "TypeError"
+    },
+    "roundTrip": {
+      "value": "secret message"
+    }
+  },
   "errors": {
     "badOaepHash": {
       "code": "ERR_OSSL_EVP_INVALID_DIGEST",

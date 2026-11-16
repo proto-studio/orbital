@@ -53,8 +53,10 @@
 
   function keyFor(input, wantPrivate) {
     const KeyObject = crypto.KeyObject;
+    // A KeyObject or WebCrypto CryptoKey, directly or as options.key.
     let key = input instanceof KeyObject ? input
       : (input && typeof input === 'object' && input.key instanceof KeyObject ? input.key : null);
+    if (!key) key = crypto._fromCryptoKey(input) || (input && typeof input === 'object' ? crypto._fromCryptoKey(input.key) : null);
     if (!key) {
       try {
         key = wantPrivate ? crypto.createPrivateKey(input) : crypto.createPublicKey(input);
