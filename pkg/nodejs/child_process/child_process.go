@@ -50,6 +50,8 @@ type childProc struct {
 	// child.unref() asked it not to. Guarded by mu.
 	held   bool
 	unrefd bool
+	// eof marks the readers that have reached the end of their output. Guarded by mu.
+	eof map[int]bool
 }
 
 // New creates a new ChildProcess module.
@@ -638,6 +640,18 @@ func (c *ChildProcess) readFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		buf := make([]byte, 65536)
 		n, _ := reader.Read(buf)
+		if n == 0 {
+			// A pipe at its end no longer holds the loop for an unref'd child.
+			c.mu.Lock()
+			if proc, ok := c.processes[id]; ok {
+				if proc.eof == nil {
+					proc.eof = make(map[int]bool)
+				}
+				proc.eof[fd] = true
+				c.updateHold(proc)
+			}
+			c.mu.Unlock()
+		}
 
 		// A read error other than the end of the stream can only be a closed pipe,
 		// and a later read reports it if data came with it.
@@ -793,10 +807,16 @@ func (c *ChildProcess) setRef(info *v8.FunctionCallbackInfo, ref bool) {
 }
 
 // updateHold makes the wait for proc keep the event loop running, or not. As in Node, an
-// unref'd child still holds the loop while its output pipes are open, because Node reads
-// them from the start. The caller holds mu.
+// unref'd child still holds the loop while an output pipe is open and not at its end,
+// because Node reads them from the start. The caller holds mu.
 func (c *ChildProcess) updateHold(proc *childProc) {
-	want := !proc.exited && (!proc.unrefd || len(proc.readers) > 0)
+	open := 0
+	for fd := range proc.readers {
+		if !proc.eof[fd] {
+			open++
+		}
+	}
+	want := !proc.exited && (!proc.unrefd || open > 0)
 	switch {
 	case want && !proc.held:
 		c.rt.EventLoop().AddPendingWork()

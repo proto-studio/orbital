@@ -61,6 +61,8 @@ async function main() {
   const ignored = cp.spawn('sleep', ['2'], { stdio: 'ignore' });
   ignored.unref();
   results.unref_pid = typeof ignored.pid === 'number';
+  // An unref'd child whose output pipes have closed doesn't keep the script running.
+  cp.spawn('/bin/sh', ['-c', 'exec 1>&- 2>&-; sleep 3']).unref();
   return results;
 }
 
