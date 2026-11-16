@@ -179,7 +179,7 @@
         // line and prints with it.
         const text = readSource(file);
         if (text !== null && code(text, 0) === 0xFEFF) {
-          sourceLine = '﻿' + sourceLine;
+          sourceLine = '\uFEFF' + sourceLine;
           start++;
           end++;
         }
