@@ -57,6 +57,12 @@ function contexts() {
     ciphersOnlyOpenSSLHas: { ciphers: 'DHE' },
     ciphersJoinedOpenSSLOnly: { ciphers: 'DHE+AESGCM' },
     ciphersNoSuitesAnywhere: { ciphers: 'CCM8' },
+    ciphersNameExcludedAgain: { ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256:!ECDHE-ECDSA-AES128-GCM-SHA256' },
+    ciphersNameRemovedAgain: { ciphers: 'ECDHE-ECDSA-AES128-GCM-SHA256:-ECDHE-ECDSA-AES128-GCM-SHA256' },
+    ciphersGroupExcludedAgain: { ciphers: 'DHE:!DHE' },
+    ciphersHighExcludedAgain: { ciphers: 'HIGH:!HIGH' },
+    ciphersJoinExcludedAgain: { ciphers: 'DHE+AESGCM:!DHE+AESGCM' },
+    ciphersAllLeavesNullSuites: { ciphers: 'ECDHE:!ALL' },
   };
   const out = {};
   for (const [name, options] of Object.entries(cases)) {

@@ -128,10 +128,10 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 	var tls13 []string
 	var chosen []suiteInfo
 	banned := map[uint16]bool{}
-	// OpenSSL also knows suites crypto/tls lacks, such as DHE ones, so a list whose suites
-	// were all removed again may still have some there. Only a list that never selected
-	// anything is refused.
-	selectedAny := false
+	// OpenSSL also knows suites crypto/tls lacks, such as DHE ones, which every group but a
+	// single name has some of. A group added and not excluded again by the same word is
+	// taken to leave some of those, so the list isn't empty.
+	otherSuites := map[string]bool{}
 	for _, token := range strings.FieldsFunc(ciphers, func(r rune) bool { return r == ':' || r == ',' || r == ' ' }) {
 		if strings.HasPrefix(token, "TLS_") {
 			tls13 = append(tls13, token)
@@ -175,19 +175,21 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 		if !known {
 			continue
 		}
+		hasOthers := token != "" && !isCipherName(token) && (len(selected) > 0)
 		switch op {
-		case '!':
-			for _, c := range selected {
-				banned[c.id] = true
+		case '!', '-':
+			if op == '!' {
+				for _, c := range selected {
+					banned[c.id] = true
+				}
 			}
 			chosen = removeCiphers(chosen, selected)
-		case '-':
-			chosen = removeCiphers(chosen, selected)
+			delete(otherSuites, token)
 		case '+':
 			// Moving suites to the end changes only preference, which crypto/tls decides.
 		default:
-			if len(selected) > 0 {
-				selectedAny = true
+			if hasOthers {
+				otherSuites[token] = true
 			}
 			for _, c := range selected {
 				if c != elsewhere && !banned[c.id] && !containsCipher(chosen, c) {
@@ -196,7 +198,7 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 			}
 		}
 	}
-	if !selectedAny && len(tls13) == 0 {
+	if len(chosen) == 0 && len(otherSuites) == 0 && len(tls13) == 0 {
 		return errNoCipherMatch
 	}
 
@@ -211,6 +213,15 @@ func ApplyCiphers(cfg *tls.Config, ciphers string) error {
 		cfg.MinVersion = tls.VersionTLS13
 	}
 	return nil
+}
+
+func isCipherName(word string) bool {
+	for _, c := range openSSLCiphers {
+		if c.name == word {
+			return true
+		}
+	}
+	return false
 }
 
 func containsCipher(list []suiteInfo, c suiteInfo) bool {
