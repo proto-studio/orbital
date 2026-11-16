@@ -342,7 +342,7 @@
       // validateAttributes in its default load).
       const err = new NativeTypeError(r.message);
       err.code = r.code;
-      throw err;
+      throw internal(err);
     }
     return { source: r.source, format: r.format, shortCircuit: true };
   }
@@ -543,7 +543,7 @@
       const err = new NativeTypeError('Expected an object to be returned for the "importAttributes" from the "' +
         lastHook + '" hook but got ' + describe(res.importAttributes) + '.');
       err.code = 'ERR_INVALID_RETURN_PROPERTY_VALUE';
-      throw err;
+      throw internal(err);
     }
     const resolvedAttributes = res.importAttributes != null ? res.importAttributes : importAttributes;
     return {
