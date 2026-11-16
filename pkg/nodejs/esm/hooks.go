@@ -308,6 +308,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	// Like Node's module map, a type that isn't a string is refused before any
 	// load hook runs.
 	if _, typeReceived := parseAttrsJSON(resolvedAttrs); typeReceived != "" {
+		e.dropResolvedAttrs(resolvedAttrs)
 		return "", "", attrTypeError("ERR_INVALID_ARG_TYPE",
 			`The "type" argument must be of type string. Received `+typeReceived)
 	}
@@ -321,6 +322,7 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		key = attrCheckKey(url, resolvedList)
 		if prior, seen := e.attrChecks[key]; seen {
 			if prior != nil {
+				e.dropResolvedAttrs(resolvedAttrs)
 				return "", "", prior
 			}
 		} else {
@@ -359,6 +361,12 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	}
 	resolvedList, _ := parseAttrsJSON(resolvedAttrs)
 	return final, e.typedKey(url, format, resolvedList), nil
+}
+
+// dropResolvedAttrs releases the attributes the loader realm keeps for a load
+// that won't happen.
+func (e *ESM) dropResolvedAttrs(resolvedAttrs string) {
+	_, _ = e.callLoaderRealm("__dropAttrs", resolvedAttrs)
 }
 
 // callLoaderRealm invokes a global function in the loader realm with string args

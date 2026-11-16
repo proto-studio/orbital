@@ -11,6 +11,12 @@
 (function () {
   'use strict';
 
+  // Captured now, so a hook's initialize() replacing the globals can't change
+  // the errors the loader throws.
+  const NativeError = Error;
+  const NativeTypeError = TypeError;
+  const NativeURIError = URIError;
+
   const hooks = [];
 
   // Called (from Go) once per module.register(), after the hooks module has been
@@ -334,7 +340,7 @@
     if (r.code) {
       // An import attribute the module's format doesn't allow (Node's
       // validateAttributes in its default load).
-      const err = new TypeError(r.message);
+      const err = new NativeTypeError(r.message);
       err.code = r.code;
       throw err;
     }
@@ -377,6 +383,15 @@
     encoded.id = id;
     return JSON.stringify(encoded);
   }
+
+  // Go calls this when it refuses a resolution before its load, so the stashed
+  // object isn't kept.
+  globalThis.__dropAttrs = function (text) {
+    try {
+      const encoded = JSON.parse(text || '{}');
+      if (encoded.id !== undefined) stashed.delete(encoded.id);
+    } catch (e) { /* nothing stashed */ }
+  };
 
   function unstashAttrs(text) {
     const encoded = JSON.parse(text || '{"array":false,"pairs":[]}');
@@ -428,7 +443,8 @@
     if (typeof v === 'function') return v.name ? 'function ' + v.name : 'function';
     if (typeof v === 'object') {
       const ctor = v.constructor && v.constructor.name;
-      return ctor ? 'an instance of ' + ctor : safeString(v);
+      // Node calls a null-prototype object an instance of Object as well.
+      return 'an instance of ' + (ctor || 'Object');
     }
     let shown = typeof v === 'bigint' ? v + 'n' : safeString(v);
     if (shown.length > 25) shown = shown.slice(0, 25) + '...';
@@ -481,7 +497,7 @@
     // A resolve hook may replace the attributes the module is loaded with, with
     // an object (Node's check of a resolve hook's result).
     if (res.importAttributes != null && typeof res.importAttributes !== 'object') {
-      const err = new TypeError('Expected an object to be returned for the "importAttributes" from the "' +
+      const err = new NativeTypeError('Expected an object to be returned for the "importAttributes" from the "' +
         lastHook + '" hook but got ' + describe(res.importAttributes) + '.');
       err.code = 'ERR_INVALID_RETURN_PROPERTY_VALUE';
       throw err;
