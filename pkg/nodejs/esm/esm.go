@@ -201,12 +201,17 @@ func (e *ESM) runModule(source, filename string, entry bool) (*v8.Value, error) 
 	if isPromise {
 		ctx.PerformMicrotaskCheckpoint()
 		if result.PromiseState() == v8.PromisePending {
-			return nil, errors.New("Top-level await promise never resolved before the event loop drained")
+			return nil, ErrUnsettledTopLevelAwait
 		}
 	}
 
 	return result, nil
 }
+
+// ErrUnsettledTopLevelAwait is returned when a module's top-level await never
+// settles and nothing is left to run. Node then runs the 'exit' listeners and
+// exits with code 13.
+var ErrUnsettledTopLevelAwait = errors.New("top-level await promise never resolved before the event loop drained")
 
 // endedOr returns what ended the runtime in place of err, a failure from loading or
 // running module code. process.exit() terminates execution, so any step that runs
@@ -232,7 +237,13 @@ func (e *ESM) linkFailed(err error) error {
 	exc := e.linkErr
 	e.linkErr = nil
 	if exc == nil {
-		return err
+		// Not a resolution failure: the exception linking threw (a SyntaxError
+		// in a dependency, a missing export).
+		var thrown v8.ExceptionError
+		if !errors.As(err, &thrown) || thrown.Exception() == nil {
+			return err
+		}
+		exc = thrown.Exception()
 	}
 	rejected := e.rejected
 	if rejected == nil || !rejected.IsFunction() {
@@ -340,7 +351,8 @@ func (e *ESM) Preload(specifier string) error {
 		// An 'uncaughtException' listener handled it.
 		return ErrPreloadFailed
 	case v8.PromisePending:
-		return errors.New("esm: --import " + specifier + " never finished loading")
+		// Its top-level await never settled: Node exits 13.
+		return ErrUnsettledTopLevelAwait
 	}
 	return nil
 }

@@ -33,6 +33,10 @@
   const reflectApply = Reflect.apply;
   const objectKeys = Object.keys;
   const jsonStringify = JSON.stringify;
+  const isPrototypeOf = Object.prototype.isPrototypeOf;
+  const ErrorPrototype = Error.prototype;
+  const getTime = Date.prototype.getTime;
+  function dateValue(d) { return reflectApply(getTime, d, []); }
   function internal(err) {
     reflectApply(internalAdd, internalErrors, [err]);
     return err;
@@ -46,6 +50,11 @@
     try {
       if (e === null || (typeof e !== 'object' && typeof e !== 'function')) {
         return jsonStringify({ primitive: true, value: e === undefined ? null : e, undef: e === undefined });
+      }
+      if (!reflectApply(isPrototypeOf, ErrorPrototype, [e])) {
+        // Not an error: Node transfers the value itself (structured clone).
+        if (e instanceof Date) return jsonStringify({ object: true, date: dateValue(e) });
+        return jsonStringify({ object: true, json: e });
       }
       const props = {};
       const keys = objectKeys(e);

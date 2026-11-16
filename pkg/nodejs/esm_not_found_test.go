@@ -709,3 +709,28 @@ try { await import('./nope.mjs'); } catch (e) { log.push(String(e).slice(0, 26),
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A non-error value a hook throws arrives as that value, and a file: URL host
+// is checked against the URL grammar (decoded delimiters, forbidden characters,
+// IPv6). Expected from Node 20.18.1.
+func TestDynamicImport_HookValuesAndHostGrammar(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'obj') throw { foo: 1 };
+  if (s === 'date') throw new Date(0);
+  if (s === 'arr') throw [1, 2];
+  return n(s, c);
+}`,
+		"entry.mjs": `for (const u of ['file://local%20host/tmp/x', 'file://[abc]/tmp/x', 'file://user%40localhost/tmp/x', 'file://localhost%3A12/tmp/x', 'file://[::1]/tmp/x']) {
+  try { await import(u); } catch (e) { log.push([e.code, e.input]); }
+}
+const { register } = await import('node:module');
+register('./hooks.mjs', import.meta.url);
+for (const s of ['obj', 'date', 'arr']) { try { await import(s); } catch (e) { log.push([Object.prototype.toString.call(e), e instanceof Error, JSON.stringify(e), e.message, e.stack === undefined]); } }`,
+	})
+	want := `[["ERR_INVALID_URL","file://local%20host/tmp/x"],["ERR_INVALID_URL","file://[abc]/tmp/x"],["ERR_INVALID_URL","file://user%40localhost/tmp/x"],["ERR_INVALID_URL","file://localhost%3A12/tmp/x"],["ERR_INVALID_FILE_URL_HOST","file://[::1]/tmp/x"],` +
+		`["[object Object]",false,"{\"foo\":1}",null,true],["[object Date]",false,"\"1970-01-01T00:00:00.000Z\"",null,true],["[object Array]",false,"[1,2]",null,true]]`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

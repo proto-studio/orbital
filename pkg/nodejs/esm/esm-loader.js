@@ -119,6 +119,7 @@
   // stack and own enumerable properties, or the thrown value if it wasn't an
   // object, as Node transfers it from its hooks thread.
   var jsonParse = JSON.parse;
+  var NativeDate = Date;
   var objectKeys = Object.keys;
   var hookCtors = {
     Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
@@ -127,6 +128,7 @@
   globalThis.__esmHookError = function (payload) {
     var d = jsonParse(payload);
     if (d.primitive) return d.undef ? undefined : d.value;
+    if (d.object) return 'date' in d ? new NativeDate(d.date) : d.json;
     var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
     var err = new Ctor(d.message);
     var keys = objectKeys(d.props || {});
