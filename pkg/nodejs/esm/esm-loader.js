@@ -125,19 +125,26 @@
   // thread. (A thrown value that isn't an error is structured-cloned in Go.)
   var jsonParse = JSON.parse;
   var objectKeys = Object.keys;
+  var objectCreate = Object.create;
   var hookCtors = {
     Error: NativeError, TypeError: NativeTypeError, URIError: NativeURIError,
     RangeError: RangeError, SyntaxError: SyntaxError, ReferenceError: ReferenceError, EvalError: EvalError,
   };
   // props, when given, is the error's own properties as structured-cloned.
-  globalThis.__esmHookError = function (payload, props) {
+  // Like Node's deserialized errors, the result has its class's prototype and
+  // own name, message, stack and (if it had one) cause, then its properties.
+  globalThis.__esmHookError = function (payload, bag) {
     var d = jsonParse(payload);
-    if (props !== undefined) d.props = props;
+    var props = d.props || {};
+    if (bag !== undefined && bag !== null) props = bag.props || {};
     var Ctor = (typeof d.ctor === 'string' && objectKeys(hookCtors).indexOf(d.ctor) >= 0) ? hookCtors[d.ctor] : NativeError;
-    var err = new Ctor(d.message);
-    var keys = objectKeys(d.props || {});
-    for (var i = 0; i < keys.length; i++) own(err, keys[i], d.props[keys[i]], true);
+    var err = objectCreate(Ctor.prototype);
+    own(err, 'name', d.name, false);
+    own(err, 'message', d.message, false);
     own(err, 'stack', d.stack, false);
+    if (bag && bag.hasCause) own(err, 'cause', bag.cause, false);
+    var keys = objectKeys(props);
+    for (var i = 0; i < keys.length; i++) own(err, keys[i], props[keys[i]], true);
     return err;
   };
 

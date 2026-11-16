@@ -78,6 +78,8 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		"dep.mjs":    `export const a = 1;`,
 		"e2.mjs":     `import { b } from './dep.mjs';`,
 		"tla.mjs":    `await new Promise(() => {});`,
+		"zero.cjs":   `process.on('exit', () => { process.exitCode = 0; });`,
+		"seven.cjs":  `process.on('exit', () => { process.exitCode = 7; });`,
 		"entry.mjs":  `console.log('entry');`,
 	}
 	for name, src := range files {
@@ -95,6 +97,9 @@ func TestEntry_LinkErrorsAndUnsettledAwait(t *testing.T) {
 		{[]string{"-r", p("pre.cjs"), p("e2.mjs")}, "caught SyntaxError The requested module './dep.mjs' does not provide an export named 'b'\nexit 0\n", 0},
 		{[]string{"-r", p("pre.cjs"), p("tla.mjs")}, "exit 0\n", 13},
 		{[]string{"-r", p("pre.cjs"), "--import", p("tla.mjs"), p("entry.mjs")}, "exit 0\n", 13},
+		// An 'exit' listener's process.exitCode replaces 13, even when it is 0.
+		{[]string{"-r", p("zero.cjs"), p("tla.mjs")}, "", 0},
+		{[]string{"-r", p("seven.cjs"), "--import", p("tla.mjs"), p("entry.mjs")}, "", 7},
 	}
 	for _, tc := range cases {
 		out, code := runOrbital(t, "", tc.args...)
