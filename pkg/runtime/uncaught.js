@@ -223,6 +223,30 @@
     return result;
   }
 
+  // FinalizationRegistry cleanup callbacks run from the event loop between
+  // callbacks (Runtime.runPlatformTasks). Each one is entered like any other
+  // callback, so an exception reaches 'uncaughtException' and the ticks it
+  // queues run before its promise jobs, as in Node.
+  const NativeFinalizationRegistry = globalThis.FinalizationRegistry;
+  if (typeof NativeFinalizationRegistry === 'function') {
+    const FinalizationRegistry = function FinalizationRegistry(cleanup) {
+      // Called without new: the native constructor throws its own TypeError.
+      if (new.target === undefined) return NativeFinalizationRegistry(cleanup);
+      const wrapped = typeof cleanup === 'function'
+        ? function (held) { callback(cleanup, undefined, held); }
+        : cleanup;
+      return Reflect.construct(NativeFinalizationRegistry, [wrapped],
+        new.target === FinalizationRegistry ? NativeFinalizationRegistry : new.target);
+    };
+    FinalizationRegistry.prototype = NativeFinalizationRegistry.prototype;
+    Object.defineProperty(NativeFinalizationRegistry.prototype, 'constructor', {
+      value: FinalizationRegistry, writable: true, enumerable: false, configurable: true,
+    });
+    Object.defineProperty(globalThis, 'FinalizationRegistry', {
+      value: FinalizationRegistry, writable: true, enumerable: false, configurable: true,
+    });
+  }
+
   // rebuildThrown recovers a main-script exception from its text. It only runs when the
   // V8 glue cannot hand over the thrown value: see Runtime.reportScriptError.
   function rebuildThrown(text) {

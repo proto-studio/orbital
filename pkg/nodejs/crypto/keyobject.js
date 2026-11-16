@@ -15,8 +15,32 @@
     ? new FinalizationRegistry((id) => crypto._keyFree(id))
     : null;
 
+  // Only wrap() makes a KeyObject from a handle; other callers get Node's
+  // argument errors, so no KeyObject can take over a handle it doesn't own.
+  const kFromHandle = Symbol('kFromHandle');
+
+  function described(value) {
+    if (value === null || value === undefined) return String(value);
+    if (typeof value === 'object' || typeof value === 'function') {
+      const name = value.constructor && value.constructor.name;
+      return name ? 'an instance of ' + name : String(value);
+    }
+    return 'type ' + typeof value + ' (' + (typeof value === 'string' ? "'" + value + "'" : String(value)) + ')';
+  }
+
   class KeyObject {
-    constructor(id) {
+    constructor(type, id) {
+      if (type !== kFromHandle) {
+        if (type !== 'secret' && type !== 'public' && type !== 'private') {
+          const err = new TypeError("The argument 'type' is invalid. Received " +
+            (typeof type === 'string' ? "'" + type + "'" : String(type)));
+          err.code = 'ERR_INVALID_ARG_VALUE';
+          throw err;
+        }
+        const err = new TypeError('The "handle" argument must be of type object. Received ' + described(id));
+        err.code = 'ERR_INVALID_ARG_TYPE';
+        throw err;
+      }
       this[kHandle] = id;
       if (registry) registry.register(this, id);
       const info = JSON.parse(crypto._keyInfo(id));
@@ -59,7 +83,7 @@
   }
 
   function wrap(id) {
-    return new KeyObject(id);
+    return new KeyObject(kFromHandle, id);
   }
 
   function createSecretKey(key, encoding) {
