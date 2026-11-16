@@ -750,3 +750,33 @@ for (const s of ['mem:a', 'mem:b', 'mem:c', 'mem:a']) log.push((await import(s))
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// Hook-realm prototype changes don't reach the attribute bookkeeping: an
+// inherited Array.prototype.type getter isn't read, an Object.prototype.id
+// setter doesn't run, and a Map returned as importAttributes reaches load as a
+// Map without its expando. Expected from Node 20.18.1.
+func TestImportAttributes_BookkeepingIgnoresPrototypesAndKeepsContainers(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 'd';`,
+		"hooks.mjs": `export async function resolve(s, c, n) {
+  if (s === 'arr') { Object.defineProperty(Array.prototype, 'type', { get() { throw new Error('getter'); }, configurable: true }); const r = await n('./dep.mjs?arr', c); return { ...r, importAttributes: [] }; }
+  if (s === 'map') { const m = new Map([['k', 'v']]); m.foo = 'bar'; const r = await n('./dep.mjs?map', c); return { ...r, importAttributes: m }; }
+  if (s === 'id') { Object.defineProperty(Object.prototype, 'id', { set(v) { throw new Error('setter id'); }, get() { return 99; }, configurable: true }); return n('./dep.mjs?id', c); }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('?arr')) globalThis.__a = [Array.isArray(c.importAttributes), c.importAttributes.length];
+  if (u.endsWith('?map')) globalThis.__m = [c.importAttributes instanceof Map, c.importAttributes.get && c.importAttributes.get('k'), c.importAttributes.foo];
+  const r = await n(u, c);
+  if (u.endsWith('?arr') || u.endsWith('?map')) return { ...r, source: 'export default ' + JSON.stringify(u.endsWith('?arr') ? globalThis.__a : globalThis.__m), format: 'module' };
+  return r;
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+for (const s of ['arr', 'map', 'id', './dep.mjs?after']) { try { log.push((await import(s)).default); } catch (e) { log.push(['err', e.code, e.message.slice(0, 60)]); } }`,
+	})
+	if got, want := runLogModuleIn(t, dir), `[[true,0],[true,"v",null],"d","d"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
