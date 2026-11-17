@@ -127,3 +127,41 @@ func TestCrypto_CallbackWorkUsesBoundedPool(t *testing.T) {
 		t.Error("no task ran on the pool")
 	}
 }
+
+// Killing the runtime drops the callback work still queued on its pool: with
+// one thread busy, the ten calls queued behind it never run.
+func TestCrypto_KillDropsQueuedWork(t *testing.T) {
+	rt, err := runtime.New(&runtime.Config{ThreadPoolSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if err := buffer.New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	var ran int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	beforeOffThreadWork = func() {
+		if atomic.AddInt32(&ran, 1) == 1 {
+			started <- struct{}{}
+			<-release
+		}
+	}
+	defer func() { beforeOffThreadWork = nil }()
+	if _, err := rt.RunScript(`
+		for (let i = 0; i < 11; i++) __crypto_module.randomBytes(8, () => {});
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	rt.Kill("test")
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	if n := atomic.LoadInt32(&ran); n != 1 {
+		t.Errorf("%d tasks ran after Kill, want only the one already running", n)
+	}
+}

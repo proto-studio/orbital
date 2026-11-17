@@ -12,7 +12,7 @@ import (
 // goroutines however much work is queued, and runs every task.
 func TestThreadPool_Bounded(t *testing.T) {
 	for _, size := range []int{1, 3, DefaultThreadPoolSize} {
-		p := newThreadPool(size)
+		p := newThreadPool(size, nil)
 		var running, peak, done int32
 		var wg sync.WaitGroup
 		release := make(chan struct{})
@@ -53,8 +53,47 @@ func TestThreadPool_Bounded(t *testing.T) {
 // A size of 0 or less means Node's default of 4.
 func TestThreadPool_DefaultSize(t *testing.T) {
 	for _, size := range []int{0, -1} {
-		if got := newThreadPool(size).size; got != DefaultThreadPoolSize {
+		if got := newThreadPool(size, nil).size; got != DefaultThreadPoolSize {
 			t.Errorf("newThreadPool(%d).size = %d, want %d", size, got, DefaultThreadPoolSize)
 		}
+	}
+}
+
+// Once the runtime stops, work that hasn't started is dropped and new work
+// isn't queued; the task already running finishes.
+func TestThreadPool_DropsQueuedWorkWhenStopped(t *testing.T) {
+	done := make(chan struct{})
+	p := newThreadPool(1, done)
+	var ran int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	p.submit(func() {
+		close(started)
+		<-release
+		atomic.AddInt32(&ran, 1)
+		close(finished)
+	})
+	<-started
+	for i := 0; i < 10; i++ {
+		p.submit(func() { atomic.AddInt32(&ran, 1) })
+	}
+	close(done)
+	p.submit(func() { atomic.AddInt32(&ran, 1) })
+	close(release)
+	<-finished
+	// Let the worker look at the queue again before checking.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		p.mu.Lock()
+		idle := p.running == 0
+		p.mu.Unlock()
+		if idle {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if n := atomic.LoadInt32(&ran); n != 1 {
+		t.Errorf("%d tasks ran, want only the one already running", n)
 	}
 }

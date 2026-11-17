@@ -17,6 +17,7 @@ type Runtime struct {
 	unhandledRejections string // Config.UnhandledRejections
 	noWarnings          bool   // Config.NoWarnings
 	threadPool          *threadPool
+	cryptoMemoryLimit   int64 // Config.CryptoMemoryLimit
 
 	isolate           *v8.Isolate
 	context           *v8.Context
@@ -118,6 +119,12 @@ type Config struct {
 	// libuv's threadpool. Further tasks wait their turn. 0 means
 	// DefaultThreadPoolSize (4), Node's default UV_THREADPOOL_SIZE.
 	ThreadPoolSize int
+	// CryptoMemoryLimit, when positive, is the most memory in bytes one key
+	// derivation may use, such as an scrypt call (whatever the script asks for
+	// with maxmem). A call over it fails as one over its own maxmem does, with
+	// ERR_CRYPTO_INVALID_SCRYPT_PARAMS. 0 means no limit beyond the script's
+	// own, as in Node.
+	CryptoMemoryLimit int64
 }
 
 // DefaultConfig returns a configuration with common modules enabled.
@@ -241,7 +248,8 @@ func New(cfg *Config) (*Runtime, error) {
 
 		unhandledRejections: cfg.UnhandledRejections,
 		noWarnings:          cfg.NoWarnings,
-		threadPool:          newThreadPool(cfg.ThreadPoolSize),
+		threadPool:          newThreadPool(cfg.ThreadPoolSize, execController.Done()),
+		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
 	}
 
 	// Set up kill callback to stop the event loop, cancel tasks, and terminate
@@ -516,6 +524,12 @@ func (rt *Runtime) IsKilled() bool {
 // KillReason returns the reason for killing, if killed.
 func (rt *Runtime) KillReason() string {
 	return rt.execController.KillReason()
+}
+
+// CryptoMemoryLimit is Config.CryptoMemoryLimit: the most memory one key
+// derivation may use, or 0 for no limit beyond the script's own.
+func (rt *Runtime) CryptoMemoryLimit() int64 {
+	return rt.cryptoMemoryLimit
 }
 
 // IsDone returns true if execution should stop (killed or timed out).

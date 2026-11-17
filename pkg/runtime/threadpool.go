@@ -10,23 +10,38 @@ const DefaultThreadPoolSize = 4
 // threadPool runs queued work on at most size goroutines, as Node runs the
 // callback forms of its crypto functions on libuv's threadpool. Work beyond
 // that waits in the queue, in order, until a worker is free. Workers start
-// as work arrives and exit when the queue is empty.
+// as work arrives and exit when the queue is empty. Once done is closed (the
+// runtime was killed, timed out or disposed), work not yet started is
+// dropped: nothing would receive its result.
 type threadPool struct {
 	mu      sync.Mutex
 	size    int
 	running int
 	queue   []func()
+	done    <-chan struct{}
 }
 
-func newThreadPool(size int) *threadPool {
+func newThreadPool(size int, done <-chan struct{}) *threadPool {
 	if size <= 0 {
 		size = DefaultThreadPoolSize
 	}
-	return &threadPool{size: size}
+	return &threadPool{size: size, done: done}
+}
+
+func (p *threadPool) stopped() bool {
+	select {
+	case <-p.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // submit queues work, starting a worker if fewer than size are running.
 func (p *threadPool) submit(work func()) {
+	if p.stopped() {
+		return
+	}
 	p.mu.Lock()
 	p.queue = append(p.queue, work)
 	start := p.running < p.size
@@ -42,6 +57,12 @@ func (p *threadPool) submit(work func()) {
 func (p *threadPool) worker() {
 	for {
 		p.mu.Lock()
+		if p.stopped() {
+			for i := range p.queue {
+				p.queue[i] = nil
+			}
+			p.queue = nil
+		}
 		if len(p.queue) == 0 {
 			p.running--
 			p.mu.Unlock()
@@ -59,7 +80,9 @@ func (p *threadPool) worker() {
 // Config.ThreadPoolSize tasks run at once, and the rest wait their turn. It
 // returns at once; work runs later on another goroutine. Callers that hand a
 // result back to JavaScript keep the event loop alive with AddPendingWork
-// until they have.
+// until they have. Once the runtime is killed, times out or is disposed,
+// work that hasn't started is dropped, and new work isn't queued; work
+// already running finishes.
 func (r *Runtime) RunInThreadPool(work func()) {
 	r.threadPool.submit(work)
 }
