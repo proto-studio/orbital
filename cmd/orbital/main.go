@@ -468,6 +468,9 @@ func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
 	// process.kill() signals any process, as in Node. The library default refuses it.
 	cfg.ProcessSignaler = runtime.NewRealProcessSignaler()
+	// Work waiting for the thread pool queues without limit, as in Node. The library
+	// default makes it wait for room instead.
+	cfg.ThreadPoolQueueSize = -1
 	cfg.UnhandledRejections = unhandledRejections
 	cfg.NoWarnings = silenceWarnings
 
