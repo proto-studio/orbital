@@ -98,6 +98,18 @@
 	// err.code === 'MODULE_NOT_FOUND'; libraries branch on that code to treat a
 	// missing optional dependency as absent rather than fatal (yargs' config
 	// `extends`, optional-require patterns, resolve probes, etc.).
+	// readSource reads a module's source, or returns null when the file can't be read. A
+	// file too large for one string throws Node's ERR_STRING_TOO_LONG.
+	function readSource(filename) {
+		const source = __requireFile(filename);
+		if (source !== null && typeof source === 'object') {
+			const err = new Error(source.message);
+			err.code = source.code;
+			throw err;
+		}
+		return source;
+	}
+
 	function moduleNotFoundError(request) {
 		const err = new Error("Cannot find module '" + request + "'");
 		err.code = 'MODULE_NOT_FOUND';
@@ -238,7 +250,7 @@
 			let loadedOK = false;
 			try {
 				// Read and compile the module
-				let source = __requireFile(resolved);
+				let source = readSource(resolved);
 				if (source === null || source === undefined) {
 					delete moduleCache[resolved];
 					throw moduleNotFoundError(request);
@@ -325,11 +337,11 @@
 		_cache: moduleCache,
 		_extensions: {
 			'.js': function(module, filename) {
-				const content = __requireFile(filename);
+				const content = readSource(filename);
 				module._compile(content, filename);
 			},
 			'.json': function(module, filename) {
-				const content = __requireFile(filename);
+				const content = readSource(filename);
 				module.exports = JSON.parse(content);
 			}
 		},

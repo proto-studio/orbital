@@ -303,6 +303,14 @@
         case 'error':
           w.emit('error', new Error(data));
           break;
+        case 'codedError': {
+          // "CODE\nmessage": an Error with Node's code.
+          const nl = data.indexOf('\n');
+          const err = new Error(data.slice(nl + 1));
+          err.code = data.slice(0, nl);
+          w.emit('error', err);
+          break;
+        }
         case 'thrown': {
           let err;
           try {

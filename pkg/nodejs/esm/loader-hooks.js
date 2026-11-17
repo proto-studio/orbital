@@ -16,6 +16,7 @@
   const NativeError = Error;
   const NativeTypeError = TypeError;
   const NativeURIError = URIError;
+  const NativeRangeError = RangeError;
 
   const hooks = [];
 
@@ -346,8 +347,11 @@
     const code = ownGet(r, 'code');
     if (code) {
       // An import attribute the module's format doesn't allow (Node's
-      // validateAttributes in its default load).
-      const err = new NativeTypeError(ownGet(r, 'message'));
+      // validateAttributes in its default load), a TypeError, or an error the
+      // read gave, such as a file too large to load, of the kind it names.
+      const kind = ownGet(r, 'kind');
+      const Ctor = kind === 'RangeError' ? NativeRangeError : kind === 'Error' ? NativeError : NativeTypeError;
+      const err = new Ctor(ownGet(r, 'message'));
       ownProp(err, 'code', code);
       throw internal(err);
     }

@@ -166,6 +166,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   the thread.
 - **[gap] A custom `Filesystem` without `LinkFilesystem`** fails `symlink`, `readlink` and
   `link` with `ENOSYS`.
+- **[gap] `fs.readFile` reads files up to 402,653,166 bytes.** Its result reaches JavaScript
+  as one string, so a larger file fails with `RangeError [ERR_FS_FILE_TOO_LARGE]` naming
+  that limit, where Node reads up to 2 GiB. Over 2 GiB the error is Node's. A file that
+  doesn't report its size, such as `/dev/zero`, stops at the limit too, where Node keeps
+  reading. `require`, `import` and worker entry files load up to V8's longest string,
+  536,870,888 bytes, and fail a larger file with Node's errors (`runtime.ReadFileLimited`).
 - **[approx] `fs.watch` and `fs.watchFile` poll.** `watch` checks every 100 ms and reports
   `'rename'` when an entry appears or goes and `'change'` when its stats change, so it can
   miss a change undone within one poll and doesn't report the events in Node's exact order.

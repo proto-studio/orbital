@@ -13,6 +13,7 @@ package esm
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
+	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
 
@@ -41,7 +43,16 @@ var (
 // ---- filesystem helpers (through the sandboxed runtime FS) -----------------
 
 func (e *ESM) fsRead(p string) (string, error) {
-	b, err := e.rt.Filesystem().ReadFile(p)
+	b, err := runtime.ReadFileLimited(e.rt.Filesystem(), p, runtime.MaxSourceSize)
+	var tooLarge *runtime.FileTooLargeError
+	if errors.As(err, &tooLarge) {
+		// Node's import reads the file, refusing one over 2 GiB, then makes one string of
+		// it, failing one too large for that.
+		if tooLarge.OverNodeLimit() {
+			return "", &moduleError{msg: tooLarge.Error(), code: "ERR_FS_FILE_TOO_LARGE", rangeError: true}
+		}
+		return "", &moduleError{msg: runtime.StringTooLongMessage, code: "ERR_STRING_TOO_LONG"}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -776,6 +787,8 @@ type moduleError struct {
 	typeError bool
 	// uriError makes it a URIError, Node's error for a malformed escape.
 	uriError bool
+	// rangeError makes it a RangeError, as Node's ERR_FS_FILE_TOO_LARGE is.
+	rangeError bool
 	// input is the string ERR_INVALID_URL couldn't parse, its "input" property.
 	input string
 	// module is the importer's URL on an ERR_INVALID_FILE_URL_HOST.
@@ -801,6 +814,8 @@ func (m *moduleError) kind() string {
 	switch {
 	case m.uriError:
 		return "URIError"
+	case m.rangeError:
+		return "RangeError"
 	case m.typeError:
 		return "TypeError"
 	}

@@ -207,7 +207,17 @@ func (e *ESM) installLoaderBridges(lrt *runtime.Runtime) error {
 		url := argString(info, 0)
 		src, format, lerr := e.loadURL(url)
 		if lerr != nil {
-			return c.Throw("Cannot load module '" + url + "': " + lerr.Error())
+			var me *moduleError
+			if !errors.As(lerr, &me) {
+				return c.Throw("Cannot load module '" + url + "': " + lerr.Error())
+			}
+			// A coded error, such as a file too large to load, is rebuilt as Node's.
+			data, merr := json.Marshal(map[string]string{"message": me.msg, "code": me.code, "kind": me.kind()})
+			if merr != nil {
+				return c.Throw(merr.Error())
+			}
+			out, _ := c.NewString(string(data))
+			return out
 		}
 		// As JSON, like __goResolve's result, so a setter a hook put on
 		// Object.prototype doesn't run.
