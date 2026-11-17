@@ -9,10 +9,14 @@ import (
 	"compress/zlib"
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
+	"sync/atomic"
 
+	nodecrypto "proto.zip/studio/orbital/pkg/nodejs/crypto"
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -38,6 +42,13 @@ type Zlib struct {
 // The codec goroutine is started lazily on the first write/end so an unused
 // stream (e.g. created for an instanceof check) does not block a pipe read
 // forever and keep the event loop alive.
+//
+// Output is handed over one chunk at a time: after each chunk the codec waits
+// for JS to acknowledge it (_streamAck), which JS does once the readable side
+// has room. So a small input can't expand into unbounded memory however slowly
+// the stream is read. While it waits, the codec doesn't keep the event loop
+// alive, as a paused zlib stream doesn't in Node; the acknowledgement, made on
+// the JS thread, takes the event loop's pending work back for it.
 type zStream struct {
 	z        *Zlib
 	id       int
@@ -47,8 +58,27 @@ type zStream struct {
 	pr       *io.PipeReader
 	inW      *io.PipeWriter
 
+	// ack carries JS's acknowledgement of the chunk the codec is waiting on.
+	ack chan struct{}
+	// closed is closed when the stream is destroyed, so a codec waiting on an
+	// acknowledgement stops.
+	closed    chan struct{}
+	closeOnce sync.Once
+	// awaitingAck is whether the codec has handed over a chunk and released the
+	// event loop's pending work until JS acknowledges it. The codec sets it
+	// before it enqueues the chunk; the acknowledgement clears it, so a stray
+	// _streamAck can't take pending work the codec won't give back.
+	awaitingAck atomic.Bool
+
 	startMu sync.Mutex
 	started bool
+}
+
+// close stops the stream: its input ends with an error and a codec waiting on
+// an acknowledgement gives up.
+func (s *zStream) close() {
+	s.closeOnce.Do(func() { close(s.closed) })
+	s.inW.CloseWithError(io.ErrClosedPipe)
 }
 
 // ensureStarted launches the codec goroutine exactly once.
@@ -63,13 +93,26 @@ func (s *zStream) ensureStarted() {
 
 	s.z.rt.EventLoop().AddPendingWork()
 	go func() {
-		defer s.z.rt.EventLoop().DonePendingWork()
+		// The codec holds the event loop's pending work except while it waits
+		// for an acknowledgement; if it stops while waiting, it holds none.
+		holding := true
+		defer func() {
+			if holding {
+				s.z.rt.EventLoop().DonePendingWork()
+			}
+		}()
 
-		err := s.z.runTransform(s.ctx, s.format, s.pr, s.callback)
+		err := s.z.runTransform(s, &holding)
 
 		s.z.mu.Lock()
 		delete(s.z.streams, s.id)
 		s.z.mu.Unlock()
+
+		if errors.Is(err, errStreamClosed) {
+			// Destroyed, or the runtime stopped: nothing is listening.
+			s.pr.CloseWithError(err)
+			return
+		}
 
 		if err != nil && err != io.EOF {
 			s.pr.CloseWithError(err)
@@ -214,6 +257,12 @@ func (z *Zlib) Register(rt *runtime.Runtime) error {
 	if err := regFn("_streamDestroy", z.streamDestroyFunc); err != nil {
 		return err
 	}
+	if err := regFn("_streamAck", z.streamAckFunc); err != nil {
+		return err
+	}
+	if err := zlibInternal.Set("maxOutput", ctx.NewNumber(maxOutput)); err != nil {
+		return err
+	}
 
 	// Set as global
 	if err := rt.SetGlobal("__zlib_internal", zlibInternal); err != nil {
@@ -245,157 +294,168 @@ func returnBytes(ctx *v8.Context, data []byte) *v8.Value {
 	return val
 }
 
-// gzipSyncFunc compresses data using gzip
-func (z *Zlib) gzipSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+// maxOutput is the most bytes a sync call can hand back, since its result
+// reaches JavaScript as one base64 string. Node allows up to
+// buffer.constants.MAX_LENGTH.
+const maxOutput = nodecrypto.MaxNativeBytes
+
+// errTooLarge stops a codec whose output passes the call's limit.
+var errTooLarge = errors.New("zlib: output is larger than the limit")
+
+// outputLimit reads the output limit a sync call was given (zlib.js passes
+// options.maxOutputLength), within what one result can carry. The natives check
+// it themselves, since scripts can call them directly.
+func outputLimit(args []*v8.Value) int64 {
+	if len(args) < 2 || !args[1].IsNumber() {
+		return maxOutput
+	}
+	f := args[1].Number()
+	switch {
+	case math.IsNaN(f) || f >= maxOutput:
+		return maxOutput
+	case f < 1:
+		return 0
+	}
+	return int64(f)
+}
+
+// limitedBuffer collects a codec's output and fails with errTooLarge as soon as
+// it would pass limit, so a small input can't expand without bound.
+type limitedBuffer struct {
+	buf   bytes.Buffer
+	limit int64
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if int64(b.buf.Len())+int64(len(p)) > b.limit {
+		return 0, errTooLarge
+	}
+	return b.buf.Write(p)
+}
+
+// syncResult is a sync call's result: the output as base64, false when it was
+// larger than the limit (zlib.js throws ERR_BUFFER_TOO_LARGE), or nil when the
+// codec failed.
+func syncResult(ctx *v8.Context, out *limitedBuffer, err error) *v8.Value {
+	if errors.Is(err, errTooLarge) {
+		return ctx.False()
+	}
+	if err != nil {
+		return nil
+	}
+	return returnBytes(ctx, out.buf.Bytes())
+}
+
+// compressSync runs a compressor over the call's input, with its output limited.
+func compressSync(info *v8.FunctionCallbackInfo, newWriter func(io.Writer) (io.WriteCloser, error)) *v8.Value {
 	args := info.Args()
 	if len(args) < 1 {
 		return nil
 	}
-
 	data := getBytes(args[0])
+	out := &limitedBuffer{limit: outputLimit(args)}
+	w, err := newWriter(out)
+	if err == nil {
+		_, err = w.Write(data)
+		if cerr := w.Close(); err == nil {
+			err = cerr
+		}
+	}
+	return syncResult(info.Context(), out, err)
+}
 
-	var buf bytes.Buffer
-	writer := gzip.NewWriter(&buf)
-	if _, err := writer.Write(data); err != nil {
+// decompressSync runs a decompressor over the call's input, reading no more
+// output than the limit allows.
+func decompressSync(info *v8.FunctionCallbackInfo, newReader func(io.Reader) (io.ReadCloser, error)) *v8.Value {
+	args := info.Args()
+	if len(args) < 1 {
 		return nil
 	}
-	if err := writer.Close(); err != nil {
-		return nil
+	data := getBytes(args[0])
+	out := &limitedBuffer{limit: outputLimit(args)}
+	r, err := newReader(bytes.NewReader(data))
+	if err == nil {
+		_, err = io.Copy(out, r)
+		r.Close()
 	}
+	return syncResult(info.Context(), out, err)
+}
 
-	return returnBytes(info.Context(), buf.Bytes())
+// gzipSyncFunc compresses data using gzip
+func (z *Zlib) gzipSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	return compressSync(info, func(w io.Writer) (io.WriteCloser, error) { return gzip.NewWriter(w), nil })
 }
 
 // gunzipSyncFunc decompresses gzip data
 func (z *Zlib) gunzipSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	data := getBytes(args[0])
-
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil
-	}
-	defer reader.Close()
-
-	result, err := io.ReadAll(reader)
-	if err != nil {
-		return nil
-	}
-
-	return returnBytes(info.Context(), result)
+	return decompressSync(info, func(r io.Reader) (io.ReadCloser, error) { return gzip.NewReader(r) })
 }
 
 // deflateSyncFunc compresses data using deflate (zlib format)
 func (z *Zlib) deflateSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	data := getBytes(args[0])
-
-	var buf bytes.Buffer
-	writer := zlib.NewWriter(&buf)
-	if _, err := writer.Write(data); err != nil {
-		return nil
-	}
-	if err := writer.Close(); err != nil {
-		return nil
-	}
-
-	return returnBytes(info.Context(), buf.Bytes())
+	return compressSync(info, func(w io.Writer) (io.WriteCloser, error) { return zlib.NewWriter(w), nil })
 }
 
 // inflateSyncFunc decompresses deflate data (zlib format)
 func (z *Zlib) inflateSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	data := getBytes(args[0])
-
-	reader, err := zlib.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil
-	}
-	defer reader.Close()
-
-	result, err := io.ReadAll(reader)
-	if err != nil {
-		return nil
-	}
-
-	return returnBytes(info.Context(), result)
+	return decompressSync(info, func(r io.Reader) (io.ReadCloser, error) { return zlib.NewReader(r) })
 }
 
 // deflateRawSyncFunc compresses data using raw deflate (no header)
 func (z *Zlib) deflateRawSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	data := getBytes(args[0])
-
-	var buf bytes.Buffer
-	writer, err := flate.NewWriter(&buf, flate.DefaultCompression)
-	if err != nil {
-		return nil
-	}
-	if _, err := writer.Write(data); err != nil {
-		return nil
-	}
-	if err := writer.Close(); err != nil {
-		return nil
-	}
-
-	return returnBytes(info.Context(), buf.Bytes())
+	return compressSync(info, func(w io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(w, flate.DefaultCompression)
+	})
 }
 
 // inflateRawSyncFunc decompresses raw deflate data (no header)
 func (z *Zlib) inflateRawSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	args := info.Args()
-	if len(args) < 1 {
-		return nil
-	}
-
-	data := getBytes(args[0])
-
-	reader := flate.NewReader(bytes.NewReader(data))
-	defer reader.Close()
-
-	result, err := io.ReadAll(reader)
-	if err != nil {
-		return nil
-	}
-
-	return returnBytes(info.Context(), result)
+	return decompressSync(info, func(r io.Reader) (io.ReadCloser, error) { return flate.NewReader(r), nil })
 }
+
+// errStreamClosed stops a codec whose stream was destroyed, or whose runtime
+// stopped, while it waited for JS to take a chunk.
+var errStreamClosed = errors.New("zlib: stream closed")
 
 // zSink is the output side of a streaming transform: every codec write is
-// forwarded to the JS callback as a base64 chunk via the event loop. base64
-// encoding copies the bytes synchronously, so the io.Copy buffer can be reused.
+// forwarded to the JS callback as a base64 chunk via the event loop, and the
+// write returns once JS acknowledges it. base64 encoding copies the bytes
+// synchronously, so the io.Copy buffer can be reused.
 type zSink struct {
-	z   *Zlib
-	ctx *v8.Context
-	cb  *v8.Value
+	s       *zStream
+	holding *bool
 }
 
-func (s *zSink) Write(p []byte) (int, error) {
+func (k *zSink) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	s := k.s
+	el := s.z.rt.EventLoop()
 	enc := base64.StdEncoding.EncodeToString(p)
-	s.z.rt.EventLoop().EnqueueMicrotask(func() {
+	s.awaitingAck.Store(true)
+	el.EnqueueMicrotask(func() {
 		dataVal, _ := s.ctx.NewString(enc)
-		s.z.rt.MakeCallback(s.cb, nil, s.ctx.Null(), dataVal)
+		s.z.rt.MakeCallback(s.callback, nil, s.ctx.Null(), dataVal)
 	})
-	return len(p), nil
+	// The chunk is queued, so the event loop has work until JS has seen it.
+	*k.holding = false
+	el.DonePendingWork()
+	select {
+	case <-s.ack:
+		*k.holding = true
+		return len(p), nil
+	case <-s.closed:
+	case <-s.z.rt.ExecutionContext().Done():
+	}
+	// An acknowledgement may have arrived just before the stream closed; it took
+	// pending work for the codec, which the codec now gives back on its way out.
+	select {
+	case <-s.ack:
+		*k.holding = true
+	default:
+	}
+	return 0, errStreamClosed
 }
 
 // streamCreateFunc starts a streaming (de)compressor and returns its handle id.
@@ -424,6 +484,8 @@ func (z *Zlib) streamCreateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		callback: callback,
 		pr:       pr,
 		inW:      pw,
+		ack:      make(chan struct{}, 1),
+		closed:   make(chan struct{}),
 	}
 	z.streams[id] = h
 	z.mu.Unlock()
@@ -433,10 +495,11 @@ func (z *Zlib) streamCreateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 // runTransform drives the Go codec for the given Node stream format, copying the
 // piped input through the (de)compressor into the JS-delivering sink.
-func (z *Zlib) runTransform(ctx *v8.Context, format string, pr *io.PipeReader, callback *v8.Value) error {
-	out := &zSink{z: z, ctx: ctx, cb: callback}
+func (z *Zlib) runTransform(s *zStream, holding *bool) error {
+	out := &zSink{s: s, holding: holding}
+	pr := s.pr
 
-	switch format {
+	switch s.format {
 	case "gunzip":
 		r, err := gzip.NewReader(pr)
 		if err != nil {
@@ -485,7 +548,7 @@ func (z *Zlib) runTransform(ctx *v8.Context, format string, pr *io.PipeReader, c
 		}
 		return w.Close()
 	default:
-		return fmt.Errorf("zlib: unknown stream format %q", format)
+		return fmt.Errorf("zlib: unknown stream format %q", s.format)
 	}
 }
 
@@ -522,13 +585,18 @@ func (z *Zlib) runUnzip(out io.Writer, pr *io.PipeReader) error {
 	}
 }
 
-// streamWriteFunc feeds one base64-encoded input chunk into a stream handle.
+// streamWriteFunc feeds one base64-encoded input chunk into a stream handle,
+// and calls back once the codec has taken it. The write happens off the JS
+// thread: the codec may be waiting for JS to acknowledge output before it reads
+// more input.
 func (z *Zlib) streamWriteFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
 	args := info.Args()
-	if len(args) < 2 {
+	if len(args) < 3 || !args[2].IsFunction() {
 		return nil
 	}
 	id := int(args[0].Integer())
+	done := args[2]
 
 	z.mu.Lock()
 	h, ok := z.streams[id]
@@ -539,12 +607,52 @@ func (z *Zlib) streamWriteFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	data, err := base64.StdEncoding.DecodeString(args[1].String())
 	if err != nil {
+		errVal, _ := ctx.NewString(err.Error())
+		z.rt.MakeCallback(done, nil, errVal)
 		return nil
 	}
 	h.ensureStarted()
-	// Blocks until the codec goroutine consumes the bytes (io.Pipe backpressure);
-	// the sink never blocks, so the goroutine always drains and this returns.
-	h.inW.Write(data)
+	el := z.rt.EventLoop()
+	// The write doesn't keep the event loop alive: while the codec reads, it
+	// holds the loop itself, and while it waits for a paused reader, nothing
+	// should, as in Node.
+	go func() {
+		_, werr := h.inW.Write(data)
+		el.EnqueueMicrotask(func() {
+			if werr != nil {
+				errVal, _ := ctx.NewString(werr.Error())
+				z.rt.MakeCallback(done, nil, errVal)
+				return
+			}
+			z.rt.MakeCallback(done, nil)
+		})
+	}()
+	return nil
+}
+
+// streamAckFunc lets a codec waiting on its last chunk continue. It runs on the
+// JS thread, and takes the event loop's pending work back for the codec before
+// waking it, so the loop never sees the stream idle in between.
+func (z *Zlib) streamAckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	args := info.Args()
+	if len(args) < 1 {
+		return nil
+	}
+	id := int(args[0].Integer())
+
+	z.mu.Lock()
+	h, ok := z.streams[id]
+	z.mu.Unlock()
+	if !ok || !h.awaitingAck.CompareAndSwap(true, false) {
+		return nil
+	}
+	select {
+	case <-h.closed:
+		return nil
+	default:
+	}
+	z.rt.EventLoop().AddPendingWork()
+	h.ack <- struct{}{}
 	return nil
 }
 
@@ -581,7 +689,7 @@ func (z *Zlib) streamDestroyFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	z.mu.Unlock()
 	if ok {
-		h.inW.CloseWithError(io.ErrClosedPipe)
+		h.close()
 	}
 	return nil
 }
