@@ -121,9 +121,10 @@ type Config struct {
 	ThreadPoolSize int
 	// CryptoMemoryLimit, when positive, is the most memory in bytes one key
 	// derivation (pbkdf2, scrypt, hkdf, and WebCrypto's PBKDF2 and HKDF) may
-	// use: scrypt's workspace, whatever
-	// maxmem the script passes, plus the derived key on its way to JavaScript,
-	// counted as three times its length. An scrypt call over it fails as one
+	// use: scrypt's workspace, whatever maxmem the script passes, plus the
+	// derived key on its way to JavaScript, counted as six times its length
+	// (the key, its base64 form and that form's copies, and the Buffer), plus
+	// the inputs as they're copied and decoded. An scrypt call over it fails as one
 	// over its own maxmem does (ERR_CRYPTO_INVALID_SCRYPT_PARAMS); a pbkdf2 or
 	// hkdf key too long for it is ERR_OUT_OF_RANGE. 0 means no limit beyond
 	// the script's own, as in Node.

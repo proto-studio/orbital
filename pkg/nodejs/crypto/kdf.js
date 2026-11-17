@@ -87,10 +87,11 @@
     validateInteger(value, name, 0, 4294967295);
   }
 
-  // The embedder's Config.CryptoMemoryLimit bounds a derived key's length;
-  // without one, any length Node takes is allowed.
-  function checkKeyLenLimit(keylen, name) {
-    const max = crypto._kdfMaxKeyLen();
+  // The embedder's Config.CryptoMemoryLimit bounds a derived key's length,
+  // after what the inputs (inputB64Length characters of base64) take; without
+  // one, any length Node takes is allowed.
+  function checkKeyLenLimit(keylen, name, inputB64Length) {
+    const max = crypto._kdfMaxKeyLen(inputB64Length);
     if (max >= 0 && keylen > max) {
       throw outOfRange(name, '<= ' + max, keylen);
     }
@@ -154,7 +155,7 @@
     validateInt32(keylen, 'keylen', 0);
     checkNativeKeyLen(keylen);
     digestSize(digest);
-    checkKeyLenLimit(keylen, 'keylen');
+    checkKeyLenLimit(keylen, 'keylen', password.length + salt.length);
     return [password, salt, iterations, keylen, digest];
   }
 
@@ -220,7 +221,7 @@
       if (p === 0) p = scryptDefaults.p;
       if (maxmem === 0) maxmem = scryptDefaults.maxmem;
     }
-    const failed = crypto._scryptCheck(N, r, p, maxmem, keylen);
+    const failed = crypto._scryptCheck(N, r, p, maxmem, keylen, password.length + salt.length);
     if (failed) {
       const reason = failed.slice(1);
       throw codedError(RangeError, 'ERR_CRYPTO_INVALID_SCRYPT_PARAMS',
@@ -276,8 +277,10 @@
     if (length > 255 * size) {
       throw codedError(RangeError, 'ERR_CRYPTO_INVALID_KEYLEN', 'Invalid key length');
     }
-    checkKeyLenLimit(length, 'length');
-    return [digest, key, salt.toString('base64'), info.toString('base64'), length];
+    salt = salt.toString('base64');
+    info = info.toString('base64');
+    checkKeyLenLimit(length, 'length', key.length + salt.length + info.length);
+    return [digest, key, salt, info, length];
   }
 
   crypto.hkdfSync = function hkdfSync(digest, key, salt, info, length) {
