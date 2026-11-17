@@ -8,6 +8,7 @@ import (
 
 	"proto.zip/studio/orbital/pkg/nodejs/buffer"
 	"proto.zip/studio/orbital/pkg/runtime"
+	"proto.zip/studio/orbital/pkg/v8"
 )
 
 func setupRuntime(t *testing.T) *runtime.Runtime {
@@ -348,4 +349,37 @@ func TestFSWithoutBufferReadlink(t *testing.T) {
 	if result.String() != "true" {
 		t.Errorf("readlinkSync without Buffer = %s", result.String())
 	}
+}
+
+// An open that finishes after the runtime's cleanup has run closes its file and gives its
+// place back, rather than leaving both behind.
+func TestFS_OpenAfterDisposeGivesBackItsPlace(t *testing.T) {
+	rt, err := runtime.New(&runtime.Config{Filesystem: runtime.NewMemoryFilesystem(), MaxOpenFiles: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	f := New()
+	if err := f.Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Filesystem().WriteFile("/a", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := rt.Context()
+	path, _ := ctx.NewString("/a")
+	flags, _ := ctx.NewString("r")
+	work, _, thrown := f.openOp(ctx, []*v8.Value{path, flags})
+	if thrown != nil {
+		t.Fatal("openOp threw")
+	}
+	closeAll{f}.Close() // cleanup runs before the open finishes
+	if res := work(); res.err == nil {
+		t.Fatal("open after cleanup succeeded")
+	}
+	release, err := rt.OpenFile()
+	if err != nil {
+		t.Fatalf("the open kept its place: %v", err)
+	}
+	release()
 }

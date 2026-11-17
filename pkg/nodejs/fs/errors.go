@@ -195,6 +195,7 @@ type closeAll struct{ f *FS }
 func (c closeAll) Close() error {
 	f := c.f
 	f.fdMu.Lock()
+	f.disposed = true
 	files := f.fds
 	slots := f.fdSlots
 	f.fds = make(map[int]runtime.File)

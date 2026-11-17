@@ -1260,12 +1260,17 @@ func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if !ok {
 		return nil
 	}
+	n.startAccept(s, callback)
+	return nil
+}
 
+// startAccept waits for one connection on s and hands it to callback.
+func (n *Net) startAccept(s *server, callback *v8.Value) {
 	s.mu.Lock()
 	srv := s.srv
 	if srv == nil || s.closed {
 		s.mu.Unlock()
-		return nil
+		return
 	}
 	s.accepting++
 	s.updateHoldLocked()
@@ -1295,10 +1300,12 @@ func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				return
 			}
 			// Over Config.MaxOpenSockets the connection is closed unseen, as libuv drops
-			// one it accepts at the OS's descriptor limit.
+			// one it accepts at the OS's descriptor limit, and the server waits for the
+			// next one, since the script asks again only from this callback.
 			release, serr := n.rt.OpenSocket()
 			if serr != nil {
 				socket.Close()
+				n.startAccept(s, callback)
 				return
 			}
 			id, conn := n.newConn()
@@ -1314,7 +1321,6 @@ func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		s.updateHoldLocked()
 		s.mu.Unlock()
 	}()
-	return nil
 }
 
 func (n *Net) closeServerFunc(info *v8.FunctionCallbackInfo) *v8.Value {
