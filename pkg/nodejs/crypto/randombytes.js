@@ -6,6 +6,8 @@
   const crypto = __crypto_module;
   const nativeRandomBytes = crypto.randomBytes;
   const kMaxLength = 2147483647;
+  // The most bytes a native can return (lengths.go); Node allows more.
+  const kMaxNativeBytes = crypto._maxNativeBytes;
 
   function codedError(Type, code, message) {
     const err = new Type(message);
@@ -46,13 +48,17 @@
       throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
         'The value of "size" is out of range. It must be >= 0 && <= ' + kMaxLength + '. Received ' + size);
     }
+    if (size > kMaxNativeBytes) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+        'The value of "size" is out of range. It must be >= 0 && <= ' + kMaxNativeBytes + '. Received ' + size);
+    }
     return Math.floor(size);
   }
 
   crypto.randomBytes = function randomBytes(size, callback) {
     size = assertSize(size);
     if (callback === undefined) {
-      return nativeRandomBytes(size);
+      return Buffer.from(nativeRandomBytes(size), 'base64');
     }
     if (typeof callback !== 'function') {
       throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',

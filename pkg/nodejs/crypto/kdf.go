@@ -97,7 +97,10 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	iter, keyLen := args[2].Integer(), args[3].Integer()
 	h := nodeDigest(args[4].String())
 	// kdf.js checks these, but scripts can reach the native directly.
-	if h == nil || iter < 1 || iter > math.MaxInt32 || keyLen < 0 || keyLen > math.MaxInt32 {
+	if keyLen < 0 || keyLen > maxNativeBytes {
+		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
+	}
+	if h == nil || iter < 1 || iter > math.MaxInt32 {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
 	xof := isXOF(args[4].String())
@@ -182,6 +185,9 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	password, salt := argBytes(args, 0), argBytes(args, 1)
 	n, r, p, maxmem := args[2].Number(), args[3].Number(), args[4].Number(), args[5].Number()
 	keyLen := args[6].Integer()
+	if keyLen < 0 || keyLen > maxNativeBytes {
+		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
+	}
 	if n < 0 || r < 0 || p < 0 || maxmem < 1 || maxmem > 1<<53 ||
 		scryptCheck(uint64(n), uint64(r), uint64(p), uint64(maxmem)) != nil || keyLen < 0 || keyLen > math.MaxInt32 {
 		return ctx.Throw("scrypt: invalid parameters")

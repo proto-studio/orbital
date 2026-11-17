@@ -7,6 +7,11 @@
 
   const crypto = __crypto_module;
   const kMaxPossibleLength = 2147483647;
+  // The most bytes the native returns at once (lengths.go); larger fills
+  // are made in pieces of this size.
+  const maxNativeBytes = () => crypto._maxNativeBytes;
+  // The largest prime size, in bits, the native can return.
+  const kMaxPrimeBits = crypto._maxPrimeBits;
 
   function codedError(Type, code, message) {
     const err = new Type(message);
@@ -145,8 +150,11 @@
     } else {
       size = assertSize(size, elementSize, offset, buf.byteLength);
     }
-    if (size === 0) return buf;
-    fill(buf, offset, size, crypto._randomBase64(size));
+    const piece = maxNativeBytes();
+    for (let done = 0; done < size; done += piece) {
+      const n = Math.min(piece, size - done);
+      fill(buf, offset + done, n, crypto._randomBase64(n));
+    }
     return buf;
   };
 
@@ -177,14 +185,27 @@
     }
     // The bytes are made off the JS thread and copied in on it.
     callback = bindContext(callback);
-    crypto._randomBase64(size, function (message, data) {
+    let done = 0;
+    const piece = maxNativeBytes();
+    const next = () => {
+      const n = Math.min(piece, size - done);
+      crypto._randomBase64(n, onPiece);
+    };
+    function onPiece(message, data) {
       if (message !== undefined) {
         callback(new Error(message));
         return;
       }
-      fill(buf, offset, size, data);
+      const n = Math.min(piece, size - done);
+      fill(buf, offset + done, n, data);
+      done += n;
+      if (done < size) {
+        next();
+        return;
+      }
       callback(null, buf);
-    });
+    }
+    next();
   };
 
   // ---- webcrypto ------------------------------------------------------------
@@ -274,14 +295,22 @@
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length);
   }
 
+  // Node takes any int32 size; the native can't return a prime longer than a
+  // string holds.
+  function checkPrimeSize(size) {
+    if (size > kMaxPrimeBits) throw outOfRange('size', '>= 1 && <= ' + kMaxPrimeBits, size);
+  }
+
   crypto.generatePrimeSync = function generatePrimeSync(size, options = {}) {
     validateInt32(size, 'size', 1);
+    checkPrimeSize(size);
     const job = primeJob(size, options);
     return primeResult(crypto._generatePrime(...job.args), job.bigint);
   };
 
   crypto.generatePrime = function generatePrime(size, options = {}, callback) {
     validateInt32(size, 'size', 1);
+    checkPrimeSize(size);
     if (typeof options === 'function') {
       callback = options;
       options = {};

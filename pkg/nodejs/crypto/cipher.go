@@ -540,6 +540,10 @@ func (c *Crypto) cipherUpdateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err != nil {
 		return throwCipherError(info.Context(), err)
 	}
+	// Input that fits a string can still produce a few bytes more than one holds.
+	if len(out) > maxNativeBytes {
+		return info.Context().Throw(outOfRange("data", 0, maxNativeBytes, int64(len(out))))
+	}
 	return b64Result(info.Context(), out)
 }
 
