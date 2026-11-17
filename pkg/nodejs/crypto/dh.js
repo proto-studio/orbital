@@ -161,7 +161,7 @@
         privateBits(s, bits)));
       s.priv = fromB64(out.priv);
       s.pub = fromB64(out.pub);
-      return encode(s.pub, encoding);
+      return encode(Buffer.from(s.pub), encoding);
     },
     computeSecret(key, inEnc, outEnc) {
       const s = this[kState];

@@ -87,6 +87,12 @@
       "name": "Error"
     }
   },
+  "dhReturnedBuffers": [
+    "40",
+    "40",
+    "06",
+    true
+  ],
   "ecdh": {
     "prime256v1": {
       "value": [
