@@ -1258,7 +1258,7 @@ func (e *ESM) finalize(url, source, format string) (string, error) {
 		if !urlSchemeRe.MatchString(url) {
 			// File-backed: one value per url (a query or fragment makes another)
 			// across its module jobs, one per type.
-			return "export default __esmJSONValue(" + jsQuote(untypedKey(url)) + ", () => (\n" + source + "\n));\n", nil
+			return "export default __esmJSONValue(" + jsQuote(e.jsonToken) + ", " + jsQuote(untypedKey(url)) + ", () => (\n" + source + "\n));\n", nil
 		}
 		return "export default " + source + ";\n", nil
 	default: // "module"

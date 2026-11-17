@@ -8,12 +8,17 @@ package esm
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"sync"
+	"weak"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -47,6 +52,12 @@ type ESM struct {
 	linkErr *v8.Value
 	// attrChecks remembers the outcome of checking each (url, type) import.
 	attrChecks map[string]error
+	// hookedLoads keeps each module the load hooks produced, by its cache key,
+	// so importing the same (url, type) again reuses that job without loading.
+	hookedLoads map[string]string
+	// jsonToken is the secret the JSON modules this loader generates pass to
+	// __esmJSONValue, so no other code can reach the shared JSON values.
+	jsonToken string
 }
 
 // New creates an ESM module runtime without a loader realm provider, so
@@ -79,6 +90,10 @@ func (e *ESM) Register(rt *runtime.Runtime) error {
 // ensureLoader installs the JS helpers, the dynamic-import callback and the
 // module.register bridge, once. None of them needs the CommonJS module system
 // (registered after ESM) until a module is actually resolved.
+// jsonTokens holds each runtime's JSON-module secret, for another ESM loader
+// set up on the same runtime; an entry goes when its runtime is collected.
+var jsonTokens sync.Map
+
 func (e *ESM) ensureLoader() error {
 	if e.loaderReady {
 		return nil
@@ -92,11 +107,33 @@ func (e *ESM) ensureLoader() error {
 		e.makeError, _ = global.Get("__esmModuleError")
 		e.rejected, _ = global.Get("__esmRejected")
 		e.hookError, _ = global.Get("__esmHookError")
+		if t, ok := jsonTokens.Load(weak.Make(e.rt)); ok {
+			e.jsonToken = t.(string)
+		}
 		e.loaderReady = true
 		return nil
 	}
 	if _, err := e.rt.RunScript(esmLoaderJS, "esm-loader.js"); err != nil {
 		return err
+	}
+	// The JSON modules' secret, handed to esm-loader.js before any program code
+	// runs (see __esmJSONSetup).
+	var tok [16]byte
+	if _, err := rand.Read(tok[:]); err != nil {
+		return err
+	}
+	e.jsonToken = hex.EncodeToString(tok[:])
+	key := weak.Make(e.rt)
+	jsonTokens.Store(key, e.jsonToken)
+	goruntime.AddCleanup(e.rt, func(k weak.Pointer[runtime.Runtime]) { jsonTokens.Delete(k) }, key)
+	if setup, _ := global.Get("__esmJSONSetup"); setup != nil && setup.IsFunction() {
+		arg, serr := ctx.NewString(e.jsonToken)
+		if serr != nil {
+			return serr
+		}
+		if _, cerr := setup.Call(nil, arg); cerr != nil {
+			return cerr
+		}
 	}
 	e.makeError, _ = global.Get("__esmModuleError")
 	e.rejected, _ = global.Get("__esmRejected")

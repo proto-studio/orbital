@@ -928,3 +928,48 @@ await t(async () => (await import('./dep.mjs?h', { with: { type: '\uD800' } })).
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A (url, type) job loads once: importing it again doesn't run the load hooks.
+// Attributes that are a proxy fail to cross before any trap runs, and cyclic
+// attributes keep their cycle. Expected from Node 20.18.1.
+func TestImportAttributes_JobsLoadOnceAndAttributesCloneWhole(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dep.mjs": `export default 'd';`,
+		"hooks.mjs": `const loads = {};
+export async function resolve(s, c, n) {
+  if (s === 'proxy') { const r = await n('./dep.mjs?x', c); return { ...r, importAttributes: new Proxy({}, { getPrototypeOf() { throw new Error('trap ran'); } }) }; }
+  if (s === 'cyc') { const r = await n('./dep.mjs?c', c); const a = {}; a.self = a; return { ...r, importAttributes: a }; }
+  return n(s, c);
+}
+export async function load(u, c, n) {
+  if (u.endsWith('?c')) return { format: 'module', source: 'export default ' + (c.importAttributes.self === c.importAttributes), shortCircuit: true };
+  if (u.includes('dep.mjs?o')) { const k = u + (c.importAttributes.type || ''); loads[k] = (loads[k] || 0) + 1; if (loads[k] > 1) throw new Error('loaded twice'); return { format: 'module', source: 'export default "once"', shortCircuit: true }; }
+  return n(u, c);
+}`,
+		"entry.mjs": `import { register } from 'node:module';
+register('./hooks.mjs', import.meta.url);
+const t = async (f) => { try { log.push(await f()); } catch (e) { log.push(String(e.message).includes('trap ran') ? 'trap ran' : 'rejected'); } };
+await t(async () => (await import('proxy')).default);
+await t(async () => (await import('cyc')).default);
+for (let i = 0; i < 2; i++) await t(async () => (await import('./dep.mjs?o', { with: { type: 'a' } })).default);
+for (let i = 0; i < 2; i++) await t(async () => (await import('./dep.mjs?o')).default);`,
+	})
+	if got, want := runLogModuleIn(t, dir), `["rejected",true,"once","once","once","once"]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// The shared JSON values are the loader's alone: program code can't call the
+// helper to put a value in place of a file's.
+func TestImportAttributes_JSONValuesAreInternal(t *testing.T) {
+	got := runLogModule(t, map[string]string{
+		"d.json": `{"j":1}`,
+		"entry.mjs": `const p = new URL('./d.json', import.meta.url).pathname, seed = () => ({ j: 'seeded' });
+for (const args of [[p, seed], ['guess', p, seed]]) { try { __esmJSONValue(...args); } catch (e) { /* refused */ } }
+log.push(typeof __esmJSONSetup, (await import('./d.json', { with: { type: 'json' } })).default.j);`,
+	})
+	if want := `["undefined",1]`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
