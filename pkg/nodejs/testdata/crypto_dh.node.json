@@ -10,6 +10,31 @@
       "message": "The \"sizeOrKey\" argument must be one of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type boolean (true)",
       "name": "TypeError"
     },
+    "checkLargest": {
+      "value": 257
+    },
+    "checkLeadingZero": {
+      "value": 257
+    },
+    "checkOverMax": {
+      "value": 257
+    },
+    "checkTooLarge": {
+      "code": "ERR_OSSL_DH_MODULUS_TOO_LARGE",
+      "message": "error:02800067:Diffie-Hellman routines::modulus too large",
+      "name": "Error"
+    },
+    "emptyPrivateKey": {
+      "code": "ERR_CRYPTO_INVALID_KEYTYPE",
+      "message": "Invalid key type",
+      "name": "RangeError"
+    },
+    "emptyPrivateKeyPublic": {
+      "value": [
+        "01",
+        ""
+      ]
+    },
     "evenPrime": {
       "code": "ERR_OSSL_BN_NO_INVERSE",
       "message": "error:0180006C:bignum routines::no inverse",
@@ -85,6 +110,22 @@
       "code": "ERR_CRYPTO_UNKNOWN_DH_GROUP",
       "message": "Unknown DH group",
       "name": "Error"
+    },
+    "zeroPrivateKey": {
+      "code": "ERR_CRYPTO_INVALID_KEYTYPE",
+      "message": "Invalid key type",
+      "name": "RangeError"
+    },
+    "zeroPrivateKeyBadPeer": {
+      "code": "ERR_CRYPTO_INVALID_KEYLEN",
+      "message": "Supplied key is too small",
+      "name": "RangeError"
+    },
+    "zeroPrivateKeyPublic": {
+      "value": [
+        "01",
+        ""
+      ]
     }
   },
   "dhReturnedBuffers": [
@@ -317,6 +358,10 @@
       true
     ]
   },
+  "groupCase": [
+    true,
+    128
+  ],
   "groupShape": [
     "undefined",
     "undefined",

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
+	"strings"
 
 	"proto.zip/studio/orbital/internal/bigmod"
 	"proto.zip/studio/orbital/pkg/v8"
@@ -28,6 +29,10 @@ func dhErr(code, message string) error { return &signError{code, message} }
 // dhMaxModulusBits is OpenSSL's largest Diffie-Hellman modulus
 // (OPENSSL_DH_MAX_MODULUS_BITS).
 const dhMaxModulusBits = 10000
+
+// dhCheckMaxModulusBits is the largest modulus OpenSSL's DH_check looks at
+// (OPENSSL_DH_CHECK_MAX_MODULUS_BITS); a larger one is "modulus too large".
+const dhCheckMaxModulusBits = 32768
 
 var (
 	errKeyTooSmall      = dhErr("ERR_CRYPTO_INVALID_KEYLEN", "Supplied key is too small")
@@ -70,40 +75,83 @@ func jsonString(v any) string {
 // --- finite-field DH -------------------------------------------------------
 
 // dhSafePrime makes a safe prime of bits bits that suits generator g, as
-// OpenSSL's DH_generate_parameters does (p = 23 mod 24 for 2, p = 3 or 7
-// mod 10 for 5).
+// OpenSSL's DH_generate_parameters does (p = 23 mod 24 for 2, p = 3 mod 10
+// for 5). It sieves candidates for p = 2q+1 by small primes, checking both q
+// and p, before testing either for primality, as OpenSSL does: testing each
+// candidate in full makes the time it takes vary by seconds.
 func dhSafePrime(bits int, g int64) (*big.Int, error) {
-	one := big.NewInt(1)
+	// q's step and residue keep p's residue for the generator.
+	step, rem := int64(2), int64(1)
+	switch g {
+	case 2:
+		step, rem = 12, 11 // q = 11 mod 12, so p = 23 mod 24
+	case 5:
+		step, rem = 10, 1 // q = 1 mod 10, so p = 3 mod 10
+	}
+	const window = 1 << 16
+	residues := make([]uint64, len(sievePrimes))
 	m := new(big.Int)
 	for {
-		q, err := rand.Prime(rand.Reader, bits-1)
+		// q has bits-1 bits with its top two set, so p = 2q+1 has bits bits.
+		q, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), uint(bits-1)))
 		if err != nil {
 			return nil, err
 		}
-		p := new(big.Int).Lsh(q, 1)
-		p.Add(p, one)
-		switch g {
-		case 2:
-			if m.Mod(p, big.NewInt(24)).Int64() != 23 {
-				continue
-			}
-		case 5:
-			if r := m.Mod(p, big.NewInt(10)).Int64(); r != 3 && r != 7 {
-				continue
-			}
+		q.SetBit(q, bits-2, 1)
+		q.SetBit(q, bits-3, 1)
+		q.Sub(q, m.Mod(q, big.NewInt(step)))
+		q.Add(q, big.NewInt(rem))
+		for i, sp := range sievePrimes {
+			residues[i] = m.Mod(q, new(big.Int).SetUint64(sp)).Uint64()
 		}
-		if p.BitLen() == bits && p.ProbablyPrime(20) {
-			return p, nil
+	candidates:
+		for delta := uint64(0); delta < window*uint64(step); delta += uint64(step) {
+			for i, sp := range sievePrimes {
+				r := (residues[i] + delta) % sp
+				if r == 0 || (2*r+1)%sp == 0 {
+					continue candidates
+				}
+			}
+			cand := new(big.Int).Add(q, new(big.Int).SetUint64(delta))
+			p := new(big.Int).Lsh(cand, 1)
+			p.SetBit(p, 0, 1)
+			if p.BitLen() != bits {
+				break
+			}
+			if cand.ProbablyPrime(0) && p.ProbablyPrime(0) && cand.ProbablyPrime(20) && p.ProbablyPrime(20) {
+				return p, nil
+			}
 		}
 	}
 }
 
+// sievePrimes are the odd primes below 2048, for dhSafePrime's sieve.
+var sievePrimes = func() []uint64 {
+	const n = 2048
+	composite := make([]bool, n)
+	var primes []uint64
+	for i := 3; i < n; i += 2 {
+		if composite[i] {
+			continue
+		}
+		primes = append(primes, uint64(i))
+		for j := i * i; j < n; j += 2 * i {
+			composite[j] = true
+		}
+	}
+	return primes
+}()
+
 // dhCheck is the verifyError value OpenSSL's DH_check gives for p and g.
+// The caller rules out moduli over dhCheckMaxModulusBits first.
 func dhCheck(p, g *big.Int) int {
-	const notPrime, notSafe, badGenerator, tooSmall = 0x01, 0x02, 0x08, 0x80
+	const notPrime, notSafe, badGenerator, tooSmall, tooLarge = 0x01, 0x02, 0x08, 0x80, 0x100
 	flags := 0
 	if p.BitLen() < 512 {
 		flags |= tooSmall
+	}
+	if p.BitLen() > dhMaxModulusBits {
+		flags |= tooLarge
 	}
 	if !p.ProbablyPrime(20) {
 		flags |= notPrime
@@ -160,7 +208,8 @@ func (c *Crypto) dhGroupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 1 {
 		return ctx.Throw("dh: missing arguments")
 	}
-	hexPrime, ok := modpGroups[args[0].String()]
+	// Node looks group names up regardless of case.
+	hexPrime, ok := modpGroups[strings.ToLower(args[0].String())]
 	if !ok {
 		v, _ := ctx.NewString("")
 		return v
@@ -173,6 +222,9 @@ func (c *Crypto) dhGroupFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 func (c *Crypto) dhCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	p := new(big.Int).SetBytes(b64Arg(args, 0))
+	if p.BitLen() > dhCheckMaxModulusBits {
+		return info.Context().Throw(errModulusTooLarge.Error())
+	}
 	g := new(big.Int).SetBytes(b64Arg(args, 1))
 	return info.Context().NewNumber(float64(dhCheck(p, g)))
 }
@@ -211,8 +263,8 @@ func dhExp(base *big.Int, exp []byte, m *bigmod.Modulus, p *big.Int) ([]byte, er
 	return bigmod.NewNat().Exp(b, exp, m).Bytes(m), nil
 }
 
-// dhKeysFunc backs _dhKeys(primeB64, generatorB64, privateB64, privateBits):
-// {priv, pub} as base64, making a private key when privateB64 is "". A
+// dhKeysFunc backs _dhKeys(primeB64, generatorB64, privateB64, privateBits, hasPrivate):
+// {priv, pub} as base64, making a private key unless hasPrivate. A
 // privateBits of 0 or less picks the size for the prime's strength.
 func (c *Crypto) dhKeysFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
@@ -226,8 +278,10 @@ func (c *Crypto) dhKeysFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err != nil {
 		return ctx.Throw(err.Error())
 	}
+	// A private key the script set is used as it is, even zero, as OpenSSL
+	// does; only an object without one gets a new one.
 	x := b64Arg(args, 2)
-	if new(big.Int).SetBytes(x).Sign() == 0 {
+	if len(args) < 5 || !args[4].Boolean() {
 		bits := int(args[3].Integer())
 		if bits <= 0 || bits > p.BitLen() {
 			bits = dhPrivateBits(p.BitLen())
@@ -272,6 +326,15 @@ func (c *Crypto) dhSecretFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	if y.Cmp(pm1) >= 0 {
 		return ctx.Throw(errKeyTooLarge.Error())
+	}
+	// A zero private key would make the secret 1 whatever the peer's key;
+	// OpenSSL refuses it. The check reads every byte, whatever their values.
+	var nonzero byte
+	for _, b := range x {
+		nonzero |= b
+	}
+	if nonzero == 0 {
+		return ctx.Throw(errInvalidKeyType.Error())
 	}
 	s, err := dhExp(y, x, m, p)
 	if err != nil {

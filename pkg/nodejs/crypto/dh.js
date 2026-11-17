@@ -158,7 +158,7 @@
       const s = this[kState];
       const bits = s.group ? null : s.prime.length * 8;
       const out = JSON.parse(native(crypto._dhKeys, b64(s.prime), b64(s.generator), s.priv ? b64(s.priv) : '',
-        privateBits(s, bits)));
+        privateBits(s, bits), !!s.priv));
       s.priv = fromB64(out.priv);
       s.pub = fromB64(out.pub);
       return encode(Buffer.from(s.pub), encoding);
