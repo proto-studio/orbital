@@ -121,6 +121,14 @@ type Config struct {
 	// libuv's threadpool. Further tasks wait their turn. 0 means
 	// DefaultThreadPoolSize (4), Node's default UV_THREADPOOL_SIZE.
 	ThreadPoolSize int
+	// ThreadPoolQueueSize is how many more tasks may wait for the thread pool once
+	// ThreadPoolSize are running. Each waiting task holds its inputs, so when the
+	// queue is full, starting more work waits for a task to leave it, blocking the
+	// JavaScript thread, rather than letting the queue grow without bound. Every
+	// task still runs and calls back. 0 means none wait: new work waits for a
+	// running task to finish. A negative value means no limit, as in Node; the
+	// orbital CLI uses that.
+	ThreadPoolQueueSize int
 	// CryptoMemoryLimit, when positive, is the most memory in bytes one key
 	// derivation (pbkdf2, scrypt, hkdf, and WebCrypto's PBKDF2 and HKDF) may
 	// use: scrypt's workspace, whatever maxmem the script passes, plus the
@@ -254,7 +262,7 @@ func New(cfg *Config) (*Runtime, error) {
 
 		unhandledRejections: cfg.UnhandledRejections,
 		noWarnings:          cfg.NoWarnings,
-		threadPool:          newThreadPool(cfg.ThreadPoolSize, execController.Done()),
+		threadPool:          newThreadPool(cfg.ThreadPoolSize, cfg.ThreadPoolQueueSize, execController.Done()),
 		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
 	}
 

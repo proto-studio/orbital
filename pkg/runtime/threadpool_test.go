@@ -12,7 +12,7 @@ import (
 // goroutines however much work is queued, and runs every task.
 func TestThreadPool_Bounded(t *testing.T) {
 	for _, size := range []int{1, 3, DefaultThreadPoolSize} {
-		p := newThreadPool(size, nil)
+		p := newThreadPool(size, -1, nil)
 		var running, peak, done int32
 		var wg sync.WaitGroup
 		release := make(chan struct{})
@@ -53,7 +53,7 @@ func TestThreadPool_Bounded(t *testing.T) {
 // A size of 0 or less means Node's default of 4.
 func TestThreadPool_DefaultSize(t *testing.T) {
 	for _, size := range []int{0, -1} {
-		if got := newThreadPool(size, nil).size; got != DefaultThreadPoolSize {
+		if got := newThreadPool(size, -1, nil).size; got != DefaultThreadPoolSize {
 			t.Errorf("newThreadPool(%d).size = %d, want %d", size, got, DefaultThreadPoolSize)
 		}
 	}
@@ -63,7 +63,7 @@ func TestThreadPool_DefaultSize(t *testing.T) {
 // isn't queued; the task already running finishes.
 func TestThreadPool_DropsQueuedWorkWhenStopped(t *testing.T) {
 	done := make(chan struct{})
-	p := newThreadPool(1, done)
+	p := newThreadPool(1, -1, done)
 	var ran int32
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -95,5 +95,66 @@ func TestThreadPool_DropsQueuedWorkWhenStopped(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&ran); n != 1 {
 		t.Errorf("%d tasks ran, want only the one already running", n)
+	}
+}
+
+// With a queue limit, submit waits for room instead of letting the queue grow, and every
+// task still runs.
+func TestThreadPool_QueueLimitWaitsForRoom(t *testing.T) {
+	for _, maxQueue := range []int{0, 1, 5} {
+		p := newThreadPool(2, maxQueue, nil)
+		var peakQueue, ran int32
+		const tasks = 50
+		var wg sync.WaitGroup
+		wg.Add(tasks)
+		for i := 0; i < tasks; i++ {
+			p.submit(func() {
+				defer wg.Done()
+				time.Sleep(time.Millisecond)
+				atomic.AddInt32(&ran, 1)
+			})
+			p.mu.Lock()
+			if q := int32(len(p.queue)); q > atomic.LoadInt32(&peakQueue) {
+				atomic.StoreInt32(&peakQueue, q)
+			}
+			p.mu.Unlock()
+		}
+		wg.Wait()
+		if peakQueue > int32(maxQueue) {
+			t.Errorf("maxQueue %d: %d tasks waited", maxQueue, peakQueue)
+		}
+		if ran != tasks {
+			t.Errorf("maxQueue %d: %d of %d tasks ran", maxQueue, ran, tasks)
+		}
+	}
+}
+
+// A submit waiting for room gives up when the runtime stops, without running its work.
+func TestThreadPool_WaitingSubmitStopsWithTheRuntime(t *testing.T) {
+	done := make(chan struct{})
+	p := newThreadPool(1, 0, done)
+	release := make(chan struct{})
+	p.submit(func() { <-release })
+	defer close(release)
+
+	var ran int32
+	returned := make(chan struct{})
+	go func() {
+		p.submit(func() { atomic.AddInt32(&ran, 1) })
+		close(returned)
+	}()
+	select {
+	case <-returned:
+		t.Fatal("submit returned while the pool was full")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(done)
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("submit kept waiting after the runtime stopped")
+	}
+	if atomic.LoadInt32(&ran) != 0 {
+		t.Error("work submitted after the runtime stopped ran")
 	}
 }

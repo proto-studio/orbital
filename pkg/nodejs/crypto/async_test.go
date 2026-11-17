@@ -131,7 +131,7 @@ func TestCrypto_CallbackWorkUsesBoundedPool(t *testing.T) {
 // Killing the runtime drops the callback work still queued on its pool: with
 // one thread busy, the ten calls queued behind it never run.
 func TestCrypto_KillDropsQueuedWork(t *testing.T) {
-	rt, err := runtime.New(&runtime.Config{ThreadPoolSize: 1})
+	rt, err := runtime.New(&runtime.Config{ThreadPoolSize: 1, ThreadPoolQueueSize: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,5 +163,37 @@ func TestCrypto_KillDropsQueuedWork(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if n := atomic.LoadInt32(&ran); n != 1 {
 		t.Errorf("%d tasks ran after Kill, want only the one already running", n)
+	}
+}
+
+// With no room to queue, each call waits for the one ahead of it, and every callback
+// still runs with its result.
+func TestCrypto_QueueLimitStillRunsEveryCallback(t *testing.T) {
+	rt, err := runtime.New(&runtime.Config{ThreadPoolSize: 1, ThreadPoolQueueSize: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Dispose()
+	if err := buffer.New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := New().Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.RunScript(`
+		globalThis.lengths = [];
+		const c = __crypto_module;
+		for (let i = 1; i <= 30; i++) c.randomBytes(i, (err, buf) => { if (!err) lengths.push(buf.length); });
+	`, "test.js"); err != nil {
+		t.Fatal(err)
+	}
+	rt.EventLoop().Run()
+	got, err := rt.RunScript(`lengths.length === 30 && lengths.every((n, i) => n === i + 1)`, "check.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Boolean() {
+		v, _ := rt.RunScript(`JSON.stringify(lengths)`, "dump.js")
+		t.Fatalf("callbacks: %s", v.String())
 	}
 }
