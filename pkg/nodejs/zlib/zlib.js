@@ -43,6 +43,95 @@
     return bytes;
   }
 
+  // buffer.constants.MAX_LENGTH, the largest maxOutputLength Node accepts.
+  const kMaxLength = 2147483647;
+  // The most bytes one call can hand back here (zlib.go): its result reaches
+  // JavaScript as one base64 string.
+  const kMaxOutput = internal.maxOutput;
+
+  function codedError(Type, code, message) {
+    const err = new Type(message);
+    err.code = code;
+    return err;
+  }
+
+  // Node's description of a rejected value, as in its ERR_INVALID_ARG_TYPE.
+  function describeReceived(value) {
+    if (value === null || value === undefined) return 'Received ' + value;
+    if (typeof value === 'function') return 'Received function ' + (value.name || '<anonymous>');
+    if (typeof value === 'object') {
+      if (value.constructor && value.constructor.name) {
+        return 'Received an instance of ' + value.constructor.name;
+      }
+      return 'Received ' + String(value);
+    }
+    let shown;
+    if (typeof value === 'string') {
+      shown = value.length > 28 ? value.slice(0, 25) + '...' : value;
+      shown = "'" + shown + "'";
+    } else if (typeof value === 'bigint') {
+      shown = String(value) + 'n';
+    } else if (typeof value === 'symbol') {
+      shown = String(value);
+    } else {
+      shown = Object.is(value, -0) ? '-0' : String(value);
+    }
+    return 'Received type ' + typeof value + ' (' + shown + ')';
+  }
+
+  // A number as Node's ERR_OUT_OF_RANGE shows it: integers of 2^32 and more
+  // grouped with underscores.
+  function describeNumber(value) {
+    if (Number.isInteger(value) && Math.abs(value) > 2 ** 32) {
+      const digits = String(Math.abs(value));
+      let grouped = '';
+      for (let i = digits.length; i > 0; i -= 3) {
+        grouped = digits.slice(Math.max(0, i - 3), i) + (grouped ? '_' + grouped : '');
+      }
+      return (value < 0 ? '-' : '') + grouped;
+    }
+    return String(value);
+  }
+
+  // Node's checkRangesOrGetDefault for options.maxOutputLength: undefined and
+  // NaN mean the default, anything else must be a finite number in range.
+  function maxOutputLength(options) {
+    const name = 'options.maxOutputLength';
+    const value = options === null || options === undefined ? undefined : options.maxOutputLength;
+    if (value === undefined || Number.isNaN(value)) return kMaxLength;
+    if (typeof value !== 'number') {
+      throw codedError(TypeError, 'ERR_INVALID_ARG_TYPE',
+        'The "' + name + '" property must be of type number. ' + describeReceived(value));
+    }
+    if (!Number.isFinite(value)) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+        'The value of "' + name + '" is out of range. It must be a finite number. Received ' + describeNumber(value));
+    }
+    if (value < 1 || value > kMaxLength) {
+      throw codedError(RangeError, 'ERR_OUT_OF_RANGE',
+        'The value of "' + name + '" is out of range. It must be >= 1 and <= ' + kMaxLength +
+        '. Received ' + describeNumber(value));
+    }
+    return value;
+  }
+
+  // Runs one native sync codec with the call's output limit. Over it, the
+  // native returns false and this throws Node's ERR_BUFFER_TOO_LARGE, naming the
+  // limit that applied: the caller's, or the most one call can return here.
+  function runSync(native, buffer, options, failure) {
+    const requested = maxOutputLength(options);
+    const limit = requested > kMaxOutput ? kMaxOutput : requested;
+    const result = native(toBase64(buffer), limit);
+    if (result === false) {
+      throw codedError(RangeError, 'ERR_BUFFER_TOO_LARGE',
+        'Cannot create a Buffer larger than ' + limit + ' bytes');
+    }
+    if (result === null || result === undefined) {
+      throw new Error(failure);
+    }
+    return fromBase64(result);
+  }
+
   // Compression levels
   const constants = {
     Z_NO_COMPRESSION: 0,
@@ -81,80 +170,59 @@
      * Compress data using gzip.
      */
     gzipSync: function(buffer, options) {
-      const result = internal.gzipSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('Gzip compression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.gzipSync, buffer, options, 'Gzip compression failed');
     },
 
     /**
      * Decompress gzip data.
      */
     gunzipSync: function(buffer, options) {
-      const result = internal.gunzipSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('Gzip decompression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.gunzipSync, buffer, options, 'Gzip decompression failed');
     },
 
     /**
      * Compress data using deflate (zlib format).
      */
     deflateSync: function(buffer, options) {
-      const result = internal.deflateSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('Deflate compression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.deflateSync, buffer, options, 'Deflate compression failed');
     },
 
     /**
      * Decompress deflate data (zlib format).
      */
     inflateSync: function(buffer, options) {
-      const result = internal.inflateSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('Inflate decompression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.inflateSync, buffer, options, 'Inflate decompression failed');
     },
 
     /**
      * Compress data using raw deflate (no zlib header).
      */
     deflateRawSync: function(buffer, options) {
-      const result = internal.deflateRawSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('DeflateRaw compression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.deflateRawSync, buffer, options, 'DeflateRaw compression failed');
     },
 
     /**
      * Decompress raw deflate data (no zlib header).
      */
     inflateRawSync: function(buffer, options) {
-      const result = internal.inflateRawSync(toBase64(buffer));
-      if (result === null || result === undefined) {
-        throw new Error('InflateRaw decompression failed');
-      }
-      return fromBase64(result);
+      return runSync(internal.inflateRawSync, buffer, options, 'InflateRaw decompression failed');
     },
 
     /**
      * Decompress data (auto-detect format).
      */
     unzipSync: function(buffer, options) {
+      maxOutputLength(options);
       // Try gzip first
       try {
         return zlib.gunzipSync(buffer, options);
       } catch (e) {
+        if (e && e.code === 'ERR_BUFFER_TOO_LARGE') throw e;
         // Try deflate
         try {
           return zlib.inflateSync(buffer, options);
         } catch (e2) {
+          if (e2 && e2.code === 'ERR_BUFFER_TOO_LARGE') throw e2;
           throw new Error('Unzip failed: could not decompress data');
         }
       }
@@ -170,15 +238,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.gzipSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -192,15 +265,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.gunzipSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -214,15 +292,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.deflateSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -236,15 +319,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.inflateSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -258,15 +346,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.deflateRawSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -280,15 +373,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.inflateRawSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -302,15 +400,20 @@
         callback = options;
         options = {};
       }
+      // An invalid option throws here, as Node's does, not through the callback.
+      maxOutputLength(options);
       try {
         const result = zlib.unzipSync(buffer, options);
+        // With a callback, the result goes only there, as in Node.
         if (callback) {
           setImmediate(() => callback(null, result));
+          return;
         }
         return Promise.resolve(result);
       } catch (err) {
         if (callback) {
           setImmediate(() => callback(err));
+          return;
         }
         return Promise.reject(err);
       }
@@ -356,6 +459,9 @@
       constructor(format, options) {
         super(options || {});
         this._zFinalCb = null;
+        // Whether the native codec is waiting for this side to take its last
+        // chunk; it's acknowledged once the readable side has room.
+        this._zAckPending = false;
         this._zId = internal._streamCreate(format, (err, chunk) => {
           if (this.destroyed) return;
           if (err) {
@@ -369,16 +475,29 @@
             if (this._zFinalCb) { const cb = this._zFinalCb; this._zFinalCb = null; cb(); }
             return;
           }
-          this.push(Buffer.from(chunk, 'base64'));
+          if (this.push(Buffer.from(chunk, 'base64'))) {
+            internal._streamAck(this._zId);
+          } else {
+            this._zAckPending = true;
+          }
         });
+      }
+
+      _read(n) {
+        if (this._zAckPending) {
+          this._zAckPending = false;
+          internal._streamAck(this._zId);
+        }
+        super._read(n);
       }
 
       _transform(chunk, encoding, callback) {
         const buf = Buffer.isBuffer(chunk)
           ? chunk
           : Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8');
-        internal._streamWrite(this._zId, buf.toString('base64'));
-        callback();
+        internal._streamWrite(this._zId, buf.toString('base64'), (err) => {
+          callback(err ? new Error(err) : undefined);
+        });
       }
 
       // The native codec signals the end of the output, not the Transform base class.

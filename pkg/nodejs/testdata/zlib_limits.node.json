@@ -1,0 +1,96 @@
+{
+  "asyncBadOption": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.maxOutputLength\" property must be of type number. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "asyncOkReturn": "undefined",
+  "asyncReturn": "undefined",
+  "callbacks": [
+    "sync",
+    "gunzip RangeError ERR_BUFFER_TOO_LARGE Cannot create a Buffer larger than 10 bytes true",
+    "inflate null 5000"
+  ],
+  "deflateRawSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "deflateSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "exactLimit": {
+    "length": 5
+  },
+  "fractionalAboveOutput": {
+    "length": 5
+  },
+  "fractionalLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 1.5 bytes",
+    "name": "RangeError"
+  },
+  "gunzipSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "gzipSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "infiniteLimit": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.maxOutputLength\" is out of range. It must be a finite number. Received Infinity",
+    "name": "RangeError"
+  },
+  "inflateRawSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "inflateSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "nanLimit": {
+    "length": 5
+  },
+  "negativeInfiniteLimit": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.maxOutputLength\" is out of range. It must be a finite number. Received -Infinity",
+    "name": "RangeError"
+  },
+  "noOptions": {
+    "length": 5
+  },
+  "nullLimit": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.maxOutputLength\" property must be of type number. Received null",
+    "name": "TypeError"
+  },
+  "objectLimit": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.maxOutputLength\" property must be of type number. Received an instance of Object",
+    "name": "TypeError"
+  },
+  "stringLimit": {
+    "code": "ERR_INVALID_ARG_TYPE",
+    "message": "The \"options.maxOutputLength\" property must be of type number. Received type string ('x')",
+    "name": "TypeError"
+  },
+  "unzipSyncDeflateOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "unzipSyncOverLimit": {
+    "code": "ERR_BUFFER_TOO_LARGE",
+    "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  }
+}

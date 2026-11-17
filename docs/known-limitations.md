@@ -231,6 +231,13 @@ traceability.
   WebCrypto's PBKDF2 `deriveBits` and HMAC/AES `generateKey` have the same byte cap. RSA
   keys are generated up to 16,384 bits, OpenSSL's largest usable modulus; larger
   `modulusLength` values give `modulus too large` rather than a key Node couldn't use.
+- **[gap] zlib's buffer APIs return at most what one V8 string holds.** `gunzipSync`,
+  `inflateSync` and the other buffer forms, sync and callback, hand their result back as
+  one base64 string, so their output stops at 402,653,166 bytes even when
+  `maxOutputLength` allows more, with the same `ERR_BUFFER_TOO_LARGE` Node gives over
+  `maxOutputLength`, naming that limit (`zlib.go`). `maxOutputLength` itself is checked
+  against Orbital's `buffer.constants.MAX_LENGTH`, 2,147,483,647, where Node's is 2^32.
+  The streams have no such cap.
 - **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
   CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`) from Go's standard library, and
   ChaCha20 and ChaCha20-Poly1305 from `golang.org/x/crypto` (`cipher.go`). CCM, OCB, XTS,
