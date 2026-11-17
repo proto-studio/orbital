@@ -98,17 +98,25 @@ func b64uDec(s string) ([]byte, error) {
 func b64sDec(s string) ([]byte, error) { return b64s.DecodeString(s) }
 
 // withMemoryLimit applies Config.CryptoMemoryLimit to a derivation native
-// whose JSON params give its output length in bits: the derived bits count
-// three times their length in bytes (the bytes, their base64 form and the
-// ArrayBuffer), as node:crypto's derivations do.
+// whose JSON params give its output length in bits and carry its inputs in
+// base64: the derived bits count six times their length in bytes (the bytes,
+// their base64 form, its C copy and V8 string, and the ArrayBuffer), as
+// node:crypto's derivations do, and the params four times theirs (their copy
+// out of V8, the JSON decoder's input and strings, and the decoded inputs).
+// It's checked before the native decodes the params.
 func withMemoryLimit(rt *runtime.Runtime, name string, fn v8.FunctionCallback) v8.FunctionCallback {
 	return func(info *v8.FunctionCallbackInfo) *v8.Value {
 		if limit := rt.CryptoMemoryLimit(); limit > 0 {
+			params := argStr(info, 0)
+			inputs := 4 * int64(len(params))
+			if inputs > limit {
+				return throwf(info.Context(), "%s: params are out of range for the crypto memory limit", name)
+			}
 			var p struct {
 				Length int64 `json:"length"`
 			}
-			if err := json.Unmarshal([]byte(argStr(info, 0)), &p); err == nil && p.Length > 0 && 3*(p.Length/8) > limit {
-				return throwf(info.Context(), "%s: length %d is out of range for the crypto memory limit: it must be <= %d", name, p.Length, limit/3*8)
+			if err := json.Unmarshal([]byte(params), &p); err == nil && p.Length > 0 && 6*(p.Length/8) > limit-inputs {
+				return throwf(info.Context(), "%s: length %d is out of range for the crypto memory limit: it must be <= %d", name, p.Length, (limit-inputs)/6*8)
 			}
 		}
 		return fn(info)

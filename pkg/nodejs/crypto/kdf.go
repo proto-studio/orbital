@@ -57,10 +57,20 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 var errDerivingBits = errors.New("Deriving bits failed")
 
 func argBytes(args []*v8.Value, i int) []byte {
+	return decodeArg(argString(args, i))
+}
+
+// argString is a string argument, or "" when it's missing.
+func argString(args []*v8.Value, i int) string {
 	if i >= len(args) {
-		return nil
+		return ""
 	}
-	b, _ := base64.StdEncoding.DecodeString(args[i].String())
+	return args[i].String()
+}
+
+// decodeArg decodes a base64 argument.
+func decodeArg(s string) []byte {
+	b, _ := base64.StdEncoding.DecodeString(s)
 	return b
 }
 
@@ -93,16 +103,18 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 5 {
 		return ctx.Throw("pbkdf2: missing arguments")
 	}
-	password, salt := argBytes(args, 0), argBytes(args, 1)
 	iter, keyLen := args[2].Integer(), args[3].Integer()
 	h := nodeDigest(args[4].String())
-	// kdf.js checks these, but scripts can reach the native directly.
+	// kdf.js checks these, but scripts can reach the native directly. The
+	// limit is checked before the inputs are decoded.
 	if keyLen < 0 || keyLen > maxNativeBytes {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
-	if h == nil || iter < 1 || iter > math.MaxInt32 || !c.keyLenFits(keyLen) {
+	pw64, salt64 := argString(args, 0), argString(args, 1)
+	if h == nil || iter < 1 || iter > math.MaxInt32 || !c.keyLenFits(keyLen, inputCost(len(pw64), len(salt64))) {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
+	password, salt := decodeArg(pw64), decodeArg(salt64)
 	xof := isXOF(args[4].String())
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
 		if xof {
@@ -158,36 +170,53 @@ func scryptCheck(n, r, p, maxmem uint64) error {
 }
 
 // keyOutputCost is the memory a derived key of keyLen bytes takes on its way
-// to JavaScript, counted against Config.CryptoMemoryLimit: the key itself,
-// its base64 form, and the Buffer made from it.
+// to JavaScript, counted against Config.CryptoMemoryLimit: the key, its
+// base64 form (4/3 of it), the C copy of that string and the V8 string made
+// from it (4/3 each), and the Buffer decoded from it: six times its length.
 func keyOutputCost(keyLen int64) uint64 {
-	return 3 * uint64(keyLen)
+	return 6 * uint64(keyLen)
 }
 
-// kdfMaxKeyLen is the longest key a derivation may return under
-// Config.CryptoMemoryLimit, or -1 when no limit is set.
-func (c *Crypto) kdfMaxKeyLen() int64 {
+// inputCost is the memory the inputs of a derivation take, given the lengths
+// of the base64 strings they arrive as: each string's copy out of V8 and the
+// bytes decoded from it.
+func inputCost(b64Lens ...int) uint64 {
+	var n uint64
+	for _, l := range b64Lens {
+		n += uint64(l) + uint64(l)/4*3
+	}
+	return n
+}
+
+// kdfMaxKeyLen is the longest key a derivation whose decoded inputs take
+// inputs bytes may return under Config.CryptoMemoryLimit, or -1 when no limit
+// is set.
+func (c *Crypto) kdfMaxKeyLen(inputs uint64) int64 {
 	limit := c.rt.CryptoMemoryLimit()
 	if limit <= 0 {
 		return -1
 	}
-	return limit / 3
+	if inputs >= uint64(limit) {
+		return 0
+	}
+	return (limit - int64(inputs)) / 6
 }
 
-// keyLenFits reports whether a key of keyLen bytes fits Config.CryptoMemoryLimit.
-func (c *Crypto) keyLenFits(keyLen int64) bool {
-	max := c.kdfMaxKeyLen()
-	return max < 0 || keyLen <= max
+// keyLenFits reports whether a key of keyLen bytes, from inputs taking
+// inputs bytes, fits Config.CryptoMemoryLimit.
+func (c *Crypto) keyLenFits(keyLen int64, inputs uint64) bool {
+	limit := c.rt.CryptoMemoryLimit()
+	return limit <= 0 || keyOutputCost(keyLen)+inputs <= uint64(limit)
 }
 
 // scryptMaxmem is the memory limit an scrypt call's workspace is checked
 // against: the script's maxmem, lowered when Config.CryptoMemoryLimit is set
-// to what the limit leaves after the derived key's output.
-func (c *Crypto) scryptMaxmem(maxmem float64, keyLen int64) uint64 {
+// to what the limit leaves after the derived key's output and the inputs.
+func (c *Crypto) scryptMaxmem(maxmem float64, keyLen int64, inputs uint64) uint64 {
 	m := uint64(maxmem)
 	if limit := c.rt.CryptoMemoryLimit(); limit > 0 {
 		left := uint64(0)
-		if cost := keyOutputCost(keyLen); cost < uint64(limit) {
+		if cost := keyOutputCost(keyLen) + inputs; cost < uint64(limit) {
 			left = uint64(limit) - cost
 		}
 		if left < m {
@@ -201,12 +230,17 @@ func (c *Crypto) scryptMaxmem(maxmem float64, keyLen int64) uint64 {
 	return m
 }
 
-// kdfMaxKeyLenFunc backs _kdfMaxKeyLen(): kdfMaxKeyLen.
+// kdfMaxKeyLenFunc backs _kdfMaxKeyLen(inputB64Length): kdfMaxKeyLen for
+// inputs whose base64 strings total inputB64Length characters.
 func (c *Crypto) kdfMaxKeyLenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
-	return info.Context().NewNumber(float64(c.kdfMaxKeyLen()))
+	var inputs uint64
+	if args := info.Args(); len(args) > 0 && args[0].Integer() > 0 {
+		inputs = inputCost(int(args[0].Integer()))
+	}
+	return info.Context().NewNumber(float64(c.kdfMaxKeyLen(inputs)))
 }
 
-// scryptCheckFunc backs _scryptCheck(N, r, p, maxmem, keylen): "" when OpenSSL would
+// scryptCheckFunc backs _scryptCheck(N, r, p, maxmem, keylen, inputB64Length): "" when OpenSSL would
 // accept the parameters, else the reason it gives, which may be empty, after
 // a "!" so an empty reason still reads as a failure.
 func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -217,10 +251,14 @@ func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	out := ""
 	var keyLen int64
+	var inputs uint64
 	if len(args) > 4 {
 		keyLen = args[4].Integer()
 	}
-	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number(), keyLen)); err != nil {
+	if len(args) > 5 && args[5].Integer() > 0 {
+		inputs = inputCost(int(args[5].Integer()))
+	}
+	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number(), keyLen, inputs)); err != nil {
 		out = "!" + err.Error()
 	}
 	v, _ := ctx.NewString(out)
@@ -235,16 +273,18 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 7 {
 		return ctx.Throw("scrypt: missing arguments")
 	}
-	password, salt := argBytes(args, 0), argBytes(args, 1)
 	n, r, p, maxmem := args[2].Number(), args[3].Number(), args[4].Number(), args[5].Number()
+	pw64, salt64 := argString(args, 0), argString(args, 1)
+	inputs := inputCost(len(pw64), len(salt64))
 	keyLen := args[6].Integer()
 	if keyLen < 0 || keyLen > maxNativeBytes {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
 	if n < 0 || r < 0 || p < 0 || maxmem < 1 || maxmem > 1<<53 ||
-		keyLen < 0 || keyLen > math.MaxInt32 || scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem, keyLen)) != nil {
+		keyLen < 0 || keyLen > math.MaxInt32 || scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem, keyLen, inputs)) != nil {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
+	password, salt := decodeArg(pw64), decodeArg(salt64)
 	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
 		if keyLen == 0 {
 			return []byte{}, nil
@@ -261,11 +301,13 @@ func (c *Crypto) hkdfFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("hkdf: missing arguments")
 	}
 	h := nodeDigest(args[0].String())
-	ikm, salt, infoBytes := argBytes(args, 1), argBytes(args, 2), argBytes(args, 3)
 	keyLen := int(args[4].Integer())
-	if h == nil || keyLen < 0 || keyLen > 255*h().Size() || !c.keyLenFits(int64(keyLen)) {
+	ikm64, salt64, info64 := argString(args, 1), argString(args, 2), argString(args, 3)
+	if h == nil || keyLen < 0 || keyLen > 255*h().Size() ||
+		!c.keyLenFits(int64(keyLen), inputCost(len(ikm64), len(salt64), len(info64))) {
 		return ctx.Throw("hkdf: invalid arguments")
 	}
+	ikm, salt, infoBytes := decodeArg(ikm64), decodeArg(salt64), decodeArg(info64)
 	xof := isXOF(args[0].String())
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
 		if xof {
