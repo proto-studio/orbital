@@ -48,6 +48,19 @@ type fetchOp struct {
 	slot func()
 }
 
+// holdSlot keeps release until closeBody gives the slot back. If cancellation has already
+// closed the operation, nothing would, so it gives the slot back at once.
+func (op *fetchOp) holdSlot(release func()) {
+	op.mu.Lock()
+	if op.closed {
+		op.mu.Unlock()
+		release()
+		return
+	}
+	op.slot = release
+	op.mu.Unlock()
+}
+
 // New creates a new Fetch module.
 func New() *Fetch {
 	return &Fetch{}
@@ -167,9 +180,7 @@ func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		f.finishEarly(op, jsCtx, callback, string(encoded))
 		return jsCtx.NewNumber(float64(op.id))
 	}
-	op.mu.Lock()
-	op.slot = release
-	op.mu.Unlock()
+	op.holdSlot(release)
 
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
