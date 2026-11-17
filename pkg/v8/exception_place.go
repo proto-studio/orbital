@@ -85,7 +85,7 @@ func (c *Context) CallRecordingFunction() (*Value, error) {
 	if ptr == nil {
 		return nil, errors.New("v8: could not create callRecording")
 	}
-	return &Value{ptr: ptr, ctx: c}, nil
+	return newValue(ptr, c), nil
 }
 
 // RunScriptRethrowing runs a script from inside a native function. If the script throws,
@@ -104,7 +104,7 @@ func (c *Context) RunScriptRethrowing(source, origin string) *Value {
 	if result == nil {
 		return nil
 	}
-	return &Value{ptr: result, ctx: c}
+	return newValue(result, c)
 }
 
 // CompileFunctionRethrowing compiles source, a string value, as the body of a function
@@ -130,5 +130,5 @@ func (c *Context) CompileFunctionRethrowing(source *Value, origin string, params
 	if result == nil {
 		return nil
 	}
-	return &Value{ptr: result, ctx: c}
+	return newValue(result, c)
 }

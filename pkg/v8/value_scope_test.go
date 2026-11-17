@@ -2,6 +2,7 @@ package v8_test
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"proto.zip/studio/orbital/pkg/v8"
@@ -391,5 +392,63 @@ func TestProxyHelpersFallInReleaseScope(t *testing.T) {
 		if v.IsObject() {
 			t.Errorf("%s's value outlived its scope", name)
 		}
+	}
+}
+
+// A function compiled from inside a native call is released like any other value made
+// there, so compiling modules again and again doesn't keep every one alive.
+func TestCompiledFunctionsAreReleased(t *testing.T) {
+	iso, err := v8.NewIsolate()
+	if err != nil {
+		t.Fatalf("NewIsolate: %v", err)
+	}
+	defer iso.Dispose()
+	ctx, err := iso.NewContext()
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	defer ctx.Dispose()
+
+	tmpl, err := iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+		args := info.Args()
+		if len(args) < 1 {
+			return nil
+		}
+		return info.Context().CompileFunctionRethrowing(args[0], "module.js", "exports")
+	})
+	if err != nil {
+		t.Fatalf("NewFunctionTemplate: %v", err)
+	}
+	fn, err := tmpl.GetFunction(ctx)
+	if err != nil {
+		t.Fatalf("GetFunction: %v", err)
+	}
+	global, err := ctx.Global()
+	if err != nil {
+		t.Fatalf("Global: %v", err)
+	}
+	if err := global.Set("compile", fn); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	src := "exports.x = '" + strings.Repeat("x", 4096) + "';"
+	for batch := 0; batch < 10; batch++ {
+		if _, err := ctx.RunScript("for (let i = 0; i < 2000; i++) compile(`"+src+"` + i)(globalThis);", "loop.js"); err != nil {
+			t.Fatalf("RunScript: %v", err)
+		}
+		runtime.GC()
+	}
+	runtime.GC()
+	runtime.GC()
+	// A last call frees what the finalizers have handed back.
+	if _, err := ctx.RunScript("compile('')", "drain.js"); err != nil {
+		t.Fatalf("RunScript: %v", err)
+	}
+	stats, err := iso.GetHeapStatistics()
+	if err != nil {
+		t.Fatalf("GetHeapStatistics: %v", err)
+	}
+	// Each function kept would hold a handle: 20000 of them take about 640 KB.
+	if stats.UsedGlobalHandlesSize > 256<<10 {
+		t.Errorf("persistent handles take %d bytes after 20000 compiled functions", stats.UsedGlobalHandlesSize)
 	}
 }
