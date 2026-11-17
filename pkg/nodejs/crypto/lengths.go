@@ -17,7 +17,14 @@ const (
 	maxNativeBytes = maxStringLength / 4 * 3
 	// maxPrimeBits is the largest prime, in bits, whose hex form fits a string.
 	maxPrimeBits = maxStringLength * 4
+	// maxRSABits is the largest RSA modulus OpenSSL will use
+	// (OPENSSL_RSA_MAX_MODULUS_BITS); Node can't sign or encrypt with a larger key.
+	maxRSABits = 16384
 )
+
+// MaxNativeBytes is the most bytes a native can return to JavaScript as one
+// base64 string, for the WebCrypto natives.
+const MaxNativeBytes = maxNativeBytes
 
 // outOfRange is Node's ERR_OUT_OF_RANGE message for an integer outside
 // [min, max], with Node's digit grouping for values of 2^32 and more.

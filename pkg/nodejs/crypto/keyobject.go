@@ -246,6 +246,10 @@ func GenerateRSAKey(bits int, e int64) (*rsa.PrivateKey, error) {
 }
 
 func generateRSAKey(bits int, e int64) (*rsa.PrivateKey, error) {
+	// Checked here as well as by the callers, since every RSA key comes through.
+	if bits > maxRSABits {
+		return nil, errors.New("error:0200009B:rsa routines::modulus too large")
+	}
 	if e == 65537 {
 		return rsa.GenerateKey(rand.Reader, bits)
 	}

@@ -147,6 +147,17 @@ func argStr(info *v8.FunctionCallbackInfo, i int) string {
 	return args[i].String()
 }
 
+// maxSecretKeyBytes is the longest secret key generateKey makes: its JWK, a
+// base64url string with a little JSON around it, must fit one V8 string.
+const maxSecretKeyBytes = nodecrypto.MaxNativeBytes - 1024
+
+// pssSaltTooLong reports whether a PSS salt length can't fit an encoding for
+// a modulus of modBits bits and a hash of hLen bytes, or is negative.
+func pssSaltTooLong(modBits, hLen, saltLength int) bool {
+	emLen := (modBits - 1 + 7) / 8
+	return saltLength < 0 || saltLength > emLen-hLen-2
+}
+
 func throwf(ctx *v8.Context, format string, a ...interface{}) *v8.Value {
 	return ctx.Throw(fmt.Sprintf(format, a...))
 }
@@ -234,6 +245,10 @@ func nativeGenerateKey(info *v8.FunctionCallbackInfo) *v8.Value {
 			} else {
 				length = 256
 			}
+		}
+		// The key goes back as a JWK string, so it must fit one.
+		if length < 0 || length/8 > maxSecretKeyBytes {
+			return throwf(ctx, "generateKey: length %d is out of range: it must be <= %d", length, maxSecretKeyBytes*8)
 		}
 		raw := make([]byte, length/8)
 		if _, err := rand.Read(raw); err != nil {
@@ -358,6 +373,10 @@ func nativeSign(info *v8.FunctionCallbackInfo) *v8.Value {
 		if err != nil {
 			return throwf(ctx, "sign PS: %v", err)
 		}
+		// Checked before crypto/rsa makes the salt.
+		if pssSaltTooLong(priv.N.BitLen(), nh().Size(), p.SaltLength) {
+			return throwf(ctx, "sign PS: saltLength %d is too long for the key", p.SaltLength)
+		}
 		opts := &rsa.PSSOptions{SaltLength: p.SaltLength, Hash: ch}
 		sig, err := rsa.SignPSS(rand.Reader, priv, ch, hashSum(ch, nh, data), opts)
 		if err != nil {
@@ -448,7 +467,8 @@ func nativeVerify(info *v8.FunctionCallbackInfo) *v8.Value {
 			return throwf(ctx, "verify PS: %v", err)
 		}
 		opts := &rsa.PSSOptions{SaltLength: p.SaltLength, Hash: ch}
-		ok = rsa.VerifyPSS(pub, ch, hashSum(ch, nh, data), sig, opts) == nil
+		ok = !pssSaltTooLong(pub.N.BitLen(), nh().Size(), p.SaltLength) &&
+			rsa.VerifyPSS(pub, ch, hashSum(ch, nh, data), sig, opts) == nil
 
 	case "ECDSA":
 		ch, nh, has := hashByName(p.Hash)
@@ -694,8 +714,8 @@ func nativePbkdf2(info *v8.FunctionCallbackInfo) *v8.Value {
 	if p.Iterations <= 0 {
 		return throwf(ctx, "pbkdf2: iterations must be positive")
 	}
-	if p.Length < 0 {
-		return throwf(ctx, "pbkdf2: invalid length %d", p.Length)
+	if p.Length < 0 || p.Length/8 > nodecrypto.MaxNativeBytes {
+		return throwf(ctx, "pbkdf2: length %d is out of range: it must be <= %d", p.Length, nodecrypto.MaxNativeBytes*8)
 	}
 	dk, err := pbkdf2.Key(nh, string(password), salt, p.Iterations, p.Length/8)
 	if err != nil {

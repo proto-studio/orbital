@@ -225,6 +225,9 @@ traceability.
   402,653,166 bytes, and `generatePrime` refuses sizes over 2,147,483,552 bits, with
   `ERR_OUT_OF_RANGE`. Node allows up to 2,147,483,647 for each. `randomFill` and
   `randomFillSync` fill larger buffers in pieces, so they have no such cap (`lengths.go`).
+  WebCrypto's PBKDF2 `deriveBits` and HMAC/AES `generateKey` have the same byte cap. RSA
+  keys are generated up to 16,384 bits, OpenSSL's largest usable modulus; larger
+  `modulusLength` values give `modulus too large` rather than a key Node couldn't use.
 - **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
   CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`) from Go's standard library, and
   ChaCha20 and ChaCha20-Poly1305 from `golang.org/x/crypto` (`cipher.go`). CCM, OCB, XTS,
