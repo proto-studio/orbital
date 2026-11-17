@@ -167,7 +167,7 @@
       const s = this[kState];
       const other = toBuf(key, inEnc);
       if (!s.priv) throw codedError(Error, 'ERR_CRYPTO_INVALID_STATE', 'No private key - did you forget to generate one?');
-      return encode(fromB64(native(crypto._dhSecret, b64(s.prime), b64(s.priv), b64(other))), outEnc);
+      return encode(fromB64(native(crypto._dhSecret, b64(s.prime), b64(s.priv), b64(other), b64(s.generator))), outEnc);
     },
     getPrime(encoding) { return encode(Buffer.from(this[kState].prime), encoding); },
     getGenerator(encoding) { return encode(Buffer.from(this[kState].generator), encoding); },

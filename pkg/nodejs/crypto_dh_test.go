@@ -51,3 +51,43 @@ try {
 		t.Errorf("got %v, want %q", got["result"], want)
 	}
 }
+
+// For the MODP groups, whose subgroup order is known, computeSecret refuses a
+// peer key outside the prime-order subgroup (p-2 and p-4 here, as -1 isn't a
+// square mod these primes), whether the
+// object came from getDiffieHellman or from the group's prime. A key in it, 4,
+// is used. Node 20 doesn't check this; other moduli aren't checked, nor
+// are keys when the generator itself is outside the subgroup.
+func TestCryptoDH_RefusesKeysOutsideTheSubgroup(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const crypto = require('crypto');
+const outcome = (f) => { try { return f().length; } catch (e) { return e.code + ' ' + e.message; } };
+const group = crypto.getDiffieHellman('modp14');
+const prime = group.getPrime();
+const minus = (n) => Buffer.from((BigInt('0x' + prime.toString('hex')) - n).toString(16), 'hex');
+const minusTwo = minus(2n);
+const keyed = (dh) => { dh.generateKeys(); return dh; };
+done({
+  groupMinusTwo: outcome(() => keyed(crypto.getDiffieHellman('modp14')).computeSecret(minusTwo)),
+  groupMinusFour: outcome(() => keyed(crypto.getDiffieHellman('modp14')).computeSecret(minus(4n))),
+  primeMinusTwo: outcome(() => keyed(crypto.createDiffieHellman(prime, 2)).computeSecret(minusTwo)),
+  groupFour: outcome(() => keyed(crypto.getDiffieHellman('modp14')).computeSecret(Buffer.from([4]))),
+  otherPrime: outcome(() => keyed(crypto.createDiffieHellman(crypto.getDiffieHellman('modp2').getPrime().subarray(0, 64), 2)).computeSecret(Buffer.from([3]))),
+  // -1 isn't a square mod the MODP primes, so generator p-2 makes keys outside the subgroup.
+  nonSquareGenerator: (() => {
+    const a = crypto.createDiffieHellman(prime, minusTwo); const b = crypto.createDiffieHellman(prime, minusTwo);
+    a.generateKeys(); b.generateKeys();
+    return a.computeSecret(b.getPublicKey()).equals(b.computeSecret(a.getPublicKey()));
+  })(),
+});
+`)
+	invalid := "ERR_CRYPTO_INVALID_KEYTYPE Unspecified validation error"
+	wantJSON(t, got, map[string]any{
+		"groupMinusTwo":      invalid,
+		"groupMinusFour":     invalid,
+		"primeMinusTwo":      invalid,
+		"groupFour":          float64(256),
+		"otherPrime":         float64(64),
+		"nonSquareGenerator": true,
+	})
+}
