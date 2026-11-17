@@ -289,32 +289,28 @@
   // when value has no prototype, and otherwise, as Node's getConstructorName has it, the kind of
   // value with its prototype described in angle brackets: Object <[Object: null prototype] {}>.
   // budget is how many more levels deep the value may print; past it, the prototype is
-  // <Complex prototype>. A proxy whose traps throw while it's looked at is named Object, as
-  // Node, which inspects a proxy's target, would name a plain one.
+  // <Complex prototype>. As in Node, a proxy on the prototype chain whose trap throws throws out
+  // of it.
   function constructorName(value, budget = Infinity) {
     let first;
-    try {
-      for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
-        const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
-        if (desc !== undefined && typeof desc.value === 'function' && desc.value.name !== '' &&
-            isInstance(value, desc.value)) {
-          return String(desc.value.name);
-        }
-        if (obj === value) first = Object.getPrototypeOf(obj);
+    for (let obj = value; obj !== null; obj = Object.getPrototypeOf(obj)) {
+      const desc = Object.getOwnPropertyDescriptor(obj, 'constructor');
+      if (desc !== undefined && typeof desc.value === 'function' && desc.value.name !== '' &&
+          isInstance(value, desc.value)) {
+        return String(desc.value.name);
       }
-      if (first === null) return null;
-      // V8's name for how value was made, as Node's internalGetConstructorName has it.
-      const kind = internalConstructorName(value);
-      if (budget < 0) return `${kind} <Complex prototype>`;
-      const inner = constructorName(first, budget - 1);
-      if (inner !== null) return `${kind} <${inner}>`;
-      // Node inspects the prototype with a depth of -1: its braces when it has no keys, and
-      // otherwise its name alone.
-      const proto = keys(first).length === 0 ? `${objectPrefix(first)}{}` : cutLabel(first, objectFallback(first, tagOf(first)));
-      return `${kind} <${proto}>`;
-    } catch (e) {
-      return 'Object';
+      if (obj === value) first = Object.getPrototypeOf(obj);
     }
+    if (first === null) return null;
+    // V8's name for how value was made, as Node's internalGetConstructorName has it.
+    const kind = internalConstructorName(value);
+    if (budget < 0) return `${kind} <Complex prototype>`;
+    const inner = constructorName(first, budget - 1);
+    if (inner !== null) return `${kind} <${inner}>`;
+    // Node inspects the prototype with a depth of -1: its braces when it has no keys, and
+    // otherwise its name alone.
+    const proto = keys(first).length === 0 ? `${objectPrefix(first)}{}` : cutLabel(first, objectFallback(first, tagOf(first)));
+    return `${kind} <${proto}>`;
   }
   const isInstance = (value, ctor) => {
     try {
@@ -496,11 +492,6 @@
   // getter that throws while the value is named, like its toStringTag, throws out of it;
   // proxies, whose traps could, are printed as their targets and don't get here.
   function cut(value) {
-    return cutName(value);
-  }
-
-  function cutName(value) {
-    // Read first, so a proxy whose getPrototypeOf trap throws is [Object] even when empty.
     const proto = Object.getPrototypeOf(value);
     // Only the name is needed, so no bytes are read.
     const bin = binary(value, 0, -1);
