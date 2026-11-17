@@ -97,3 +97,20 @@ func (f *endlessFile) Write([]byte) (int, error)      { return 0, syscall.EBADF 
 func (f *endlessFile) Seek(int64, int) (int64, error) { return 0, syscall.ESPIPE }
 func (f *endlessFile) Close() error                   { return nil }
 func (f *endlessFile) Stat() (*FileInfo, error)       { return &FileInfo{Name: "endless"}, nil }
+
+// Reading a file of the size it reports allocates once, without doubling the buffer to
+// read EOF.
+func TestReadFileLimited_AllocatesOnce(t *testing.T) {
+	m := NewMemoryFilesystem()
+	const size = 8<<20 - 1
+	if err := m.WriteFile("/f", make([]byte, size), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ReadFileLimited(m, "/f", MaxReadFileSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := cap(data); c >= 2*size {
+		t.Fatalf("buffer capacity %d for a %d-byte file", c, size)
+	}
+}

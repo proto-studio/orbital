@@ -71,9 +71,11 @@ func ReadFileLimited(fsys Filesystem, path string, limit int64) ([]byte, error) 
 		return nil, &FileTooLargeError{Path: path, Size: info.Size, Limit: limit}
 	}
 
+	// Room for the file and for ReadFrom's final read, which wants bytes.MinRead free and
+	// would otherwise double the buffer just to see EOF.
 	var buf bytes.Buffer
 	if info.Size > 0 {
-		buf.Grow(int(info.Size) + 1)
+		buf.Grow(int(info.Size) + bytes.MinRead)
 	}
 	if _, err := buf.ReadFrom(io.LimitReader(f, limit+1)); err != nil {
 		return nil, err
