@@ -42,6 +42,11 @@
     "message": "Cannot create a Buffer larger than 10 bytes",
     "name": "RangeError"
   },
+  "hugeLimit": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.maxOutputLength\" is out of range. It must be \u003e= 1 and \u003c= 4294967296. Received 9_007_199_254_740_992",
+    "name": "RangeError"
+  },
   "infiniteLimit": {
     "code": "ERR_OUT_OF_RANGE",
     "message": "The value of \"options.maxOutputLength\" is out of range. It must be a finite number. Received Infinity",
@@ -56,6 +61,9 @@
     "code": "ERR_BUFFER_TOO_LARGE",
     "message": "Cannot create a Buffer larger than 10 bytes",
     "name": "RangeError"
+  },
+  "maxLimit": {
+    "length": 5
   },
   "nanLimit": {
     "length": 5
@@ -78,6 +86,11 @@
     "message": "The \"options.maxOutputLength\" property must be of type number. Received an instance of Object",
     "name": "TypeError"
   },
+  "overMaxLimit": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.maxOutputLength\" is out of range. It must be \u003e= 1 and \u003c= 4294967296. Received 4_294_967_297",
+    "name": "RangeError"
+  },
   "stringLimit": {
     "code": "ERR_INVALID_ARG_TYPE",
     "message": "The \"options.maxOutputLength\" property must be of type number. Received type string ('x')",
@@ -91,6 +104,11 @@
   "unzipSyncOverLimit": {
     "code": "ERR_BUFFER_TOO_LARGE",
     "message": "Cannot create a Buffer larger than 10 bytes",
+    "name": "RangeError"
+  },
+  "zeroLimit": {
+    "code": "ERR_OUT_OF_RANGE",
+    "message": "The value of \"options.maxOutputLength\" is out of range. It must be \u003e= 1 and \u003c= 4294967296. Received 0",
     "name": "RangeError"
   }
 }

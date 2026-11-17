@@ -1,7 +1,6 @@
 // Runs unchanged in Node and in Orbital. zlib_limits.node.json is this script's output
 // under Node v20.18.1. Regenerate it with
 //   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestZlib_OutputLimitMatchesNode'
-// Values whose errors name buffer.constants.MAX_LENGTH aren't here: Orbital's is smaller.
 const zlib = require('zlib');
 const results = {};
 
@@ -40,6 +39,10 @@ results.nullLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: null
 results.infiniteLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: Infinity }));
 results.negativeInfiniteLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: -Infinity }));
 results.objectLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: {} }));
+results.zeroLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: 0 }));
+results.maxLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: 2 ** 32 }));
+results.overMaxLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: 2 ** 32 + 1 }));
+results.hugeLimit = outcome(() => zlib.gunzipSync(hello, { maxOutputLength: 2 ** 53 }));
 
 // The callback forms throw a bad option at once, report an output over the limit through
 // the callback, and return undefined.

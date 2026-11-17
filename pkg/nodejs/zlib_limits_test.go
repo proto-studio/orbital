@@ -35,23 +35,6 @@ func TestZlib_OutputLimitMatchesNode(t *testing.T) {
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
 
-// Orbital's buffer.constants.MAX_LENGTH is smaller than Node's, so the range errors name it.
-func TestZlib_OutputLimitRange(t *testing.T) {
-	got := runJS(t, &runtime.Config{}, `
-const zlib = require('zlib');
-const hello = zlib.gzipSync('hello');
-const outcome = (v) => { try { return zlib.gunzipSync(hello, { maxOutputLength: v }).length; } catch (e) { return e.code + ' ' + e.message; } };
-done({ zero: outcome(0), max: outcome(2147483647), over: outcome(2147483648), huge: outcome(2 ** 53) });
-`)
-	const prefix = `ERR_OUT_OF_RANGE The value of "options.maxOutputLength" is out of range. It must be >= 1 and <= 2147483647. Received `
-	wantJSON(t, got, map[string]any{
-		"zero": prefix + "0",
-		"max":  float64(5),
-		"over": prefix + "2147483648",
-		"huge": prefix + "9_007_199_254_740_992",
-	})
-}
-
 // A stream that nothing reads holds about one chunk of output: the codec waits for the
 // reader instead of expanding the whole input. It also doesn't keep the event loop alive,
 // and reading it later still yields every byte, in order.
