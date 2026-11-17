@@ -41,6 +41,7 @@ var (
 	errModulusTooLarge  = dhErr("ERR_OSSL_DH_MODULUS_TOO_LARGE", "error:02800067:Diffie-Hellman routines::modulus too large")
 	errNoInverse        = dhErr("ERR_OSSL_BN_NO_INVERSE", "error:0180006C:bignum routines::no inverse")
 	errInvalidKeyType   = dhErr("ERR_CRYPTO_INVALID_KEYTYPE", "Invalid key type")
+	errInvalidPeerKey   = dhErr("ERR_CRYPTO_INVALID_KEYTYPE", "Unspecified validation error")
 	errInvalidECDHPub   = dhErr("ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY", "Public key is not valid for specified curve")
 	errInvalidECDHPriv  = dhErr("ERR_CRYPTO_INVALID_KEYTYPE", "Private key is not valid for specified curve.")
 	errECPointConvert   = dhErr("ERR_CRYPTO_OPERATION_FAILED", "Failed to convert Buffer to EC_POINT")
@@ -308,14 +309,15 @@ func (c *Crypto) dhKeysFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return v
 }
 
-// dhSecretFunc backs _dhSecret(primeB64, privateB64, otherB64): the shared
-// secret, padded to the prime's length as Node pads it.
+// dhSecretFunc backs _dhSecret(primeB64, privateB64, otherB64, generatorB64):
+// the shared secret, padded to the prime's length as Node pads it.
 func (c *Crypto) dhSecretFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
 	p := new(big.Int).SetBytes(b64Arg(args, 0))
 	x := b64Arg(args, 1)
 	y := new(big.Int).SetBytes(b64Arg(args, 2))
+	g := new(big.Int).SetBytes(b64Arg(args, 3))
 	m, err := dhModulus(p, errInvalidKeyType)
 	if err != nil {
 		return ctx.Throw(err.Error())
@@ -326,6 +328,9 @@ func (c *Crypto) dhSecretFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	if y.Cmp(pm1) >= 0 {
 		return ctx.Throw(errKeyTooLarge.Error())
+	}
+	if !dhInGroupSubgroup(p, g, y) {
+		return ctx.Throw(errInvalidPeerKey.Error())
 	}
 	// A zero private key would make the secret 1 whatever the peer's key;
 	// OpenSSL refuses it. The check reads every byte, whatever their values.
@@ -536,4 +541,33 @@ func (c *Crypto) keyAgreementFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw(dhErr("ERR_CRYPTO_OPERATION_FAILED", "Failed to compute shared secret").Error())
 	}
 	return throwOrString(ctx, b64(secret), nil)
+}
+
+// modpPrimes are the MODP groups' primes, by their bytes.
+var modpPrimes = func() map[string]bool {
+	m := make(map[string]bool, len(modpGroups))
+	for _, h := range modpGroups {
+		p, _ := new(big.Int).SetString(h, 16)
+		m[string(p.Bytes())] = true
+	}
+	return m
+}()
+
+// dhInGroupSubgroup reports whether y, a peer's public key in [2, p-2], is
+// in the prime-order subgroup when p is one of the MODP groups' safe primes,
+// whose order q = (p-1)/2 is known, and the generator g is in it too:
+// y^q = 1 mod p. A key outside it would confine the secret to a set of two.
+// With a generator outside the subgroup, honest keys are outside it as well,
+// so they aren't refused. Other moduli aren't checked, as their subgroup
+// order isn't known. All three values are public.
+func dhInGroupSubgroup(p, g, y *big.Int) bool {
+	if !modpPrimes[string(p.Bytes())] {
+		return true
+	}
+	q := new(big.Int).Rsh(p, 1)
+	one := big.NewInt(1)
+	if new(big.Int).Exp(g, q, p).Cmp(one) != 0 {
+		return true
+	}
+	return new(big.Int).Exp(y, q, p).Cmp(one) == 0
 }
