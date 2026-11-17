@@ -342,6 +342,16 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 		}
 	}
 
+	// The module's job, once loaded, is reused as is, as Node's module map
+	// does: no load hook runs again for it.
+	jobKey := url
+	if attrs != nil || len(resolvedList) > 0 {
+		jobKey = e.typedKey(url, "", keyList)
+	}
+	if final, ok := e.hookedLoads[jobKey]; ok {
+		return final, jobKey, nil
+	}
+
 	// load chain -> { source, format }
 	loading = true
 	loadP, err := e.callLoaderRealm("__runLoad", url, preFormat, resolvedAttrs, check)
@@ -381,10 +391,11 @@ func (e *ESM) resolveAndLoadHooked(specifier, referrer string, attrs []v8.Import
 	}
 	// An entry point is keyed by the type its resolve hooks gave it, if any,
 	// so a later import resolving to that url and type is the same module.
-	if attrs == nil && len(resolvedList) == 0 {
-		return final, url, nil
+	if e.hookedLoads == nil {
+		e.hookedLoads = map[string]string{}
 	}
-	return final, e.typedKey(url, format, keyList), nil
+	e.hookedLoads[jobKey] = final
+	return final, jobKey, nil
 }
 
 // dropResolvedAttrs releases the attributes the loader realm keeps for a load

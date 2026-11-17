@@ -443,23 +443,15 @@
     let value = attrs;
     let cloned = false;
     if (clone && attrs !== null && typeof attrs === 'object') {
+      // Cloned first, in one pass (V8's serializer reads each value once and
+      // keeps cycles; a proxy fails here, before any of its traps run).
+      const copy = clone(attrs);
       const keys = ObjectKeys(attrs);
       // Only a plain object or array is rebuilt; a built-in container (a Map,
       // say) keeps its clone, which drops expandos as Node's does.
       const proto = ObjectGetPrototypeOf(attrs);
       const isArray = ArrayIsArray(attrs);
       const plain = isArray || proto === ObjectPrototype || proto === null;
-      // A plain container's values are read once, into own data properties,
-      // and both the clone and any rebuild below use that copy.
-      let source = attrs;
-      if (plain) {
-        source = isArray ? [] : {};
-        for (let i = 0; i < keys.length; i++) {
-          ObjectDefineProperty(source, keys[i], { value: attrs[keys[i]], writable: true, enumerable: true, configurable: true });
-        }
-        if (isArray) source.length = attrs.length;
-      }
-      const copy = clone(source);
       value = copy;
       cloned = true;
       if (plain && ObjectKeys(copy).length !== keys.length) {
@@ -469,10 +461,10 @@
         const rebuilt = ArrayIsArray(attrs) ? [] : {};
         for (let i = 0; i < keys.length; i++) {
           const k = keys[i];
-          const v = reflectApply(hasOwn, copy, [k]) ? copy[k] : source[k];
+          const v = reflectApply(hasOwn, copy, [k]) ? copy[k] : attrs[k];
           ObjectDefineProperty(rebuilt, k, { value: v, writable: true, enumerable: true, configurable: true });
         }
-        if (isArray) rebuilt.length = source.length;
+        if (isArray) rebuilt.length = attrs.length;
         value = rebuilt;
       }
     }

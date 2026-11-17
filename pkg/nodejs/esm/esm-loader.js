@@ -167,13 +167,21 @@
 
   // A file's JSON value, made once and shared by every module job for it (one
   // per import type), as Node shares it through the CommonJS cache. Fixed on
-  // the global object, so code can't replace or shadow it.
+  // the global object, so code can't replace or shadow it, and only callable
+  // with the secret the loader puts in the JSON modules it generates (set
+  // once, by __esmJSONSetup, before any program code runs).
   var jsonValues = new Map();
   var jsonHas = Map.prototype.has;
   var jsonGet = Map.prototype.get;
   var jsonSet = Map.prototype.set;
+  var jsonToken = null;
+  globalThis.__esmJSONSetup = function (token) {
+    delete globalThis.__esmJSONSetup;
+    if (jsonToken === null && typeof token === 'string' && token !== '') jsonToken = token;
+  };
   defineProperty(globalThis, '__esmJSONValue', {
-    value: function (path, make) {
+    value: function (token, path, make) {
+      if (jsonToken === null || token !== jsonToken) throw new NativeTypeError('__esmJSONValue is internal to the module loader');
       if (apply(jsonHas, jsonValues, [path])) return apply(jsonGet, jsonValues, [path]);
       var value = make();
       apply(jsonSet, jsonValues, [path, value]);
