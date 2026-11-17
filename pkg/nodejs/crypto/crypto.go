@@ -21,6 +21,10 @@ type Crypto struct {
 	// opaque integer handle into this table rather than the key material itself.
 	// It is per-Crypto-instance (one per runtime), so separate sandboxes/workers
 	// never share key state. Guarded by keyMu; handles are monotonic.
+	// strLen reads a string argument's length without copying it; see
+	// StringLength.
+	strLen func(*v8.Value) int64
+
 	keyMu  sync.Mutex
 	keys   map[int64]*keyEntry
 	keySeq int64
@@ -47,6 +51,11 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 	c.rt = rt
 	iso := rt.Isolate()
 	ctx := rt.Context()
+	strLen, err := StringLength(ctx)
+	if err != nil {
+		return err
+	}
+	c.strLen = strLen
 
 	// Create crypto object
 	cryptoObj, err := ctx.NewObject()

@@ -97,25 +97,39 @@ func b64uDec(s string) ([]byte, error) {
 
 func b64sDec(s string) ([]byte, error) { return b64s.DecodeString(s) }
 
+// paramsCharCost is what each character of a derivation's JSON params
+// counts against Config.CryptoMemoryLimit: the copies made out of V8 (three
+// at once, up to three bytes a character), twice over as the wrapper and the
+// native each read them, the JSON decoder's input and strings, and the
+// decoded inputs.
+const paramsCharCost = 24
+
 // withMemoryLimit applies Config.CryptoMemoryLimit to a derivation native
 // whose JSON params give its output length in bits and carry its inputs in
 // base64: the derived bits count six times their length in bytes (the bytes,
 // their base64 form, its C copy and V8 string, and the ArrayBuffer), as
-// node:crypto's derivations do, and the params four times theirs (their copy
-// out of V8, the JSON decoder's input and strings, and the decoded inputs).
-// It's checked before the native decodes the params.
-func withMemoryLimit(rt *runtime.Runtime, name string, fn v8.FunctionCallback) v8.FunctionCallback {
+// node:crypto's derivations do, and the params paramsCharCost bytes a
+// character. The params' length is read before they're copied, and they
+// must be a string, so the native reads the same params that were checked.
+func withMemoryLimit(rt *runtime.Runtime, strLen func(*v8.Value) int64, name string, fn v8.FunctionCallback) v8.FunctionCallback {
 	return func(info *v8.FunctionCallbackInfo) *v8.Value {
 		if limit := rt.CryptoMemoryLimit(); limit > 0 {
-			params := argStr(info, 0)
-			inputs := 4 * int64(len(params))
-			if inputs > limit {
+			args := info.Args()
+			n := int64(-1)
+			if len(args) > 0 {
+				n = strLen(args[0])
+			}
+			if n < 0 {
+				return throwf(info.Context(), "%s: params must be a string under the crypto memory limit", name)
+			}
+			if n > limit/paramsCharCost {
 				return throwf(info.Context(), "%s: params are out of range for the crypto memory limit", name)
 			}
+			inputs := n * paramsCharCost
 			var p struct {
 				Length int64 `json:"length"`
 			}
-			if err := json.Unmarshal([]byte(params), &p); err == nil && p.Length > 0 && 6*(p.Length/8) > limit-inputs {
+			if err := json.Unmarshal([]byte(args[0].String()), &p); err == nil && p.Length > 0 && 6*(p.Length/8) > limit-inputs {
 				return throwf(info.Context(), "%s: length %d is out of range for the crypto memory limit: it must be <= %d", name, p.Length, (limit-inputs)/6*8)
 			}
 		}
@@ -134,6 +148,10 @@ func registerNative(rt *runtime.Runtime) error {
 		return err
 	}
 
+	strLen, err := nodecrypto.StringLength(ctx)
+	if err != nil {
+		return err
+	}
 	funcs := map[string]v8.FunctionCallback{
 		"digest":      nativeDigest,
 		"generateKey": nativeGenerateKey,
@@ -142,9 +160,9 @@ func registerNative(rt *runtime.Runtime) error {
 		"encrypt":     nativeEncrypt,
 		"decrypt":     nativeDecrypt,
 		"deriveBits":  nativeDeriveBits,
-		"pbkdf2":      withMemoryLimit(rt, "pbkdf2", nativePbkdf2),
+		"pbkdf2":      withMemoryLimit(rt, strLen, "pbkdf2", nativePbkdf2),
 		"checkJWK":    nativeCheckJWK,
-		"hkdf":        withMemoryLimit(rt, "hkdf", nativeHkdf),
+		"hkdf":        withMemoryLimit(rt, strLen, "hkdf", nativeHkdf),
 		"aesKwWrap":   nativeAesKwWrap,
 		"aesKwUnwrap": nativeAesKwUnwrap,
 	}

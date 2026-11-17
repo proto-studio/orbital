@@ -57,20 +57,10 @@ func (c *Crypto) deriveKey(ctx *v8.Context, callback *v8.Value, work func() ([]b
 var errDerivingBits = errors.New("Deriving bits failed")
 
 func argBytes(args []*v8.Value, i int) []byte {
-	return decodeArg(argString(args, i))
-}
-
-// argString is a string argument, or "" when it's missing.
-func argString(args []*v8.Value, i int) string {
 	if i >= len(args) {
-		return ""
+		return nil
 	}
-	return args[i].String()
-}
-
-// decodeArg decodes a base64 argument.
-func decodeArg(s string) []byte {
-	b, _ := base64.StdEncoding.DecodeString(s)
+	b, _ := base64.StdEncoding.DecodeString(args[i].String())
 	return b
 }
 
@@ -110,11 +100,11 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	if keyLen < 0 || keyLen > maxNativeBytes {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
-	pw64, salt64 := argString(args, 0), argString(args, 1)
-	if h == nil || iter < 1 || iter > math.MaxInt32 || !c.keyLenFits(keyLen, inputCost(len(pw64), len(salt64))) {
+	inputs, ok := c.inputsCost(args, 0, 1)
+	if !ok || h == nil || iter < 1 || iter > math.MaxInt32 || !c.keyLenFits(keyLen, inputs) {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
-	password, salt := decodeArg(pw64), decodeArg(salt64)
+	password, salt := argBytes(args, 0), argBytes(args, 1)
 	xof := isXOF(args[4].String())
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
 		if xof {
@@ -177,15 +167,57 @@ func keyOutputCost(keyLen int64) uint64 {
 	return 6 * uint64(keyLen)
 }
 
-// inputCost is the memory the inputs of a derivation take, given the lengths
-// of the base64 strings they arrive as: each string's copy out of V8 and the
-// bytes decoded from it.
-func inputCost(b64Lens ...int) uint64 {
-	var n uint64
-	for _, l := range b64Lens {
-		n += uint64(l) + uint64(l)/4*3
+// inputCharCost is what each character of a derivation's base64 input
+// strings counts against Config.CryptoMemoryLimit. Copying a string out of V8
+// holds up to three UTF-8 copies of it at once, at up to three bytes a
+// character, and the decoded bytes (and any copy the derivation makes of
+// them) take less than another one. The length is read from V8 before any
+// copy is made.
+const inputCharCost = 10
+
+// inputCost is the memory the inputs of a derivation take, given the total
+// length of the base64 strings they arrive as.
+func inputCost(chars int64) uint64 {
+	if chars <= 0 {
+		return 0
 	}
-	return n
+	return uint64(chars) * inputCharCost
+}
+
+// StringLength returns a function that reports a value's length in UTF-16
+// code units, without copying it out of V8, or -1 when it isn't a string. A
+// native checks the length of an input against a memory limit with it before
+// the input is copied, and it rules out objects whose conversion to a string
+// could differ from one call to the next.
+func StringLength(ctx *v8.Context) (func(*v8.Value) int64, error) {
+	fn, err := ctx.RunScript("(s) => typeof s === 'string' ? s.length : -1", "crypto-string-length.js")
+	if err != nil {
+		return nil, err
+	}
+	return func(v *v8.Value) int64 {
+		n, err := fn.Call(ctx.Undefined(), v)
+		if err != nil || n == nil {
+			return -1
+		}
+		return n.Integer()
+	}, nil
+}
+
+// inputsCost is inputCost for the string arguments at the given indexes, read
+// before they're copied; ok is false when one of them isn't a string.
+func (c *Crypto) inputsCost(args []*v8.Value, idx ...int) (cost uint64, ok bool) {
+	var chars int64
+	for _, i := range idx {
+		if i >= len(args) {
+			continue
+		}
+		n := c.strLen(args[i])
+		if n < 0 {
+			return 0, false
+		}
+		chars += n
+	}
+	return inputCost(chars), true
 }
 
 // kdfMaxKeyLen is the longest key a derivation whose decoded inputs take
@@ -235,7 +267,7 @@ func (c *Crypto) scryptMaxmem(maxmem float64, keyLen int64, inputs uint64) uint6
 func (c *Crypto) kdfMaxKeyLenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	var inputs uint64
 	if args := info.Args(); len(args) > 0 && args[0].Integer() > 0 {
-		inputs = inputCost(int(args[0].Integer()))
+		inputs = inputCost(args[0].Integer())
 	}
 	return info.Context().NewNumber(float64(c.kdfMaxKeyLen(inputs)))
 }
@@ -256,7 +288,7 @@ func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		keyLen = args[4].Integer()
 	}
 	if len(args) > 5 && args[5].Integer() > 0 {
-		inputs = inputCost(int(args[5].Integer()))
+		inputs = inputCost(args[5].Integer())
 	}
 	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number(), keyLen, inputs)); err != nil {
 		out = "!" + err.Error()
@@ -274,8 +306,7 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("scrypt: missing arguments")
 	}
 	n, r, p, maxmem := args[2].Number(), args[3].Number(), args[4].Number(), args[5].Number()
-	pw64, salt64 := argString(args, 0), argString(args, 1)
-	inputs := inputCost(len(pw64), len(salt64))
+	inputs, ok := c.inputsCost(args, 0, 1)
 	keyLen := args[6].Integer()
 	if keyLen < 0 || keyLen > maxNativeBytes {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
@@ -284,7 +315,10 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		keyLen < 0 || keyLen > math.MaxInt32 || scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem, keyLen, inputs)) != nil {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
-	password, salt := decodeArg(pw64), decodeArg(salt64)
+	if !ok {
+		return ctx.Throw("scrypt: invalid parameters")
+	}
+	password, salt := argBytes(args, 0), argBytes(args, 1)
 	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
 		if keyLen == 0 {
 			return []byte{}, nil
@@ -300,15 +334,15 @@ func (c *Crypto) hkdfFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if len(args) < 5 {
 		return ctx.Throw("hkdf: missing arguments")
 	}
-	h := nodeDigest(args[0].String())
+	digest := args[0].String()
+	h := nodeDigest(digest)
 	keyLen := int(args[4].Integer())
-	ikm64, salt64, info64 := argString(args, 1), argString(args, 2), argString(args, 3)
-	if h == nil || keyLen < 0 || keyLen > 255*h().Size() ||
-		!c.keyLenFits(int64(keyLen), inputCost(len(ikm64), len(salt64), len(info64))) {
+	inputs, ok := c.inputsCost(args, 1, 2, 3)
+	if !ok || h == nil || keyLen < 0 || keyLen > 255*h().Size() || !c.keyLenFits(int64(keyLen), inputs) {
 		return ctx.Throw("hkdf: invalid arguments")
 	}
-	ikm, salt, infoBytes := decodeArg(ikm64), decodeArg(salt64), decodeArg(info64)
-	xof := isXOF(args[0].String())
+	ikm, salt, infoBytes := argBytes(args, 1), argBytes(args, 2), argBytes(args, 3)
+	xof := isXOF(digest)
 	return c.deriveKey(ctx, argCallback(args, 5), func() ([]byte, error) {
 		if xof {
 			return nil, errDerivingBits

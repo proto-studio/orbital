@@ -53,11 +53,12 @@ func TestCrypto_NoMemoryLimitByDefault(t *testing.T) {
 
 // The limit counts the derived key too: six times its length for the key,
 // its base64 form, that form's C copy and V8 string, and the Buffer. It
-// counts the inputs as they're copied out of V8 and decoded: 7/4 of their
-// base64 length. With pbkdf2's 21 bytes of input ('pw' and 'salt'), a
-// 60021-byte limit allows keys of up to 10000 bytes.
+// counts the inputs as they're copied out of V8 and decoded, ten bytes for
+// each character of their base64 form, before copying them. With pbkdf2's
+// 120 bytes of input ('pw' and 'salt'), a 60120-byte limit allows keys of up
+// to 10000 bytes.
 func TestCrypto_MemoryLimitCapsKeyLength(t *testing.T) {
-	got := runJS(t, &runtime.Config{CryptoMemoryLimit: 60021}, `
+	got := runJS(t, &runtime.Config{CryptoMemoryLimit: 60120}, `
 const crypto = require('crypto');
 const outcome = (f) => { try { const v = f(); return v.byteLength; } catch (e) { return e.code + ' ' + e.message; } };
 const big = 'x'.repeat(30000);
@@ -73,6 +74,7 @@ done({
   native: outcome(() => __crypto_module._pbkdf2('', '', 1, 20000, 'sha256')),
   nativeBigInput: outcome(() => __crypto_module._pbkdf2('A'.repeat(40000), '', 1, 16, 'sha256')),
   nativeHkdfBigInput: outcome(() => __crypto_module._hkdf('sha256', 'A'.repeat(40000), '', '', 16)),
+  nativeNotString: outcome(() => __crypto_module._pbkdf2({ toString() { return ''; } }, '', 1, 16, 'sha256')),
   nativeScryptBigInput: outcome(() => __crypto_module._scrypt('A'.repeat(40000), '', 2, 1, 1, 32 << 20, 16)),
 });
 `)
@@ -81,22 +83,24 @@ done({
 		"pbkdf2Over":           `ERR_OUT_OF_RANGE The value of "keylen" is out of range. It must be <= 10000. Received 10001`,
 		"pbkdf2Callback":       `ERR_OUT_OF_RANGE The value of "keylen" is out of range. It must be <= 10000. Received 20000`,
 		"pbkdf2BigInput":       `ERR_OUT_OF_RANGE The value of "keylen" is out of range. It must be <= 0. Received 16`,
-		"hkdfOver":             `ERR_OUT_OF_RANGE The value of "length" is out of range. It must be <= 9997. Received 16000`,
+		"hkdfOver":             `ERR_OUT_OF_RANGE The value of "length" is out of range. It must be <= 9986. Received 16000`,
 		"hkdfBigInput":         `ERR_OUT_OF_RANGE The value of "length" is out of range. It must be <= 0. Received 16`,
 		"scryptOver":           scryptMemoryError,
 		"scryptBigInput":       scryptMemoryError,
 		"native":               "undefined pbkdf2: invalid arguments",
 		"nativeBigInput":       "undefined pbkdf2: invalid arguments",
+		"nativeNotString":      "undefined pbkdf2: invalid arguments",
 		"nativeHkdfBigInput":   "undefined hkdf: invalid arguments",
 		"nativeScryptBigInput": "undefined scrypt: invalid parameters",
 	})
 }
 
 // The limit covers WebCrypto's PBKDF2 and HKDF derivations too, through
-// SubtleCrypto and through the natives directly, counting the params as
-// four times their JSON length.
+// SubtleCrypto and through the natives directly, counting the params at
+// 24 bytes a character. The params must be a string, so the native derives
+// from the params that were checked.
 func TestCrypto_MemoryLimitCapsWebCrypto(t *testing.T) {
-	got := runJS(t, &runtime.Config{CryptoMemoryLimit: 60021}, `
+	got := runJS(t, &runtime.Config{CryptoMemoryLimit: 62000}, `
 (async () => {
   const subtle = globalThis.crypto.subtle;
   const n = __webcrypto_native;
@@ -109,10 +113,15 @@ func TestCrypto_MemoryLimitCapsWebCrypto(t *testing.T) {
   done({
     ok, over,
     pbkdf2Native: err(() => n.pbkdf2(JSON.stringify({ passwordB64: '', saltB64: '', iterations: 1, hash: 'SHA-256', length: 4000000000 }))).includes('crypto memory limit'),
-    hkdfNative: err(() => n.hkdf(JSON.stringify({ keyB64: 'AA==', saltB64: '', infoB64: '', hash: 'SHA-512', length: 80008 }))).includes('crypto memory limit'),
+    hkdfNative: err(() => n.hkdf(JSON.stringify({ keyB64: 'AA==', saltB64: '', infoB64: '', hash: 'SHA-512', length: 90000 }))).includes('crypto memory limit'),
+    notString: (() => {
+      let calls = 0;
+      const params = { toString() { return calls++ ? JSON.stringify({ passwordB64: '', saltB64: '', iterations: 1, hash: 'SHA-256', length: 8000000 }) : '{}'; } };
+      return err(() => n.pbkdf2(params)).includes('crypto memory limit');
+    })(),
     bigParams: err(() => n.pbkdf2(JSON.stringify({ passwordB64: 'A'.repeat(20000), saltB64: '', iterations: 1, hash: 'SHA-256', length: 8 }))).includes('crypto memory limit'),
   });
 })();
 `)
-	wantJSON(t, got, map[string]any{"ok": float64(9875), "over": "rejected", "pbkdf2Native": true, "hkdfNative": true, "bigParams": true})
+	wantJSON(t, got, map[string]any{"ok": float64(9875), "over": "rejected", "pbkdf2Native": true, "hkdfNative": true, "bigParams": true, "notString": true})
 }
