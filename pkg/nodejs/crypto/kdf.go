@@ -157,6 +157,17 @@ func scryptCheck(n, r, p, maxmem uint64) error {
 	return nil
 }
 
+// scryptMaxmem is the memory limit an scrypt call is checked against: the
+// script's maxmem, lowered to the embedder's Config.CryptoMemoryLimit when
+// that is set and smaller.
+func (c *Crypto) scryptMaxmem(maxmem float64) uint64 {
+	m := uint64(maxmem)
+	if limit := c.rt.CryptoMemoryLimit(); limit > 0 && uint64(limit) < m {
+		m = uint64(limit)
+	}
+	return m
+}
+
 // scryptCheckFunc backs _scryptCheck(N, r, p, maxmem): "" when OpenSSL would
 // accept the parameters, else the reason it gives, which may be empty, after
 // a "!" so an empty reason still reads as a failure.
@@ -167,7 +178,7 @@ func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("scrypt: missing arguments")
 	}
 	out := ""
-	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), uint64(args[3].Number())); err != nil {
+	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number())); err != nil {
 		out = "!" + err.Error()
 	}
 	v, _ := ctx.NewString(out)
@@ -189,7 +200,7 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
 	if n < 0 || r < 0 || p < 0 || maxmem < 1 || maxmem > 1<<53 ||
-		scryptCheck(uint64(n), uint64(r), uint64(p), uint64(maxmem)) != nil || keyLen < 0 || keyLen > math.MaxInt32 {
+		scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem)) != nil || keyLen < 0 || keyLen > math.MaxInt32 {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
 	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
