@@ -87,6 +87,15 @@
     validateInteger(value, name, 0, 4294967295);
   }
 
+  // The embedder's Config.CryptoMemoryLimit bounds a derived key's length;
+  // without one, any length Node takes is allowed.
+  function checkKeyLenLimit(keylen, name) {
+    const max = crypto._kdfMaxKeyLen();
+    if (max >= 0 && keylen > max) {
+      throw outOfRange(name, '<= ' + max, keylen);
+    }
+  }
+
   function viewBytes(view) {
     return Buffer.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
   }
@@ -145,6 +154,7 @@
     validateInt32(keylen, 'keylen', 0);
     checkNativeKeyLen(keylen);
     digestSize(digest);
+    checkKeyLenLimit(keylen, 'keylen');
     return [password, salt, iterations, keylen, digest];
   }
 
@@ -210,7 +220,7 @@
       if (p === 0) p = scryptDefaults.p;
       if (maxmem === 0) maxmem = scryptDefaults.maxmem;
     }
-    const failed = crypto._scryptCheck(N, r, p, maxmem);
+    const failed = crypto._scryptCheck(N, r, p, maxmem, keylen);
     if (failed) {
       const reason = failed.slice(1);
       throw codedError(RangeError, 'ERR_CRYPTO_INVALID_SCRYPT_PARAMS',
@@ -266,6 +276,7 @@
     if (length > 255 * size) {
       throw codedError(RangeError, 'ERR_CRYPTO_INVALID_KEYLEN', 'Invalid key length');
     }
+    checkKeyLenLimit(length, 'length');
     return [digest, key, salt.toString('base64'), info.toString('base64'), length];
   }
 

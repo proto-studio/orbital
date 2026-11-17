@@ -100,7 +100,7 @@ func (c *Crypto) pbkdf2Func(info *v8.FunctionCallbackInfo) *v8.Value {
 	if keyLen < 0 || keyLen > maxNativeBytes {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
-	if h == nil || iter < 1 || iter > math.MaxInt32 {
+	if h == nil || iter < 1 || iter > math.MaxInt32 || !c.keyLenFits(keyLen) {
 		return ctx.Throw("pbkdf2: invalid arguments")
 	}
 	xof := isXOF(args[4].String())
@@ -157,18 +157,56 @@ func scryptCheck(n, r, p, maxmem uint64) error {
 	return nil
 }
 
-// scryptMaxmem is the memory limit an scrypt call is checked against: the
-// script's maxmem, lowered to the embedder's Config.CryptoMemoryLimit when
-// that is set and smaller.
-func (c *Crypto) scryptMaxmem(maxmem float64) uint64 {
+// keyOutputCost is the memory a derived key of keyLen bytes takes on its way
+// to JavaScript, counted against Config.CryptoMemoryLimit: the key itself,
+// its base64 form, and the Buffer made from it.
+func keyOutputCost(keyLen int64) uint64 {
+	return 3 * uint64(keyLen)
+}
+
+// kdfMaxKeyLen is the longest key a derivation may return under
+// Config.CryptoMemoryLimit, or -1 when no limit is set.
+func (c *Crypto) kdfMaxKeyLen() int64 {
+	limit := c.rt.CryptoMemoryLimit()
+	if limit <= 0 {
+		return -1
+	}
+	return limit / 3
+}
+
+// keyLenFits reports whether a key of keyLen bytes fits Config.CryptoMemoryLimit.
+func (c *Crypto) keyLenFits(keyLen int64) bool {
+	max := c.kdfMaxKeyLen()
+	return max < 0 || keyLen <= max
+}
+
+// scryptMaxmem is the memory limit an scrypt call's workspace is checked
+// against: the script's maxmem, lowered when Config.CryptoMemoryLimit is set
+// to what the limit leaves after the derived key's output.
+func (c *Crypto) scryptMaxmem(maxmem float64, keyLen int64) uint64 {
 	m := uint64(maxmem)
-	if limit := c.rt.CryptoMemoryLimit(); limit > 0 && uint64(limit) < m {
-		m = uint64(limit)
+	if limit := c.rt.CryptoMemoryLimit(); limit > 0 {
+		left := uint64(0)
+		if cost := keyOutputCost(keyLen); cost < uint64(limit) {
+			left = uint64(limit) - cost
+		}
+		if left < m {
+			m = left
+		}
+		// scryptCheck reads 0 as OpenSSL's default; nothing is left here.
+		if m == 0 {
+			m = 1
+		}
 	}
 	return m
 }
 
-// scryptCheckFunc backs _scryptCheck(N, r, p, maxmem): "" when OpenSSL would
+// kdfMaxKeyLenFunc backs _kdfMaxKeyLen(): kdfMaxKeyLen.
+func (c *Crypto) kdfMaxKeyLenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	return info.Context().NewNumber(float64(c.kdfMaxKeyLen()))
+}
+
+// scryptCheckFunc backs _scryptCheck(N, r, p, maxmem, keylen): "" when OpenSSL would
 // accept the parameters, else the reason it gives, which may be empty, after
 // a "!" so an empty reason still reads as a failure.
 func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
@@ -178,7 +216,11 @@ func (c *Crypto) scryptCheckFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("scrypt: missing arguments")
 	}
 	out := ""
-	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number())); err != nil {
+	var keyLen int64
+	if len(args) > 4 {
+		keyLen = args[4].Integer()
+	}
+	if err := scryptCheck(uint64(args[0].Number()), uint64(args[1].Number()), uint64(args[2].Number()), c.scryptMaxmem(args[3].Number(), keyLen)); err != nil {
 		out = "!" + err.Error()
 	}
 	v, _ := ctx.NewString(out)
@@ -200,7 +242,7 @@ func (c *Crypto) scryptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw(outOfRange("keylen", 0, maxNativeBytes, keyLen))
 	}
 	if n < 0 || r < 0 || p < 0 || maxmem < 1 || maxmem > 1<<53 ||
-		scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem)) != nil || keyLen < 0 || keyLen > math.MaxInt32 {
+		keyLen < 0 || keyLen > math.MaxInt32 || scryptCheck(uint64(n), uint64(r), uint64(p), c.scryptMaxmem(maxmem, keyLen)) != nil {
 		return ctx.Throw("scrypt: invalid parameters")
 	}
 	return c.deriveKey(ctx, argCallback(args, 7), func() ([]byte, error) {
@@ -221,7 +263,7 @@ func (c *Crypto) hkdfFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	h := nodeDigest(args[0].String())
 	ikm, salt, infoBytes := argBytes(args, 1), argBytes(args, 2), argBytes(args, 3)
 	keyLen := int(args[4].Integer())
-	if h == nil || keyLen < 0 || keyLen > 255*h().Size() {
+	if h == nil || keyLen < 0 || keyLen > 255*h().Size() || !c.keyLenFits(int64(keyLen)) {
 		return ctx.Throw("hkdf: invalid arguments")
 	}
 	xof := isXOF(args[0].String())

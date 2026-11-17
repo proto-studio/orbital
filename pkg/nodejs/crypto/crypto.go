@@ -102,11 +102,12 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_keyAgreement": c.keyAgreementFunc,
 
 		// Key derivation (kdf.go).
-		"_digestSize":  c.digestSizeFunc,
-		"_pbkdf2":      c.pbkdf2Func,
-		"_scryptCheck": c.scryptCheckFunc,
-		"_scrypt":      c.scryptFunc,
-		"_hkdf":        c.hkdfFunc,
+		"_digestSize":   c.digestSizeFunc,
+		"_pbkdf2":       c.pbkdf2Func,
+		"_scryptCheck":  c.scryptCheckFunc,
+		"_kdfMaxKeyLen": c.kdfMaxKeyLenFunc,
+		"_scrypt":       c.scryptFunc,
+		"_hkdf":         c.hkdfFunc,
 
 		// Ciphers (cipher.go).
 		"_cipherInit":           c.cipherInitFunc,
