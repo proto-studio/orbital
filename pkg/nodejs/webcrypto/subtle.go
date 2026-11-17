@@ -377,6 +377,12 @@ func nativeSign(info *v8.FunctionCallbackInfo) *v8.Value {
 		if pssSaltTooLong(priv.N.BitLen(), nh().Size(), p.SaltLength) {
 			return throwf(ctx, "sign PS: saltLength %d is too long for the key", p.SaltLength)
 		}
+		// crypto/rsa reads a salt length of 0 as "choose a length", and
+		// can't make an empty salt, so signing with one isn't offered, as in
+		// node:crypto. webcrypto.js refuses it first.
+		if p.SaltLength == 0 {
+			return throwf(ctx, "sign PS: saltLength 0 is not supported")
+		}
 		opts := &rsa.PSSOptions{SaltLength: p.SaltLength, Hash: ch}
 		sig, err := rsa.SignPSS(rand.Reader, priv, ch, hashSum(ch, nh, data), opts)
 		if err != nil {
@@ -467,8 +473,15 @@ func nativeVerify(info *v8.FunctionCallbackInfo) *v8.Value {
 			return throwf(ctx, "verify PS: %v", err)
 		}
 		opts := &rsa.PSSOptions{SaltLength: p.SaltLength, Hash: ch}
-		ok = !pssSaltTooLong(pub.N.BitLen(), nh().Size(), p.SaltLength) &&
-			rsa.VerifyPSS(pub, ch, hashSum(ch, nh, data), sig, opts) == nil
+		switch {
+		case pssSaltTooLong(pub.N.BitLen(), nh().Size(), p.SaltLength):
+			ok = false
+		case p.SaltLength == 0:
+			// An empty salt, which crypto/rsa reads as "any length".
+			ok = nodecrypto.VerifyPSSNoSalt(pub, nh, hashSum(ch, nh, data), sig)
+		default:
+			ok = rsa.VerifyPSS(pub, ch, hashSum(ch, nh, data), sig, opts) == nil
+		}
 
 	case "ECDSA":
 		ch, nh, has := hashByName(p.Hash)

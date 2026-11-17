@@ -73,6 +73,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
 - **[approx] Only HKDF checks key usages in `deriveBits`/`deriveKey`.** HKDF rejects a
   base key without the `deriveBits` or `deriveKey` usage, or for another algorithm, with
   Node's `InvalidAccessError`; PBKDF2, ECDH and X25519 don't check yet.
+- **[gap] RSA-PSS signing with `saltLength: 0` isn't supported.** `sign` rejects with
+  `NotSupportedError` ("Unsupported crypto operation"), as `node:crypto`'s `sign` throws
+  `ERR_CRYPTO_UNSUPPORTED_OPERATION`: Go's RSA can't make an empty salt (it reads 0 as
+  "choose a length"), and the private-key step done by hand wouldn't be constant time.
+  Node makes the signature. `verify` with `saltLength: 0` works, and refuses a salted
+  signature.
 - **[gap] ML-DSA and other non-allowlisted algorithms are rejected by design.**
   `SUPPORTED_IMPORT_ALGS` gates `importKey`; anything outside it throws
   `NotSupportedError` (matches Node). Expanding real algorithm support means
