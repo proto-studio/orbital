@@ -120,7 +120,8 @@ type Config struct {
 	// DefaultThreadPoolSize (4), Node's default UV_THREADPOOL_SIZE.
 	ThreadPoolSize int
 	// CryptoMemoryLimit, when positive, is the most memory in bytes one key
-	// derivation (pbkdf2, scrypt, hkdf) may use: scrypt's workspace, whatever
+	// derivation (pbkdf2, scrypt, hkdf, and WebCrypto's PBKDF2 and HKDF) may
+	// use: scrypt's workspace, whatever
 	// maxmem the script passes, plus the derived key on its way to JavaScript,
 	// counted as three times its length. An scrypt call over it fails as one
 	// over its own maxmem does (ERR_CRYPTO_INVALID_SCRYPT_PARAMS); a pbkdf2 or
