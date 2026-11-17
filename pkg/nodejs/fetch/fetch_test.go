@@ -19,7 +19,9 @@ import (
 
 func setupRuntime(t *testing.T) *runtime.Runtime {
 	t.Helper()
-	rt, err := runtime.New(nil)
+	cfg := runtime.DefaultConfig()
+	cfg.MaxOpenSockets = -1
+	rt, err := runtime.New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create runtime: %v", err)
 	}
@@ -130,6 +132,13 @@ func TestResponse_ArrayBuffer_Uint8Array(t *testing.T) {
 
 func setupStreamingRuntime(t *testing.T, cfg *runtime.Config) *runtime.Runtime {
 	t.Helper()
+	// These exercise fetch, not the socket cap.
+	if cfg == nil {
+		cfg = runtime.DefaultConfig()
+	}
+	if cfg.MaxOpenSockets == 0 {
+		cfg.MaxOpenSockets = -1
+	}
 	rt, err := runtime.New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create runtime: %v", err)

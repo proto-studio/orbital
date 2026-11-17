@@ -474,6 +474,10 @@ func createRuntime() (*runtime.Runtime, error) {
 	// Scripts start as many workers and loader hooks as they like, as in Node. The
 	// library default allows none.
 	cfg.MaxWorkers = -1
+	// Scripts open as many sockets and files as the OS allows, as in Node. The library
+	// default allows none.
+	cfg.MaxOpenSockets = -1
+	cfg.MaxOpenFiles = -1
 	cfg.UnhandledRejections = unhandledRejections
 	cfg.NoWarnings = silenceWarnings
 

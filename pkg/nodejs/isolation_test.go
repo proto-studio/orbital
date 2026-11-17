@@ -111,7 +111,7 @@ func newParent(t *testing.T, marker string) *parentFixture {
 		}
 	}
 	client := &markerClient{marker: marker}
-	inst, err := New(allowWorkers(&runtime.Config{
+	inst, err := New(openCaps(&runtime.Config{
 		EnableConsole: true,
 		EnableTimers:  true,
 		Filesystem:    runtime.NewLocalFilesystem(root),
@@ -223,7 +223,7 @@ func TestConcurrentParentsKeepTheirOwnChildren(t *testing.T) {
 			}
 			os.WriteFile(filepath.Join(root, "marker.txt"), []byte(marker), 0o644)
 			os.WriteFile(filepath.Join(root, "worker.js"), []byte(workerJS), 0o644)
-			inst, err := New(allowWorkers(&runtime.Config{
+			inst, err := New(openCaps(&runtime.Config{
 				EnableConsole: true,
 				EnableTimers:  true,
 				Filesystem:    runtime.NewLocalFilesystem(root),

@@ -723,7 +723,6 @@
 
   // As in Node, the reason a fetch failed is in the error's cause.
   function fetchFailed(encoded) {
-    const err = new TypeError('fetch failed');
     let desc;
     try {
       desc = JSON.parse(encoded);
@@ -731,13 +730,17 @@
       desc = { message: encoded };
     }
     const cause = new Error(desc.message);
+    // With no socket left to open (Config.MaxOpenSockets, or the OS's descriptor
+    // limit), Node's fetch rejects with that error itself: "open EMFILE".
+    const bare = desc.code === 'EMFILE' && desc.syscall === 'open';
+    const err = bare ? cause : new TypeError('fetch failed');
     if (desc.code) cause.code = desc.code;
     if (desc.syscall) cause.syscall = desc.syscall;
     if (desc.errno) cause.errno = desc.errno;
     if (desc.address) cause.address = desc.address;
     if (desc.port) cause.port = desc.port;
     if (desc.hostname) cause.hostname = desc.hostname;
-    err.cause = cause;
+    if (!bare) err.cause = cause;
     return err;
   }
 

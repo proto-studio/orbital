@@ -258,6 +258,8 @@ func ErrnoName(errno syscall.Errno) string {
 		return "EINVAL"
 	case syscall.EAFNOSUPPORT:
 		return "EAFNOSUPPORT"
+	case syscall.EMFILE:
+		return "EMFILE"
 	}
 	return errno.Error()
 }

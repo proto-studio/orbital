@@ -13,7 +13,8 @@ import (
 func setupRuntime(t *testing.T) *runtime.Runtime {
 	// Use memory filesystem for testing
 	cfg := &runtime.Config{
-		Filesystem: runtime.NewMemoryFilesystem(),
+		Filesystem:   runtime.NewMemoryFilesystem(),
+		MaxOpenFiles: -1,
 	}
 
 	rt, err := runtime.New(cfg)
@@ -287,7 +288,7 @@ func TestFS_Name(t *testing.T) {
 // written as their exact UTF-8 or raw bytes, and a read with no encoding gives a Uint8Array.
 func TestFSWithoutBuffer(t *testing.T) {
 	memory := runtime.NewMemoryFilesystem()
-	rt, err := runtime.New(&runtime.Config{Filesystem: memory})
+	rt, err := runtime.New(&runtime.Config{Filesystem: memory, MaxOpenFiles: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestFSWithoutBufferReadlink(t *testing.T) {
 	if err := os.Symlink("tést-\xff", filepath.Join(dir, "l")); err != nil {
 		t.Skipf("the filesystem refuses the name: %v", err)
 	}
-	rt, err := runtime.New(&runtime.Config{Filesystem: runtime.NewLocalFilesystem("")})
+	rt, err := runtime.New(&runtime.Config{Filesystem: runtime.NewLocalFilesystem(""), MaxOpenFiles: -1})
 	if err != nil {
 		t.Fatal(err)
 	}

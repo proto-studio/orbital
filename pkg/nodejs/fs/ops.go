@@ -330,7 +330,13 @@ func (f *FS) readdirOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int,
 	}
 	fsys := f.fs()
 	return func() opResult {
+		// Reading a directory opens it while it runs.
+		release, err := f.rt.OpenFile()
+		if err != nil {
+			return failed(err, "scandir", path)
+		}
 		entries, err := fsys.ReadDir(path)
+		release()
 		if err != nil {
 			return failed(err, "scandir", path)
 		}
@@ -372,6 +378,17 @@ func (f *FS) copyFileOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int
 		if excl && fsys.Exists(dest) {
 			return opResult{err: syscall.EEXIST, syscall: "copyfile", path: src, dest: dest}
 		}
+		// A copy has both files open while it runs.
+		releaseSrc, err := f.rt.OpenFile()
+		if err != nil {
+			return opResult{err: err, syscall: "copyfile", path: src, dest: dest}
+		}
+		defer releaseSrc()
+		releaseDest, err := f.rt.OpenFile()
+		if err != nil {
+			return opResult{err: err, syscall: "copyfile", path: src, dest: dest}
+		}
+		defer releaseDest()
 		if err := fsys.Copy(src, dest); err != nil {
 			return opResult{err: err, syscall: "copyfile", path: src, dest: dest}
 		}
@@ -392,8 +409,14 @@ func (f *FS) openOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 	}
 	fsys := f.fs()
 	return func() opResult {
+		// The descriptor holds one of Config.MaxOpenFiles until it's closed.
+		release, err := f.rt.OpenFile()
+		if err != nil {
+			return failed(err, "open", path)
+		}
 		file, err := fsys.OpenFile(path, flags, perm)
 		if err != nil {
+			release()
 			return failed(err, "open", path)
 		}
 		// A pipe, socket or device reads in a queue of its own (readLane).
@@ -405,6 +428,7 @@ func (f *FS) openOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 		fd := f.nextFD
 		f.nextFD++
 		f.fds[fd] = file
+		f.fdSlots[fd] = release
 		if streamLike {
 			f.streams[fd] = true
 		}
@@ -436,12 +460,17 @@ func (f *FS) closeOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *
 	return func() opResult {
 		f.fdMu.Lock()
 		file, ok := f.fds[fd]
+		release := f.fdSlots[fd]
 		if ok {
 			delete(f.fds, fd)
+			delete(f.fdSlots, fd)
 		}
 		f.fdMu.Unlock()
 		if !ok {
 			return failed(syscall.EBADF, "close", "")
+		}
+		if release != nil {
+			defer release()
 		}
 		f.queueMu.Lock()
 		delete(f.queues, fd)

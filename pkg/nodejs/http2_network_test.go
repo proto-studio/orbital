@@ -515,7 +515,7 @@ func TestHTTP2CertificateVerification(t *testing.T) {
 }
 
 func secureConfig(ca *testCA) *runtime.Config {
-	return &runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}}
+	return openHandles(&runtime.Config{ClientTLSConfig: &tls.Config{RootCAs: ca.pool}})
 }
 
 func waitCancelled(t *testing.T, srv *h2Server) {

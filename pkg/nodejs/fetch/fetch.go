@@ -44,6 +44,8 @@ type fetchOp struct {
 	userStop  atomic.Bool // reader.cancel / body.cancel, a clean close
 	tracked   atomic.Bool // holds event-loop pending work for an open stream
 	delivered atomic.Bool
+	// slot gives back the request's place under Config.MaxOpenSockets once it ends.
+	slot func()
 }
 
 // New creates a new Fetch module.
@@ -157,6 +159,17 @@ func (f *Fetch) fetchFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	jsCtx := info.Context()
 	client := f.rt.HTTPClient()
+
+	// Each request in flight counts as an open socket, until closeBody ends it.
+	release, serr := f.rt.OpenSocket()
+	if serr != nil {
+		encoded, _ := json.Marshal(netdial.Describe(serr, "open", "", 0))
+		f.finishEarly(op, jsCtx, callback, string(encoded))
+		return jsCtx.NewNumber(float64(op.id))
+	}
+	op.mu.Lock()
+	op.slot = release
+	op.mu.Unlock()
 
 	f.rt.EventLoop().AddPendingWork()
 	go func() {
@@ -482,10 +495,15 @@ func (f *Fetch) closeBody(op *fetchOp) {
 	body := op.body
 	op.body = nil
 	release := op.tracked.Swap(false)
+	slot := op.slot
+	op.slot = nil
 	op.mu.Unlock()
 
 	if body != nil {
 		body.Close()
+	}
+	if slot != nil {
+		slot()
 	}
 	if op.cancel != nil {
 		op.cancel()

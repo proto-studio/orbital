@@ -1466,6 +1466,13 @@
           const match = /^([A-Z][A-Z0-9_]+):/.exec(error);
           const err = new Error(error);
           if (match) err.code = match[1];
+          if (error === 'open EMFILE') {
+            // No socket left to open (Config.MaxOpenSockets): Node's error at the
+            // descriptor limit.
+            err.code = 'EMFILE';
+            err.errno = -24;
+            err.syscall = 'open';
+          }
           this.destroy(err);
           return;
         }
