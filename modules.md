@@ -43,7 +43,7 @@ Tracks every module in the current Node.js distribution (v26 `module.builtinModu
 - [x] url
 
 ## Crypto & Compression
-- [x] crypto — hash/hmac/random + KeyObject (generate/import/export) + pbkdf2/scrypt/hkdf + X509Certificate + ciphers + sign/verify + RSA encryption + ECDH + generateKey (no finite-field Diffie-Hellman); see known-limitations.md
+- [x] crypto — hash/hmac/random + KeyObject (generate/import/export) + pbkdf2/scrypt/hkdf + X509Certificate + ciphers + sign/verify + RSA encryption + Diffie-Hellman/ECDH + generateKey; see known-limitations.md
 - [x] crypto/webcrypto — SubtleCrypto; deriveBits is PBKDF2/HKDF/ECDH/X25519 only, ML-DSA rejected; see known-limitations.md
 - [x] zlib
 

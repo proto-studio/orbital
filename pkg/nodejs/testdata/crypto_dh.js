@@ -1,6 +1,5 @@
 // Runs unchanged in Node and in Orbital. crypto_dh.node.json is this script's output under
-// Node v20.18.1. Finite-field Diffie-Hellman isn't offered (#242), so crypto_dh_test.go
-// checks its errors separately. Regenerate the output with
+// Node v20.18.1. Regenerate the output with
 //   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestCryptoDH_MatchesNode'
 // The keys in pems were made by Node for this test.
 const crypto = require('crypto');
@@ -22,6 +21,60 @@ function outcome(f) {
     return { name: e.name, code: e.code, message: e.message };
   }
 }
+
+// Finite-field DH with fixed private keys is deterministic.
+const modp2 = crypto.getDiffieHellman('modp2');
+results.groups = ['modp1', 'modp2', 'modp5', 'modp14', 'modp15', 'modp16', 'modp17', 'modp18']
+  .map((n) => { const g = crypto.getDiffieHellman(n); return [g.getPrime().length, g.getGenerator('hex'), g.verifyError]; });
+results.groupShape = [typeof modp2.setPrivateKey, typeof modp2.setPublicKey, crypto.createDiffieHellmanGroup('modp1').getPrime().length];
+results.fixedKeys = outcome(() => {
+  const a = crypto.createDiffieHellman(modp2.getPrime(), modp2.getGenerator());
+  const b = crypto.createDiffieHellman(modp2.getPrime('hex'), 'hex', 2);
+  a.setPrivateKey(Buffer.from('0102030405060708', 'hex'));
+  b.setPrivateKey('99887766', 'hex');
+  const pa = a.generateKeys('hex');
+  const pb = b.generateKeys();
+  return [pa, pb.toString('hex'), a.computeSecret(pb).toString('hex'), b.computeSecret(pa, 'hex', 'base64'),
+    a.getPrivateKey('hex'), a.getPublicKey().length, a.verifyError];
+});
+results.randomKeys = outcome(() => {
+  const a = crypto.getDiffieHellman('modp14');
+  const b = crypto.getDiffieHellman('modp14');
+  a.generateKeys();
+  b.generateKeys();
+  return [a.computeSecret(b.getPublicKey()).equals(b.computeSecret(a.getPublicKey())), a.computeSecret(b.getPublicKey()).length,
+    a.getPublicKey().length <= 256];
+});
+results.generated = outcome(() => {
+  const g = crypto.createDiffieHellman(512);
+  return [g.getPrime().length, g.getGenerator('hex'), g.verifyError, g.getPrime()[0] >= 0x80];
+});
+results.verifyErrors = [
+  outcome(() => crypto.createDiffieHellman(Buffer.from([23]), 5).verifyError),
+  outcome(() => crypto.createDiffieHellman(Buffer.from([24])).verifyError),
+  outcome(() => crypto.createDiffieHellman(modp2.getPrime(), Buffer.from([1])).verifyError),
+  outcome(() => crypto.createDiffieHellman(Buffer.concat([modp2.getPrime().subarray(0, 127), Buffer.from([0xfd])])).verifyError),
+];
+results.dhErrors = {
+  sizeTooSmall: outcome(() => crypto.createDiffieHellman(1)),
+  badSize: outcome(() => crypto.createDiffieHellman(true)),
+  badGenerator: outcome(() => crypto.createDiffieHellman(Buffer.from([23]), {})),
+  smallModulusKeys: outcome(() => crypto.createDiffieHellman(Buffer.from([23]), 5).generateKeys()),
+  unknownGroup: outcome(() => crypto.getDiffieHellman('modp99')),
+  noPublicKey: outcome(() => crypto.createDiffieHellman(modp2.getPrime()).getPublicKey()),
+  noPrivateKey: outcome(() => crypto.createDiffieHellman(modp2.getPrime()).getPrivateKey()),
+  otherKeyOne: outcome(() => { const a = crypto.getDiffieHellman('modp2'); a.generateKeys(); return a.computeSecret(Buffer.from([1])); }),
+  otherKeyZero: outcome(() => { const a = crypto.getDiffieHellman('modp2'); a.generateKeys(); return a.computeSecret(Buffer.from([0])); }),
+  otherKeyTooLarge: outcome(() => { const a = crypto.getDiffieHellman('modp2'); a.generateKeys(); return a.computeSecret(modp2.getPrime()); }),
+  // The modulus's value counts, not its buffer's length.
+  primeOne: outcome(() => crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(63), Buffer.from([1])])).generateKeys()),
+  primeTwo: outcome(() => crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(63), Buffer.from([2])])).generateKeys()),
+  evenPrime: outcome(() => crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(63, 0xff), Buffer.from([0xfe])])).generateKeys()),
+  primeTooLarge: outcome(() => crypto.createDiffieHellman(Buffer.alloc(1251, 0xff)).generateKeys()),
+  secretTooLarge: outcome(() => { const a = crypto.createDiffieHellman(Buffer.alloc(1251, 0xff)); a.setPrivateKey(Buffer.from([3])); return a.computeSecret(Buffer.from([5])); }),
+  largestPrime: outcome(() => { const a = crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(1249, 0xff), Buffer.from([0xfd])])); a.setPrivateKey(Buffer.from([3])); return [a.generateKeys('hex'), a.computeSecret(Buffer.from([5])).length]; }),
+  sizeTooLarge: outcome(() => crypto.createDiffieHellman(10001)),
+};
 
 // ECDH with fixed private keys is deterministic.
 const ec = {};
@@ -99,7 +152,8 @@ results.ecdhErrors = {
   shortOther: outcome(() => { const a = crypto.createECDH('prime256v1'); a.generateKeys(); return a.computeSecret(Buffer.alloc(3)); }),
   badFormat: outcome(() => { const a = crypto.createECDH('prime256v1'); return a.generateKeys('hex', 'bogus'); }),
 };
-results.ecdhShape = [Object.keys(crypto.ECDH.prototype).sort().join(','), crypto.ECDH('prime256v1') instanceof crypto.ECDH];
+results.ecdhShape = [Object.keys(crypto.ECDH.prototype).sort().join(','), Object.keys(crypto.DiffieHellman.prototype).sort().join(','),
+  crypto.ECDH('prime256v1') instanceof crypto.ECDH];
 
 // crypto.diffieHellman with KeyObjects.
 const k = {};

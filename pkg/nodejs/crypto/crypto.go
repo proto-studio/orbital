@@ -98,8 +98,13 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		"_rsaCrypt": c.rsaCryptFunc,
 
 		// Key agreement (dh.go).
-		"_ecdh":         c.ecdhFunc,
-		"_keyAgreement": c.keyAgreementFunc,
+		"_dhGeneratePrime": c.dhGeneratePrimeFunc,
+		"_dhGroup":         c.dhGroupFunc,
+		"_dhCheck":         c.dhCheckFunc,
+		"_dhKeys":          c.dhKeysFunc,
+		"_dhSecret":        c.dhSecretFunc,
+		"_ecdh":            c.ecdhFunc,
+		"_keyAgreement":    c.keyAgreementFunc,
 
 		// Key derivation (kdf.go).
 		"_digestSize":  c.digestSizeFunc,
