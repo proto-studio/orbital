@@ -532,3 +532,19 @@ func (c *blockingClient) Get(ctx context.Context, url string) (*runtime.Response
 func (c *blockingClient) Post(ctx context.Context, url string, contentType string, body []byte) (*runtime.Response, error) {
 	return c.Do(ctx, &runtime.Request{Method: http.MethodPost, URL: url, Body: body})
 }
+
+// A slot taken for an operation that cancellation has already closed is given back at
+// once, since closeBody won't run again to give it back.
+func TestFetch_SlotForAClosedOperationIsGivenBack(t *testing.T) {
+	released := 0
+	op := &fetchOp{closed: true}
+	op.holdSlot(func() { released++ })
+	if released != 1 || op.slot != nil {
+		t.Fatalf("released %d times, slot kept: %v", released, op.slot != nil)
+	}
+	open := &fetchOp{}
+	open.holdSlot(func() { released++ })
+	if released != 1 || open.slot == nil {
+		t.Fatal("the slot of an open operation was given back early")
+	}
+}
