@@ -425,6 +425,14 @@ func (f *FS) openOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v
 			streamLike = true
 		}
 		f.fdMu.Lock()
+		if f.disposed {
+			// The runtime was disposed while this open ran, and its cleanup has
+			// already closed the other files: nothing will close this one.
+			f.fdMu.Unlock()
+			file.Close()
+			release()
+			return failed(syscall.EBADF, "open", path)
+		}
 		fd := f.nextFD
 		f.nextFD++
 		f.fds[fd] = file

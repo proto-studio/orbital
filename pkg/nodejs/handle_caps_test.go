@@ -247,3 +247,56 @@ w.on('exit', () => {
 `)
 	wantJSON(t, got, map[string]any{"after": "opened"})
 }
+
+// A server that drops a connection over the cap keeps accepting: once a place frees, the
+// next connection reaches the script.
+func TestCaps_ServerKeepsAcceptingAfterADrop(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	firstDropped := make(chan bool, 1)
+	go func() {
+		addr := "127.0.0.1:" + strconv.Itoa(port)
+		var conn net.Conn
+		for i := 0; i < 100; i++ {
+			if conn, err = net.Dial("tcp", addr); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if conn == nil {
+			firstDropped <- false
+			return
+		}
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, rerr := conn.Read(make([]byte, 1))
+		conn.Close()
+		firstDropped <- rerr != nil
+		time.Sleep(600 * time.Millisecond)
+		if second, err := net.Dial("tcp", addr); err == nil {
+			t.Cleanup(func() { second.Close() })
+		}
+	}()
+
+	got := runCapped(t, &runtime.Config{MaxOpenSockets: 2, Timeout: 10 * time.Second}, `
+const net = require('net'), dgram = require('dgram');
+const udp = dgram.createSocket('udp4');
+udp.bind(0, '127.0.0.1', () => {
+  // The listener and the UDP socket fill the cap; the first connection is dropped.
+  const server = net.createServer((socket) => {
+    socket.destroy();
+    server.close();
+    done({ accepted: true });
+  }).listen(`+strconv.Itoa(port)+`, '127.0.0.1');
+  setTimeout(() => udp.close(), 300);
+});
+`)
+	wantJSON(t, got, map[string]any{"accepted": true})
+	if !<-firstDropped {
+		t.Error("the first connection was not dropped")
+	}
+}
