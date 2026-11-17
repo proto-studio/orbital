@@ -54,8 +54,8 @@ func (c *Crypto) randomBytesAsyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("randomBytes: size and callback are required")
 	}
 	size := args[0].Integer()
-	if size < 0 || size > 2147483647 {
-		return ctx.Throw("randomBytes: size out of range")
+	if size < 0 || size > maxNativeBytes {
+		return ctx.Throw(outOfRange("size", 0, maxNativeBytes, size))
 	}
 	c.runOffThread(args[1], func() func(*v8.Context) []*v8.Value {
 		buf := make([]byte, size)

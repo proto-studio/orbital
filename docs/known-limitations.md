@@ -220,6 +220,11 @@ traceability.
 
 ### Still missing
 
+- **[gap] Crypto outputs are capped at what one V8 string holds.** The natives return bytes
+  as base64 (or hex) strings, so `randomBytes`, `pbkdf2` and `scrypt` refuse sizes over
+  402,653,166 bytes, and `generatePrime` refuses sizes over 2,147,483,552 bits, with
+  `ERR_OUT_OF_RANGE`. Node allows up to 2,147,483,647 for each. `randomFill` and
+  `randomFillSync` fill larger buffers in pieces, so they have no such cap (`lengths.go`).
 - **[gap] Some ciphers are missing.** `createCipheriv` has AES (CBC, ECB, CTR, CFB,
   CFB8, OFB, GCM) and Triple DES (`des-ede3*`, `des-ede*`) from Go's standard library, and
   ChaCha20 and ChaCha20-Poly1305 from `golang.org/x/crypto` (`cipher.go`). CCM, OCB, XTS,

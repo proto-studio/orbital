@@ -74,8 +74,8 @@ func (c *Crypto) randomBase64Func(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("randomBase64: size is required")
 	}
 	size := args[0].Integer()
-	if size < 0 || size > 1<<31-1 {
-		return ctx.Throw("randomBase64: size out of range")
+	if size < 0 || size > maxNativeBytes {
+		return ctx.Throw(outOfRange("size", 0, maxNativeBytes, size))
 	}
 	return c.offThread(ctx, optionalCallback(args, 1), func() (string, error) {
 		buf := make([]byte, size)
@@ -204,8 +204,8 @@ func (c *Crypto) generatePrimeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("generatePrime: missing arguments")
 	}
 	size := args[0].Integer()
-	if size < 1 || size > math.MaxInt32 {
-		return ctx.Throw("generatePrime: size out of range")
+	if size < 1 || size > maxPrimeBits {
+		return ctx.Throw(outOfRange("size", 1, maxPrimeBits, size))
 	}
 	bits := int(size)
 	safe := args[1].Boolean()

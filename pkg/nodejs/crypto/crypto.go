@@ -134,6 +134,14 @@ func (c *Crypto) Register(rt *runtime.Runtime) error {
 		}
 	}
 
+	// The longest outputs the natives can return (lengths.go), for the wrappers.
+	if err := cryptoObj.Set("_maxNativeBytes", ctx.NewNumber(maxNativeBytes)); err != nil {
+		return err
+	}
+	if err := cryptoObj.Set("_maxPrimeBits", ctx.NewNumber(maxPrimeBits)); err != nil {
+		return err
+	}
+
 	// Set as global
 	if err := rt.SetGlobal("__crypto_module", cryptoObj); err != nil {
 		return err
@@ -433,21 +441,21 @@ func (c *Crypto) randomBytesFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return nil
 	}
 
-	size := int(args[0].Integer())
-	if size < 0 || size > 2147483647 {
-		return nil
+	ctx := info.Context()
+	size := args[0].Integer()
+	if size < 0 || size > maxNativeBytes {
+		return ctx.Throw(outOfRange("size", 0, maxNativeBytes, size))
 	}
 
 	bytes := make([]byte, size)
 	if _, err := rand.Read(bytes); err != nil {
-		return nil
+		return ctx.Throw(err.Error())
 	}
 
-	// The callback form is randomBytesAsyncFunc (async.go).
-	hexStr := hex.EncodeToString(bytes)
-	code := `Buffer.from('` + hexStr + `', 'hex')`
-	bufVal, _ := c.rt.RunScript(code, "crypto_buffer")
-	return bufVal
+	// The bytes as base64; randombytes.js makes the Buffer. The callback form
+	// is randomBytesAsyncFunc (async.go).
+	v, _ := ctx.NewString(base64.StdEncoding.EncodeToString(bytes))
+	return v
 }
 
 func (c *Crypto) randomUUIDFunc(info *v8.FunctionCallbackInfo) *v8.Value {

@@ -5,6 +5,12 @@
 
   const crypto = __crypto_module;
   const kMaxLength = 4294967296;
+  // The longest key the natives can return (lengths.go); Node allows more.
+  const kMaxNativeBytes = crypto._maxNativeBytes;
+
+  function checkNativeKeyLen(keylen) {
+    if (keylen > kMaxNativeBytes) throw outOfRange('keylen', '>= 0 && <= ' + kMaxNativeBytes, keylen);
+  }
   const scryptDefaults = { N: 16384, r: 8, p: 1, maxmem: 32 << 20 };
 
   function codedError(Type, code, message) {
@@ -137,6 +143,7 @@
     salt = bufferSource(salt, 'salt');
     validateInt32(iterations, 'iterations', 1);
     validateInt32(keylen, 'keylen', 0);
+    checkNativeKeyLen(keylen);
     digestSize(digest);
     return [password, salt, iterations, keylen, digest];
   }
@@ -160,6 +167,7 @@
     password = bufferSource(password, 'password');
     salt = bufferSource(salt, 'salt');
     validateInt32(keylen, 'keylen', 0);
+    checkNativeKeyLen(keylen);
 
     let { N, r, p, maxmem } = scryptDefaults;
     if (options && options !== scryptDefaults) {
