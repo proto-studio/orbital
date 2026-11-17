@@ -55,6 +55,19 @@ results.verifyErrors = [
   outcome(() => crypto.createDiffieHellman(modp2.getPrime(), Buffer.from([1])).verifyError),
   outcome(() => crypto.createDiffieHellman(Buffer.concat([modp2.getPrime().subarray(0, 127), Buffer.from([0xfd])])).verifyError),
 ];
+// The buffers DiffieHellman returns are the caller's: changing one leaves the
+// object's keys alone.
+results.dhReturnedBuffers = (() => {
+  const a = crypto.createDiffieHellman(modp2.getPrime(), 2);
+  a.setPrivateKey(Buffer.from([6]));
+  const pub = a.generateKeys();
+  const before = a.getPublicKey('hex');
+  pub.fill(0);
+  a.getPublicKey().fill(0);
+  a.getPrivateKey().fill(0);
+  a.getPrime().fill(0);
+  return [before, a.getPublicKey('hex'), a.getPrivateKey('hex'), a.getPrime().equals(modp2.getPrime())];
+})();
 results.dhErrors = {
   sizeTooSmall: outcome(() => crypto.createDiffieHellman(1)),
   badSize: outcome(() => crypto.createDiffieHellman(true)),
