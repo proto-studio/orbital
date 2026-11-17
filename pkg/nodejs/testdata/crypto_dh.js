@@ -26,6 +26,7 @@ function outcome(f) {
 const modp2 = crypto.getDiffieHellman('modp2');
 results.groups = ['modp1', 'modp2', 'modp5', 'modp14', 'modp15', 'modp16', 'modp17', 'modp18']
   .map((n) => { const g = crypto.getDiffieHellman(n); return [g.getPrime().length, g.getGenerator('hex'), g.verifyError]; });
+results.groupCase = [crypto.getDiffieHellman('MODP2').getPrime().equals(modp2.getPrime()), crypto.createDiffieHellmanGroup('Modp2').getPrime().length];
 results.groupShape = [typeof modp2.setPrivateKey, typeof modp2.setPublicKey, crypto.createDiffieHellmanGroup('modp1').getPrime().length];
 results.fixedKeys = outcome(() => {
   const a = crypto.createDiffieHellman(modp2.getPrime(), modp2.getGenerator());
@@ -87,6 +88,16 @@ results.dhErrors = {
   secretTooLarge: outcome(() => { const a = crypto.createDiffieHellman(Buffer.alloc(1251, 0xff)); a.setPrivateKey(Buffer.from([3])); return a.computeSecret(Buffer.from([5])); }),
   largestPrime: outcome(() => { const a = crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(1249, 0xff), Buffer.from([0xfd])])); a.setPrivateKey(Buffer.from([3])); return [a.generateKeys('hex'), a.computeSecret(Buffer.from([5])).length]; }),
   sizeTooLarge: outcome(() => crypto.createDiffieHellman(10001)),
+  zeroPrivateKey: outcome(() => { const a = crypto.createDiffieHellman(modp2.getPrime()); a.setPrivateKey('00', 'hex'); return a.computeSecret(Buffer.from([2])); }),
+  emptyPrivateKey: outcome(() => { const a = crypto.createDiffieHellman(modp2.getPrime()); a.setPrivateKey(Buffer.alloc(0)); return a.computeSecret(Buffer.from([2])); }),
+  zeroPrivateKeyBadPeer: outcome(() => { const a = crypto.createDiffieHellman(modp2.getPrime()); a.setPrivateKey('00', 'hex'); return a.computeSecret(Buffer.from([1])); }),
+  zeroPrivateKeyPublic: outcome(() => { const a = crypto.createDiffieHellman(modp2.getPrime()); a.setPrivateKey('00', 'hex'); return [a.generateKeys('hex'), a.getPrivateKey('hex')]; }),
+  emptyPrivateKeyPublic: outcome(() => { const a = crypto.createDiffieHellman(modp2.getPrime()); a.setPrivateKey(Buffer.alloc(0)); return [a.generateKeys('hex'), a.getPrivateKey('hex')]; }),
+  // DH_check looks at moduli of up to 32768 bits, flagging those over 10000.
+  checkTooLarge: outcome(() => crypto.createDiffieHellman(Buffer.alloc(4097, 0xff))),
+  checkLargest: outcome(() => crypto.createDiffieHellman(Buffer.alloc(4096, 0xff)).verifyError),
+  checkOverMax: outcome(() => crypto.createDiffieHellman(Buffer.alloc(1251, 0xff)).verifyError),
+  checkLeadingZero: outcome(() => crypto.createDiffieHellman(Buffer.concat([Buffer.alloc(1), Buffer.alloc(4096, 0xff)])).verifyError),
 };
 
 // ECDH with fixed private keys is deterministic.

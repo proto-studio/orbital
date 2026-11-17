@@ -1,6 +1,9 @@
 package crypto
 
-import "testing"
+import (
+	"math/big"
+	"testing"
+)
 
 // The key agreement native checks the kinds of the keys behind its handles
 // itself, since scripts can call it with any handles.
@@ -32,5 +35,30 @@ func TestDH_KeyAgreementChecksKinds(t *testing.T) {
 		`"ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE","ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",true]`
 	if got := result.String(); got != want {
 		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+// dhSafePrime's primes are safe and keep the residue OpenSSL picks for the
+// generator.
+func TestDHSafePrime(t *testing.T) {
+	for _, g := range []int64{2, 5, 3} {
+		p, err := dhSafePrime(512, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := new(big.Int).Rsh(p, 1)
+		if p.BitLen() != 512 || !p.ProbablyPrime(20) || !q.ProbablyPrime(20) {
+			t.Fatalf("g=%d: %x is not a 512-bit safe prime", g, p)
+		}
+		switch g {
+		case 2:
+			if r := new(big.Int).Mod(p, big.NewInt(24)).Int64(); r != 23 {
+				t.Fatalf("g=2: p = %d mod 24, want 23", r)
+			}
+		case 5:
+			if r := new(big.Int).Mod(p, big.NewInt(10)).Int64(); r != 3 {
+				t.Fatalf("g=5: p = %d mod 10, want 3", r)
+			}
+		}
 	}
 }
