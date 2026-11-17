@@ -3,6 +3,7 @@ package module
 
 import (
 	_ "embed"
+	"errors"
 	"path/filepath"
 	"strings"
 
@@ -95,9 +96,20 @@ func (m *Module) requireFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	fs := m.rt.Filesystem()
 
 	// Try to read the file
-	data, err := fs.ReadFile(filename)
+	data, err := runtime.ReadFileLimited(fs, filename, runtime.MaxSourceSize)
 	if err != nil {
-		return ctx.Null()
+		var tooLarge *runtime.FileTooLargeError
+		if !errors.As(err, &tooLarge) {
+			return ctx.Null()
+		}
+		// Node's require reads the file into one string, and fails one too large
+		// for that with ERR_STRING_TOO_LONG, however large the file is.
+		failure, _ := ctx.NewObject()
+		code, _ := ctx.NewString("ERR_STRING_TOO_LONG")
+		failure.Set("code", code)
+		message, _ := ctx.NewString(runtime.StringTooLongMessage)
+		failure.Set("message", message)
+		return failure
 	}
 
 	result, _ := ctx.NewString(string(data))
@@ -238,7 +250,7 @@ func (m *Module) resolveAsDirectory(path string, fs fsInterface) string {
 	// Try package.json
 	pkgPath := filepath.Join(path, "package.json")
 	if fs.Exists(pkgPath) {
-		data, err := fs.ReadFile(pkgPath)
+		data, err := runtime.ReadFileLimited(m.rt.Filesystem(), pkgPath, runtime.MaxSourceSize)
 		if err == nil {
 			// Simple JSON parsing for "main" field
 			main := m.parsePackageMain(string(data))

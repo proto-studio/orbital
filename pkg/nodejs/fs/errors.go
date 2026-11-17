@@ -115,6 +115,37 @@ func fsFailure(ctx *v8.Context, err error, syscallName, path string) *v8.Value {
 	return obj
 }
 
+// fileTooLarge describes a read refused because the file is too large, Node's
+// RangeError [ERR_FS_FILE_TOO_LARGE], or returns nil for any other error.
+func fileTooLarge(ctx *v8.Context, err error) *v8.Value {
+	var tooLarge *runtime.FileTooLargeError
+	if !errors.As(err, &tooLarge) {
+		return nil
+	}
+	obj, _ := ctx.NewObject()
+	obj.Set("__fsError", ctx.True())
+	rangeError, _ := ctx.NewString("RangeError")
+	obj.Set("errorType", rangeError)
+	code, _ := ctx.NewString("ERR_FS_FILE_TOO_LARGE")
+	obj.Set("code", code)
+	message, _ := ctx.NewString(tooLarge.Error())
+	obj.Set("message", message)
+	return obj
+}
+
+// asyncFileTooLarge builds the RangeError fileTooLarge describes, to pass to a callback, or
+// returns nil for any other error.
+func (f *FS) asyncFileTooLarge(ctx *v8.Context, err error) *v8.Value {
+	failure := fileTooLarge(ctx, err)
+	if failure == nil {
+		return nil
+	}
+	if e := f.callFsHelper(ctx, "__fromFailure", failure); e != nil {
+		return e
+	}
+	return failure
+}
+
 // fsFailureTo describes a failed call on two paths, such as rename, whose message names both:
 // "ENOENT: no such file or directory, rename 'a' -> 'b'".
 func fsFailureTo(ctx *v8.Context, err error, syscallName, path, dest string) *v8.Value {

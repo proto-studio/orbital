@@ -315,6 +315,9 @@
   // can only throw a string. This throws it as Node's Error.
   function check(result) {
     if (result && result.__fsError) {
+      if (result.errorType === 'RangeError') {
+        throw codedError(RangeError, result.code, result.message);
+      }
       const e = new Error(result.message);
       e.errno = result.errno;
       e.code = result.code;
@@ -603,6 +606,16 @@
   // calls this so failures surface as real Error instances with a Node `code`,
   // rather than bare strings. Kept here because constructing/adorning Errors is
   // far simpler in JS than across the V8 boundary.
+  // The Error a native failure describes, for the natives' callbacks.
+  fs.__fromFailure = function (failure) {
+    try {
+      check(failure);
+    } catch (e) {
+      return e;
+    }
+    return failure;
+  };
+
   fs.__makeFsError = function (message, code, path, syscall) {
     const e = new Error(message || (code ? code + ': fs error' : 'fs error'));
     if (code) { e.code = code; e.errno = ERRNO[code] !== undefined ? ERRNO[code] : -1; }

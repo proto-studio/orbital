@@ -292,8 +292,11 @@ func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	path := stringArg(args, 0)
-	data, err := f.fs().ReadFile(path)
+	data, err := runtime.ReadFileLimited(f.fs(), path, runtime.MaxReadFileSize)
 	if err != nil {
+		if tooLarge := fileTooLarge(ctx, err); tooLarge != nil {
+			return tooLarge
+		}
 		return fsFailure(ctx, err, readSyscall(err), path)
 	}
 
@@ -653,7 +656,7 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		data, err := fsys.ReadFile(path)
+		data, err := runtime.ReadFileLimited(fsys, path, runtime.MaxReadFileSize)
 		contents := ""
 		if err == nil {
 			contents = fileContents(data, asText)
@@ -661,6 +664,10 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
+				if tooLarge := f.asyncFileTooLarge(ctx, err); tooLarge != nil {
+					f.rt.MakeCallback(callback, nil, tooLarge, ctx.Null())
+					return
+				}
 				f.rt.MakeCallback(callback, nil, f.asyncFsError(ctx, err, readSyscall(err), path), ctx.Null())
 			} else {
 				dataVal, _ := ctx.NewString(contents)

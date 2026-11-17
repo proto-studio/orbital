@@ -27,6 +27,7 @@
   var NativeError = Error;
   var NativeTypeError = TypeError;
   var NativeURIError = URIError;
+  var NativeRangeError = RangeError;
   var reject = Promise.reject.bind(Promise);
   var defineProperty = Object.defineProperty;
   var apply = Reflect.apply;
@@ -55,8 +56,10 @@
   }
   var CodedError = Object.create(NativeError.prototype);
   var CodedTypeError = Object.create(NativeTypeError.prototype);
+  var CodedRangeError = Object.create(RangeError.prototype);
   own(CodedError, 'toString', codedToString, false);
   own(CodedTypeError, 'toString', codedToString, false);
+  own(CodedRangeError, 'toString', codedToString, false);
   var setPrototypeOf = Object.setPrototypeOf;
   var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   var NativeString = String;
@@ -98,11 +101,12 @@
     });
   }
 
-  // kind is the error's class: "Error", "TypeError" or "URIError".
+  // kind is the error's class: "Error", "TypeError", "URIError" or "RangeError".
   globalThis.__esmModuleError = function (message, code, url, kind, input, module) {
     var isTypeError = kind === 'TypeError';
     var err = isTypeError ? new NativeTypeError(message)
-      : kind === 'URIError' ? new NativeURIError(message) : new NativeError(message);
+      : kind === 'URIError' ? new NativeURIError(message)
+      : kind === 'RangeError' ? new NativeRangeError(message) : new NativeError(message);
     if (code) {
       // The "[CODE]" header is added when the stack is first read, from the
       // engine's own accessor, so formatting (and an Error.prepareStackTrace the
@@ -115,7 +119,7 @@
       }
       own(err, 'code', code, true);
       apply(codesSet, codes, [err, code]);
-      setPrototypeOf(err, isTypeError ? CodedTypeError : CodedError);
+      setPrototypeOf(err, isTypeError ? CodedTypeError : kind === 'RangeError' ? CodedRangeError : CodedError);
     }
     if (url) own(err, 'url', url, true);
     if (input) own(err, 'input', input, true);

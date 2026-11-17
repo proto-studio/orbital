@@ -26,7 +26,7 @@ var workerThreadsJS string
 
 // wtEvent is a worker->parent event carried over a Go channel.
 type wtEvent struct {
-	kind string // "online" | "message" | "error" | "exit"
+	kind string // "online" | "message" | "error" | "codedError" | "thrown" | "exit"
 	data string // JSON payload (message) or error text
 	code int    // exit code
 }
@@ -339,7 +339,15 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	if !wk.eval {
 		// The entry is read through the configured filesystem, like any other file
 		// the program opens, so an injected sandbox applies to it.
-		data, readErr := wrt.Filesystem().ReadFile(wk.target)
+		data, readErr := goruntime.ReadFileLimited(wrt.Filesystem(), wk.target, goruntime.MaxSourceSize)
+		var tooLarge *goruntime.FileTooLargeError
+		if errors.As(readErr, &tooLarge) {
+			// Node reads the entry into one string, and fails one too large for that
+			// with ERR_STRING_TOO_LONG.
+			wk.fromWorker <- wtEvent{kind: "codedError", data: "ERR_STRING_TOO_LONG\n" + goruntime.StringTooLongMessage}
+			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
+			return
+		}
 		if readErr != nil {
 			wk.fromWorker <- wtEvent{kind: "error", data: readErr.Error()}
 			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
