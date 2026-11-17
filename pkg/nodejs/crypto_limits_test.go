@@ -64,7 +64,7 @@ done({
   pbkdf2Callback: outcome(() => crypto.pbkdf2('pw', 'salt', 1, 2147483647, 'sha256', () => {})),
   hkdfOver: outcome(() => crypto.hkdfSync('sha512', 'key', 'salt', 'info', 16000)),
   scryptOver: outcome(() => crypto.scryptSync('pw', 'salt', 20000, { N: 2, r: 1, p: 1 })),
-  native: outcome(() => __crypto_module._pbkdf2('', '', 1, 2147483647, 'sha256')),
+  native: outcome(() => __crypto_module._pbkdf2('', '', 1, 20000, 'sha256')),
 });
 `)
 	wantJSON(t, got, map[string]any{
@@ -75,4 +75,27 @@ done({
 		"scryptOver":     scryptMemoryError,
 		"native":         "undefined pbkdf2: invalid arguments",
 	})
+}
+
+// The limit covers WebCrypto's PBKDF2 and HKDF derivations too, through
+// SubtleCrypto and through the natives directly.
+func TestCrypto_MemoryLimitCapsWebCrypto(t *testing.T) {
+	got := runJS(t, &runtime.Config{CryptoMemoryLimit: 30000}, `
+(async () => {
+  const subtle = globalThis.crypto.subtle;
+  const n = __webcrypto_native;
+  const err = (f) => { try { f(); return 'returned'; } catch (e) { return String(e.message); } };
+  const base = await subtle.importKey('raw', new Uint8Array(8), 'PBKDF2', false, ['deriveBits']);
+  const params = { name: 'PBKDF2', salt: new Uint8Array(8), iterations: 1, hash: 'SHA-256' };
+  const ok = (await subtle.deriveBits(params, base, 80000)).byteLength;
+  let over;
+  try { await subtle.deriveBits(params, base, 80008); over = 'resolved'; } catch (e) { over = 'rejected'; }
+  done({
+    ok, over,
+    pbkdf2Native: err(() => n.pbkdf2(JSON.stringify({ passwordB64: '', saltB64: '', iterations: 1, hash: 'SHA-256', length: 4000000000 }))).includes('crypto memory limit'),
+    hkdfNative: err(() => n.hkdf(JSON.stringify({ keyB64: 'AA==', saltB64: '', infoB64: '', hash: 'SHA-512', length: 80008 }))).includes('crypto memory limit'),
+  });
+})();
+`)
+	wantJSON(t, got, map[string]any{"ok": float64(10000), "over": "rejected", "pbkdf2Native": true, "hkdfNative": true})
 }
