@@ -386,3 +386,19 @@ show(range(10, (i) => '\u{1F680}'.repeat(i % 3) + 'ab'.repeat(i % 4)),
   custom.call = null;
   console.log(u.inspect({ [Symbol.for('nodejs.util.inspect.custom')]: custom }));
 }
+// util.inspect names a function as Node's getFunctionBase and getClassBase do, one without a
+// prototype included.
+{
+  class A {}
+  class B extends A {}
+  const bare = (f) => { Object.setPrototypeOf(f, null); return f; };
+  const tagged = Object.defineProperty(function t() {}, Symbol.toStringTag, { value: 'Tg' });
+  const reproto = Object.setPrototypeOf(function r() {}, A);
+  const fns = [
+    (() => function () {})(), () => 1, function* g() {}, async function a() {}, async function* ag() {},
+    A, B, (() => class {})(), class /* ( */ C {}, { *m() {} }.m, tagged, reproto, Math.max,
+    bare(function f() {}), bare((() => function () {})()), bare(class K {}), bare(function* h() {}),
+    bare(async function b() {}), bare(class S extends A {}), { deep: { er: { still: bare(function d() {}) } } }
+  ];
+  for (const fn of fns) console.log(u.inspect(fn));
+}
