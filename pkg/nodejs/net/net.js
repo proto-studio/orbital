@@ -31,13 +31,15 @@
   const kListenMessages = {
     EADDRINUSE: 'address already in use',
     EACCES: 'permission denied',
-    EADDRNOTAVAIL: 'address not available'
+    EADDRNOTAVAIL: 'address not available',
+    EMFILE: 'too many open files'
   };
 
   function listenError(desc, address, port) {
     const text = kListenMessages[desc.code];
     if (text) {
-      const where = port === undefined ? address : `${address}:${port}`;
+      // As Node's, the port is left out when it is 0.
+      const where = port === undefined || port === 0 ? address : `${address}:${port}`;
       desc.message = `listen ${desc.code}: ${text} ${where}`;
     }
     return nodeError(desc);

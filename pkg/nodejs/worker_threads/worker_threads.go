@@ -281,6 +281,8 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	}
 	// Workers it starts count against the same cap.
 	wrt.ShareIsolateLimit(w.rt)
+	// The worker's sockets and files count against its parent's caps.
+	wrt.ShareHandleLimits(w.rt)
 
 	// The pump below may call wrt.Kill, so it must be finished before the isolate
 	// is disposed. Deferred calls run in reverse: stop the pump, then dispose.

@@ -138,8 +138,11 @@ type Conn struct {
 	reading    int
 	held       bool
 	resourceID uint64
-	readErr    error
-	diverted   chan divertedRead
+	// slot gives back the connection's place under Config.MaxOpenSockets; nil
+	// until it opens a socket (see takeSlot).
+	slot     func()
+	readErr  error
+	diverted chan divertedRead
 	// noHold stops a waiting read from keeping the process running. A pipe's transport
 	// holds the event loop itself, only while it has bytes to process, and hands that hold
 	// to the read that returns them through afterRead.
@@ -278,6 +281,22 @@ func (c *Conn) updateHoldLocked() {
 	}
 }
 
+// takeSlot counts the connection against Config.MaxOpenSockets, once, before it opens a
+// socket of its own; Close gives the slot back. Over the cap it fails with EMFILE.
+func (c *Conn) takeSlot() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.slot != nil {
+		return nil
+	}
+	release, err := c.n.rt.OpenSocket()
+	if err != nil {
+		return err
+	}
+	c.slot = release
+	return nil
+}
+
 // Close closes the socket. It implements io.Closer for the runtime's resource tracker.
 func (c *Conn) Close() error {
 	c.mu.Lock()
@@ -289,8 +308,10 @@ func (c *Conn) Close() error {
 	c.updateHoldLocked()
 	socket := c.socket
 	attempt := c.attempt
+	slot := c.slot
 	c.socket = nil
 	c.attempt = nil
+	c.slot = nil
 	c.mu.Unlock()
 
 	c.cancel()
@@ -301,7 +322,20 @@ func (c *Conn) Close() error {
 	if socket != nil {
 		err = socket.Close()
 	}
+	if slot != nil {
+		slot()
+	}
 	return err
+}
+
+// failOpen calls back with the error Node gives when no socket can be opened: "open
+// EMFILE", with no address.
+func (n *Net) failOpen(callback *v8.Value, err error) {
+	desc := netdial.Describe(err, "open", "", 0)
+	out := connectResult{Error: &desc}
+	n.deliver(func(ctx *v8.Context) {
+		n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, out))
+	})
 }
 
 func (n *Net) deliver(fn func(ctx *v8.Context)) {
@@ -363,6 +397,10 @@ func (n *Net) connectFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return info.Context().Throw("net: invalid connect options")
 	}
 	callback := args[4]
+	if err := conn.takeSlot(); err != nil {
+		n.failOpen(callback, err)
+		return nil
+	}
 
 	seq, attemptCtx := conn.beginAttempt()
 	n.rt.EventLoop().AddPendingWork()
@@ -518,6 +556,10 @@ func (n *Net) connectAddressFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return info.Context().Throw("net: no such resolved address")
 	}
 	ip := resolved.ips[index]
+	if err := conn.takeSlot(); err != nil {
+		n.failOpen(callback, err)
+		return nil
+	}
 
 	seq, attemptCtx := conn.beginAttempt()
 	n.rt.EventLoop().AddPendingWork()
@@ -583,6 +625,10 @@ func (n *Net) connectUnixFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 	path := args[1].String()
 	callback := args[2]
+	if err := conn.takeSlot(); err != nil {
+		n.failOpen(callback, err)
+		return nil
+	}
 
 	n.rt.EventLoop().AddPendingWork()
 	go func() {
@@ -1023,6 +1069,8 @@ type server struct {
 	held       bool
 	closed     bool
 	resourceID uint64
+	// slot gives back the listener's place under Config.MaxOpenSockets.
+	slot func()
 }
 
 func (s *server) updateHoldLocked() {
@@ -1048,10 +1096,35 @@ func (s *server) Close() error {
 	s.closed = true
 	s.updateHoldLocked()
 	srv := s.srv
+	slot := s.slot
+	s.slot = nil
 	s.mu.Unlock()
+	var err error
 	if srv != nil {
-		return srv.Close()
+		err = srv.Close()
 	}
+	if slot != nil {
+		slot()
+	}
+	return err
+}
+
+// listenWith opens a listener on the server, counted against Config.MaxOpenSockets: over
+// the cap it fails with EMFILE before opening anything.
+func (s *server) listenWith(open func() (runtime.TCPServer, error)) error {
+	release, err := s.n.rt.OpenSocket()
+	if err != nil {
+		return err
+	}
+	srv, err := open()
+	if err != nil {
+		release()
+		return err
+	}
+	s.mu.Lock()
+	s.srv = srv
+	s.slot = release
+	s.mu.Unlock()
 	return nil
 }
 
@@ -1138,13 +1211,13 @@ func (n *Net) listenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	host := args[1].String()
 	port := int(args[2].Integer())
 
-	srv := n.rt.SocketFactory().CreateTCPServer()
-	if err := srv.Listen(n.rt.ExecutionContext(), host, port); err != nil {
+	err := s.listenWith(func() (runtime.TCPServer, error) {
+		srv := n.rt.SocketFactory().CreateTCPServer()
+		return srv, srv.Listen(n.rt.ExecutionContext(), host, port)
+	})
+	if err != nil {
 		return jsJSON(ctx, netdial.Describe(err, "listen", host, port))
 	}
-	s.mu.Lock()
-	s.srv = srv
-	s.mu.Unlock()
 	return ctx.Null()
 }
 
@@ -1165,13 +1238,13 @@ func (n *Net) listenUnixFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if err != nil {
 		return jsJSON(ctx, netdial.Describe(err, "listen", path, 0))
 	}
-	srv := factory.CreateUnixServer()
-	if err := srv.Listen(n.rt.ExecutionContext(), path, 0); err != nil {
+	err = s.listenWith(func() (runtime.TCPServer, error) {
+		srv := factory.CreateUnixServer()
+		return srv, srv.Listen(n.rt.ExecutionContext(), path, 0)
+	})
+	if err != nil {
 		return jsJSON(ctx, netdial.Describe(err, "listen", path, 0))
 	}
-	s.mu.Lock()
-	s.srv = srv
-	s.mu.Unlock()
 	return ctx.Null()
 }
 
@@ -1221,9 +1294,17 @@ func (n *Net) acceptFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 				n.rt.MakeCallback(callback, ctx.Undefined(), jsJSON(ctx, desc), ctx.Null(), ctx.Null())
 				return
 			}
+			// Over Config.MaxOpenSockets the connection is closed unseen, as libuv drops
+			// one it accepts at the OS's descriptor limit.
+			release, serr := n.rt.OpenSocket()
+			if serr != nil {
+				socket.Close()
+				return
+			}
 			id, conn := n.newConn()
 			conn.mu.Lock()
 			conn.socket = socket
+			conn.slot = release
 			conn.mu.Unlock()
 			n.rt.MakeCallback(callback, ctx.Undefined(), ctx.Null(), ctx.NewNumber(float64(id)), jsJSON(ctx, describeAddresses(socket)))
 		})

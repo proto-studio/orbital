@@ -176,7 +176,49 @@ func (f *FS) writeWithFlags(path string, data []byte, flag *v8.Value, perm fs.Fi
 	if !ok {
 		return "open", syscall.EINVAL
 	}
-	return writeFile(f.fs(), path, data, flags, perm)
+	return f.writeFileCounted(f.fs(), path, data, flags, perm)
+}
+
+// writeFileCounted is writeFile holding one of Config.MaxOpenFiles while the file is open.
+func (f *FS) writeFileCounted(fsys runtime.Filesystem, path string, data []byte, flags int, perm fs.FileMode) (string, error) {
+	release, err := f.rt.OpenFile()
+	if err != nil {
+		return "open", err
+	}
+	defer release()
+	return writeFile(fsys, path, data, flags, perm)
+}
+
+// closeAll closes the files and read streams still open when the runtime is disposed.
+type closeAll struct{ f *FS }
+
+func (c closeAll) Close() error {
+	f := c.f
+	f.fdMu.Lock()
+	files := f.fds
+	slots := f.fdSlots
+	f.fds = make(map[int]runtime.File)
+	f.fdSlots = make(map[int]func())
+	f.fdMu.Unlock()
+	for _, file := range files {
+		file.Close()
+	}
+	for _, release := range slots {
+		release()
+	}
+	f.rsMu.Lock()
+	streams := f.readStreams
+	f.readStreams = make(map[int]*readStream)
+	f.rsMu.Unlock()
+	for _, h := range streams {
+		if h.file != nil {
+			h.file.Close()
+		}
+		if h.slot != nil {
+			h.slot()
+		}
+	}
+	return nil
 }
 
 // writeFile writes data to path opened with flags. On failure it also names the call that

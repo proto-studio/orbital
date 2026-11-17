@@ -134,6 +134,14 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		reqCtx = context.Background()
 	}
 
+	// The request counts as an open socket until its whole response has arrived.
+	release, serr := h.rt.OpenSocket()
+	if serr != nil {
+		// http.js reports this as Node does at the descriptor limit.
+		fail("open EMFILE")
+		return nil
+	}
+
 	h.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer h.rt.EventLoop().DonePendingWork()
@@ -143,6 +151,7 @@ func (h *HTTP) doRequestFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		if err == nil {
 			responseBody, err = resp.Bytes()
 		}
+		release()
 		if err != nil {
 			fail(err.Error())
 			return

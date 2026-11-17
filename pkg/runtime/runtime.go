@@ -18,6 +18,8 @@ type Runtime struct {
 	noWarnings          bool   // Config.NoWarnings
 	threadPool          *threadPool
 	isolates            *isolateLimit
+	sockets             *handleLimit
+	files               *handleLimit
 	cryptoMemoryLimit   int64 // Config.CryptoMemoryLimit
 
 	isolate           *v8.Isolate
@@ -99,6 +101,20 @@ type Config struct {
 	// with Node's ERR_WORKER_INIT_FAILED. 0 allows none; a negative value means no
 	// limit, which the orbital CLI uses, as Node has none.
 	MaxWorkers int
+	// MaxOpenSockets is how many sockets scripts may have open at once: TCP
+	// connections and listeners (including TLS, HTTP and HTTP/2 connections), UDP
+	// sockets, and requests through HTTPClient. One more fails with EMFILE, as at the
+	// OS's own limit. 0 allows none, so an embedder that grants network access sets
+	// it too; a negative value means no limit beyond the OS's, which the orbital CLI
+	// uses. A runtime's workers and loader realms count against the same cap.
+	MaxOpenSockets int
+	// MaxOpenFiles is how many files scripts may have open at once through fs: file
+	// descriptors from fs.open and FileHandles, streams, directories being read, and
+	// the files calls like readFile, writeFile and copyFile open while they run. One
+	// more fails with EMFILE. 0 allows none; a negative value means no limit beyond
+	// the OS's, which the orbital CLI uses. Loading modules and worker entry files
+	// doesn't count. A runtime's workers and loader realms count against the same cap.
+	MaxOpenFiles int
 	// ProcessSpawner spawns child processes.
 	// If nil, real process spawning with no restrictions is used.
 	ProcessSpawner ProcessSpawner
@@ -271,6 +287,8 @@ func New(cfg *Config) (*Runtime, error) {
 		noWarnings:          cfg.NoWarnings,
 		threadPool:          newThreadPool(cfg.ThreadPoolSize, cfg.ThreadPoolQueueSize, execController.Done()),
 		isolates:            &isolateLimit{max: cfg.MaxWorkers},
+		sockets:             &handleLimit{max: cfg.MaxOpenSockets},
+		files:               &handleLimit{max: cfg.MaxOpenFiles},
 		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
 	}
 

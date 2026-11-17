@@ -1223,7 +1223,15 @@
     session._id = internal.connect(host, port, JSON.stringify(nativeOptions), (message, code) => {
       if (session._destroyed) return;
       if (message) {
-        session.destroy(makeError(message, code));
+        const error = makeError(message, code);
+        if (code === 'EMFILE') {
+          // No socket left to open, as at the OS's descriptor limit.
+          error.errno = -24;
+          error.syscall = 'connect';
+          error.address = host;
+          error.port = port;
+        }
+        session.destroy(error);
         return;
       }
 

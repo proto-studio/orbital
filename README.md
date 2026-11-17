@@ -115,11 +115,18 @@ cfg := &runtime.Config{
 	HTTPClient:     runtime.NewFilteredHTTPClient(nil, policy),
 	SocketFactory:  runtime.NewFilteredSocketFactory(nil, policy),
 	ProcessSpawner: runtime.NewNoOpProcessSpawner(),
+	MaxOpenSockets: 64,
+	MaxOpenFiles:   64,
 	DocumentRoot:   "/sandbox",
 	Timeout:        30 * time.Second,
 }
 inst, err := nodejs.New(cfg)
 ```
+
+`MaxOpenSockets` and `MaxOpenFiles` cap how many sockets and files scripts have open at once, and
+default to 0, which allows none: set them whenever you grant network or filesystem access. One
+more fails with `EMFILE`, as at the OS's descriptor limit. A negative value means no limit beyond
+the OS's, which the `orbital` CLI uses.
 
 See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DNS use these controls,
 and [`docs/child-processes.md`](docs/child-processes.md) for `ProcessSpawner`: the built-in

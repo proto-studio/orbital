@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"proto.zip/studio/orbital/pkg/nodejs/internal/netdial"
 	"proto.zip/studio/orbital/pkg/nodejs/internal/tlsclient"
 	"proto.zip/studio/orbital/pkg/runtime"
+	"syscall"
 )
 
 // errNoHTTP2Transport is returned rather than falling back to unrestricted sockets.
@@ -88,12 +90,30 @@ func (h *HTTP2) checkTransport() error {
 }
 
 // connectSocket connects through the runtime's injected resolver and socket factory.
+// The connection counts against Config.MaxOpenSockets until it closes.
 func (h *HTTP2) connectSocket(ctx context.Context, opts dialOptions) (net.Conn, error) {
-	result, err := netdial.Connect(ctx, h.rt, opts.host, opts.port, netdial.Options{})
+	release, err := h.rt.OpenSocket()
 	if err != nil {
 		return nil, err
 	}
-	return runtime.NewSocketConn(result.Socket), nil
+	result, err := netdial.Connect(ctx, h.rt, opts.host, opts.port, netdial.Options{})
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &slotConn{Conn: runtime.NewSocketConn(result.Socket), release: release}, nil
+}
+
+// slotConn gives back its connection's place under Config.MaxOpenSockets when it closes.
+type slotConn struct {
+	net.Conn
+	release func()
+}
+
+func (c *slotConn) Close() error {
+	err := c.Conn.Close()
+	c.release()
+	return err
 }
 
 // closeNotifyConn reports the end of the connection. HTTP/2 reads continuously, so
@@ -119,6 +139,11 @@ func (c *closeNotifyConn) Read(b []byte) (int, error) {
 
 // describeError converts a connection failure to the message and code Node reports.
 func describeError(err error, opts dialOptions) (string, string) {
+	if errors.Is(err, syscall.EMFILE) {
+		// No socket left to open (Config.MaxOpenSockets): Node's error for a connection
+		// it couldn't open. http2.js adds the errno, syscall, address and port.
+		return fmt.Sprintf("connect EMFILE %s:%d - Local (undefined:undefined)", opts.host, opts.port), "EMFILE"
+	}
 	if strings.Contains(err.Error(), "tls: no application protocol") {
 		return err.Error(), "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL"
 	}

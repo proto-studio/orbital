@@ -37,7 +37,7 @@ func TestHelperRunScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true}))
+	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,11 +29,31 @@ func allowWorkers(cfg *runtime.Config) *runtime.Config {
 	return cfg
 }
 
+// openHandles lets a fixture open sockets and files without limit, as the orbital CLI
+// does, when its config doesn't set the caps. The fixtures exercise the modules, not the
+// caps, which handle_caps_test.go tests with runtimes it builds itself.
+func openHandles(cfg *runtime.Config) *runtime.Config {
+	if cfg.MaxOpenSockets == 0 {
+		cfg.MaxOpenSockets = -1
+	}
+	if cfg.MaxOpenFiles == 0 {
+		cfg.MaxOpenFiles = -1
+	}
+	return cfg
+}
+
+// openCaps opens both the handle and worker caps, for fixtures that build a runtime
+// themselves.
+func openCaps(cfg *runtime.Config) *runtime.Config {
+	return openHandles(allowWorkers(cfg))
+}
+
 // runJS runs source through the real runtime, including its event loop, and returns
 // the value the script passed to done(). Fixtures inject everything via cfg.
 func runJS(t *testing.T, cfg *runtime.Config, source string) map[string]any {
 	t.Helper()
 	allowWorkers(cfg)
+	openHandles(cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 20 * time.Second
 	}

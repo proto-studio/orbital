@@ -32,9 +32,11 @@ type FS struct {
 	// Open file-descriptor table backing the synchronous fd-based API
 	// (openSync/writeSync/readSync/closeSync/fstatSync). File descriptors are
 	// small integers handed back to JavaScript; 0-2 are reserved for stdio.
-	fdMu   sync.Mutex
-	fds    map[int]runtime.File
-	nextFD int
+	fdMu sync.Mutex
+	fds  map[int]runtime.File
+	// fdSlots give back each descriptor's place under Config.MaxOpenFiles.
+	fdSlots map[int]func()
+	nextFD  int
 
 	// The calls on each descriptor, which run one at a time and in order (ops.go).
 	queueMu sync.Mutex
@@ -54,14 +56,16 @@ type FS struct {
 // byte-range accounting (start/end from fs.createReadStream options).
 type readStream struct {
 	file      runtime.File
-	remaining int64 // bytes left to read when limited
-	limited   bool  // true when an explicit end offset was given
+	slot      func() // gives back the stream's place under Config.MaxOpenFiles
+	remaining int64  // bytes left to read when limited
+	limited   bool   // true when an explicit end offset was given
 }
 
 // New creates a new FS module.
 func New() *FS {
 	return &FS{
 		fds:         make(map[int]runtime.File),
+		fdSlots:     make(map[int]func()),
 		queues:      make(map[int]*fdQueue),
 		streams:     make(map[int]bool),
 		nextFD:      3,
@@ -83,6 +87,9 @@ func (f *FS) fs() runtime.Filesystem {
 // Register sets up the fs module.
 func (f *FS) Register(rt *runtime.Runtime) error {
 	f.rt = rt
+	// Files still open when the runtime is disposed close with it, giving back their
+	// places under Config.MaxOpenFiles, which a worker shares with its parent.
+	rt.TrackResource(closeAll{f})
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
@@ -292,7 +299,12 @@ func (f *FS) readFileSyncFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	path := stringArg(args, 0)
+	release, err := f.rt.OpenFile()
+	if err != nil {
+		return fsFailure(ctx, err, "open", path)
+	}
 	data, err := runtime.ReadFileLimited(f.fs(), path, runtime.MaxReadFileSize)
+	release()
 	if err != nil {
 		if tooLarge := fileTooLarge(ctx, err); tooLarge != nil {
 			return tooLarge
@@ -656,7 +668,13 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
 
-		data, err := runtime.ReadFileLimited(fsys, path, runtime.MaxReadFileSize)
+		// The file holds one of Config.MaxOpenFiles while it's read.
+		var data []byte
+		release, err := f.rt.OpenFile()
+		if err == nil {
+			data, err = runtime.ReadFileLimited(fsys, path, runtime.MaxReadFileSize)
+			release()
+		}
 		contents := ""
 		if err == nil {
 			contents = fileContents(data, asText)
@@ -707,7 +725,7 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 			err = syscall.EINVAL
 		}
 		if err == nil {
-			failed, err = writeFile(fsys, path, data, flags, perm)
+			failed, err = f.writeFileCounted(fsys, path, data, flags, perm)
 		}
 
 		f.rt.EventLoop().EnqueueMicrotask(func() {
@@ -830,8 +848,18 @@ func (f *FS) readStreamOpenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	result, _ := ctx.NewObject()
 
+	release, err := f.rt.OpenFile()
+	if err != nil {
+		// Node's error at the descriptor limit: "EMFILE: too many open files, open 'path'".
+		errStr, _ := ctx.NewString(fsErrorMessage("EMFILE", errnoDescriptions["EMFILE"], "open", path))
+		codeStr, _ := ctx.NewString("EMFILE")
+		result.Set("error", errStr)
+		result.Set("code", codeStr)
+		return result
+	}
 	file, err := f.fs().OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
+		release()
 		code, description, _ := errnoOf(err)
 		errStr, _ := ctx.NewString(fsErrorMessage(code, description, "open", path))
 		codeStr, _ := ctx.NewString(code)
@@ -843,6 +871,7 @@ func (f *FS) readStreamOpenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if start > 0 {
 		if _, err := file.Seek(start, io.SeekStart); err != nil {
 			file.Close()
+			release()
 			errStr, _ := ctx.NewString(err.Error())
 			codeStr, _ := ctx.NewString("EINVAL")
 			result.Set("error", errStr)
@@ -851,7 +880,7 @@ func (f *FS) readStreamOpenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}
 
-	h := &readStream{file: file}
+	h := &readStream{file: file, slot: release}
 	if end >= 0 {
 		s := start
 		if s < 0 {
@@ -963,6 +992,9 @@ func (f *FS) readStreamCloseFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	if ok && h.file != nil {
 		h.file.Close()
+	}
+	if ok && h.slot != nil {
+		h.slot()
 	}
 	return nil
 }

@@ -600,7 +600,7 @@
 
   // Node errno values for the codes the native async layer produces. Real
   // packages (send, http-errors) branch on err.code, and occasionally err.errno.
-  const ERRNO = { ENOENT: -2, EACCES: -13, EINVAL: -22, EIO: -5, EBADF: -9 };
+  const ERRNO = { ENOENT: -2, EACCES: -13, EINVAL: -22, EIO: -5, EBADF: -9, EMFILE: -24 };
 
   // Shared error factory: the Go async layer (fs.stat/access/createReadStream)
   // calls this so failures surface as real Error instances with a Node `code`,

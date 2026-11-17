@@ -36,7 +36,7 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 // globalThis.log.
 func runLogModuleIn(t *testing.T, dir string) string {
 	t.Helper()
-	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
+	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}

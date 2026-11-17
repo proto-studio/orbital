@@ -20,9 +20,11 @@ var dgramJS string
 
 // Dgram provides UDP socket functionality.
 type Dgram struct {
-	rt       *runtime.Runtime
-	sockets  map[int64]runtime.UDPSocket
-	holds    map[int64]*holdState
+	rt      *runtime.Runtime
+	sockets map[int64]runtime.UDPSocket
+	holds   map[int64]*holdState
+	// slots give back each bound socket's place under Config.MaxOpenSockets.
+	slots    map[int64]func()
 	socketID int64
 	mu       sync.Mutex
 }
@@ -40,6 +42,7 @@ func New() *Dgram {
 	return &Dgram{
 		sockets: make(map[int64]runtime.UDPSocket),
 		holds:   make(map[int64]*holdState),
+		slots:   make(map[int64]func()),
 	}
 }
 
@@ -51,6 +54,9 @@ func (d *Dgram) Name() string {
 // Register sets up the dgram module.
 func (d *Dgram) Register(rt *runtime.Runtime) error {
 	d.rt = rt
+	// Sockets still open when the runtime is disposed close with it, giving back
+	// their places under Config.MaxOpenSockets, which a worker shares with its parent.
+	rt.TrackResource(closeAll{d})
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
@@ -122,6 +128,44 @@ func (d *Dgram) createSocketFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return ctx.NewNumber(float64(id))
 }
 
+// closeAll closes the sockets still open when the runtime is disposed.
+type closeAll struct{ d *Dgram }
+
+func (c closeAll) Close() error {
+	c.d.mu.Lock()
+	sockets := c.d.sockets
+	slots := c.d.slots
+	c.d.sockets = make(map[int64]runtime.UDPSocket)
+	c.d.slots = make(map[int64]func())
+	c.d.mu.Unlock()
+	for _, socket := range sockets {
+		if socket != nil {
+			socket.Close()
+		}
+	}
+	for _, release := range slots {
+		release()
+	}
+	return nil
+}
+
+// takeSlot counts a socket against Config.MaxOpenSockets once, when it binds, explicitly
+// or on its first send; closing it gives the slot back. Over the cap it fails with an
+// "EMFILE: ..." error, which dgram.js reports as Node does.
+func (d *Dgram) takeSlot(id int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.slots[id] != nil {
+		return nil
+	}
+	release, err := d.rt.OpenSocket()
+	if err != nil {
+		return errors.New("EMFILE: too many open files")
+	}
+	d.slots[id] = release
+	return nil
+}
+
 func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
@@ -139,6 +183,10 @@ func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	if !ok {
 		d.callCallback(callback, "Socket not found")
+		return nil
+	}
+	if err := d.takeSlot(id); err != nil {
+		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallback(callback, err.Error()) })
 		return nil
 	}
 
@@ -179,6 +227,11 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	if !ok {
 		d.callCallbackWithBytes(callback, "Socket not found", 0)
+		return nil
+	}
+	// A socket that hasn't bound binds on its first send.
+	if err := d.takeSlot(id); err != nil {
+		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallbackWithBytes(callback, err.Error(), 0) })
 		return nil
 	}
 
@@ -332,10 +385,15 @@ func (d *Dgram) closeFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	if ok {
 		delete(d.sockets, id)
 	}
+	release := d.slots[id]
+	delete(d.slots, id)
 	d.mu.Unlock()
 
 	if ok && socket != nil {
 		socket.Close()
+	}
+	if release != nil {
+		release()
 	}
 
 	d.mu.Lock()

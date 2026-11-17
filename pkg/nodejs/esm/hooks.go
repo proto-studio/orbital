@@ -78,6 +78,8 @@ func (e *ESM) ensureLoaderRealm() error {
 	}
 	// Workers and realms it starts count against the same cap.
 	lrt.ShareIsolateLimit(e.rt)
+	// The realm's sockets and files count against this runtime's caps.
+	lrt.ShareHandleLimits(e.rt)
 	// The loader realm belongs to this runtime and is disposed with it.
 	realmID := e.rt.TrackResource(realmCloser{rt: lrt, release: release})
 	fail := func(err error) error {

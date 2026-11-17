@@ -39,6 +39,15 @@
     const error = new Error(message);
     const match = /^([A-Z][A-Z0-9_]+):/.exec(message);
     if (match) error.code = match[1];
+    // Over the runtime's socket cap, as at the OS's descriptor limit: "bind EMFILE 0.0.0.0".
+    if (error.code === 'EMFILE' && syscall) {
+      error.message = `${syscall} EMFILE ${address}${port ? `:${port}` : ''}`;
+      error.errno = -24;
+      error.syscall = syscall;
+      if (address) error.address = address;
+      if (port) error.port = port;
+      return error;
+    }
     if (syscall) {
       if (!match && /address already in use/.test(message)) error.code = 'EADDRINUSE';
       else if (!match && /permission denied/.test(message)) error.code = 'EACCES';
@@ -254,6 +263,12 @@
       internal.send(this._id, encoded, destination.host, destination.port, family, (err, bytes) => {
         this._sendQueue--;
         if (err) {
+          // The implicit bind of a first send failing is reported as the bind's
+          // failure, through 'error', and the send's callback isn't called, as in Node.
+          if (!wasBound && !this._bound && /^EMFILE:/.test(err)) {
+            this.emit('error', socketError(err, 'bind', this.type === 'udp6' ? '::' : '0.0.0.0', 0));
+            return;
+          }
           const error = socketError(err, 'send', destination.host, destination.port);
           if (typeof callback === 'function') callback(error);
           else this.emit('error', error);

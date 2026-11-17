@@ -92,3 +92,17 @@ or `AllowAllInheritedDescriptors()` for all of them, as the `orbital` CLI does o
 socket's address and the connections it accepts are checked as for any server, and a
 connected socket's peer as for a connection to it. Anything it can't check that way, such
 as a pipe or a Unix socket, is refused.
+
+## Open sockets
+
+`Config.MaxOpenSockets` caps how many sockets scripts have open at once, across the runtime and
+the workers and loader realms it starts. It counts TCP connections and listeners, including the
+connections under TLS, HTTP and HTTP/2, UDP sockets once they bind, and requests in flight through
+`HTTPClient`, including `fetch`. Sockets from inherited descriptors don't count, since they open
+nothing new. 0, the default, allows none; a negative value means no limit beyond the OS's.
+
+Going over the cap gives the error Node gives at the OS's descriptor limit: `net.connect`,
+`http.request` and `fetch` fail with `open EMFILE`, `listen` with
+`listen EMFILE: too many open files`, a UDP bind with `bind EMFILE`, and `http2.connect` with
+`connect EMFILE`. A connection a server accepts over the cap is closed without reaching the
+script, as libuv drops one it accepts at the limit.
