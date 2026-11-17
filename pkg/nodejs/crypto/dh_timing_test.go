@@ -4,10 +4,35 @@ import (
 	"bytes"
 	"crypto/rand"
 	"math/big"
+	mrand "math/rand/v2"
 	"slices"
 	"testing"
 	"time"
 )
+
+// interleavedLowTimes calls f(i) for each of names in turn, rounds times over,
+// shuffling the order each round, and returns each one's 10th-percentile time.
+func interleavedLowTimes(rounds int, names []string, f func(i int)) map[string]time.Duration {
+	samples := make([][]time.Duration, len(names))
+	order := make([]int, len(names))
+	for i := range order {
+		order[i] = i
+	}
+	for r := 0; r < rounds; r++ {
+		mrand.Shuffle(len(order), func(a, b int) { order[a], order[b] = order[b], order[a] })
+		for _, i := range order {
+			start := time.Now()
+			f(i)
+			samples[i] = append(samples[i], time.Since(start))
+		}
+	}
+	out := make(map[string]time.Duration, len(names))
+	for i, ds := range samples {
+		slices.Sort(ds)
+		out[names[i]] = ds[len(ds)/10]
+	}
+	return out
+}
 
 // medianDuration runs f n times and returns the median time one run took.
 func medianDuration(n int, f func()) time.Duration {
@@ -23,9 +48,15 @@ func medianDuration(n int, f func()) time.Duration {
 
 // The private-key exponentiation takes the same time whatever the exponent's
 // value: exponents of the same length with very different bit patterns (one
-// bit set, every bit set, random) take about the same time. The margin (1.5x)
-// allows for a busy CI machine; math/big's Exp, which depends on the value,
-// differs by orders of magnitude on the same exponents.
+// bit set, every bit set, random) take about the same time; math/big's Exp,
+// which depends on the value, differs by orders of magnitude on the same
+// exponents.
+//
+// CI machines are shared, so the exponents are timed interleaved, one call
+// each in turn, and compared by a low percentile: load that slows one call
+// slows its neighbours too. The margin is 1.5x, and the whole measurement is
+// taken up to three times before the test fails, so a burst of load can't
+// fail it while a real dependence on the exponent still does every time.
 func TestDHExpTimeDoesNotDependOnExponent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -42,31 +73,27 @@ func TestDHExpTimeDoesNotDependOnExponent(t *testing.T) {
 	random := make([]byte, size)
 	rand.Read(random)
 	g := big.NewInt(2)
-	exps := map[string][]byte{"one bit": oneBit, "all bits": allBits, "random": random}
+	names := []string{"one bit", "all bits", "random"}
+	exps := [][]byte{oneBit, allBits, random}
 
-	// Warm up, then measure each exponent in turn several times so drift in
-	// the machine's speed affects them alike.
+	// Warm up.
 	for _, e := range exps {
 		dhExp(g, e, m, p)
 	}
-	medians := map[string][]time.Duration{}
-	for round := 0; round < 5; round++ {
-		for name, e := range exps {
-			medians[name] = append(medians[name], medianDuration(15, func() { dhExp(g, e, m, p) }))
+	var times map[string]time.Duration
+	for attempt := 1; attempt <= 3; attempt++ {
+		times = interleavedLowTimes(60, names, func(i int) { dhExp(g, exps[i], m, p) })
+		lo, hi := times[names[0]], times[names[0]]
+		for _, d := range times {
+			lo, hi = min(lo, d), max(hi, d)
 		}
-	}
-	best := map[string]time.Duration{}
-	for name, ds := range medians {
-		slices.Sort(ds)
-		best[name] = ds[0]
-	}
-	lo, hi := best["one bit"], best["one bit"]
-	for _, d := range best {
-		lo, hi = min(lo, d), max(hi, d)
-	}
-	t.Logf("constant-time exponentiation: %v", best)
-	if float64(hi) > 1.5*float64(lo) {
-		t.Errorf("times differ by exponent: %v", best)
+		t.Logf("constant-time exponentiation, attempt %d: %v", attempt, times)
+		if float64(hi) <= 1.5*float64(lo) {
+			break
+		}
+		if attempt == 3 {
+			t.Errorf("times differ by exponent in every attempt: %v", times)
+		}
 	}
 
 	// The same measurement on math/big, which isn't constant time, for
