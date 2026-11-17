@@ -160,7 +160,7 @@
 				if (target === null) return '<Revoked Proxy>';
 				if (target !== undefined) value = target;
 			}
-			if (typeof value === 'function') return formatFunction(value);
+			if (typeof value === 'function') return inspectShared.functionBase(value, layout.depth - currentDepth);
 			if (type !== 'object') return inspectShared.primitive(value);
 
 			// Objects
@@ -214,14 +214,6 @@
 			if (bin !== null) return formatBinary(value, bin, currentDepth);
 			if (ArrayBuffer.isView(value)) return formatView(value, currentDepth);
 			return formatObject(value, currentDepth);
-		}
-
-		function formatFunction(fn) {
-			const name = fn.name || '(anonymous)';
-			if (fn.toString().startsWith('class')) {
-				return `[class ${name}]`;
-			}
-			return `[Function: ${name}]`;
 		}
 
 		function formatArray(arr, depth) {

@@ -5,7 +5,7 @@
 // helpers inspectjs.go makes, ownNonIndexKeys, internalConstructorName and proxyTarget, and returns { context, quote, string, key,
 // keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot, finish, binary,
 // collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix,
-// proxyTarget }.
+// functionBase, proxyTarget }.
 //
 // Layout follows a context from context(options), which, like Node's, holds the options and
 // currentDepth: the level of the object whose entries were formatted last. A value's level is
@@ -375,6 +375,49 @@
     const tag = tagOf(value);
     if (ctor === 'Array' && tag === '') return '';
     return label(ctor, tag, 'Array', `(${value.length})`) + ' ';
+  }
+
+  // The kinds of function Node tells apart, which V8 names them after even without a prototype.
+  const functionKinds = new Set(['Function', 'GeneratorFunction', 'AsyncFunction', 'AsyncGeneratorFunction']);
+  const classRegExp = /^(\s+[^(]*?)\s*{/;
+  const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
+
+  // functionBase is how util.inspect names a function, as Node's getFunctionBase and getClassBase
+  // do: [Function: f], [GeneratorFunction (null prototype): g] or [class B extends A], with the
+  // constructor and toStringTag after it when they differ. budget is as for constructorName.
+  function functionBase(value, budget = Infinity) {
+    const ctor = constructorName(value, budget);
+    const tag = tagOf(value);
+    const source = Function.prototype.toString.call(value);
+    if (source.startsWith('class') && source.endsWith('}')) {
+      const slice = source.slice(5, -1);
+      const brace = slice.indexOf('{');
+      // As in Node, the slow check that it's a class strips comments by replacing them with
+      // "undefined", as it passes no replacement.
+      if (brace !== -1 && (!slice.slice(0, brace).includes('(') ||
+          classRegExp.exec(slice.replace(stripCommentsRegExp)) !== null)) {
+        const name = (Object.prototype.hasOwnProperty.call(value, 'name') && value.name) || '(anonymous)';
+        let base = `class ${name}`;
+        if (ctor !== 'Function' && ctor !== null) base += ` [${ctor}]`;
+        if (tag !== '' && ctor !== tag) base += ` [${tag}]`;
+        if (ctor !== null) {
+          const superName = Object.getPrototypeOf(value).name;
+          if (superName) base += ` extends ${superName}`;
+        } else {
+          base += ' extends [null prototype]';
+        }
+        return `[${base}]`;
+      }
+    }
+    const kind = internalConstructorName(value);
+    const type = functionKinds.has(kind) ? kind : 'Function';
+    let base = `[${type}`;
+    if (ctor === null) base += ' (null prototype)';
+    base += value.name === '' ? ' (anonymous)' : `: ${value.name}`;
+    base += ']';
+    if (ctor !== type && ctor !== null) base += ` ${ctor}`;
+    if (tag !== '' && ctor !== tag) base += ` [${tag}]`;
+    return base;
   }
 
   // cutLabel is how util.inspect names value, a kind of object named fallback, past the depth
@@ -783,6 +826,6 @@
   return {
     context, quote, string, key, keys, extraKeys, numbersAt, primitive, numeric, stringSpec, more, view, snapshot,
     finish, binary, collection, scalar, isDate, field, cut, entry, tracker, reduce, objectPrefix, arrayPrefix,
-    proxyTarget
+    functionBase, proxyTarget
   };
 })
