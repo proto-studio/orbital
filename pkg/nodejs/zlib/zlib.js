@@ -43,8 +43,9 @@
     return bytes;
   }
 
-  // buffer.constants.MAX_LENGTH, the largest maxOutputLength Node accepts.
-  const kMaxLength = 2147483647;
+  // The largest maxOutputLength Node 20 accepts, its buffer.constants.MAX_LENGTH. Output
+  // stops sooner here anyway, at kMaxOutput.
+  const kMaxLength = 2 ** 32;
   // The most bytes one call can hand back here (zlib.go): its result reaches
   // JavaScript as one base64 string.
   const kMaxOutput = internal.maxOutput;
