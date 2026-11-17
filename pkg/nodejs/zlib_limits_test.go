@@ -84,3 +84,34 @@ done({ started: true });
 `)
 	wantJSON(t, got, map[string]any{"started": true})
 }
+
+// A stream whose codec finishes before the writable side ends, as an empty deflate stream
+// does, still finishes: 'finish', end()'s callback and 'end' all happen.
+func TestZlib_ShortStreamsFinish(t *testing.T) {
+	got := runJS(t, &runtime.Config{}, `
+const zlib = require('zlib');
+const cases = [
+  ['createInflate', zlib.deflateSync(Buffer.alloc(0))],
+  ['createInflateRaw', zlib.deflateRawSync(Buffer.alloc(0))],
+  ['createGunzip', zlib.gzipSync(Buffer.alloc(0))],
+  ['createInflate', zlib.deflateSync('hi')],
+];
+const results = [];
+let pending = cases.length * 20;
+for (let i = 0; i < 20; i++) {
+  for (const [name, input] of cases) {
+    const s = zlib[name]();
+    const seen = { finish: false, endCallback: false, end: false };
+    s.on('finish', () => { seen.finish = true; });
+    s.on('end', () => { seen.end = true; });
+    s.resume();
+    s.end(input, () => { seen.endCallback = true; });
+    setTimeout(() => {
+      results.push(seen.finish && seen.endCallback && seen.end ? 'ok' : name + ' ' + JSON.stringify(seen));
+      if (--pending === 0) done({ failures: results.filter((r) => r !== 'ok') });
+    }, 200);
+  }
+}
+`)
+	wantJSON(t, got, map[string]any{"failures": []any{}})
+}
