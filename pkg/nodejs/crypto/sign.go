@@ -229,6 +229,13 @@ func verifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bo
 	return string(pssNoSaltHash(h, mHash)) == string(H)
 }
 
+// VerifyPSSNoSalt reports whether sig is a valid RSA-PSS signature of mHash
+// with an empty salt, for WebCrypto's saltLength 0: crypto/rsa reads a salt
+// length of 0 as "any length".
+func VerifyPSSNoSalt(k *rsa.PublicKey, h func() hash.Hash, mHash, sig []byte) bool {
+	return verifyPSSNoSalt(k, h, mHash, sig)
+}
+
 func ecdsaSize(k *ecdsa.PublicKey) int {
 	return (k.Curve.Params().BitSize + 7) / 8
 }

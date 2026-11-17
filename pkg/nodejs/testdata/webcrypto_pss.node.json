@@ -1,0 +1,35 @@
+{
+  "missingSalt": {
+    "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'RsaPssParams' because 'saltLength' is required in 'RsaPssParams'.",
+    "name": "TypeError"
+  },
+  "missingSaltVerify": {
+    "message": "Failed to normalize algorithm: passed algorithm can not be converted to 'RsaPssParams' because 'saltLength' is required in 'RsaPssParams'.",
+    "name": "TypeError"
+  },
+  "negativeSalt": {
+    "message": "Failed to normalize algorithm: 'saltLength' of 'RsaPssParams' (passed algorithm) is outside the expected range of 0 to 4294967295.",
+    "name": "TypeError"
+  },
+  "saltString": {
+    "value": true
+  },
+  "sign32": {
+    "value": true
+  },
+  "verifyEmptyWith0": {
+    "value": true
+  },
+  "verifyEmptyWith32": {
+    "value": false
+  },
+  "verifyOtherData": {
+    "value": false
+  },
+  "verifySaltedWith0": {
+    "value": false
+  },
+  "verifySaltedWith32": {
+    "value": true
+  }
+}

@@ -443,6 +443,21 @@
     }
   }
 
+  // RsaPssParams.saltLength: required, and an [EnforceRange] unsigned long,
+  // as WebIDL converts it. 0 means an empty salt: verify checks for one, but
+  // sign refuses it, as node:crypto does. Other algorithms ignore it.
+  function pssSaltLength(algo) {
+    if (algo.name !== 'RSA-PSS') return 0;
+    if (algo.saltLength === undefined) {
+      throw new TypeError("Failed to normalize algorithm: passed algorithm can not be converted to 'RsaPssParams' because 'saltLength' is required in 'RsaPssParams'.");
+    }
+    const n = Math.trunc(Number(algo.saltLength));
+    if (!Number.isFinite(Number(algo.saltLength)) || n < 0 || n > 4294967295) {
+      throw new TypeError("Failed to normalize algorithm: 'saltLength' of 'RsaPssParams' (passed algorithm) is outside the expected range of 0 to 4294967295.");
+    }
+    return n;
+  }
+
   class SubtleCrypto {
     async digest(algorithm, data) {
       const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
@@ -559,8 +574,12 @@
       const params = {
         name: algo.name,
         hash: hashName(algo.hash) || (key.algorithm.hash && key.algorithm.hash.name) || '',
-        saltLength: algo.saltLength || 0,
+        saltLength: pssSaltLength(algo),
       };
+      // Go's RSA can't make an empty salt (it reads 0 as "choose a length").
+      if (algo.name === 'RSA-PSS' && params.saltLength === 0) {
+        throw new DOMException('Unsupported crypto operation', 'NotSupportedError');
+      }
       const sigB64 = native.sign(JSON.stringify(params), JSON.stringify(key._jwk), bytesToB64(u8(data)));
       return b64ToBytes(sigB64).buffer;
     }
@@ -570,7 +589,7 @@
       const params = {
         name: algo.name,
         hash: hashName(algo.hash) || (key.algorithm.hash && key.algorithm.hash.name) || '',
-        saltLength: algo.saltLength || 0,
+        saltLength: pssSaltLength(algo),
       };
       const res = native.verify(
         JSON.stringify(params), JSON.stringify(key._jwk),
