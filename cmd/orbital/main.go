@@ -471,6 +471,9 @@ func createRuntime() (*runtime.Runtime, error) {
 	// Work waiting for the thread pool queues without limit, as in Node. The library
 	// default makes it wait for room instead.
 	cfg.ThreadPoolQueueSize = -1
+	// Scripts start as many workers and loader hooks as they like, as in Node. The
+	// library default allows none.
+	cfg.MaxWorkers = -1
 	cfg.UnhandledRejections = unhandledRejections
 	cfg.NoWarnings = silenceWarnings
 

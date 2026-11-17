@@ -164,6 +164,19 @@ func (e *ESM) installRegisterBridge() error {
 			return c.Throw("register(): specifier is required")
 		}
 		if err := e.registerHook(specifier, parentURL); err != nil {
+			if errors.Is(err, runtime.ErrWorkerLimit) {
+				// Node runs hooks on a worker; one it can't start fails as ERR_WORKER_INIT_FAILED.
+				if mk := e.makeError; mk != nil && mk.IsFunction() {
+					msg, _ := c.NewString("Worker initialization failure: " + err.Error())
+					code, _ := c.NewString("ERR_WORKER_INIT_FAILED")
+					empty, _ := c.NewString("")
+					kind, _ := c.NewString("Error")
+					if exc, cerr := mk.Call(nil, msg, code, empty, kind); cerr == nil && exc != nil {
+						c.ThrowValue(exc)
+						return c.Undefined()
+					}
+				}
+			}
 			return c.Throw(err.Error())
 		}
 		return c.Undefined()

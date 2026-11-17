@@ -41,10 +41,14 @@ type loaderRealm struct {
 }
 
 // realmCloser disposes a loader realm when its owning runtime is disposed.
-type realmCloser struct{ rt *runtime.Runtime }
+type realmCloser struct {
+	rt      *runtime.Runtime
+	release func() // gives back the realm's place under Config.MaxWorkers
+}
 
 func (c realmCloser) Close() error {
 	c.rt.Dispose()
+	c.release()
 	return nil
 }
 
@@ -62,15 +66,24 @@ func (e *ESM) ensureLoaderRealm() error {
 	if e.provider == nil {
 		return errors.New("esm: loader realm provider not configured")
 	}
-	lrt, err := e.provider()
+	// The realm is an isolate of its own, and holds one of Config.MaxWorkers.
+	release, err := e.rt.StartIsolate()
 	if err != nil {
 		return err
 	}
+	lrt, err := e.provider()
+	if err != nil {
+		release()
+		return err
+	}
+	// Workers and realms it starts count against the same cap.
+	lrt.ShareIsolateLimit(e.rt)
 	// The loader realm belongs to this runtime and is disposed with it.
-	realmID := e.rt.TrackResource(realmCloser{lrt})
+	realmID := e.rt.TrackResource(realmCloser{rt: lrt, release: release})
 	fail := func(err error) error {
 		e.rt.UntrackResource(realmID)
 		lrt.Dispose()
+		release()
 		return err
 	}
 	mod, ok := lrt.GetModule("esm")

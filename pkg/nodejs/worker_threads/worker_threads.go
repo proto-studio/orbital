@@ -41,6 +41,10 @@ type worker struct {
 	terminate  chan struct{}
 	termOnce   sync.Once
 	resourceID uint64
+	// slot gives back the worker's place under Config.MaxWorkers. startErr is set
+	// instead when there was none. Both are set before the worker's goroutines start.
+	slot     func()
+	startErr error
 }
 
 // Close terminates the worker when its parent runtime is disposed.
@@ -168,6 +172,11 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	w.workers[id] = wk
 	w.mu.Unlock()
 	wk.resourceID = w.rt.TrackResource(wk)
+	if release, err := w.rt.StartIsolate(); err != nil {
+		wk.startErr = err
+	} else {
+		wk.slot = release
+	}
 
 	// Keep the parent event loop alive while the worker runs.
 	w.rt.EventLoop().AddPendingWork()
@@ -177,6 +186,11 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		for ev := range wk.fromWorker {
 			e := ev
 			w.rt.EventLoop().EnqueueMicrotask(func() {
+				// The worker's place is free by the time the script hears 'exit', as
+				// a Node worker is gone by then.
+				if e.kind == "exit" && wk.slot != nil {
+					wk.slot()
+				}
 				w.dispatchToParent(id, e)
 			})
 			if e.kind == "exit" {
@@ -250,12 +264,25 @@ func (w *WorkerThreads) terminateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 // ---- worker side ---------------------------------------------------------
 
 func (w *WorkerThreads) runWorker(wk *worker) {
+	// Over Config.MaxWorkers the worker fails to start, as Node reports a worker it
+	// couldn't set up: an 'error' with ERR_WORKER_INIT_FAILED, then 'exit'.
+	if wk.startErr != nil {
+		wk.fromWorker <- wtEvent{kind: "codedError", data: "ERR_WORKER_INIT_FAILED\nWorker initialization failure: " + wk.startErr.Error()}
+		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
+		return
+	}
+	// The slot is normally given back as 'exit' reaches the parent; this covers a
+	// parent that stops before it does.
+	defer wk.slot()
+
 	wrt, err := w.provider()
 	if err != nil {
 		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
 		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
 		return
 	}
+	// Workers it starts count against the same cap.
+	wrt.ShareIsolateLimit(w.rt)
 
 	// The pump below may call wrt.Kill, so it must be finished before the isolate
 	// is disposed. Deferred calls run in reverse: stop the pump, then dispose.
