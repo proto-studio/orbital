@@ -11,3 +11,6 @@ require (
 	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 )
+
+// v1.0.0 was published by mistake; this release line is v0.x.
+retract [v1.0.0, v1.0.1]
