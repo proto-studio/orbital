@@ -94,9 +94,12 @@ func (p *threadPool) submit(work func()) {
 	p.mu.Unlock()
 }
 
-// worker runs first, then queued work until the queue is empty.
+// worker runs first, unless the runtime stopped before the worker began, then queued
+// work until the queue is empty.
 func (p *threadPool) worker(first func()) {
-	first()
+	if !p.stopped() {
+		first()
+	}
 	for {
 		p.mu.Lock()
 		if p.stopped() {

@@ -158,3 +158,28 @@ func TestThreadPool_WaitingSubmitStopsWithTheRuntime(t *testing.T) {
 		t.Error("work submitted after the runtime stopped ran")
 	}
 }
+
+// Work handed to a worker that hasn't begun yet doesn't run if the runtime stops first.
+func TestThreadPool_HandedOffWorkStopsWithTheRuntime(t *testing.T) {
+	done := make(chan struct{})
+	p := newThreadPool(1, 0, done)
+	close(done)
+	var ran int32
+	// stopped() is checked again by the worker, so work submitted just before the
+	// runtime stops, and handed to a worker that starts after, doesn't run.
+	p.mu.Lock()
+	p.running++
+	p.mu.Unlock()
+	finished := make(chan struct{})
+	go func() {
+		p.worker(func() { atomic.AddInt32(&ran, 1) })
+		close(finished)
+	}()
+	<-finished
+	if atomic.LoadInt32(&ran) != 0 {
+		t.Error("work ran after the runtime stopped")
+	}
+	if p.running != 0 {
+		t.Errorf("running = %d after the worker exited", p.running)
+	}
+}
