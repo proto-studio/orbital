@@ -38,7 +38,7 @@ type FS struct {
 	fdSlots map[int]func()
 	// disposed is set, under fdMu, once the runtime's cleanup has closed the open files.
 	disposed bool
-	nextFD  int
+	nextFD   int
 
 	// The calls on each descriptor, which run one at a time and in order (ops.go).
 	queueMu sync.Mutex
