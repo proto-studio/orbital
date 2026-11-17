@@ -460,6 +460,10 @@
       constructor(format, options) {
         super(options || {});
         this._zFinalCb = null;
+        // Whether the native codec has finished its output. A codec can finish
+        // before the writable side ends (an empty deflate stream ends itself), and
+        // _final then completes at once.
+        this._zDone = false;
         // Whether the native codec is waiting for this side to take its last
         // chunk; it's acknowledged once the readable side has room.
         this._zAckPending = false;
@@ -472,6 +476,7 @@
             return;
           }
           if (chunk === null || chunk === undefined) {
+            this._zDone = true;
             this.push(null);
             if (this._zFinalCb) { const cb = this._zFinalCb; this._zFinalCb = null; cb(); }
             return;
@@ -503,6 +508,10 @@
 
       // The native codec signals the end of the output, not the Transform base class.
       _final(callback) {
+        if (this._zDone) {
+          callback();
+          return;
+        }
         this._zFinalCb = callback;
         internal._streamEnd(this._zId);
       }
