@@ -19,10 +19,21 @@ import (
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
+// allowWorkers lets a fixture start workers and loader hooks without limit, as the
+// orbital CLI does, when its config doesn't set MaxWorkers. The fixtures exercise the
+// modules, not the cap, which worker_cap_test.go tests with runtimes it builds itself.
+func allowWorkers(cfg *runtime.Config) *runtime.Config {
+	if cfg.MaxWorkers == 0 {
+		cfg.MaxWorkers = -1
+	}
+	return cfg
+}
+
 // runJS runs source through the real runtime, including its event loop, and returns
 // the value the script passed to done(). Fixtures inject everything via cfg.
 func runJS(t *testing.T, cfg *runtime.Config, source string) map[string]any {
 	t.Helper()
+	allowWorkers(cfg)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 20 * time.Second
 	}

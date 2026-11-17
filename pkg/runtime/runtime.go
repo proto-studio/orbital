@@ -17,6 +17,7 @@ type Runtime struct {
 	unhandledRejections string // Config.UnhandledRejections
 	noWarnings          bool   // Config.NoWarnings
 	threadPool          *threadPool
+	isolates            *isolateLimit
 	cryptoMemoryLimit   int64 // Config.CryptoMemoryLimit
 
 	isolate           *v8.Isolate
@@ -92,6 +93,12 @@ type Config struct {
 	// JavaScript options apply as they do in Node, and certificates are verified
 	// against the system roots by default.
 	ClientTLSConfig *tls.Config
+	// MaxWorkers is how many workers and loader realms (from module.register) scripts
+	// may have running at once, across the runtime and everything it starts, nested
+	// workers included. Each is a V8 isolate with a heap of its own. One more fails
+	// with Node's ERR_WORKER_INIT_FAILED. 0 allows none; a negative value means no
+	// limit, which the orbital CLI uses, as Node has none.
+	MaxWorkers int
 	// ProcessSpawner spawns child processes.
 	// If nil, real process spawning with no restrictions is used.
 	ProcessSpawner ProcessSpawner
@@ -263,6 +270,7 @@ func New(cfg *Config) (*Runtime, error) {
 		unhandledRejections: cfg.UnhandledRejections,
 		noWarnings:          cfg.NoWarnings,
 		threadPool:          newThreadPool(cfg.ThreadPoolSize, cfg.ThreadPoolQueueSize, execController.Done()),
+		isolates:            &isolateLimit{max: cfg.MaxWorkers},
 		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
 	}
 

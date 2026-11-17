@@ -15,7 +15,7 @@ import (
 // what the script recorded in globalThis.log.
 func runExit(t *testing.T, script string) (int, string) {
 	t.Helper()
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func runExitModule(t *testing.T, files map[string]string) (int, string) {
 			t.Fatal(err)
 		}
 	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}

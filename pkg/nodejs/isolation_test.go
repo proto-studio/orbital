@@ -111,14 +111,14 @@ func newParent(t *testing.T, marker string) *parentFixture {
 		}
 	}
 	client := &markerClient{marker: marker}
-	inst, err := New(&runtime.Config{
+	inst, err := New(allowWorkers(&runtime.Config{
 		EnableConsole: true,
 		EnableTimers:  true,
 		Filesystem:    runtime.NewLocalFilesystem(root),
 		Environment:   runtime.NewSandboxedEnvironment(map[string]string{"MARKER": marker}),
 		HTTPClient:    client,
 		Timeout:       30 * time.Second,
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,14 +223,14 @@ func TestConcurrentParentsKeepTheirOwnChildren(t *testing.T) {
 			}
 			os.WriteFile(filepath.Join(root, "marker.txt"), []byte(marker), 0o644)
 			os.WriteFile(filepath.Join(root, "worker.js"), []byte(workerJS), 0o644)
-			inst, err := New(&runtime.Config{
+			inst, err := New(allowWorkers(&runtime.Config{
 				EnableConsole: true,
 				EnableTimers:  true,
 				Filesystem:    runtime.NewLocalFilesystem(root),
 				Environment:   runtime.NewSandboxedEnvironment(map[string]string{"MARKER": marker}),
 				HTTPClient:    &markerClient{marker: marker},
 				Timeout:       30 * time.Second,
-			})
+			}))
 			if err != nil {
 				errs <- err.Error()
 				return

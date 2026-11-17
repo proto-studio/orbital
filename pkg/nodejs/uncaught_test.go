@@ -15,7 +15,7 @@ import (
 // runUncaught runs source and returns what it passed to note(), and Run's error.
 func runUncaught(t *testing.T, source string) ([]string, error) {
 	t.Helper()
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ setTimeout(() => note('later'), 20);
 func runModuleUncaught(t *testing.T, source string) ([]string, error) {
 	t.Helper()
 	const timeout = 2 * time.Second
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: timeout})
+	inst, err := New(allowWorkers(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: timeout}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -791,7 +791,7 @@ if (typeof Float16Array !== 'function') {
 func runUncaughtWith(t *testing.T, cfg *runtime.Config, source string) ([]string, error) {
 	t.Helper()
 	cfg.EnableConsole, cfg.EnableTimers, cfg.Timeout = true, true, 20*time.Second
-	inst, err := New(cfg)
+	inst, err := New(allowWorkers(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
