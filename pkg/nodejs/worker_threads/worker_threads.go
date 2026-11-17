@@ -186,11 +186,6 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		for ev := range wk.fromWorker {
 			e := ev
 			w.rt.EventLoop().EnqueueMicrotask(func() {
-				// The worker's place is free by the time the script hears 'exit', as
-				// a Node worker is gone by then.
-				if e.kind == "exit" && wk.slot != nil {
-					wk.slot()
-				}
 				w.dispatchToParent(id, e)
 			})
 			if e.kind == "exit" {
@@ -203,9 +198,15 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		}
 	}()
 
-	// Worker goroutine.
+	// Worker goroutine. The worker's runtime is disposed when runWorker returns, so its
+	// place under Config.MaxWorkers is free before the script hears 'exit', as a Node
+	// worker is gone by then.
 	go func() {
-		w.runWorker(wk)
+		code := w.runWorker(wk)
+		if wk.slot != nil {
+			wk.slot()
+		}
+		wk.fromWorker <- wtEvent{kind: "exit", code: code}
 		close(wk.fromWorker)
 	}()
 
@@ -263,23 +264,20 @@ func (w *WorkerThreads) terminateFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 // ---- worker side ---------------------------------------------------------
 
-func (w *WorkerThreads) runWorker(wk *worker) {
+// runWorker runs the worker to completion and returns its exit code. It has disposed the
+// worker's runtime by the time it returns; the caller then sends 'exit'.
+func (w *WorkerThreads) runWorker(wk *worker) int {
 	// Over Config.MaxWorkers the worker fails to start, as Node reports a worker it
 	// couldn't set up: an 'error' with ERR_WORKER_INIT_FAILED, then 'exit'.
 	if wk.startErr != nil {
 		wk.fromWorker <- wtEvent{kind: "codedError", data: "ERR_WORKER_INIT_FAILED\nWorker initialization failure: " + wk.startErr.Error()}
-		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-		return
+		return 1
 	}
-	// The slot is normally given back as 'exit' reaches the parent; this covers a
-	// parent that stops before it does.
-	defer wk.slot()
 
 	wrt, err := w.provider()
 	if err != nil {
 		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
-		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-		return
+		return 1
 	}
 	// Workers it starts count against the same cap.
 	wrt.ShareIsolateLimit(w.rt)
@@ -322,8 +320,7 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	initCode := fmt.Sprintf("__wt_init_worker(%s);", jsStringLiteral(wk.workerData))
 	if _, err := wrt.RunScript(initCode, "worker_bootstrap.js"); err != nil {
 		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
-		wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-		return
+		return 1
 	}
 	deliverFn, _ := wrt.GetGlobal("__wt_deliver")
 	// Taken before the entry runs, so the worker's own code cannot replace it.
@@ -372,13 +369,11 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 			// Node reads the entry into one string, and fails one too large for that
 			// with ERR_STRING_TOO_LONG.
 			wk.fromWorker <- wtEvent{kind: "codedError", data: "ERR_STRING_TOO_LONG\n" + goruntime.StringTooLongMessage}
-			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-			return
+			return 1
 		}
 		if readErr != nil {
 			wk.fromWorker <- wtEvent{kind: "error", data: readErr.Error()}
-			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-			return
+			return 1
 		}
 		source = string(data)
 		origin = wk.target
@@ -433,7 +428,7 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 			wk.fromWorker <- ev
 		}
 	}
-	wk.fromWorker <- wtEvent{kind: "exit", code: code}
+	return code
 }
 
 // serializeFunc implements __wt_serialize(value, bufferPrototype): the value serialized by
