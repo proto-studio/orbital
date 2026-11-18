@@ -318,7 +318,7 @@ func (rt *Runtime) Exit(code int) {
 
 // ended reports whether an uncaught exception or process.exit() has ended the runtime.
 func (rt *Runtime) ended() bool {
-	return rt.fatal.Load() != nil || rt.exited.Load() != nil
+	return rt.outOfMemory.Load() || rt.fatal.Load() != nil || rt.exited.Load() != nil
 }
 
 // stopRunning stops everything still queued once the runtime has ended.
@@ -441,9 +441,14 @@ func (rt *Runtime) ExitError() *ExitError {
 	return rt.exited.Load()
 }
 
-// Ended returns what ended this runtime, an *UncaughtError or an *ExitError, or nil if it
-// hasn't ended. Embedders who run the event loop themselves should check it afterwards.
+// Ended returns what ended this runtime, an *OutOfMemoryError, an *UncaughtError or an
+// *ExitError, or nil if it hasn't ended. Embedders who run the event loop themselves
+// should check it afterwards.
 func (rt *Runtime) Ended() error {
+	if rt.outOfMemory.Load() {
+		rt.settleEnd()
+		return &OutOfMemoryError{}
+	}
 	if uncaught := rt.UncaughtError(); uncaught != nil {
 		return uncaught
 	}
@@ -463,7 +468,7 @@ func (rt *Runtime) settleEnd() {
 	// reaction's function is where termination lands, before any of its body runs.
 	rt.isolate.TerminateExecution()
 	rt.context.PerformMicrotaskCheckpoint()
-	if !rt.IsKilled() {
+	if !rt.IsKilled() && !rt.outOfMemory.Load() {
 		rt.isolate.CancelTerminateExecution()
 	}
 }
@@ -573,6 +578,9 @@ func (rt *Runtime) reportScriptError(scriptErr error) error {
 
 // endedError returns what ended the runtime, without settling its promise queue.
 func (rt *Runtime) endedError() error {
+	if rt.outOfMemory.Load() {
+		return &OutOfMemoryError{}
+	}
 	if uncaught := rt.fatal.Load(); uncaught != nil {
 		return uncaught
 	}

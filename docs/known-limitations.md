@@ -202,6 +202,12 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   initialized V8 can use. Go runs isolates on any OS thread, so `v8go_init` passes
   `--no-memory-protection-keys` and code pages fall back to plain `mprotect` permissions. Other
   platforms are unaffected.
+- **[gap] Some ArrayBuffer memory isn't charged to a `MemoryBudget`.** The budget sees what V8
+  allocates through the isolate's ArrayBuffer allocator and the heap limit. Resizable
+  `ArrayBuffer`s, growable `SharedArrayBuffer`s and WebAssembly memory reserve their pages
+  through V8's sandbox page allocator instead, which has no per-isolate hook, so they aren't
+  counted. A large object can also take a heap past its limit in one allocation; the isolate
+  then runs out of memory at the next collection.
 
 ## util.inspect and console.log (`pkg/nodejs/internal/inspectjs`, `console`, `util`)
 

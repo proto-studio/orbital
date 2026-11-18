@@ -23,6 +23,8 @@ type Runtime struct {
 	socketsClosed       bool  // SocketFactory and HTTPClient refuse everything, so OpenSocket counts nothing
 	filesClosed         bool  // Filesystem refuses everything, so OpenFile counts nothing
 	cryptoMemoryLimit   int64 // Config.CryptoMemoryLimit
+	memoryBudget        *MemoryBudget
+	outOfMemory         atomic.Bool
 
 	isolate           *v8.Isolate
 	context           *v8.Context
@@ -168,6 +170,24 @@ type Config struct {
 	// running task to finish. A negative value means no limit, as in Node; the
 	// orbital CLI uses that.
 	ThreadPoolQueueSize int
+	// MemoryBudget, when set, is the memory the runtime and every worker and loader
+	// realm it starts may use together: their JavaScript heaps, and the contents of
+	// their ArrayBuffers and Buffers. Workers and loader realms built from this Config
+	// share it, as does every other runtime given the same budget, so give each
+	// runtime you want limited on its own a budget of its own.
+	//
+	// Each heap is limited by IsolateOptions as well. With a budget, a heap starts
+	// small and grows from the budget as it needs, so a runtime that doesn't use its
+	// whole heap leaves the rest to the others. Going over the budget looks to
+	// scripts like running out of memory: an ArrayBuffer or Buffer that doesn't fit
+	// throws RangeError ("Array buffer allocation failed"), a worker whose heap can't
+	// grow stops with ERR_WORKER_OUT_OF_MEMORY, and a runtime whose heap can't grow
+	// stops, with Run returning an *OutOfMemoryError. A worker the budget has no room
+	// to start fails with ERR_WORKER_INIT_FAILED.
+	//
+	// nil means no limit beyond each heap's own, as in Node. Whether or not one is set,
+	// a heap that reaches its limit stops its runtime rather than the process.
+	MemoryBudget *MemoryBudget
 	// CryptoMemoryLimit, when positive, is the most memory in bytes one key
 	// derivation (pbkdf2, scrypt, hkdf, and WebCrypto's PBKDF2 and HKDF) may
 	// use: scrypt's workspace, whatever maxmem the script passes, plus the
@@ -198,7 +218,11 @@ func New(cfg *Config) (*Runtime, error) {
 		return nil, fmt.Errorf("invalid value for UnhandledRejections: %q", cfg.UnhandledRejections)
 	}
 
-	iso, err := v8.NewIsolateWithOptions(cfg.IsolateOptions)
+	isolateOptions := cfg.IsolateOptions
+	if cfg.MemoryBudget != nil {
+		isolateOptions.MemoryBudget = cfg.MemoryBudget
+	}
+	iso, err := v8.NewIsolateWithOptions(isolateOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
@@ -298,7 +322,9 @@ func New(cfg *Config) (*Runtime, error) {
 		socketsClosed:       socketsClosed,
 		filesClosed:         filesClosed,
 		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
+		memoryBudget:        isolateOptions.MemoryBudget,
 	}
+	rt.watchMemory()
 
 	// Set up kill callback to stop the event loop, cancel tasks, and terminate
 	// any in-flight V8 JavaScript so runaway scripts / OOM recoveries stop

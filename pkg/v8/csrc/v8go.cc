@@ -12,12 +12,16 @@
 #include <v8.h>
 #include <v8-external-memory-accounter.h>
 #include <libplatform/libplatform.h>
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <unistd.h>
 
 // untypedName is a module cache key without the type a typed import adds
 // ("\x01<type>\x01<url>" is <url>): the module's url, for its script origin
@@ -193,6 +197,109 @@ static Local<Context> getLocalContext(void* context_ptr) {
 
 extern "C" {
 
+// ---- memory budget ---------------------------------------------------------
+
+struct v8go_budget {
+    std::atomic<size_t> used{0};
+    size_t limit = 0;
+    std::atomic<long> refs{1};
+};
+
+v8go_budget* v8go_budget_new(size_t limit) {
+    v8go_budget* budget = new v8go_budget();
+    budget->limit = limit;
+    return budget;
+}
+
+static void budgetRef(v8go_budget* budget) {
+    if (budget) budget->refs.fetch_add(1, std::memory_order_relaxed);
+}
+
+void v8go_budget_unref(v8go_budget* budget) {
+    if (budget && budget->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        delete budget;
+    }
+}
+
+// budgetChargeUpTo takes as much of want as fits, if that's at least least,
+// and returns what it took: 0 when less than least fits.
+static size_t budgetChargeUpTo(v8go_budget* budget, size_t want, size_t least) {
+    size_t used = budget->used.load(std::memory_order_relaxed);
+    for (;;) {
+        size_t room = used < budget->limit ? budget->limit - used : 0;
+        size_t take = std::min(want, room);
+        if (take < least || (take == 0 && want > 0)) return 0;
+        if (budget->used.compare_exchange_weak(used, used + take,
+                                               std::memory_order_relaxed)) {
+            return take;
+        }
+    }
+}
+
+int v8go_budget_charge(v8go_budget* budget, size_t n) {
+    if (!budget || n == 0) return 1;
+    return budgetChargeUpTo(budget, n, n) == n ? 1 : 0;
+}
+
+void v8go_budget_release(v8go_budget* budget, size_t n) {
+    if (budget && n > 0) budget->used.fetch_sub(n, std::memory_order_relaxed);
+}
+
+size_t v8go_budget_used(v8go_budget* budget) {
+    return budget ? budget->used.load(std::memory_order_relaxed) : 0;
+}
+
+size_t v8go_budget_limit(v8go_budget* budget) {
+    return budget ? budget->limit : 0;
+}
+
+// BudgetAllocator charges ArrayBuffer contents to a budget. An allocation that
+// doesn't fit fails, which V8 reports, after collecting garbage and trying
+// again, as RangeError: Array buffer allocation failed. V8 may free from its
+// own threads, so the budget is only touched atomically.
+class BudgetAllocator final : public ArrayBuffer::Allocator {
+ public:
+    BudgetAllocator(ArrayBuffer::Allocator* inner, v8go_budget* budget)
+        : inner_(inner), budget_(budget) {
+        budgetRef(budget_);
+    }
+    ~BudgetAllocator() override {
+        delete inner_;
+        v8go_budget_unref(budget_);
+    }
+
+    void* Allocate(size_t length) override {
+        if (!v8go_budget_charge(budget_, length)) return nullptr;
+        void* data = inner_->Allocate(length);
+        if (!data) v8go_budget_release(budget_, length);
+        return data;
+    }
+
+    void* AllocateUninitialized(size_t length) override {
+        if (!v8go_budget_charge(budget_, length)) return nullptr;
+        void* data = inner_->AllocateUninitialized(length);
+        if (!data) v8go_budget_release(budget_, length);
+        return data;
+    }
+
+    void Free(void* data, size_t length) override {
+        inner_->Free(data, length);
+        v8go_budget_release(budget_, length);
+    }
+
+    size_t MaxAllocationSize() const override {
+        return inner_->MaxAllocationSize();
+    }
+
+    PageAllocator* GetPageAllocator() override {
+        return inner_->GetPageAllocator();
+    }
+
+ private:
+    ArrayBuffer::Allocator* inner_;
+    v8go_budget* budget_;
+};
+
 // Per-isolate state stashed in Isolate::SetData(kIsolateStateSlot). Owns the
 // ArrayBuffer allocator (V8 does not free it on Dispose) and tracks the Go
 // near-heap-limit callback id for RemoveNearHeapLimitCallback.
@@ -202,6 +309,13 @@ struct IsolateState {
     // Prefer ExternalMemoryAccounter over the deprecated
     // Isolate::AdjustAmountOfExternalAllocatedMemory (sandbox-safe).
     ExternalMemoryAccounter external_memory;
+    // The budget the heap draws from, or null. heap_charged is what it has
+    // taken for this isolate's heap, given back when the isolate is disposed.
+    v8go_budget* budget = nullptr;
+    size_t heap_charged = 0;
+    // The most the old generation may grow to.
+    size_t old_generation_cap = 0;
+    std::atomic<bool> out_of_memory{false};
 };
 
 static const int kIsolateStateSlot = 0;
@@ -216,6 +330,86 @@ static size_t nearHeapLimitThunk(void* data, size_t current_heap_limit,
     int callback_id = static_cast<int>(reinterpret_cast<intptr_t>(data));
     return goNearHeapLimitCallback(callback_id, current_heap_limit,
                                    initial_heap_limit);
+}
+
+static const size_t kMB = 1024 * 1024;
+// How much of the old generation an isolate with a budget starts with. It
+// grows from there, drawing from the budget, up to its cap.
+static const size_t kInitialOldGeneration = 16 * kMB;
+// The old generation grows by at least this much at a time (or what's left),
+// and by its current size when that's more, so it doubles.
+static const size_t kOldGenerationStep = 16 * kMB;
+// Room given to an isolate that ran out of memory to finish the collection it
+// is in and unwind, as Node gives a worker that reaches its limit. Without it
+// V8 aborts the process.
+static const size_t kOutOfMemoryAllowance = 16 * kMB;
+
+// oldGenerationUsed is how much of the heap the near-heap-limit callback's limit
+// applies to is in use: every space but the young generation's (and the
+// read-only one, which is shared).
+static size_t oldGenerationUsed(Isolate* isolate) {
+    size_t used = 0;
+    HeapSpaceStatistics stats;
+    for (size_t i = 0; i < isolate->NumberOfHeapSpaces(); i++) {
+        if (!isolate->GetHeapSpaceStatistics(&stats, i)) continue;
+        const char* name = stats.space_name();
+        if (name && (strcmp(name, "new_space") == 0 ||
+                     strcmp(name, "new_large_object_space") == 0 ||
+                     strcmp(name, "read_only_space") == 0)) {
+            continue;
+        }
+        used += stats.space_used_size();
+    }
+    return used;
+}
+
+// budgetHeapLimit is V8's near-heap-limit callback for every isolate: it grows
+// the old generation from the budget while the cap and the budget allow, and
+// otherwise stops the isolate as out of memory instead of letting V8 abort.
+//
+// V8 also calls it from the collections it runs before failing an ArrayBuffer
+// allocation, which the budget may have refused with the heap nearly empty.
+// Only when the heap is near its limit does it grow it or run out: V8 aborts
+// only when the old generation is (almost) full after the callback.
+static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
+                              size_t initial_heap_limit) {
+    Isolate* isolate = static_cast<Isolate*>(data);
+    IsolateState* state = isolateState(isolate);
+    size_t used = oldGenerationUsed(isolate);
+    // A large object can take the heap past its limit in one allocation, so
+    // whatever the callback returns has to cover what's in use already.
+    size_t in_use = std::max(current_heap_limit, used);
+    if (!state || state->out_of_memory.load()) {
+        return in_use + kOutOfMemoryAllowance;
+    }
+    if (used < current_heap_limit - current_heap_limit / 4) {
+        return current_heap_limit;
+    }
+    if (state->budget && current_heap_limit < state->old_generation_cap) {
+        size_t target = std::max(current_heap_limit + std::max(current_heap_limit, kOldGenerationStep),
+                                 used + kOldGenerationStep);
+        target = std::min(target, state->old_generation_cap);
+        // It has to grow past what's in use, with some room to spare.
+        size_t least = in_use - current_heap_limit + kMB;
+        if (target >= current_heap_limit + least) {
+            size_t got = budgetChargeUpTo(state->budget, target - current_heap_limit, least);
+            if (got > 0) {
+                state->heap_charged += got;
+                return current_heap_limit + got;
+            }
+        }
+    }
+    state->out_of_memory.store(true);
+    isolate->TerminateExecution();
+    goIsolateOutOfMemory(isolate);
+    return in_use + kOutOfMemoryAllowance;
+}
+
+static size_t physicalMemory() {
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || page_size <= 0) return 0;
+    return static_cast<size_t>(pages) * static_cast<size_t>(page_size);
 }
 
 void v8go_init() {
@@ -259,35 +453,104 @@ void* v8go_isolate_new() {
 }
 
 void* v8go_isolate_new_with_params(const v8go_isolate_create_params* params) {
-    Isolate::CreateParams create_params;
-    ArrayBuffer::Allocator* allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
-    create_params.array_buffer_allocator = allocator;
+    return v8go_isolate_new_with_limits(params, nullptr, nullptr);
+}
 
-    if (params) {
-        // ConfigureDefaultsFromHeapSize sets both young+old defaults from a
-        // total heap budget. Prefer it when a hard isolate ceiling is desired.
-        if (params->max_heap_size_in_bytes > 0 ||
-            params->initial_heap_size_in_bytes > 0) {
-            create_params.constraints.ConfigureDefaultsFromHeapSize(
-                params->initial_heap_size_in_bytes,
-                params->max_heap_size_in_bytes);
+void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
+                                   v8go_isolate_limits* limits, int* failure) {
+    if (failure) *failure = V8GO_ISOLATE_FAILED;
+    v8go_isolate_create_params none = {};
+    if (!params) params = &none;
+    v8go_budget* budget = params->budget;
+
+    Isolate::CreateParams create_params;
+    ResourceConstraints& constraints = create_params.constraints;
+    // ConfigureDefaultsFromHeapSize sets both young+old defaults from a total
+    // heap budget. Prefer it when a hard isolate ceiling is desired. Without
+    // one, the defaults are V8's own for this machine (as Node sets them), or,
+    // with a budget, those for a heap as large as the budget.
+    size_t max_heap = params->max_heap_size_in_bytes;
+    if (max_heap == 0 && budget) max_heap = budget->limit;
+    if (max_heap > 0 || params->initial_heap_size_in_bytes > 0) {
+        constraints.ConfigureDefaultsFromHeapSize(
+            params->initial_heap_size_in_bytes, max_heap);
+    } else {
+        constraints.ConfigureDefaults(physicalMemory(), 0);
+    }
+    if (params->max_old_generation_size_in_bytes > 0) {
+        constraints.set_max_old_generation_size_in_bytes(
+            params->max_old_generation_size_in_bytes);
+    }
+    size_t old_cap = constraints.max_old_generation_size_in_bytes();
+    size_t young = constraints.max_young_generation_size_in_bytes();
+    size_t code_range = constraints.code_range_size_in_bytes();
+    if (params->cap_old_generation_size_in_bytes > 0) {
+        old_cap = std::min(old_cap, params->cap_old_generation_size_in_bytes);
+    }
+    if (params->cap_young_generation_size_in_bytes > 0) {
+        young = std::min(young, params->cap_young_generation_size_in_bytes);
+    }
+    if (params->cap_code_range_size_in_bytes > 0 &&
+        (code_range == 0 || params->cap_code_range_size_in_bytes < code_range)) {
+        code_range = params->cap_code_range_size_in_bytes;
+    }
+
+    // With a budget, the young generation is taken whole and the old one
+    // starts small and grows (budgetHeapLimit), up to what the budget had room
+    // for when the isolate was made.
+    size_t heap_charged = 0;
+    size_t old_start = old_cap;
+    if (budget) {
+        size_t used = budget->used.load();
+        size_t room = used < budget->limit ? budget->limit - used : 0;
+        if (room < young + kMB) {
+            if (failure) *failure = V8GO_ISOLATE_OUT_OF_MEMORY;
+            return nullptr;
         }
-        if (params->max_old_generation_size_in_bytes > 0) {
-            create_params.constraints.set_max_old_generation_size_in_bytes(
-                params->max_old_generation_size_in_bytes);
+        old_cap = std::min(old_cap, room - young);
+        old_start = std::min(old_cap, kInitialOldGeneration);
+        heap_charged = young + old_start;
+        if (!v8go_budget_charge(budget, heap_charged)) {
+            if (failure) *failure = V8GO_ISOLATE_OUT_OF_MEMORY;
+            return nullptr;
         }
     }
+    constraints.set_max_old_generation_size_in_bytes(old_start);
+    constraints.set_max_young_generation_size_in_bytes(young);
+    if (code_range > 0) constraints.set_code_range_size_in_bytes(code_range);
+
+    ArrayBuffer::Allocator* allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
+    if (budget) allocator = new BudgetAllocator(allocator, budget);
+    create_params.array_buffer_allocator = allocator;
 
     Isolate* isolate = Isolate::New(create_params);
     if (!isolate) {
         delete allocator;
+        v8go_budget_release(budget, heap_charged);
         return nullptr;
     }
 
     IsolateState* state = new IsolateState();
     state->allocator = allocator;
+    state->budget = budget;
+    budgetRef(budget);
+    state->heap_charged = heap_charged;
+    state->old_generation_cap = old_cap;
     isolate->SetData(kIsolateStateSlot, state);
+    isolate->AddNearHeapLimitCallback(budgetHeapLimit, isolate);
+
+    if (limits) {
+        limits->max_old_generation_size_in_bytes = old_cap;
+        limits->max_young_generation_size_in_bytes = young;
+        limits->code_range_size_in_bytes = code_range;
+    }
+    if (failure) *failure = 0;
     return isolate;
+}
+
+int v8go_isolate_out_of_memory(void* ptr) {
+    IsolateState* state = isolateState(static_cast<Isolate*>(ptr));
+    return state && state->out_of_memory.load() ? 1 : 0;
 }
 
 void v8go_isolate_dispose(void* ptr) {
@@ -297,7 +560,11 @@ void v8go_isolate_dispose(void* ptr) {
     isolate->SetData(kIsolateStateSlot, nullptr);
     isolate->Dispose();
     if (state) {
+        // The allocator gives back its ArrayBuffers' share as V8 frees them,
+        // which Dispose has done.
         delete state->allocator;
+        v8go_budget_release(state->budget, state->heap_charged);
+        v8go_budget_unref(state->budget);
         delete state;
     }
 }

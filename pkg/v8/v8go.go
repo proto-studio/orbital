@@ -23,6 +23,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 	"weak"
 )
@@ -52,6 +53,8 @@ type Isolate struct {
 	ptr             unsafe.Pointer
 	mu              sync.Mutex
 	nearHeapLimitID int // Go registry id for AddNearHeapLimitCallback; 0 = none
+	limits          IsolateLimits
+	onOutOfMemory   atomic.Pointer[func()]
 
 	// unused holds the context wrappers made for Go callbacks that nothing uses any more.
 	// Their finalizers run on a goroutine of their own, while the isolate may be busy or being
