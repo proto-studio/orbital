@@ -15,14 +15,15 @@ import (
 // The expected errors below are what Node 20.18.1 gives at the OS's descriptor limit
 // (captured with ulimit -n), which the caps reproduce.
 
-// runCapped runs source with exactly the caps cfg sets, unlike runJS, which opens them.
+// runCapped runs source with exactly the caps cfg sets, unlike runJS, which opens them,
+// and with the host access runJS gives.
 func runCapped(t *testing.T, cfg *runtime.Config, source string) map[string]any {
 	t.Helper()
 	cfg.EnableConsole, cfg.EnableTimers = true, true
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 20 * time.Second
 	}
-	inst, err := New(cfg)
+	inst, err := New(hostAccess(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}

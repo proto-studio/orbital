@@ -7,6 +7,21 @@ Workers and `module.register` loader realms created by an instance inherit that
 instance's configuration, and are stopped when it is disposed. Instances do not share
 configuration, so one process can host parents with different sandboxes.
 
+## Defaults
+
+A nil network field is closed, as a host is to a process that may not use the network:
+
+- A nil `SocketFactory` is `NewNoOpSocketFactory()`. Connecting, listening and binding fail
+  with `EPERM`, with Node's messages, such as `connect EPERM 127.0.0.1:80 - Local (0.0.0.0:0)`.
+- A nil `DNSResolver` is `NewNoOpResolver()`. `localhost` resolves, other names fail with
+  `ENOTFOUND`, and `dns.resolve*` fails with `ECONNREFUSED`, as when no DNS server can be
+  reached.
+- A nil `HTTPClient` makes `fetch` fail the same way: `ENOTFOUND` for a name the resolver
+  doesn't resolve, then `EPERM` for the connection. `http.request` and `https.request` connect
+  through `SocketFactory`, as with the real client.
+
+Set the fields to grant access. The `orbital` CLI sets the real implementations.
+
 ## Network modules
 
 `node:net`, `node:tls`, `node:http`, `node:https`, `node:http2` and `node:dgram` connect through the same injected controls:

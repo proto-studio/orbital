@@ -51,9 +51,13 @@
     if (syscall) {
       if (!match && /address already in use/.test(message)) error.code = 'EADDRINUSE';
       else if (!match && /permission denied/.test(message)) error.code = 'EACCES';
+      else if (!match && /operation not permitted/.test(message)) error.code = 'EPERM';
       else if (!match && /no such host/.test(message)) error.code = 'ENOTFOUND';
       if (error.code && !match) {
         error.message = `${syscall} ${error.code} ${address}${port ? `:${port}` : ''}`;
+        // The same on every platform orbital runs on.
+        if (error.code === 'EPERM') error.errno = -1;
+        else if (error.code === 'EACCES') error.errno = -13;
       }
       error.syscall = syscall;
       if (address) error.address = address;
@@ -260,8 +264,14 @@
       this._sendQueue++;
 
       const family = this.type === 'udp6' ? 6 : 4;
-      internal.send(this._id, encoded, destination.host, destination.port, family, (err, bytes) => {
+      internal.send(this._id, encoded, destination.host, destination.port, family, (err, bytes, bindAddress) => {
         this._sendQueue--;
+        if (err && bindAddress) {
+          // The socket refused the bind it makes on its first send. As in Node, that is the
+          // socket's error, and the send is dropped.
+          this.emit('error', socketError(err, 'bind', bindAddress));
+          return;
+        }
         if (err) {
           // The implicit bind of a first send failing is reported as the bind's
           // failure, through 'error', and the send's callback isn't called, as in Node.

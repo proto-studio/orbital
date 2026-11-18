@@ -41,9 +41,9 @@ A spawner refuses a call by returning an error. Scripts see these as Node's erro
 
 ## Built-in spawners
 
-- `NewRealProcessSpawner()` starts real processes with no checks. It is what a nil
-  `Config.ProcessSpawner` uses.
-- `NewNoOpProcessSpawner()` refuses everything with `ErrSpawnBlocked`.
+- `NewRealProcessSpawner()` starts real processes with no checks. The `orbital` CLI uses it.
+- `NewNoOpProcessSpawner()` refuses everything with `ErrSpawnBlocked`, which scripts see as
+  Node's `EPERM`. It is what a nil `Config.ProcessSpawner` uses.
 - `NewSandboxedProcessSpawner(cfg)` checks each call against a `SandboxProcessConfig`, then
   starts it with the real spawner. `NewAllowListProcessSpawner(paths...)` and
   `NewDenyListProcessSpawner(paths...)` are shorthands for the two modes below.

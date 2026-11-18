@@ -466,6 +466,13 @@ func nodeOptionArgs() []string {
 
 func createRuntime() (*runtime.Runtime, error) {
 	cfg := runtime.DefaultConfig()
+	// Scripts reach the host's files, environment, system details, DNS and processes, as
+	// in Node. The library defaults refuse all of them. Sockets and HTTP are set below.
+	cfg.Filesystem = runtime.NewLocalFilesystem("")
+	cfg.SystemInfo = runtime.NewRealSystemInfo()
+	cfg.Environment = runtime.NewRealEnvironment()
+	cfg.DNSResolver = runtime.NewRealResolver()
+	cfg.ProcessSpawner = runtime.NewRealProcessSpawner()
 	// process.kill() signals any process, as in Node. The library default refuses it.
 	cfg.ProcessSignaler = runtime.NewRealProcessSignaler()
 	// Work waiting for the thread pool queues without limit, as in Node. The library
@@ -511,6 +518,11 @@ func createRuntime() (*runtime.Runtime, error) {
 		factory.AllowAllInheritedDescriptors()
 		cfg.SocketFactory = factory
 	}
+	// fetch, node:http and node:https use the real network, as in Node. Sandbox mode
+	// set a client that refuses them.
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = runtime.NewRealHTTPClient()
+	}
 
 	// Set up network policy (Deno-style --allow-net / --deny-net)
 	if allowNet || len(allowNetHosts) > 0 || len(denyNetHosts) > 0 {
@@ -520,18 +532,12 @@ func createRuntime() (*runtime.Runtime, error) {
 		}
 
 		// Apply policy to socket factory
-		if cfg.SocketFactory == nil {
-			cfg.SocketFactory = runtime.NewRealSocketFactory()
-		}
 		// Only wrap if not already a NoOp factory (sandbox mode takes precedence)
 		if _, isNoOp := cfg.SocketFactory.(*runtime.NoOpSocketFactory); !isNoOp {
 			cfg.SocketFactory = runtime.NewFilteredSocketFactory(cfg.SocketFactory, policy)
 		}
 
 		// Apply policy to HTTP client
-		if cfg.HTTPClient == nil {
-			cfg.HTTPClient = runtime.NewRealHTTPClient()
-		}
 		// Only wrap if not already a NoOp client
 		if _, isNoOp := cfg.HTTPClient.(*runtime.NoOpHTTPClient); !isNoOp {
 			cfg.HTTPClient = runtime.NewFilteredHTTPClient(cfg.HTTPClient, policy)

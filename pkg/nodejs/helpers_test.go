@@ -42,6 +42,35 @@ func openHandles(cfg *runtime.Config) *runtime.Config {
 	return cfg
 }
 
+// hostAccess gives a fixture the host's files, network, processes, environment and system
+// details where its config doesn't set them, as the orbital CLI does. The fixtures exercise
+// the modules, not the closed defaults, which closed_defaults_test.go tests with runtimes
+// it builds itself.
+func hostAccess(cfg *runtime.Config) *runtime.Config {
+	if cfg.Filesystem == nil {
+		cfg.Filesystem = runtime.NewLocalFilesystem("")
+	}
+	if cfg.SystemInfo == nil {
+		cfg.SystemInfo = runtime.NewRealSystemInfo()
+	}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = runtime.NewRealHTTPClient()
+	}
+	if cfg.Environment == nil {
+		cfg.Environment = runtime.NewRealEnvironment()
+	}
+	if cfg.DNSResolver == nil {
+		cfg.DNSResolver = runtime.NewRealResolver()
+	}
+	if cfg.SocketFactory == nil {
+		cfg.SocketFactory = runtime.NewRealSocketFactory()
+	}
+	if cfg.ProcessSpawner == nil {
+		cfg.ProcessSpawner = runtime.NewRealProcessSpawner()
+	}
+	return cfg
+}
+
 // openCaps opens both the handle and worker caps, for fixtures that build a runtime
 // themselves.
 func openCaps(cfg *runtime.Config) *runtime.Config {
@@ -59,7 +88,7 @@ func runJS(t *testing.T, cfg *runtime.Config, source string) map[string]any {
 	}
 	cfg.EnableConsole = true
 	cfg.EnableTimers = true
-	inst, err := New(cfg)
+	inst, err := New(hostAccess(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}

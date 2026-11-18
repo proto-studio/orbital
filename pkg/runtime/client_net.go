@@ -8,11 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -632,4 +636,58 @@ func (m *maxBytesReadCloser) Read(p []byte) (int, error) {
 
 func (m *maxBytesReadCloser) Close() error {
 	return m.rc.Close()
+}
+
+// refusingHTTPClient refuses every request as fetch fails in Node when the process may
+// not use the network: the host is resolved with the runtime's resolver, so a name that
+// doesn't resolve fails with ENOTFOUND, and connecting to the address fails with EPERM.
+// It is the default when Config.HTTPClient is nil.
+type refusingHTTPClient struct {
+	resolver Resolver
+}
+
+// Do refuses req after resolving its host.
+func (c *refusingHTTPClient) Do(ctx context.Context, req *Request) (*Response, error) {
+	if req == nil {
+		return nil, errors.New("nil request")
+	}
+	target, err := url.Parse(req.URL)
+	if err != nil {
+		return nil, err
+	}
+	host := target.Hostname()
+	port, _ := strconv.Atoi(target.Port())
+	if port == 0 {
+		port = 80
+		if target.Scheme == "https" {
+			port = 443
+		}
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ips, err := c.resolver.LookupIP(ctx, "ip", host)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+		ip = ips[0]
+	}
+	return nil, &net.OpError{
+		Op:   "dial",
+		Net:  "tcp",
+		Addr: &net.TCPAddr{IP: ip, Port: port},
+		Err:  os.NewSyscallError("connect", syscall.EPERM),
+	}
+}
+
+// Get refuses the request.
+func (c *refusingHTTPClient) Get(ctx context.Context, url string) (*Response, error) {
+	return c.Do(ctx, &Request{Method: "GET", URL: url})
+}
+
+// Post refuses the request.
+func (c *refusingHTTPClient) Post(ctx context.Context, url string, contentType string, body []byte) (*Response, error) {
+	return c.Do(ctx, &Request{Method: "POST", URL: url})
 }

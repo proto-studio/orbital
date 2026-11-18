@@ -394,7 +394,7 @@ func TestHTTP2NoSilentFallback(t *testing.T) {
 	})
 	t.Run("no-op sockets", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{SocketFactory: runtime.NewNoOpSocketFactory()}, getScript(authority, "{}"))
-		wantCode(t, result, "ENETUNREACH")
+		wantCode(t, result, "EPERM")
 	})
 	t.Run("deny-all sockets", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{
@@ -560,7 +560,7 @@ req.once('data', () => { %s });
 	t.Run("disposing the runtime closes the connection", func(t *testing.T) {
 		cfg := secureConfig(ca)
 		cfg.EnableTimers = true
-		inst, err := New(cfg)
+		inst, err := New(hostAccess(cfg))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -590,7 +590,7 @@ session.on('error', () => {});
 	t.Run("execution timeout ends an open session", func(t *testing.T) {
 		cfg := secureConfig(ca)
 		cfg.Timeout = 300 * time.Millisecond
-		inst, err := New(cfg)
+		inst, err := New(hostAccess(cfg))
 		if err != nil {
 			t.Fatal(err)
 		}

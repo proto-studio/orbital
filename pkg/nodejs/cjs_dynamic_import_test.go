@@ -48,7 +48,7 @@ globalThis.log = [];
 })().catch((e) => log.push('failed ' + e.message));
 `, dir)
 
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +76,10 @@ func TestDynamicImport_FromCommonJSUnderDocumentRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "src", "x.mjs"), []byte(`export default 'x';`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	inst, err := New(&runtime.Config{
+	inst, err := New(hostAccess(&runtime.Config{
 		EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second,
 		Filesystem: runtime.NewLocalFilesystem(dir), DocumentRoot: dir,
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

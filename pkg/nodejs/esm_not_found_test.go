@@ -209,7 +209,7 @@ try { await import('./nope.mjs'); } catch (e) { log.push(e instanceof E, e.code)
 func TestStaticImport_NotFoundIsUncaught(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestStaticImport_NotFoundIsUncaught(t *testing.T) {
 
 	dir = t.TempDir()
 	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
-	handled, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	handled, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ log.push(a === b, c === d, (await import('pkg/sub.js?worker')).u.split('/').slic
 func TestStaticImport_NotFoundIgnoresReplacedHelper(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{"entry.mjs": `import './nope.mjs';`})
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ log.push(await r('remote'));`,
 // An --import that can't be resolved is an uncaught exception, as in Node.
 func TestPreload_NotFoundIsUncaught(t *testing.T) {
 	dir := t.TempDir()
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
