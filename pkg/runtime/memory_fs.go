@@ -10,15 +10,157 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // MemoryFilesystem implements Filesystem using in-memory storage.
 // Useful for testing or temporary file operations.
+//
+// A runtime given a MemoryFilesystem counts the memory it holds against the isolate's heap
+// limit: a call that would take the filesystem and the heap together over it fails with
+// ENOSPC, as on a full disk.
 type MemoryFilesystem struct {
 	mu    sync.RWMutex
 	files map[string]*memFile // by canonical path; hard links share a memFile
 
 	lastIno uint64
+
+	used   int64         // bytes held: each name, and each file's node, contents and link target
+	limits []memoryLimit // what used is checked against before it grows
+}
+
+// memoryLimit limits how much memory a MemoryFilesystem may hold.
+type memoryLimit interface {
+	// fits reports whether the filesystem may hold total bytes.
+	fits(total int64) bool
+}
+
+// What the filesystem counts besides contents: a name costs its entry in the map of files and
+// its text, and a file, directory or link its node, however many names it has.
+const (
+	memNameOverhead = 64
+	memFileOverhead = int64(unsafe.Sizeof(memFile{}))
+)
+
+// nameCost is what the name path costs.
+func nameCost(path string) int64 {
+	return memNameOverhead + int64(len(path))
+}
+
+// nodeCost is what a file with the one name path costs, not counting its contents.
+func nodeCost(path string) int64 {
+	return nameCost(path) + memFileOverhead
+}
+
+// fileCost is what mf itself holds, whatever its names: its node, contents and link target.
+func fileCost(mf *memFile) int64 {
+	return memFileOverhead + int64(cap(mf.data)) + int64(len(mf.target))
+}
+
+// limitMemory checks the filesystem's growth against limit too, until the returned function
+// is called.
+func (m *MemoryFilesystem) limitMemory(limit memoryLimit) (remove func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.limits = append(m.limits, limit)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			for i, l := range m.limits {
+				if l == limit {
+					m.limits = append(m.limits[:i:i], m.limits[i+1:]...)
+					break
+				}
+			}
+		})
+	}
+}
+
+// memoryInUse is how many bytes the filesystem holds.
+func (m *MemoryFilesystem) memoryInUse() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.used
+}
+
+// fits reports whether the filesystem may grow by delta bytes. Callers hold m.mu.
+func (m *MemoryFilesystem) fits(delta int64) bool {
+	if delta <= 0 {
+		return true
+	}
+	for _, l := range m.limits {
+		if !l.fits(m.used + delta) {
+			return false
+		}
+	}
+	return true
+}
+
+// account changes how much memory the filesystem holds by delta, or reports false, changing
+// nothing, when growing by delta would go over a limit. Callers hold m.mu.
+func (m *MemoryFilesystem) account(delta int64) bool {
+	if !m.fits(delta) {
+		return false
+	}
+	m.used += delta
+	return true
+}
+
+// noSpace is the failure of op on path when the memory it needs is over the limit.
+func noSpace(op, path string) error {
+	return &fs.PathError{Op: op, Path: path, Err: syscall.ENOSPC}
+}
+
+// reserve makes room in mf.data for size bytes. Capacity grows geometrically, as append's
+// does, so writing a file in chunks costs linear time; when that doesn't fit under the limit
+// it grows to size alone. It reports false when even that doesn't fit. Callers hold m.mu.
+func (m *MemoryFilesystem) reserve(mf *memFile, size int64) bool {
+	old := int64(cap(mf.data))
+	if size <= old {
+		return true
+	}
+	newCap := max(size, 2*old)
+	if !m.account(newCap - old) {
+		newCap = size
+		if !m.account(newCap - old) {
+			return false
+		}
+	}
+	grown := make([]byte, len(mf.data), newCap)
+	copy(grown, mf.data)
+	mf.data = grown
+	return true
+}
+
+// setData replaces mf's contents with a copy of data, or reports false when it doesn't fit.
+// Callers hold m.mu.
+func (m *MemoryFilesystem) setData(mf *memFile, data []byte) bool {
+	if !m.account(int64(len(data)) - int64(cap(mf.data))) {
+		return false
+	}
+	mf.data = append(make([]byte, 0, len(data)), data...)
+	return true
+}
+
+// add makes mf, a new file, and names it path, or reports false when it doesn't fit. Callers
+// hold m.mu.
+func (m *MemoryFilesystem) add(path string, mf *memFile) bool {
+	if !m.account(nameCost(path) + fileCost(mf)) {
+		return false
+	}
+	m.files[path] = m.newFile(mf)
+	return true
+}
+
+// forget gives back what mf holds once nothing refers to it: no name and no open handle, as
+// a disk keeps an unlinked file's blocks while it is open. Callers hold m.mu.
+func (m *MemoryFilesystem) forget(mf *memFile) {
+	if mf.nlink == 0 && mf.handles == 0 {
+		m.used -= fileCost(mf)
+		mf.data = nil
+	}
 }
 
 type memFile struct {
@@ -34,6 +176,10 @@ type memFile struct {
 	target string // a symbolic link's target, as given; mode has fs.ModeSymlink
 	ino    uint64
 	nlink  uint64 // the names the file has
+
+	// handles counts the handles open on the file. Its memory is given back once it has
+	// neither names nor handles.
+	handles int
 }
 
 // NewMemoryFilesystem creates a new in-memory filesystem.
@@ -186,16 +332,21 @@ func (m *MemoryFilesystem) WriteFile(path string, data []byte, perm fs.FileMode)
 		if mf.isDir {
 			return &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 		}
-		mf.data = append([]byte(nil), data...)
+		if !m.setData(mf, data) {
+			return noSpace("write", path)
+		}
 		mf.modTime = time.Now()
 		return nil
 	}
-	m.files[path] = m.newFile(&memFile{
-		data:    append([]byte(nil), data...),
-		mode:    perm,
-		modTime: time.Now(),
-		isDir:   false,
-	})
+	// Making the file fails at open; its contents, at write.
+	mf = &memFile{mode: perm, modTime: time.Now()}
+	if !m.add(path, mf) {
+		return noSpace("open", path)
+	}
+	if !m.setData(mf, data) {
+		m.unname(path)
+		return noSpace("write", path)
+	}
 	return nil
 }
 
@@ -213,16 +364,21 @@ func (m *MemoryFilesystem) AppendFile(path string, data []byte) error {
 		if err := fileAt("open", r); err != nil {
 			return err
 		}
-		m.files[path] = m.newFile(&memFile{
-			data:    append([]byte(nil), data...),
-			mode:    0644,
-			modTime: time.Now(),
-			isDir:   false,
-		})
+		f = &memFile{mode: 0644, modTime: time.Now()}
+		if !m.add(path, f) {
+			return noSpace("open", path)
+		}
+		if !m.setData(f, data) {
+			m.unname(path)
+			return noSpace("write", path)
+		}
 		return nil
 	}
 	if f.isDir {
 		return fs.ErrInvalid
+	}
+	if !m.reserve(f, int64(len(f.data)+len(data))) {
+		return noSpace("write", path)
 	}
 	f.data = append(f.data, data...)
 	f.modTime = time.Now()
@@ -242,11 +398,9 @@ func (m *MemoryFilesystem) Mkdir(path string, perm fs.FileMode) error {
 	if f != nil {
 		return fs.ErrExist
 	}
-	m.files[path] = m.newFile(&memFile{
-		mode:    perm | fs.ModeDir,
-		modTime: time.Now(),
-		isDir:   true,
-	})
+	if !m.add(path, &memFile{mode: perm | fs.ModeDir, modTime: time.Now(), isDir: true}) {
+		return noSpace("mkdir", path)
+	}
 	return nil
 }
 
@@ -270,11 +424,9 @@ func (m *MemoryFilesystem) MkdirAll(path string, perm fs.FileMode) error {
 	for _, part := range parts {
 		current += "/" + part
 		if _, ok := m.files[current]; !ok {
-			m.files[current] = m.newFile(&memFile{
-				mode:    perm | fs.ModeDir,
-				modTime: time.Now(),
-				isDir:   true,
-			})
+			if !m.add(current, &memFile{mode: perm | fs.ModeDir, modTime: time.Now(), isDir: true}) {
+				return noSpace("mkdir", current)
+			}
 		}
 	}
 	return nil
@@ -356,7 +508,19 @@ func (m *MemoryFilesystem) Rename(oldPath, newPath string) error {
 		// Two names for one file: rename(2) leaves both.
 		return nil
 	}
+	// The file takes the new name, replacing what had it.
+	delta := nameCost(newPath) - nameCost(oldPath)
+	if existing != nil {
+		delta -= nameCost(newPath)
+		if existing.nlink == 1 && existing.handles == 0 {
+			delta -= fileCost(existing)
+		}
+	}
+	if !m.fits(delta) {
+		return noSpace("rename", oldPath)
+	}
 	m.unname(newPath)
+	m.used += nameCost(newPath) - nameCost(oldPath)
 	m.files[newPath] = f
 	delete(m.files, oldPath)
 	return nil
@@ -382,7 +546,9 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 	// An existing destination keeps its identity, so handles open on it see the copy, and
 	// takes the source's mode, as a real copy does.
 	if existing != nil && !existing.isDir {
-		existing.data = append([]byte(nil), f.data...)
+		if !m.setData(existing, f.data) {
+			return noSpace("copyfile", dst)
+		}
 		existing.mode = f.mode
 		existing.modTime = time.Now()
 		return nil
@@ -392,12 +558,14 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 			return err
 		}
 	}
-	m.files[dst] = m.newFile(&memFile{
-		data:    append([]byte(nil), f.data...),
-		mode:    f.mode,
-		modTime: time.Now(),
-		isDir:   false,
-	})
+	copied := &memFile{mode: f.mode, modTime: time.Now()}
+	if !m.add(dst, copied) {
+		return noSpace("copyfile", dst)
+	}
+	if !m.setData(copied, f.data) {
+		m.unname(dst)
+		return noSpace("copyfile", dst)
+	}
 	return nil
 }
 
@@ -411,6 +579,7 @@ type memFileHandle struct {
 	writable bool
 	append   bool
 	pos      int64
+	closed   bool
 }
 
 // file returns the file this handle refers to. The caller holds f.fs.mu.
@@ -461,12 +630,8 @@ func (f *memFileHandle) Write(p []byte) (n int, err error) {
 	}
 	end := f.pos + int64(len(p))
 	if end > int64(len(mf.data)) {
-		if end > int64(cap(mf.data)) {
-			// Grow geometrically, as append does, so writing a file in chunks costs
-			// linear time rather than copying the whole file on every write.
-			grown := make([]byte, len(mf.data), max(end, 2*int64(cap(mf.data))))
-			copy(grown, mf.data)
-			mf.data = grown
+		if !f.fs.reserve(mf, end) {
+			return 0, noSpace("write", f.path)
 		}
 		// Bytes between the old end and the offset read as zeros, as in a sparse file.
 		old := int64(len(mf.data))
@@ -481,7 +646,17 @@ func (f *memFileHandle) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// Close lets the file go: one with no names left gives its memory back when its last handle
+// closes.
 func (f *memFileHandle) Close() error {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+	if f.closed {
+		return nil
+	}
+	f.closed = true
+	f.opened.handles--
+	f.fs.forget(f.opened)
 	return nil
 }
 
@@ -560,13 +735,17 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 		if err := fileAt("open", r); err != nil {
 			return nil, err
 		}
-		mf = m.newFile(&memFile{mode: perm & fs.ModePerm, modTime: time.Now()})
-		m.files[path] = mf
+		mf = &memFile{mode: perm & fs.ModePerm, modTime: time.Now()}
+		if !m.add(path, mf) {
+			return nil, noSpace("open", path)
+		}
 	}
 	if writable && flag&os.O_TRUNC != 0 {
+		m.used -= int64(cap(mf.data))
 		mf.data = nil
 		mf.modTime = time.Now()
 	}
+	mf.handles++
 
 	return &memFileHandle{
 		fs:       m,
@@ -591,8 +770,8 @@ func (m *MemoryFilesystem) change(op, path string, apply func(*memFile) error) e
 	return apply(mf)
 }
 
-// resize sets the size of a file, cutting it or padding it with zeros.
-func (mf *memFile) resize(op, path string, size int64) error {
+// resize sets the size of a file, cutting it or padding it with zeros. Callers hold m.mu.
+func (m *MemoryFilesystem) resize(mf *memFile, op, path string, size int64) error {
 	switch {
 	case mf.isDir:
 		return &fs.PathError{Op: op, Path: path, Err: syscall.EISDIR}
@@ -601,7 +780,12 @@ func (mf *memFile) resize(op, path string, size int64) error {
 	case size <= int64(len(mf.data)):
 		mf.data = mf.data[:size]
 	default:
-		mf.data = append(mf.data, make([]byte, size-int64(len(mf.data)))...)
+		if !m.reserve(mf, size) {
+			return noSpace(op, path)
+		}
+		old := len(mf.data)
+		mf.data = mf.data[:size]
+		clear(mf.data[old:])
 	}
 	mf.modTime = time.Now()
 	return nil
@@ -609,7 +793,7 @@ func (mf *memFile) resize(op, path string, size int64) error {
 
 // Truncate sets the size of a file, cutting it or padding it with zeros.
 func (m *MemoryFilesystem) Truncate(path string, size int64) error {
-	return m.change("truncate", path, func(mf *memFile) error { return mf.resize("truncate", path, size) })
+	return m.change("truncate", path, func(mf *memFile) error { return m.resize(mf, "truncate", path, size) })
 }
 
 // Chmod sets the permission bits of a file, and its setuid, setgid and sticky bits.
@@ -670,7 +854,7 @@ func (f *memFileHandle) Truncate(size int64) error {
 	if !f.writable {
 		return &fs.PathError{Op: "ftruncate", Path: f.path, Err: syscall.EINVAL}
 	}
-	return f.onOpened(func(mf *memFile) error { return mf.resize("ftruncate", f.path, size) })
+	return f.onOpened(func(mf *memFile) error { return f.fs.resize(mf, "ftruncate", f.path, size) })
 }
 
 // Sync has nothing to flush: writes reach the file at once.

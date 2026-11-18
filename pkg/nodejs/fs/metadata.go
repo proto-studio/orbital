@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"errors"
 	"io/fs"
 	"math"
 	"syscall"
@@ -55,10 +56,18 @@ func timeAt(args []*v8.Value, i int) time.Time {
 }
 
 // truncateOp backs truncate(path, len). Node opens the file to truncate it, so its errors
-// name open.
+// name open, except that a file that can't grow, as on a full disk, fails at ftruncate, with
+// no path.
 func (f *FS) truncateOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {
 	size := intAt(args, 1)
-	return f.pathOp(args, "open", func(m runtime.MetadataFilesystem, path string) error { return m.Truncate(path, size) })
+	work, fd, _ := f.pathOp(args, "open", func(m runtime.MetadataFilesystem, path string) error { return m.Truncate(path, size) })
+	return func() opResult {
+		r := work()
+		if errors.Is(r.err, syscall.ENOSPC) {
+			r.syscall, r.path = "ftruncate", ""
+		}
+		return r
+	}, fd, nil
 }
 
 func (f *FS) ftruncateOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, *v8.Value) {

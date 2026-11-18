@@ -95,19 +95,32 @@ func TestFSAPIs_MatchesNode(t *testing.T) {
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
 
-// fullFS is a MemoryFilesystem whose files are full: every write fails with ENOSPC.
+// fullFS is a MemoryFilesystem whose files are full: every write, and every truncate, fails
+// with ENOSPC.
 type fullFS struct{ *runtime.MemoryFilesystem }
 
-type fullFile struct{ runtime.File }
+// openFile is what a MemoryFilesystem's OpenFile returns.
+type openFile interface {
+	runtime.File
+	runtime.MetadataFile
+}
+
+type fullFile struct{ openFile }
 
 func (fullFile) Write([]byte) (int, error) { return 0, syscall.ENOSPC }
+
+func (fullFile) Truncate(int64) error { return syscall.ENOSPC }
 
 func (f fullFS) OpenFile(path string, flag int, perm fs.FileMode) (runtime.File, error) {
 	file, err := f.MemoryFilesystem.OpenFile(path, flag, perm)
 	if err != nil {
 		return nil, err
 	}
-	return fullFile{file}, nil
+	return fullFile{file.(openFile)}, nil
+}
+
+func (fullFS) Truncate(path string, _ int64) error {
+	return &fs.PathError{Op: "truncate", Path: path, Err: syscall.ENOSPC}
 }
 
 // A write that fails after the open reports the write, with no path, as Node does for
@@ -135,6 +148,30 @@ fs.writeFile('/full', 'x', (err) => done({
 		"dir":      map[string]any{"code": "EISDIR", "syscall": "open", "path": "/dir", "message": "EISDIR: illegal operation on a directory, open '/dir'"},
 		"stillDir": true,
 	})
+}
+
+// Node truncates a path by opening it and calling ftruncate, so a file that can't grow
+// fails at ftruncate, with no path, from every form of truncate.
+func TestFSTruncateFailures(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	if err := memory.WriteFile("/f", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: fullFS{memory}}, `
+const fs = require('fs');
+const describe = (e) => e && { code: e.code, syscall: e.syscall, path: e.path === undefined ? null : e.path, message: e.message };
+const attempt = (fn) => { try { fn(); return null; } catch (e) { return describe(e); } };
+fs.truncate('/f', 10, (err) => require('fs/promises').truncate('/f', 10).catch((perr) => {
+  const fd = fs.openSync('/f', 'r+');
+  done({
+    sync: attempt(() => fs.truncateSync('/f', 10)),
+    callback: describe(err),
+    promise: describe(perr),
+    fd: attempt(() => fs.ftruncateSync(fd, 10)),
+  });
+}));`)
+	ftruncate := map[string]any{"code": "ENOSPC", "syscall": "ftruncate", "path": nil, "message": "ENOSPC: no space left on device, ftruncate"}
+	wantJSON(t, got, map[string]any{"sync": ftruncate, "callback": ftruncate, "promise": ftruncate, "fd": ftruncate})
 }
 
 // fs.constants holds this platform's open flags, as Node's does: O_APPEND and O_CREAT, for

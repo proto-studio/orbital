@@ -33,6 +33,8 @@ type Runtime struct {
 	modules           map[string]Module
 	nativeModules     map[string]*v8.Value // User-registered native modules
 	filesystem        Filesystem
+	fsLimit           *isolateMemoryLimit // the isolate's limit on a MemoryFilesystem, if fs is one
+	unlimitFS         func()              // removes fsLimit from the filesystem
 	systemInfo        SystemInfo
 	httpClient        HTTPClient
 	environment       Environment
@@ -261,6 +263,15 @@ func New(cfg *Config) (*Runtime, error) {
 	if fs == nil {
 		fs = NewNoOpFilesystem()
 	}
+
+	// A memory filesystem's contents count against the isolate's memory limit.
+	var fsLimit *isolateMemoryLimit
+	var unlimitFS func()
+	if limited, ok := fs.(memoryLimited); ok {
+		fsLimit = newIsolateMemoryLimit(iso, cfg.IsolateOptions)
+		unlimitFS = limited.limitMemory(fsLimit)
+	}
+
 	sysInfo := cfg.SystemInfo
 	if sysInfo == nil {
 		sysInfo = NewSandboxedSystemInfo(nil)
@@ -315,6 +326,8 @@ func New(cfg *Config) (*Runtime, error) {
 		modules:         make(map[string]Module),
 		nativeModules:   make(map[string]*v8.Value),
 		filesystem:      fs,
+		fsLimit:         fsLimit,
+		unlimitFS:       unlimitFS,
 		systemInfo:      sysInfo,
 		httpClient:      httpClient,
 		environment:     env,
@@ -352,6 +365,9 @@ func New(cfg *Config) (*Runtime, error) {
 
 	if err := rt.installUncaught(); err != nil {
 		err = setupFailed(fmt.Errorf("failed to set up exception handling: %w", err))
+		if unlimitFS != nil {
+			unlimitFS()
+		}
 		ctx.Dispose()
 		iso.Dispose()
 		return nil, err
@@ -686,6 +702,10 @@ func (rt *Runtime) Dispose() {
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+
+	if rt.unlimitFS != nil {
+		rt.unlimitFS()
+	}
 
 	if rt.context != nil {
 		rt.context.Dispose()

@@ -95,6 +95,16 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	iso := rt.Isolate()
 	ctx := rt.Context()
 
+	// Each call samples the heap first, on the JavaScript thread, so a memory filesystem's
+	// growth is checked against the heap limit with the heap's usage when the call was made,
+	// also by work done off the thread.
+	newFunctionTemplate := func(cb v8.FunctionCallback) (*v8.FunctionTemplate, error) {
+		return iso.NewFunctionTemplate(func(info *v8.FunctionCallbackInfo) *v8.Value {
+			rt.SampleHeapUsage()
+			return cb(info)
+		})
+	}
+
 	// Create fs object
 	fsObj, err := ctx.NewObject()
 	if err != nil {
@@ -104,7 +114,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	// Synchronous functions
 
 	// fs.readFileSync
-	readFileSyncFn, err := iso.NewFunctionTemplate(f.readFileSyncFunc)
+	readFileSyncFn, err := newFunctionTemplate(f.readFileSyncFunc)
 	if err != nil {
 		return err
 	}
@@ -117,7 +127,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// fs.writeFileSync
-	writeFileSyncFn, err := iso.NewFunctionTemplate(f.writeFileSyncFunc)
+	writeFileSyncFn, err := newFunctionTemplate(f.writeFileSyncFunc)
 	if err != nil {
 		return err
 	}
@@ -130,7 +140,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// fs.existsSync
-	existsSyncFn, err := iso.NewFunctionTemplate(f.existsSyncFunc)
+	existsSyncFn, err := newFunctionTemplate(f.existsSyncFunc)
 	if err != nil {
 		return err
 	}
@@ -143,7 +153,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// fs.statSync
-	statSyncFn, err := iso.NewFunctionTemplate(f.statSyncFunc)
+	statSyncFn, err := newFunctionTemplate(f.statSyncFunc)
 	if err != nil {
 		return err
 	}
@@ -156,7 +166,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// fs.appendFileSync
-	appendFileSyncFn, err := iso.NewFunctionTemplate(f.appendFileSyncFunc)
+	appendFileSyncFn, err := newFunctionTemplate(f.appendFileSyncFunc)
 	if err != nil {
 		return err
 	}
@@ -172,7 +182,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	// host, etc.) emit output via openSync/writeSync/closeSync rather than
 	// writeFileSync, so these must be backed by a genuine fd table.
 	regFn := func(name string, cb v8.FunctionCallback) error {
-		tmpl, err := iso.NewFunctionTemplate(cb)
+		tmpl, err := newFunctionTemplate(cb)
 		if err != nil {
 			return err
 		}
@@ -215,7 +225,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	// Async functions
 
 	// fs.readFile
-	readFileFn, err := iso.NewFunctionTemplate(f.readFileFunc)
+	readFileFn, err := newFunctionTemplate(f.readFileFunc)
 	if err != nil {
 		return err
 	}
@@ -228,7 +238,7 @@ func (f *FS) Register(rt *runtime.Runtime) error {
 	}
 
 	// fs.writeFile
-	writeFileFn, err := iso.NewFunctionTemplate(f.writeFileFunc)
+	writeFileFn, err := newFunctionTemplate(f.writeFileFunc)
 	if err != nil {
 		return err
 	}

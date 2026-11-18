@@ -1,0 +1,83 @@
+package runtime
+
+import (
+	"sync/atomic"
+
+	"proto.zip/studio/orbital/pkg/v8"
+)
+
+// memoryLimited is a Filesystem whose memory can be counted against a limit, such as a
+// MemoryFilesystem, or a type that embeds one.
+type memoryLimited interface {
+	limitMemory(limit memoryLimit) (remove func())
+	memoryInUse() int64
+}
+
+// isolateMemoryLimit keeps a filesystem's memory and an isolate's heap together within the
+// isolate's heap limit.
+type isolateMemoryLimit struct {
+	iso   *v8.Isolate
+	limit uint64
+
+	// heapUsed is the heap's usage when last sampled. The filesystem's calls also run off the
+	// isolate's thread, where reading the heap would wait for JavaScript to stop, so they use
+	// the sample taken on the isolate's thread when the call was made.
+	heapUsed atomic.Uint64
+
+	collectedAt uint64 // the heap's usage after the last collection sample asked for
+}
+
+// newIsolateMemoryLimit is the limit of iso, created with opts: MaxHeapSizeInBytes, or, when
+// that is 0, the limit V8 applies.
+func newIsolateMemoryLimit(iso *v8.Isolate, opts v8.IsolateOptions) *isolateMemoryLimit {
+	l := &isolateMemoryLimit{iso: iso, limit: opts.MaxHeapSizeInBytes}
+	if stats, err := iso.GetHeapStatistics(); err == nil {
+		if l.limit == 0 {
+			l.limit = stats.HeapSizeLimit
+		}
+		l.heapUsed.Store(stats.UsedHeapSize)
+	}
+	return l
+}
+
+// sample records the heap's usage, given that the filesystem holds fsUsed bytes. It runs on
+// the goroutine running the isolate's JavaScript.
+//
+// The heap's usage includes garbage until V8 collects it, so when the heap and the
+// filesystem together come near the limit, sample collects garbage first, as V8 does before
+// failing an allocation. It does that only once the heap has grown by a sixteenth of the limit
+// since the last time, so calls made near the limit don't each wait for a collection.
+func (l *isolateMemoryLimit) sample(fsUsed int64) {
+	stats, err := l.iso.GetHeapStatistics()
+	if err != nil {
+		return
+	}
+	used := stats.UsedHeapSize
+	margin := l.limit / 16
+	if l.limit != 0 && used+uint64(fsUsed)+margin > l.limit && used > l.collectedAt+margin {
+		if l.iso.RequestGarbageCollectionForTesting(v8.FullGarbageCollection) == nil {
+			if stats, err := l.iso.GetHeapStatistics(); err == nil {
+				used = stats.UsedHeapSize
+			}
+		}
+		l.collectedAt = used
+	}
+	l.heapUsed.Store(used)
+}
+
+func (l *isolateMemoryLimit) fits(total int64) bool {
+	if l.limit == 0 {
+		return true // V8 reported no limit
+	}
+	return total >= 0 && l.heapUsed.Load()+uint64(total) <= l.limit
+}
+
+// SampleHeapUsage records the isolate's heap usage, which a MemoryFilesystem's growth is
+// checked with, together with what it holds, against the isolate's heap limit. The fs module
+// calls it as each call starts, on the goroutine running JavaScript, so work it does off that
+// goroutine is checked with the usage when the call was made.
+func (rt *Runtime) SampleHeapUsage() {
+	if rt.fsLimit != nil {
+		rt.fsLimit.sample(rt.filesystem.(memoryLimited).memoryInUse())
+	}
+}

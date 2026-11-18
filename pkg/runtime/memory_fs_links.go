@@ -45,6 +45,8 @@ func (m *MemoryFilesystem) unname(canonical string) {
 	if mf, ok := m.files[canonical]; ok {
 		mf.nlink--
 		delete(m.files, canonical)
+		m.used -= nameCost(canonical)
+		m.forget(mf)
 	}
 }
 
@@ -279,7 +281,9 @@ func (m *MemoryFilesystem) Symlink(target, p string) error {
 		return err
 	}
 	canonical := r.path
-	m.files[canonical] = m.newFile(&memFile{mode: fs.ModeSymlink | 0o755, target: target})
+	if !m.add(canonical, &memFile{mode: fs.ModeSymlink | 0o755, target: target}) {
+		return noSpace("symlink", p)
+	}
 	return nil
 }
 
@@ -328,6 +332,9 @@ func (m *MemoryFilesystem) Link(existing, p string) error {
 	}
 	if mf.isDir {
 		return &fs.PathError{Op: "link", Path: existing, Err: syscall.EPERM}
+	}
+	if !m.account(nameCost(canonical)) {
+		return noSpace("link", existing)
 	}
 	mf.nlink++
 	m.files[canonical] = mf
