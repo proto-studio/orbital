@@ -316,6 +316,8 @@ struct IsolateState {
     // The most the old generation may grow to.
     size_t old_generation_cap = 0;
     std::atomic<bool> out_of_memory{false};
+    // The limit given an isolate that ran out of memory to finish unwinding.
+    size_t recovery_limit = 0;
 };
 
 static const int kIsolateStateSlot = 0;
@@ -366,6 +368,27 @@ static size_t oldGenerationCommitted(Isolate* isolate) {
 // the heap holds. It grows the heap or runs out only when the heap is near its
 // limit: V8 aborts only when the old generation's pages still reach the limit
 // after the callback (Heap::CheckHeapLimitReached).
+// recoveryLimit is the limit for an isolate that has run out of memory: one
+// fixed limit with room to unwind, set the first time and raised only if what's
+// in use reaches it, since V8 aborts the process otherwise. Its execution is
+// terminated again each time, and it can't run JavaScript any more
+// (outOfMemoryGuard), so what it uses past its limit stays bounded.
+static size_t recoveryLimit(Isolate* isolate, IsolateState* state, size_t in_use) {
+    isolate->TerminateExecution();
+    if (!state) return in_use + kOutOfMemoryAllowance;
+    if (state->recovery_limit < in_use + kMB) {
+        state->recovery_limit = in_use + kOutOfMemoryAllowance;
+    }
+    return state->recovery_limit;
+}
+
+// outOfMemoryGuard runs before every call into JavaScript, and terminates it in
+// an isolate that has run out of memory.
+static void outOfMemoryGuard(Isolate* isolate) {
+    IsolateState* state = isolateState(isolate);
+    if (state && state->out_of_memory.load()) isolate->TerminateExecution();
+}
+
 static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
                               size_t initial_heap_limit) {
     Isolate* isolate = static_cast<Isolate*>(data);
@@ -375,7 +398,7 @@ static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
     // whatever the callback returns has to cover what's in use already.
     size_t in_use = std::max(current_heap_limit, used);
     if (!state || state->out_of_memory.load()) {
-        return in_use + kOutOfMemoryAllowance;
+        return recoveryLimit(isolate, state, in_use);
     }
     // An embedder's callback (Isolate.AddNearHeapLimitCallback) is asked first.
     // The heap it grows is charged to the budget like any other, and when it
@@ -391,7 +414,7 @@ static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
             }
         }
         if (state->out_of_memory.load()) {
-            return in_use + kOutOfMemoryAllowance;
+            return recoveryLimit(isolate, state, in_use);
         }
     }
     if (used < current_heap_limit - current_heap_limit / 8) {
@@ -412,9 +435,9 @@ static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
         }
     }
     state->out_of_memory.store(true);
-    isolate->TerminateExecution();
+    size_t limit = recoveryLimit(isolate, state, in_use);
     goIsolateOutOfMemory(isolate);
-    return in_use + kOutOfMemoryAllowance;
+    return limit;
 }
 
 static size_t physicalMemory() {
@@ -545,7 +568,14 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     state->old_generation_cap = old_cap;
     isolate->SetData(kIsolateStateSlot, state);
     isolate->AddNearHeapLimitCallback(budgetHeapLimit, isolate);
+    isolate->AddBeforeCallEnteredCallback(outOfMemoryGuard);
     Isolate::Initialize(isolate, create_params);
+    if (state->out_of_memory.load()) {
+        // Its heap was too small for V8 to set it up.
+        v8go_isolate_dispose(isolate);
+        if (failure) *failure = V8GO_ISOLATE_SETUP_OUT_OF_MEMORY;
+        return nullptr;
+    }
 
     if (limits) {
         limits->max_old_generation_size_in_bytes = old_cap;
@@ -649,6 +679,8 @@ void v8go_isolate_terminate_execution(void* ptr) {
 
 void v8go_isolate_cancel_terminate_execution(void* ptr) {
     if (!ptr) return;
+    // An isolate that ran out of memory stays terminated.
+    if (v8go_isolate_out_of_memory(ptr)) return;
     static_cast<Isolate*>(ptr)->CancelTerminateExecution();
 }
 

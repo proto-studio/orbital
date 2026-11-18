@@ -7,12 +7,18 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 )
 
 // ErrOutOfMemory reports that memory didn't fit in a MemoryBudget: a charge,
 // or an isolate whose heap the budget had no room to start.
 var ErrOutOfMemory = errors.New("out of memory")
+
+// ErrSetupOutOfMemory reports an isolate whose heap ran out while V8 set it
+// up: its limit was too small to hold what V8 starts every isolate with.
+// errors.Is(err, ErrOutOfMemory) is true for it too.
+var ErrSetupOutOfMemory = fmt.Errorf("heap too small to set the isolate up: %w", ErrOutOfMemory)
 
 // MemoryBudget is an amount of memory shared by the isolates made with it
 // (IsolateOptions.MemoryBudget) and whatever else charges it. Each isolate's

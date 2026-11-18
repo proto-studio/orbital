@@ -12,10 +12,12 @@ package worker_threads
 import (
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	goruntime "proto.zip/studio/orbital/pkg/runtime"
@@ -324,7 +326,7 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	wrt.ShareIsolateLimit(w.rt)
 	// The worker's sockets and files count against its parent's caps.
 	wrt.ShareHandleLimits(w.rt)
-	limitsJSON := wk.effectiveLimits(wrt)
+	limits := wk.effectiveLimits(wrt)
 
 	// The pump below may call wrt.Kill, so it must be finished before the isolate
 	// is disposed. Deferred calls run in reverse: stop the pump, then dispose.
@@ -361,7 +363,7 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	})
 
 	// Initialize parentPort / workerData inside the worker.
-	initCode := fmt.Sprintf("__wt_init_worker(%s, %s);", jsStringLiteral(wk.workerData), jsStringLiteral(limitsJSON))
+	initCode := fmt.Sprintf("__wt_init_worker(%s, %s);", jsStringLiteral(wk.workerData), jsStringLiteral(limits))
 	if _, err := wrt.RunScript(initCode, "worker_bootstrap.js"); err != nil {
 		if wrt.OutOfMemory() {
 			// Still setting up: as above, Node's worker exits with 0.
@@ -402,7 +404,7 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 		}
 	}()
 
-	wk.fromWorker <- wtEvent{kind: "online", data: limitsJSON}
+	wk.fromWorker <- wtEvent{kind: "online", data: limits}
 
 	// Resolve and run the entry.
 	source := wk.target
@@ -508,10 +510,11 @@ func lowerCap(configured, asked uint64) uint64 {
 	return asked
 }
 
-// effectiveLimits answers the worker's limits as Node reports them in resourceLimits, a JSON
-// array in Node's order: the ones its heap was made with, which with a MemoryBudget are
-// what the budget had room for then. The budget is shared, so the worker may still run out
-// before it reaches them.
+// effectiveLimits answers the worker's limits as Node reports them in resourceLimits, in
+// Node's order, as numbers separated by commas: the ones its heap was made with, which with
+// a MemoryBudget are what the budget had room for then. The budget is shared, so the worker
+// may still run out before it reaches them. A code range the script asked for may be
+// Infinity, which JSON can't carry, so they're written as JavaScript's Number reads them.
 func (wk *worker) effectiveLimits(wrt *goruntime.Runtime) string {
 	limits := wrt.Isolate().Limits()
 	stack := float64(defaultStackSizeMb)
@@ -531,8 +534,15 @@ func (wk *worker) effectiveLimits(wrt *goruntime.Runtime) string {
 		codeRange,
 		stack,
 	}
-	data, _ := json.Marshal(values)
-	return string(data)
+	parts := make([]string, len(values))
+	for i, v := range values {
+		if math.IsInf(v, 1) {
+			parts[i] = "Infinity"
+		} else {
+			parts[i] = strconv.FormatFloat(v, 'g', -1, 64)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 // mbToBytes converts a resourceLimits value in MiB to bytes: 0 for one that asks for nothing
