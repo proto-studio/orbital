@@ -297,11 +297,13 @@ func (m *MemoryFilesystem) RemoveAll(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// A final link is removed itself; what it leads to is left alone.
-	path, _, err := m.resolve("rm", path, false)
+	// A final link is removed itself; what it leads to is left alone. A "/" after it is taken
+	// as rmdir takes it: Linux refuses it, macOS removes the tree it leads to.
+	r, err := m.walk("rm", path, entryFinal)
 	if err != nil {
 		return err
 	}
+	path = r.path
 	prefix := path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"

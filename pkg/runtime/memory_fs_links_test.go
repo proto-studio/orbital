@@ -260,3 +260,27 @@ func TestMemoryFS_NewLinkNameWithSlash(t *testing.T) {
 		t.Errorf("Link(lf/) = %v, want %v", err, file)
 	}
 }
+
+// RemoveAll on a link with a "/" after it does what Node's recursive rm does there: on Linux
+// rmdir refuses it with ENOTDIR and nothing goes; macOS follows it and removes the tree it
+// leads to, leaving the link.
+func TestMemoryFS_RemoveAllSlashAfterLink(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "WriteFile", m.WriteFile("/target/x", []byte("x"), 0o644))
+	mustDo(t, "Symlink", m.Symlink("target", "/link"))
+	err := m.RemoveAll("/link/")
+	_, linkErr := m.Lstat("/link")
+	if goruntime.GOOS == "darwin" {
+		if err != nil || m.Exists("/target/x") || linkErr != nil {
+			t.Errorf("RemoveAll(link/) = %v; target/x kept %v, link err %v; want the tree gone and the link kept", err, m.Exists("/target/x"), linkErr)
+		}
+		return
+	}
+	if !errors.Is(err, syscall.ENOTDIR) || !m.Exists("/target/x") || linkErr != nil {
+		t.Errorf("RemoveAll(link/) = %v; target/x kept %v, link err %v; want ENOTDIR and both kept", err, m.Exists("/target/x"), linkErr)
+	}
+	mustDo(t, "RemoveAll(link)", m.RemoveAll("/link"))
+	if !m.Exists("/target/x") {
+		t.Errorf("RemoveAll(link) removed what the link leads to")
+	}
+}
