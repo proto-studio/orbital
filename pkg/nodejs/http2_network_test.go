@@ -392,6 +392,25 @@ func TestHTTP2NoSilentFallback(t *testing.T) {
 		}, getScript(authority, "{}"))
 		wantCode(t, result, "ERR_HTTP2_TRANSPORT_UNAVAILABLE")
 	})
+	t.Run("real sockets with HTTPClient left nil", func(t *testing.T) {
+		// A nil HTTPClient is the closed default, not a restriction of the embedder's,
+		// so sockets it granted still carry HTTP/2. runJS would fill HTTPClient in.
+		open := newH2Server(t, ca.issue(t, "127.0.0.1"))
+		inst, err := New(&runtime.Config{
+			EnableConsole: true,
+			EnableTimers:  true,
+			Timeout:       20 * time.Second,
+			SocketFactory: runtime.NewRealSocketFactory(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer inst.Runtime.Dispose()
+		result := runIn(t, inst, getScript(fmt.Sprintf("https://127.0.0.1:%d", open.port), fmt.Sprintf("{ ca: %q }", ca.pem)))
+		if result["body"] != "hello" {
+			t.Fatalf("result = %v", result)
+		}
+	})
 	t.Run("no-op sockets", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{SocketFactory: runtime.NewNoOpSocketFactory()}, getScript(authority, "{}"))
 		wantCode(t, result, "EPERM")

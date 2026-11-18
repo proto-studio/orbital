@@ -78,12 +78,13 @@ func (h *HTTP2) dial(ctx context.Context, opts dialOptions) (net.Conn, net.Conn,
 // checkTransport refuses to open real, unfiltered sockets for an embedder that
 // restricted networking only through HTTPClient. HTTPClient exposes whole requests,
 // not connections, so it cannot carry HTTP/2. Any injected SocketFactory is honored:
-// it is the boundary net.connect already goes through.
+// it is the boundary net.connect already goes through. With real sockets, the client
+// restricts nothing when it is the real one or the default left by a nil HTTPClient.
 func (h *HTTP2) checkTransport() error {
 	if _, real := h.rt.SocketFactory().(*runtime.RealSocketFactory); !real {
 		return nil
 	}
-	if _, real := h.rt.HTTPClient().(*runtime.RealHTTPClient); real {
+	if h.rt.HTTPOverSockets() {
 		return nil
 	}
 	return errNoHTTP2Transport
