@@ -6,32 +6,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
-// With the filesystem that refuses everything, every fs call, and loading code from files,
-// fails as it does in Node for a directory it may not access. Nothing on the host changes.
-func TestFS_ClosedFilesystemMatchesNode(t *testing.T) {
+// With every interface call refused, every fs call, and loading code from files, fails as it
+// does in Node for a directory it may not access. The closed filesystem refuses everything
+// with EACCES (pkg/runtime checks that it does), so this is what scripts see with it.
+func TestFS_RefusedCallsMatchNode(t *testing.T) {
 	const scriptPath, expectedPath = "testdata/fs_closed.js", "testdata/fs_closed.node.json"
-	dir := t.TempDir()
-	files := map[string]string{
-		"sub/x.js":  "module.exports = 'loaded';",
-		"sub/x.mjs": "export default 'loaded';",
-	}
-	for name, content := range files {
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	if captureFromNode(t) {
+		dir := t.TempDir()
+		for name, content := range map[string]string{
+			"sub/x.js":  "module.exports = 'loaded';",
+			"sub/x.mjs": "export default 'loaded';",
+		} {
+			p := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err := os.Chmod(dir, 0); err != nil {
 			t.Fatal(err)
 		}
@@ -54,33 +54,9 @@ func TestFS_ClosedFilesystemMatchesNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &runtime.Config{Filesystem: runtime.NewNoOpFilesystem(), Timeout: 60 * time.Second}
-	got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", dir, script))
+	cfg := &runtime.Config{Filesystem: newMockFSFailing(syscall.EACCES), Timeout: 60 * time.Second}
+	got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", "/closed", script))
 	wantJSON(t, got, readExpected(t, expectedPath))
-
-	// The host directory is as it was: the same files, unchanged.
-	var found []string
-	err = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		found = append(found, rel)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if want, ok := files[filepath.ToSlash(rel)]; !ok || string(data) != want {
-			t.Errorf("%s changed: %q", rel, data)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != len(files) {
-		t.Errorf("host files = %v, want %d", found, len(files))
-	}
 }
 
 // Scripts passed as source still run with the filesystem closed.

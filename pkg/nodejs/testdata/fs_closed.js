@@ -1,7 +1,8 @@
 // Runs unchanged in Node and in Orbital. In Node, the directory it is given can't be accessed
-// (its mode is 000); in Orbital, the filesystem refuses everything. Both should fail the same
-// way. fs_closed.node.json is this script's output under Node v20.18.1. Regenerate it with
-//   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestFS_ClosedFilesystemMatchesNode'
+// (its mode is 000); in Orbital, a mock filesystem refuses every call with EACCES, as the closed
+// filesystem does. Both should fail the same way. fs_closed.node.json is this script's output
+// under Node v20.18.1. Regenerate it with
+//   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestFS_RefusedCallsMatchNode'
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');

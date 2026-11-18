@@ -337,3 +337,18 @@ func TestMemoryFS_MkdirAllRoot(t *testing.T) {
 	mustDo(t, "Open(/)", err)
 	f.Close()
 }
+
+// mkdir -p through a link that leads nowhere fails with ENOENT, as Node gives on disk, rather
+// than making the link lead somewhere.
+func TestMemoryFS_MkdirAllThroughDanglingLink(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "Symlink", m.Symlink("missing", "/dangling"))
+	for _, p := range []string{"/dangling", "/dangling/a/b"} {
+		if err := m.MkdirAll(p, 0o755); !errors.Is(err, syscall.ENOENT) {
+			t.Errorf("MkdirAll(%s) = %v, want ENOENT", p, err)
+		}
+	}
+	if m.Exists("/missing") {
+		t.Error("MkdirAll made the link's target")
+	}
+}
