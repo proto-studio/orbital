@@ -662,6 +662,15 @@
       "syscall": "open"
     }
   },
+  "nofollow": {
+    "value": [
+      [
+        "ELOOP open",
+        "ELOOP open"
+      ],
+      "HI"
+    ]
+  },
   "p_handle_through_link": {
     "value": "H"
   },

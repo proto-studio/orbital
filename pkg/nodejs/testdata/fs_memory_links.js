@@ -79,6 +79,15 @@ async function main() {
     fs.closeSync(fd);
     return [fs.readFileSync(file('f'), 'utf8'), st.isFile()];
   });
+  attempt('nofollow', () => {
+    const { O_WRONLY, O_RDONLY, O_TRUNC, O_NOFOLLOW } = fs.constants;
+    const codes = [];
+    for (const flags of [O_WRONLY | O_TRUNC | O_NOFOLLOW, O_RDONLY | O_NOFOLLOW]) {
+      try { fs.closeSync(fs.openSync(file('abs'), flags)); codes.push('ok'); } catch (e) { codes.push(e.code + ' ' + e.syscall); }
+    }
+    fs.closeSync(fs.openSync(file('f'), O_RDONLY | O_NOFOLLOW));
+    return [codes, fs.readFileSync(file('f'), 'utf8')];
+  });
   attempt('copy_through_links', () => {
     fs.copyFileSync(file('chain2'), file('copied'));
     fs.symlinkSync('copytarget', file('copylink'));

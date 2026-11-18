@@ -284,3 +284,40 @@ func TestMemoryFS_RemoveAllSlashAfterLink(t *testing.T) {
 		t.Errorf("RemoveAll(link) removed what the link leads to")
 	}
 }
+
+// A missing name with a "/" after it, given or from a link's target, can only be a directory,
+// so making a file there fails and makes nothing: EISDIR on Linux, ENOENT on macOS.
+func TestMemoryFS_FileWhereOnlyADirectoryFits(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "Symlink", m.Symlink("missing/", "/ds"))
+	want := syscall.EISDIR
+	if goruntime.GOOS == "darwin" {
+		want = syscall.ENOENT
+	}
+	for _, p := range []string{"/ds", "/new/"} {
+		if err := m.WriteFile(p, []byte("x"), 0o644); !errors.Is(err, want) {
+			t.Errorf("WriteFile(%s) = %v, want %v", p, err, want)
+		}
+		if err := m.AppendFile(p, []byte("x")); !errors.Is(err, want) {
+			t.Errorf("AppendFile(%s) = %v, want %v", p, err, want)
+		}
+		if _, err := m.OpenFile(p, os.O_WRONLY|os.O_CREATE, 0o644); !errors.Is(err, want) {
+			t.Errorf("OpenFile(%s, O_CREATE) = %v, want %v", p, err, want)
+		}
+	}
+	if m.Exists("/missing") || m.Exists("/new") {
+		t.Errorf("a file was made: missing %v, new %v", m.Exists("/missing"), m.Exists("/new"))
+	}
+}
+
+// MkdirAll("/") makes the root, so it can be described and opened.
+func TestMemoryFS_MkdirAllRoot(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "MkdirAll", m.MkdirAll("/", 0o755))
+	if info, err := m.Stat("/"); err != nil || !info.IsDir {
+		t.Errorf("Stat(/) = %+v, %v; want a directory", info, err)
+	}
+	f, err := m.Open("/")
+	mustDo(t, "Open(/)", err)
+	f.Close()
+}
