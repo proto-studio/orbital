@@ -1229,6 +1229,7 @@
   const realpathNativeSync = fs.realpathSync;
   const realpathNative = fs.realpath;
   function asJsRealpathError(e, path) {
+    if (e && e.code === 'ELOOP' && e.syscall === 'realpath') return asJsRealpathLoop(e, path);
     if (!e || e.code !== 'ENOENT' || e.syscall !== 'realpath') return e;
     let syscall = 'lstat';
     try {
@@ -1241,14 +1242,38 @@
     e.message = "ENOENT: no such file or directory, " + syscall + " '" + p + "'";
     return e;
   }
+  // Node's JavaScript realpath follows a path's links one name at a time, and reports a link
+  // cycle from its stat of the first name that leads into one, after the names before it are
+  // resolved.
+  function asJsRealpathLoop(e, path) {
+    if (typeof path !== 'string' || !path.startsWith('/')) return e;
+    let base = '/';
+    for (const name of path.split('/')) {
+      if (name === '' || name === '.') continue;
+      const next = (base === '/' ? '' : base) + '/' + name;
+      try {
+        fs.statSync(next);
+        base = realpathNativeSync(next);
+      } catch (s) {
+        if (s && s.code === 'ELOOP') {
+          e.syscall = 'stat';
+          e.path = next;
+          e.message = 'ELOOP: too many symbolic links encountered, stat \'' + next + '\'';
+        }
+        return e;
+      }
+    }
+    return e;
+  }
   // Node's JavaScript realpath makes the path absolute and cleans it first; the native one
   // leaves ".." to apply after the links ahead of it.
   const lexical = (p) => (typeof p === 'string' && pathModule() ? fsResolve(p) : p);
   fs.realpathSync = function (path, options) {
+    const absolute = lexical(pathString(path));
     try {
-      return realpathNativeSync(lexical(pathString(path)), options);
+      return realpathNativeSync(absolute, options);
     } catch (e) {
-      throw asJsRealpathError(e, path);
+      throw asJsRealpathError(e, e && e.code === 'ELOOP' ? absolute : path);
     }
   };
   fs.realpathSync.native = realpathNativeSync;
