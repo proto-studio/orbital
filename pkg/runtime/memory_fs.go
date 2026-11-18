@@ -646,6 +646,9 @@ func (f *memFileHandle) Write(p []byte) (n int, err error) {
 	}
 	f.fs.mu.Lock()
 	defer f.fs.mu.Unlock()
+	if f.closed {
+		return 0, &fs.PathError{Op: "write", Path: f.path, Err: syscall.EBADF}
+	}
 
 	mf, err := f.file()
 	if err != nil {
@@ -872,10 +875,15 @@ func (m *MemoryFilesystem) Access(path string, mode uint32) error {
 	})
 }
 
-// onOpened runs apply on the file the handle opened, under the filesystem's lock.
+// onOpened runs apply on the file the handle opened, under the filesystem's lock. A closed
+// handle fails with EBADF, as a closed descriptor does: the file may have no names left, and
+// its memory has been given back.
 func (f *memFileHandle) onOpened(apply func(*memFile) error) error {
 	f.fs.mu.Lock()
 	defer f.fs.mu.Unlock()
+	if f.closed {
+		return syscall.EBADF
+	}
 	return apply(f.opened)
 }
 
