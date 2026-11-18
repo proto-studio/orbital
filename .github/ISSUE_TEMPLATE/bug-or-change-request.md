@@ -26,4 +26,7 @@ Include the steps to follow and the version you're using, if you can.
 Leave these blank if not, or if you're not sure.
 
 - [ ] Encryption, keys, or certificates
+- [ ] Parsing data from untrusted sources
 - [ ] Keeping sandboxed code isolated
+- [ ] What scripts can reach on the host, such as files, network, processes, or environment variables
+- [ ] A breaking change to the public API
