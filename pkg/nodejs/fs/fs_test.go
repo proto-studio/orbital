@@ -383,3 +383,52 @@ func TestFS_OpenAfterDisposeGivesBackItsPlace(t *testing.T) {
 	}
 	release()
 }
+
+// A runtime disposed with a descriptor still open closes it, so removing its file from a
+// memory filesystem that outlives the runtime gives the file's memory back.
+func TestFS_DisposeFreesWhatOpenFilesHeld(t *testing.T) {
+	memory := runtime.NewMemoryFilesystem()
+	limited := func() *runtime.Runtime {
+		rt, err := runtime.New(&runtime.Config{Filesystem: memory, MaxOpenFiles: -1,
+			IsolateOptions: v8.IsolateOptions{MaxHeapSizeInBytes: 64 << 20}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rt
+	}
+	rt := limited()
+	f := New()
+	if err := f.Register(rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.WriteFile("/a", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Truncate("/a", 32<<20); err != nil {
+		t.Fatal(err)
+	}
+	ctx := rt.Context()
+	path, _ := ctx.NewString("/a")
+	flags, _ := ctx.NewString("r")
+	work, _, thrown := f.openOp(ctx, []*v8.Value{path, flags})
+	if thrown != nil {
+		t.Fatal("openOp threw")
+	}
+	if res := work(); res.err != nil {
+		t.Fatal(res.err)
+	}
+	if err := memory.Remove("/a"); err != nil {
+		t.Fatal(err)
+	}
+	rt.Dispose()
+
+	// With the descriptor left open, the 32 MiB would still be held and this wouldn't fit.
+	rt = limited()
+	defer rt.Dispose()
+	if err := memory.WriteFile("/b", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Truncate("/b", 40<<20); err != nil {
+		t.Fatalf("after the runtime holding a 32 MiB file was disposed: %v", err)
+	}
+}
