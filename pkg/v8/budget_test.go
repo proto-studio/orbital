@@ -260,3 +260,31 @@ func TestNearHeapLimitCallbackChargedToBudget(t *testing.T) {
 		t.Fatalf("budget used %d past its limit %d", used, b.Limit())
 	}
 }
+
+// An isolate that ran out of memory can't run JavaScript any more, even after
+// CancelTerminateExecution, so running more in it can't keep raising its limit.
+func TestOutOfMemoryIsolateStaysStopped(t *testing.T) {
+	iso, ctx := newBudgetContext(t, v8.IsolateOptions{MaxHeapSizeInBytes: 32 * mb, MemoryBudget: v8.NewMemoryBudget(128 * mb)})
+	fill := `globalThis.a = globalThis.a || []; for (;;) a.push({ x: Math.random(), y: [1, 2, 3] })`
+	if _, err := ctx.RunScript(fill, "oom.js"); err == nil || !iso.OutOfMemory() {
+		t.Fatalf("filling the heap: %v, OutOfMemory %v", err, iso.OutOfMemory())
+	}
+	first, err := iso.GetHeapStatistics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		iso.CancelTerminateExecution()
+		if v, err := ctx.RunScript(`1 + 1`, "after.js"); err == nil {
+			t.Fatalf("ran JavaScript after running out of memory: %v", v)
+		}
+		_, _ = ctx.RunScript(fill, "again.js")
+	}
+	after, err := iso.GetHeapStatistics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.HeapSizeLimit > first.HeapSizeLimit {
+		t.Fatalf("heap limit grew from %d to %d after running out of memory", first.HeapSizeLimit, after.HeapSizeLimit)
+	}
+}

@@ -311,3 +311,22 @@ for (let mb = 0; mb <= 12; mb += 0.25) {
 		t.Fatalf("want some workers to run and some to run out: %v", got)
 	}
 }
+
+// A code range of Infinity, which Node takes as a number (and its own V8 then aborts on),
+// reaches the worker and its parent as Infinity, with the other limits beside it.
+func TestWorkerResourceLimitsInfiniteCodeRange(t *testing.T) {
+	got := runJS(t, &runtime.Config{MaxWorkers: -1}, `
+const { Worker } = require('worker_threads');
+const w = new Worker('require("worker_threads").parentPort.postMessage(require("worker_threads").resourceLimits.codeRangeSizeMb === Infinity)', { eval: true, resourceLimits: { codeRangeSizeMb: Infinity } });
+w.once('online', () => {
+  const online = w.resourceLimits;
+  w.once('message', (inside) => done({
+    online: online.codeRangeSizeMb === Infinity && online.maxOldGenerationSizeMb > 0,
+    inside,
+  }));
+});
+`)
+	if got["online"] != true || got["inside"] != true {
+		t.Fatalf("got %v, want Infinity reported online and inside", got)
+	}
+}

@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -223,6 +224,10 @@ func New(cfg *Config) (*Runtime, error) {
 		isolateOptions.MemoryBudget = cfg.MemoryBudget
 	}
 	iso, err := v8.NewIsolateWithOptions(isolateOptions)
+	if errors.Is(err, v8.ErrSetupOutOfMemory) {
+		// Its heap was too small for V8 to set it up.
+		return nil, &OutOfMemoryError{}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
@@ -234,12 +239,6 @@ func New(cfg *Config) (*Runtime, error) {
 		}
 		return err
 	}
-	if iso.OutOfMemory() {
-		// Its heap was too small for V8 to set it up.
-		iso.Dispose()
-		return nil, &OutOfMemoryError{}
-	}
-
 	ctx, err := iso.NewContext()
 	if err != nil {
 		err = setupFailed(fmt.Errorf("failed to create context: %w", err))

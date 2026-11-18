@@ -50,7 +50,8 @@ typedef struct v8go_isolate_limits {
 // Why v8go_isolate_new_with_params returned NULL.
 enum {
     V8GO_ISOLATE_FAILED = 1,
-    V8GO_ISOLATE_OUT_OF_MEMORY = 2
+    V8GO_ISOLATE_OUT_OF_MEMORY = 2,          // the budget had no room for the heap
+    V8GO_ISOLATE_SETUP_OUT_OF_MEMORY = 3     // the heap ran out while V8 set it up
 };
 
 typedef struct v8go_heap_statistics {

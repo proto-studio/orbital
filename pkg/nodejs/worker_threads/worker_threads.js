@@ -274,13 +274,14 @@
     };
   }
 
-  function parseLimitsJSON(json) {
-    try {
-      const limits = JSON.parse(json);
-      if (Array.isArray(limits) && limits.length === 4) return limits;
-    } catch (e) {}
-    return null;
+  // The limits a worker started with, as Go writes them: four numbers separated by commas.
+  function parseLimits(text) {
+    if (typeof text !== 'string') return null;
+    const limits = text.split(',').map(Number);
+    if (limits.length !== 4 || limits.some((n) => n !== n)) return null;
+    return limits;
   }
+
 
   if (typeof global.__wt_spawn === 'function') {
     Worker = class Worker extends EventEmitter {
@@ -342,7 +343,7 @@
       switch (kind) {
         case 'online': {
           // The limits the worker started with.
-          const limits = parseLimitsJSON(data);
+          const limits = parseLimits(data);
           if (limits !== null) w._resourceLimits = limits;
           w.emit('online');
           break;
@@ -402,11 +403,11 @@
   // Called from Go (worker runtime) once the native worker bridges are set up.
   global.__wt_serialize_thrown = serializeThrown;
 
-  global.__wt_init_worker = function(dataJson, limitsJson) {
+  global.__wt_init_worker = function(dataJson, limitsText) {
     const mod = global.__worker_threads_module;
     if (!mod) return;
     mod.isMainThread = false;
-    const limits = parseLimitsJSON(limitsJson);
+    const limits = parseLimits(limitsText);
     if (limits !== null) mod.resourceLimits = makeResourceLimits(limits);
     mod.threadId = 1;
     try {

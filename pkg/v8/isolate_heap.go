@@ -76,8 +76,11 @@ func NewIsolateWithOptions(opts IsolateOptions) (*Isolate, error) {
 	ptr := C.v8go_isolate_new_with_limits(&params, &limits, &failure)
 	runtime.KeepAlive(opts.MemoryBudget)
 	if ptr == nil {
-		if failure == C.V8GO_ISOLATE_OUT_OF_MEMORY {
+		switch failure {
+		case C.V8GO_ISOLATE_OUT_OF_MEMORY:
 			return nil, ErrOutOfMemory
+		case C.V8GO_ISOLATE_SETUP_OUT_OF_MEMORY:
+			return nil, ErrSetupOutOfMemory
 		}
 		return nil, errors.New("failed to create V8 isolate")
 	}
@@ -98,7 +101,8 @@ func (i *Isolate) Limits() IsolateLimits {
 
 // OutOfMemory reports whether the isolate has run out of memory: its heap
 // reached its limit, or the MemoryBudget had no room for it to grow, so its
-// execution was terminated.
+// execution was terminated. It can't run JavaScript any more: every call into
+// it is terminated, and CancelTerminateExecution leaves it terminated.
 func (i *Isolate) OutOfMemory() bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -256,26 +260,27 @@ func (i *Isolate) RemoveNearHeapLimitCallback(heapLimit uint64) error {
 }
 
 // TerminateExecution forcefully terminates the current JavaScript execution
-// on this isolate. Safe to call from another thread without the V8 lock.
+// on this isolate. Safe to call from another thread without the V8 lock. It
+// holds the isolate's mutex through the call, so Dispose can't free the
+// isolate under it.
 func (i *Isolate) TerminateExecution() {
 	i.mu.Lock()
-	ptr := i.ptr
-	i.mu.Unlock()
-	if ptr == nil {
+	defer i.mu.Unlock()
+	if i.ptr == nil {
 		return
 	}
-	C.v8go_isolate_terminate_execution(ptr)
+	C.v8go_isolate_terminate_execution(i.ptr)
 }
 
 // CancelTerminateExecution resumes execution capability after TerminateExecution.
+// An isolate that has run out of memory stays terminated.
 func (i *Isolate) CancelTerminateExecution() {
 	i.mu.Lock()
-	ptr := i.ptr
-	i.mu.Unlock()
-	if ptr == nil {
+	defer i.mu.Unlock()
+	if i.ptr == nil {
 		return
 	}
-	C.v8go_isolate_cancel_terminate_execution(ptr)
+	C.v8go_isolate_cancel_terminate_execution(i.ptr)
 }
 
 // IsExecutionTerminating reports whether JS is currently terminating because of
