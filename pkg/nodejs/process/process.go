@@ -135,7 +135,8 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 		return err
 	}
 
-	// runtime.chdir()
+	// The native half of process.chdir. The setup script below takes it and removes it
+	// from process.
 	chdirFn, err := iso.NewFunctionTemplate(p.chdirFunc)
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 	if err != nil {
 		return err
 	}
-	if err := processObj.Set("chdir", chdirVal); err != nil {
+	if err := processObj.Set("__orbitalChdir", chdirVal); err != nil {
 		return err
 	}
 
@@ -362,6 +363,29 @@ func (p *Process) Register(rt *goruntime.Runtime) error {
 					throw err;
 				}
 				return true;
+			};
+		}
+
+		// process.chdir as in Node: it throws what the OS refuses as an errno error naming
+		// the working directory and the one asked for.
+		if (process && typeof process.__orbitalChdir === 'function') {
+			var nativeChdir = process.__orbitalChdir;
+			delete process.__orbitalChdir;
+			var errnoMessages = { EACCES: 'permission denied', ENOENT: 'no such file or directory', ENOTDIR: 'not a directory' };
+			process.chdir = function chdir(directory) {
+				directory = String(directory);
+				var result = nativeChdir(directory);
+				if (result !== 0) {
+					var cwd = process.cwd();
+					var err = new Error(result[1] + ': ' + (errnoMessages[result[1]] || 'unknown error') +
+						", chdir '" + cwd + "' -> '" + directory + "'");
+					err.errno = result[0];
+					err.code = result[1];
+					err.syscall = 'chdir';
+					err.path = cwd;
+					err.dest = directory;
+					throw err;
+				}
 			};
 		}
 
@@ -843,17 +867,35 @@ func (p *Process) killFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	return result
 }
 
+// chdirFunc(dir) changes the working directory. It returns 0, or the negative errno and
+// its code as [errno, code], as libuv reports them. Without filesystem access it refuses
+// with EACCES, as the OS does for a directory it won't let the process enter.
 func (p *Process) chdirFunc(info *v8.FunctionCallbackInfo) *v8.Value {
+	ctx := info.Context()
 	args := info.Args()
 	if len(args) < 1 {
-		return nil
+		return ctx.NewInteger(0)
 	}
-	dir := args[0].String()
-	if err := os.Chdir(dir); err != nil {
-		// In a real implementation, we'd throw a proper error
-		return nil
+	var err error = syscall.EACCES
+	if _, closed := p.rt.Filesystem().(*goruntime.NoOpFilesystem); !closed {
+		err = os.Chdir(args[0].String())
 	}
-	return nil
+	if err == nil {
+		return ctx.NewInteger(0)
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		errno = syscall.ENOENT
+	}
+	code, ok := sysconst.ErrnoName(errno)
+	if !ok {
+		code = "UNKNOWN"
+	}
+	result, _ := ctx.NewArray(2)
+	result.SetIndex(0, ctx.NewInteger(-int64(errno)))
+	codeVal, _ := ctx.NewString(code)
+	result.SetIndex(1, codeVal)
+	return result
 }
 
 // reallyExitFunc backs process.reallyExit(code): it ends the runtime, which hands the code to

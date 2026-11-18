@@ -12,14 +12,16 @@ const http = require('http');
 const childProcess = require('child_process');
 
 const dir = globalThis.CLOSED_DIR || process.argv[2];
+const cwd = process.cwd();
 const results = {};
 
 function describe(e) {
   if (!e) return null;
-  const local = (s) => (typeof s === 'string' ? s.split(dir).join('<dir>') : s);
+  const local = (s) => (typeof s === 'string' ? s.split(dir).join('<dir>').split(cwd).join('<cwd>') : s);
   return {
     name: e.name, code: e.code, errno: e.errno, syscall: e.syscall, address: e.address,
-    port: e.port, hostname: e.hostname, path: local(e.path), message: local(e.message)
+    port: e.port, hostname: e.hostname, path: local(e.path), dest: local(e.dest),
+    message: local(e.message)
   };
 }
 function attempt(name, fn) {
@@ -44,6 +46,7 @@ function settle(name, start) {
 attempt('readFileSync', () => fs.readFileSync(dir + '/a.txt'));
 attempt('writeFileSync', () => fs.writeFileSync(dir + '/b.txt', 'x'));
 settle('promises.readdir', (cb) => fs.promises.readdir(dir).then(() => cb(null), cb));
+attempt('chdir', () => process.chdir(dir));
 
 // Processes
 attempt('execSync', () => childProcess.execSync('id', { stdio: 'pipe' }));
