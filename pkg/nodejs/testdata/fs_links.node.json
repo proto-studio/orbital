@@ -270,7 +270,27 @@
       "syscall": "lstat"
     }
   },
+  "realpath_callback_through_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/d/inner/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/d/inner/x",
+      "syscall": "lstat"
+    }
+  },
   "realpath_dangling": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "stat"
+    }
+  },
+  "realpath_dangling_child": {
     "error": {
       "code": "ENOENT",
       "errno": -2,
@@ -293,6 +313,26 @@
       "syscall": "lstat"
     }
   },
+  "realpath_missing_parent": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "lstat"
+    }
+  },
+  "realpath_missing_through_link": {
+    "error": {
+      "code": "ENOENT",
+      "errno": -2,
+      "message": "ENOENT: no such file or directory, lstat '\u003cdir\u003e/d/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/d/nope",
+      "syscall": "lstat"
+    }
+  },
   "realpath_native": {
     "value": "\u003cdir\u003e/d/inner"
   },
@@ -307,6 +347,26 @@
       "name": "Error",
       "path": "\u003cdir\u003e/nope",
       "syscall": "realpath"
+    }
+  },
+  "realpath_through_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/f/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f/x",
+      "syscall": "lstat"
+    }
+  },
+  "realpath_through_file_link": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": -20,
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/f/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f/x",
+      "syscall": "lstat"
     }
   },
   "rm_dir_link": {

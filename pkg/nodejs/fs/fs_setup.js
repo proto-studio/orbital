@@ -1222,49 +1222,33 @@
   }
   defineCall('mkdtemp', (prefix, options) => [prefixArg(prefix), checkedEncoding(options)], 'mkdtemp', (path, [, options]) => bytesNamedIn(bytesOf(path), options));
 
-  // realpath.native names realpath in its errors, as the C call does. Plain realpath, like
-  // Node's JavaScript one, reports a missing path from lstat, or a link to one from stat, by
-  // its absolute path.
+  // realpath.native names realpath in its errors, as the C call does.
   defineCall('realpath', (path, options) => [checkedPath(path, 'path'), checkedEncoding(options)], 'realpath', (real, [, options]) => bytesNamedIn(bytesOf(real), options));
   const realpathNativeSync = fs.realpathSync;
   const realpathNative = fs.realpath;
-  function asJsRealpathError(e, path) {
-    if (e && e.code === 'ELOOP' && e.syscall === 'realpath') return asJsRealpathLoop(e, path);
-    if (!e || e.code !== 'ENOENT' || e.syscall !== 'realpath') return e;
-    let syscall = 'lstat';
-    try {
-      fs.lstatSync(path);
-      syscall = 'stat';
-    } catch (ignored) {}
-    const p = pathModule() ? pathModule().resolve(String(pathString(path))) : String(path);
-    e.syscall = syscall;
-    e.path = p;
-    e.message = "ENOENT: no such file or directory, " + syscall + " '" + p + "'";
-    return e;
-  }
-  // Node's JavaScript realpath follows a path's links one name at a time, and reports a link
-  // cycle from its stat of the first name that leads into one, after the names before it are
-  // resolved. Once a prefix of the path loops every longer one does, and the native call met
-  // the cycle before any other error, so the first is found by halving: a few calls, however
+  // Node's JavaScript realpath walks an absolute path one name at a time. It fails at the
+  // first name it can't get past, with that name's lstat error, or its stat error if the name
+  // is a link, by the path the links before it led to. Once a prefix of the path fails to
+  // resolve every longer one does, so that name is found by halving: a few calls, however
   // many names the path has.
-  function asJsRealpathLoop(e, path) {
-    if (typeof path !== 'string' || !path.startsWith('/')) return e;
+  function asJsRealpathError(e, path) {
+    if (!e || e.syscall !== 'realpath' || typeof path !== 'string' || !path.startsWith('/')) return e;
     const names = path.split('/').filter((name) => name !== '' && name !== '.');
     const prefix = (k) => '/' + names.slice(0, k).join('/');
-    const loops = (k) => {
+    const fails = (k) => {
       try {
-        fs.statSync(prefix(k));
+        realpathNativeSync(prefix(k));
         return false;
-      } catch (s) {
-        return !!s && s.code === 'ELOOP';
+      } catch (ignored) {
+        return true;
       }
     };
     let lo = 1;
     let hi = names.length;
-    if (hi === 0 || !loops(hi)) return e;
+    if (hi === 0 || !fails(hi)) return e;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (loops(mid)) hi = mid;
+      if (fails(mid)) hi = mid;
       else lo = mid + 1;
     }
     let base;
@@ -1274,9 +1258,16 @@
       return e;
     }
     const next = (base === '/' ? '' : base) + '/' + names[lo - 1];
-    e.syscall = 'stat';
-    e.path = next;
-    e.message = 'ELOOP: too many symbolic links encountered, stat \'' + next + '\'';
+    try {
+      fs.lstatSync(next);
+    } catch (l) {
+      return l;
+    }
+    try {
+      fs.statSync(next);
+    } catch (s) {
+      return s;
+    }
     return e;
   }
   // Node's JavaScript realpath makes the path absolute and cleans it first; the native one
@@ -1287,7 +1278,7 @@
     try {
       return realpathNativeSync(absolute, options);
     } catch (e) {
-      throw asJsRealpathError(e, e && e.code === 'ELOOP' ? absolute : path);
+      throw asJsRealpathError(e, absolute);
     }
   };
   fs.realpathSync.native = realpathNativeSync;
