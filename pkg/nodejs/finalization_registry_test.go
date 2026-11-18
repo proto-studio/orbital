@@ -75,7 +75,8 @@ setTimeout(() => {
 }
 
 // Per-task semantics, as in Node 20 run with --expose-gc: a cleanup callback can
-// unregister the others with its token; each registry's ticks and promise jobs
+// unregister the others with its token (which of them runs first isn't fixed:
+// it follows the order V8's parallel marking threads find the dead cells); each registry's ticks and promise jobs
 // run before the next registry's cleanup; an exception stops the batch and is
 // reported before its ticks; and cleanup left by the last callback runs before
 // 'beforeExit'.
@@ -108,7 +109,8 @@ const regC = new FinalizationRegistry((held) => {
 setTimeout(() => {
   gc();
   setTimeout(() => {
-    out.a = a;
+    // Either held value can come first; only one callback runs.
+    out.a = a.map((v) => (v === 'a1' || v === 'a2' ? 'a1 or a2' : v));
     // b's registries may be cleaned in either order; check the grouping.
     const first = b[0] && b[0].slice(-1);
     const second = first === 'A' ? 'B' : 'A';
@@ -124,7 +126,7 @@ setTimeout(() => {
 }, 10);
 `)
 	want := map[string]any{
-		"a": []any{"a2", true},
+		"a": []any{"a1 or a2", true},
 		"b": true,
 		"c": []any{"cleanup", "error x", "tick", "promise", "cleanup", "error x", "tick", "promise"},
 		"d": []any{"cleanup", "beforeExit"},
