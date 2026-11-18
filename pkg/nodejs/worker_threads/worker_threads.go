@@ -497,7 +497,6 @@ func (wk *worker) configure(cfg *goruntime.Config) {
 	opts := &cfg.IsolateOptions
 	opts.CapYoungGenerationSizeInBytes = lowerCap(opts.CapYoungGenerationSizeInBytes, mbToBytes(wk.limits[0]))
 	opts.CapOldGenerationSizeInBytes = lowerCap(opts.CapOldGenerationSizeInBytes, mbToBytes(wk.limits[1]))
-	opts.CapCodeRangeSizeInBytes = lowerCap(opts.CapCodeRangeSizeInBytes, mbToBytes(wk.limits[2]))
 }
 
 // lowerCap answers the lower of two caps, where 0 is none, so the script's can't raise
@@ -519,10 +518,17 @@ func (wk *worker) effectiveLimits(wrt *goruntime.Runtime) string {
 	if s := wk.limits[3]; s > 0 && s < stack {
 		stack = s
 	}
+	// V8 shares one code range between every isolate (pointer compression's cage),
+	// set up by the first, so a worker's can't be limited. Like the stack, it's
+	// reported as Node reports it: what the script asked for, or 0 for the default.
+	codeRange := 0.0
+	if c := wk.limits[2]; c > 0 {
+		codeRange = c
+	}
 	values := []float64{
 		float64(limits.MaxYoungGenerationSizeInBytes) / (1 << 20),
 		float64(limits.MaxOldGenerationSizeInBytes) / (1 << 20),
-		float64(limits.CodeRangeSizeInBytes) / (1 << 20),
+		codeRange,
 		stack,
 	}
 	data, _ := json.Marshal(values)

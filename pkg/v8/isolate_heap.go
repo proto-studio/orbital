@@ -32,12 +32,11 @@ type IsolateOptions struct {
 	// MaxOldGenerationSizeInBytes caps only the old generation, or 0 to leave
 	// unset. Can be combined with ConfigureDefaultsFromHeapSize; applied after.
 	MaxOldGenerationSizeInBytes uint64
-	// CapOldGenerationSizeInBytes, CapYoungGenerationSizeInBytes and
-	// CapCodeRangeSizeInBytes lower the limits the fields above work out to,
-	// when they're smaller; they never raise one. 0 leaves a limit as it is.
+	// CapOldGenerationSizeInBytes and CapYoungGenerationSizeInBytes lower the
+	// limits the fields above work out to, when they're smaller; they never
+	// raise one. 0 leaves a limit as it is.
 	CapOldGenerationSizeInBytes   uint64
 	CapYoungGenerationSizeInBytes uint64
-	CapCodeRangeSizeInBytes       uint64
 	// MemoryBudget, when set, is what the isolate's heap and ArrayBuffer
 	// contents draw from. The young generation is taken from it when the
 	// isolate is made, and the old generation starts small and grows from it
@@ -54,8 +53,6 @@ type IsolateLimits struct {
 	// used up.
 	MaxOldGenerationSizeInBytes   uint64
 	MaxYoungGenerationSizeInBytes uint64
-	// CodeRangeSizeInBytes is 0 for V8's default.
-	CodeRangeSizeInBytes uint64
 }
 
 // NewIsolateWithOptions creates a V8 isolate with the given create-time options.
@@ -70,7 +67,6 @@ func NewIsolateWithOptions(opts IsolateOptions) (*Isolate, error) {
 	params.max_old_generation_size_in_bytes = C.size_t(opts.MaxOldGenerationSizeInBytes)
 	params.cap_old_generation_size_in_bytes = C.size_t(opts.CapOldGenerationSizeInBytes)
 	params.cap_young_generation_size_in_bytes = C.size_t(opts.CapYoungGenerationSizeInBytes)
-	params.cap_code_range_size_in_bytes = C.size_t(opts.CapCodeRangeSizeInBytes)
 	if opts.MemoryBudget != nil {
 		params.budget = opts.MemoryBudget.ptr
 	}
@@ -89,7 +85,6 @@ func NewIsolateWithOptions(opts IsolateOptions) (*Isolate, error) {
 	iso := &Isolate{ptr: ptr, limits: IsolateLimits{
 		MaxOldGenerationSizeInBytes:   uint64(limits.max_old_generation_size_in_bytes),
 		MaxYoungGenerationSizeInBytes: uint64(limits.max_young_generation_size_in_bytes),
-		CodeRangeSizeInBytes:          uint64(limits.code_range_size_in_bytes),
 	}}
 	runtime.SetFinalizer(iso, (*Isolate).release)
 	isolates.Store(ptr, weak.Make(iso))

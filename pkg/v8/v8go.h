@@ -37,7 +37,6 @@ typedef struct v8go_isolate_create_params {
     // 0 leaves a limit as it is.
     size_t cap_old_generation_size_in_bytes;
     size_t cap_young_generation_size_in_bytes;
-    size_t cap_code_range_size_in_bytes;
     // When set, the isolate's heap and ArrayBuffer contents draw from it.
     v8go_budget* budget;
 } v8go_isolate_create_params;
@@ -46,7 +45,6 @@ typedef struct v8go_isolate_create_params {
 typedef struct v8go_isolate_limits {
     size_t max_old_generation_size_in_bytes;
     size_t max_young_generation_size_in_bytes;
-    size_t code_range_size_in_bytes;
 } v8go_isolate_limits;
 
 // Why v8go_isolate_new_with_params returned NULL.
