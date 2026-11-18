@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -385,5 +386,77 @@ const attempt = (start) => new Promise((resolve) => {
 `)
 	if got["send"] == "EMFILE" || got["bind"] != "EADDRINUSE" || got["after"] != "bound" {
 		t.Fatalf("got %v, want a failed send and an EADDRINUSE bind, then a bind that works", got)
+	}
+}
+
+// slowUDPFactory makes real UDP sockets whose sends to 127.0.0.2 wait first, so a test can
+// have another send fail, or the script close the socket, while one is still going.
+type slowUDPFactory struct {
+	*runtime.RealSocketFactory
+	mu      sync.Mutex
+	sockets []runtime.UDPSocket
+}
+
+type slowUDPSocket struct{ runtime.UDPSocket }
+
+func (s slowUDPSocket) Send(data []byte, address string, port int) (int, error) {
+	if address == "127.0.0.2" {
+		time.Sleep(150 * time.Millisecond)
+	}
+	return s.UDPSocket.Send(data, address, port)
+}
+
+func (f *slowUDPFactory) CreateUDPSocket(socketType string) runtime.UDPSocket {
+	s := f.RealSocketFactory.CreateUDPSocket(socketType)
+	f.mu.Lock()
+	f.sockets = append(f.sockets, s)
+	f.mu.Unlock()
+	return slowUDPSocket{s}
+}
+
+// A send that fails while another on the same socket is still going leaves the socket's
+// place held, since the other one may yet open it.
+func TestCaps_DgramPlaceStaysWhileASendIsGoing(t *testing.T) {
+	factory := &slowUDPFactory{RealSocketFactory: runtime.NewRealSocketFactory()}
+	got := runCapped(t, &runtime.Config{SocketFactory: factory, MaxOpenSockets: 1}, `
+const dgram = require('dgram');
+const s = dgram.createSocket('udp4');
+s.on('error', () => {});
+const results = {};
+const other = () => new Promise((resolve) => {
+  const o = dgram.createSocket('udp4');
+  o.on('error', (e) => resolve(e.code));
+  o.bind(0, '127.0.0.1', () => { o.close(); resolve('bound'); });
+});
+s.send('x', 9, '127.0.0.2', async (e) => {
+  results.slow = e ? e.code : 'sent';
+  results.whileBound = await other();
+  s.close();
+  setTimeout(async () => { results.afterClose = await other(); done(results); }, 20);
+});
+s.send('x', 9, 'host.invalid', (e) => { results.fast = e ? e.code : 'sent'; });
+`)
+	if got["fast"] == "sent" || got["slow"] != "sent" || got["whileBound"] != "EMFILE" || got["afterClose"] != "bound" {
+		t.Fatalf("got %v, want the slow send to bind while the fast one fails, and its place held until close", got)
+	}
+}
+
+// A send still going when the script closes the socket doesn't leave a descriptor open.
+func TestCaps_DgramSendAfterCloseLeavesNothingOpen(t *testing.T) {
+	factory := &slowUDPFactory{RealSocketFactory: runtime.NewRealSocketFactory()}
+	runCapped(t, &runtime.Config{SocketFactory: factory, MaxOpenSockets: 1}, `
+const dgram = require('dgram');
+const s = dgram.createSocket('udp4');
+s.on('error', () => {});
+s.send('x', 9, '127.0.0.2');
+s.close();
+setTimeout(() => done({}), 300);
+`)
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	for _, s := range factory.sockets {
+		if addr := s.LocalAddr(); addr != nil {
+			t.Fatalf("socket still open on %v after close", addr)
+		}
 	}
 }
