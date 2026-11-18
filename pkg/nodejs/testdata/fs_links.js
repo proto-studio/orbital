@@ -103,6 +103,13 @@ async function main() {
   fs.symlinkSync('nowhere', file('dangling'));
   attempt('lstat_dangling', () => kind(fs.lstatSync(file('dangling'))));
   attempt('realpath_dangling', () => fs.realpathSync(file('dangling')));
+  // Plain realpath reports where its walk stopped, from that name's lstat (or, for a link,
+  // its stat), by the path its links led to.
+  attempt('realpath_dangling_child', () => fs.realpathSync(file('dangling/x')));
+  attempt('realpath_missing_parent', () => fs.realpathSync(file('nope/x')));
+  attempt('realpath_missing_through_link', () => fs.realpathSync(file('ld/nope/x')));
+  attempt('realpath_through_file', () => fs.realpathSync(file('f/x')));
+  attempt('realpath_through_file_link', () => fs.realpathSync(file('l/x/y')));
   attempt('unlink_link', () => { fs.unlinkSync(file('dangling')); return fs.existsSync(file('nowhere')); });
   attempt('rm_dir_link', () => { fs.symlinkSync('d', file('ld2')); fs.rmSync(file('ld2')); return fs.readdirSync(file('d')); });
   attempt('mkdtemp', () => {
@@ -135,6 +142,7 @@ async function main() {
   await attemptAsync('link_callback', async () => { await callback((cb) => fs.link(file('f'), file('hc'), cb)); return fs.readFileSync(file('hc'), 'utf8'); });
   await attemptAsync('realpath_callback', async () => (await callback((cb) => fs.realpath(file('lc'), cb)))[0]);
   await attemptAsync('realpath_callback_missing', () => callback((cb) => fs.realpath(file('nope'), cb)));
+  await attemptAsync('realpath_callback_through_file', () => callback((cb) => fs.realpath(file('ld/inner/x'), cb)));
   await attemptAsync('realpath_native_callback', async () => (await callback((cb) => fs.realpath.native(file('lc'), cb)))[0]);
   await attemptAsync('mkdtemp_callback', async () => path.basename((await callback((cb) => fs.mkdtemp(file('cb-'), cb)))[0]).length);
   await attemptAsync('readlink_callback_missing', () => callback((cb) => fs.readlink(file('nope'), cb)));
