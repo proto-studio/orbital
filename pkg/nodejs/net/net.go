@@ -1162,17 +1162,17 @@ func (n *Net) listenInheritedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("net: server not found")
 	}
 	fd := int(args[1].Integer())
-	err := runtime.ErrNotInherited
-	var srv runtime.TCPServer
-	if factory, ok := n.rt.SocketFactory().(runtime.InheritedListenerFactory); ok {
-		srv, err = factory.ListenInherited(fd)
-	}
+	// The factory listens on a duplicate of fd, so it counts like any other listener.
+	err := s.listenWith(func() (runtime.TCPServer, error) {
+		factory, ok := n.rt.SocketFactory().(runtime.InheritedListenerFactory)
+		if !ok {
+			return nil, runtime.ErrNotInherited
+		}
+		return factory.ListenInherited(fd)
+	})
 	if err != nil {
 		return jsJSON(ctx, netdial.Describe(err, "listen", "", 0))
 	}
-	s.mu.Lock()
-	s.srv = srv
-	s.mu.Unlock()
 	return ctx.Null()
 }
 
@@ -1185,15 +1185,25 @@ func (n *Net) socketInheritedFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		return ctx.Throw("net: invalid arguments")
 	}
 	fd := int(args[0].Integer())
+	// The factory wraps a duplicate of fd, so the socket counts against
+	// Config.MaxOpenSockets like any other; the conn gives the slot back on close.
+	release, err := n.rt.OpenSocket()
+	if err != nil {
+		return jsJSON(ctx, netdial.Describe(err, "open", "", 0))
+	}
 	var socket runtime.TCPSocket
-	var err error = &runtime.ErrFileDescriptor{Type: "UNKNOWN"}
+	err = &runtime.ErrFileDescriptor{Type: "UNKNOWN"}
 	if factory, ok := n.rt.SocketFactory().(runtime.InheritedSocketFactory); ok {
 		socket, err = factory.SocketInherited(fd)
 	}
 	if err != nil {
+		release()
 		return jsJSON(ctx, netdial.Describe(err, "open", "", 0))
 	}
 	id, conn := n.newConn()
+	conn.mu.Lock()
+	conn.slot = release
+	conn.mu.Unlock()
 	conn.SetSocket(socket)
 	return ctx.NewNumber(float64(id))
 }
