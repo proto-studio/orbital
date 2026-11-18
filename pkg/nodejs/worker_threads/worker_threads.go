@@ -338,7 +338,13 @@ func (w *WorkerThreads) runWorker(wk *worker) {
 	dirname := "."
 	if !wk.eval {
 		// The entry is read through the configured filesystem, like any other file
-		// the program opens, so an injected sandbox applies to it.
+		// the program opens, so an injected sandbox applies to it. Node looks it up
+		// first, and reports one it can't stat, missing or refused, as not found.
+		if _, statErr := wrt.Filesystem().Stat(wk.target); statErr != nil {
+			wk.fromWorker <- wtEvent{kind: "codedError", data: "MODULE_NOT_FOUND\nCannot find module '" + wk.target + "'"}
+			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
+			return
+		}
 		data, readErr := goruntime.ReadFileLimited(wrt.Filesystem(), wk.target, goruntime.MaxSourceSize)
 		var tooLarge *goruntime.FileTooLargeError
 		if errors.As(readErr, &tooLarge) {
