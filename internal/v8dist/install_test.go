@@ -13,7 +13,8 @@ import (
 )
 
 // makeArtifact writes a v8-<target>.tar.gz containing lib/<the three archives>
-// into dir and returns its path and sha256.
+// and the licenses/ notices a V8 build packages beside them into dir, and returns
+// its path and sha256.
 func makeArtifact(t *testing.T, dir, filename string) (string, string) {
 	t.Helper()
 	path := filepath.Join(dir, filename)
@@ -23,10 +24,10 @@ func makeArtifact(t *testing.T, dir, filename string) (string, string) {
 	}
 	zw := gzip.NewWriter(f)
 	tw := tar.NewWriter(zw)
-	for _, name := range []string{LibMonolith, LibGlue, LibCxx} {
+	for _, name := range []string{"lib/" + LibMonolith, "lib/" + LibGlue, "lib/" + LibCxx, "licenses/third_party/icu/LICENSE"} {
 		body := []byte("dummy " + name)
 		if err := tw.WriteHeader(&tar.Header{
-			Name: "lib/" + name,
+			Name: name,
 			Mode: 0o644,
 			Size: int64(len(body)),
 		}); err != nil {
@@ -98,6 +99,9 @@ func TestInstallWithManifest(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(res.LibDir, lib)); err != nil {
 			t.Errorf("missing installed lib %s: %v", lib, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(res.InstallDir, "licenses", "third_party", "icu", "LICENSE")); err != nil {
+		t.Errorf("license notices not installed beside lib/: %v", err)
 	}
 	wantDir := filepath.Join(installRoot, "v9.9.9", goos+"-"+goarch)
 	if res.InstallDir != wantDir {

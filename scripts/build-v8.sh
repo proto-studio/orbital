@@ -363,9 +363,17 @@ HEADERS_ASSET="v8-headers.tar.gz"
 python3 "$REPO_ROOT/scripts/reproducible-tar.py" "$DIST_DIR/$HEADERS_ASSET" "$REPO_ROOT/deps/v8" include
 ( cd "$DIST_DIR" && shasum -a 256 "$HEADERS_ASSET" > "$HEADERS_ASSET.sha256" )
 
+# License notices for V8 and the third-party code compiled into the libraries,
+# which their licenses require binary redistributions to carry.
+python3 "$REPO_ROOT/scripts/collect-v8-licenses.py" \
+    --src "$(pwd)" --out-dir "$BUILD_OUT_DIR" --dest "$OUTPUT_DIR/licenses" \
+    obj/libv8_monolith.a \
+    obj/buildtools/third_party/libc++/libc++.a \
+    obj/buildtools/third_party/libc++abi/libc++abi.a
+
 # gzip (not zstd) so the consumer-side extractor stays pure Go stdlib.
 ASSET="v8-${TARGET_OS}-${GOARCH}.tar.gz"
-python3 "$REPO_ROOT/scripts/reproducible-tar.py" "$DIST_DIR/$ASSET" "$OUTPUT_DIR" lib
+python3 "$REPO_ROOT/scripts/reproducible-tar.py" "$DIST_DIR/$ASSET" "$OUTPUT_DIR" lib licenses
 ( cd "$DIST_DIR" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
 
 # ============================================================================
@@ -376,7 +384,7 @@ echo ""
 echo "=== Build Complete ==="
 echo "V8 libraries:      $OUTPUT_DIR/lib/ (libv8_monolith.a, libv8_libcxx.a, libv8go_glue.a)"
 echo "V8 headers:        $REPO_ROOT/deps/v8/include/ (+ $DIST_DIR/$HEADERS_ASSET)"
-echo "Release asset:     $DIST_DIR/$ASSET"
+echo "Release asset:     $DIST_DIR/$ASSET (lib/ + licenses/)"
 echo ""
 ls -lh "$OUTPUT_DIR/lib/"*.a
 echo ""
