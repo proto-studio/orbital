@@ -130,8 +130,10 @@ async function main() {
 
   // A file in the middle of a path.
   attempt('through_file', () => fs.statSync(file('abs/x')));
-  attempt('file_trailing_slash', () => fs.statSync(file('abs/')));
-  attempt('file_trailing_slash_lstat', () => fs.lstatSync(file('abs/')));
+  // A "/" after a file. After a link to a file it depends on the OS version: older macOS
+  // follows the link and ignores the "/".
+  attempt('file_trailing_slash', () => fs.statSync(raw('f/')));
+  attempt('file_trailing_slash_lstat', () => fs.lstatSync(raw('f/')));
   attempt('read_through_file', () => fs.readFileSync(file('f/x')));
 
   // Errors from the link calls themselves.

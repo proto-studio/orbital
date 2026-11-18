@@ -159,3 +159,22 @@ func TestMemoryFS_LinksInDirsAndHandles(t *testing.T) {
 		t.Errorf("Stat of the handle: %+v, %v", info, err)
 	}
 }
+
+// A "/" after a link to a file is ENOTDIR, as on Linux and current macOS, for stat and lstat
+// alike; after a link to a directory it follows the link.
+func TestMemoryFS_TrailingSlashAfterLink(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "WriteFile", m.WriteFile("/f", []byte("f"), 0o644))
+	mustDo(t, "MkdirAll", m.MkdirAll("/d", 0o755))
+	mustDo(t, "Symlink", m.Symlink("f", "/lf"))
+	mustDo(t, "Symlink", m.Symlink("d", "/ld"))
+	if _, err := m.Stat("/lf/"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Stat(lf/) = %v, want ENOTDIR", err)
+	}
+	if _, err := m.Lstat("/lf/"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Lstat(lf/) = %v, want ENOTDIR", err)
+	}
+	if info, err := m.Lstat("/ld/"); err != nil || !info.IsDir {
+		t.Errorf("Lstat(ld/) = %+v, %v; want the directory", info, err)
+	}
+}

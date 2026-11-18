@@ -314,9 +314,9 @@
     "error": {
       "code": "ENOTDIR",
       "errno": "matches code",
-      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/abs/'",
+      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/f/'",
       "name": "Error",
-      "path": "\u003cdir\u003e/abs/",
+      "path": "\u003cdir\u003e/f/",
       "syscall": "stat"
     }
   },
@@ -324,9 +324,9 @@
     "error": {
       "code": "ENOTDIR",
       "errno": "matches code",
-      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/abs/'",
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/f/'",
       "name": "Error",
-      "path": "\u003cdir\u003e/abs/",
+      "path": "\u003cdir\u003e/f/",
       "syscall": "lstat"
     }
   },
