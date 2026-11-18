@@ -166,6 +166,22 @@ func (d *Dgram) takeSlot(id int64) error {
 	return nil
 }
 
+// dropSlotIfUnbound gives back the slot takeSlot took for a socket whose bind failed
+// before it opened anything, explicitly or on its first send, so failed binds don't use
+// up the cap.
+func (d *Dgram) dropSlotIfUnbound(id int64, socket runtime.UDPSocket) {
+	if socket.LocalAddr() != nil {
+		return
+	}
+	d.mu.Lock()
+	release := d.slots[id]
+	delete(d.slots, id)
+	d.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
 func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	args := info.Args()
 	if len(args) < 4 {
@@ -195,6 +211,9 @@ func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer d.rt.EventLoop().DonePendingWork()
 
 		err := socket.Bind(nil, address, port)
+		if err != nil {
+			d.dropSlotIfUnbound(id, socket)
+		}
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -237,6 +256,7 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	data, err := base64.StdEncoding.DecodeString(msg)
 	if err != nil {
+		d.dropSlotIfUnbound(id, socket)
 		d.callCallbackWithBytes(callback, err.Error(), 0)
 		return nil
 	}
@@ -246,6 +266,9 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer d.rt.EventLoop().DonePendingWork()
 
 		n, err := d.send(socket, data, address, port, family)
+		if err != nil {
+			d.dropSlotIfUnbound(id, socket)
+		}
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
