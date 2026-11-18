@@ -1244,25 +1244,39 @@
   }
   // Node's JavaScript realpath follows a path's links one name at a time, and reports a link
   // cycle from its stat of the first name that leads into one, after the names before it are
-  // resolved.
+  // resolved. Once a prefix of the path loops every longer one does, and the native call met
+  // the cycle before any other error, so the first is found by halving: a few calls, however
+  // many names the path has.
   function asJsRealpathLoop(e, path) {
     if (typeof path !== 'string' || !path.startsWith('/')) return e;
-    let base = '/';
-    for (const name of path.split('/')) {
-      if (name === '' || name === '.') continue;
-      const next = (base === '/' ? '' : base) + '/' + name;
+    const names = path.split('/').filter((name) => name !== '' && name !== '.');
+    const prefix = (k) => '/' + names.slice(0, k).join('/');
+    const loops = (k) => {
       try {
-        fs.statSync(next);
-        base = realpathNativeSync(next);
+        fs.statSync(prefix(k));
+        return false;
       } catch (s) {
-        if (s && s.code === 'ELOOP') {
-          e.syscall = 'stat';
-          e.path = next;
-          e.message = 'ELOOP: too many symbolic links encountered, stat \'' + next + '\'';
-        }
-        return e;
+        return !!s && s.code === 'ELOOP';
       }
+    };
+    let lo = 1;
+    let hi = names.length;
+    if (hi === 0 || !loops(hi)) return e;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (loops(mid)) hi = mid;
+      else lo = mid + 1;
     }
+    let base;
+    try {
+      base = lo === 1 ? '/' : realpathNativeSync(prefix(lo - 1));
+    } catch (ignored) {
+      return e;
+    }
+    const next = (base === '/' ? '' : base) + '/' + names[lo - 1];
+    e.syscall = 'stat';
+    e.path = next;
+    e.message = 'ELOOP: too many symbolic links encountered, stat \'' + next + '\'';
     return e;
   }
   // Node's JavaScript realpath makes the path absolute and cleans it first; the native one
