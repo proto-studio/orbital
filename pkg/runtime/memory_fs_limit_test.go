@@ -7,6 +7,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
 	"proto.zip/studio/orbital/pkg/v8"
 )
@@ -580,5 +581,42 @@ func TestRuntimeChargesMemoryFilesystemToBudget(t *testing.T) {
 
 	if _, err := New(&Config{Filesystem: m, MemoryBudget: NewMemoryBudget(1 << 20)}); !errors.Is(err, ErrOutOfMemory) {
 		t.Fatalf("New with a filesystem bigger than its budget = %v, want ErrOutOfMemory", err)
+	}
+}
+
+// Dispose keeps a memory filesystem limited until filesystem work the runtime started is done,
+// so work still running after the script stops can't grow it past the limit.
+func TestRuntimeLimitsFilesystemWorkUntilItEnds(t *testing.T) {
+	m := NewMemoryFilesystem()
+	rt, err := New(&Config{Filesystem: m, IsolateOptions: v8.IsolateOptions{MaxHeapSizeInBytes: 64 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.WriteFile("/f", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := rt.FilesystemWork()
+	disposed := make(chan struct{})
+	go func() {
+		rt.Dispose()
+		close(disposed)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-disposed:
+		t.Fatal("Dispose returned with filesystem work still running")
+	default:
+	}
+	// The work, still running, is limited.
+	wantNoSpace(t, "Truncate during Dispose", m.Truncate("/f", 64<<20))
+	done()
+	done() // calling done twice counts once
+	select {
+	case <-disposed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Dispose didn't return once the work was done")
+	}
+	if len(m.limits) != 0 {
+		t.Fatalf("a disposed runtime left %d limits on the filesystem", len(m.limits))
 	}
 }

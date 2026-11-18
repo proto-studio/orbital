@@ -679,8 +679,10 @@ func (f *FS) readFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	// Execute async
 	f.rt.EventLoop().AddPendingWork()
+	fsDone := f.rt.FilesystemWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
+		defer fsDone()
 
 		// The file holds one of Config.MaxOpenFiles while it's read.
 		var data []byte
@@ -730,8 +732,10 @@ func (f *FS) writeFileFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	// Execute async
 	f.rt.EventLoop().AddPendingWork()
+	fsDone := f.rt.FilesystemWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
+		defer fsDone()
 
 		failed := "open"
 		data, err := base64.StdEncoding.DecodeString(encoded)
@@ -822,8 +826,10 @@ func (f *FS) statFunc(info *v8.FunctionCallbackInfo, syscallName string) *v8.Val
 	statPath := f.statFor(syscallName)
 
 	f.rt.EventLoop().AddPendingWork()
+	fsDone := f.rt.FilesystemWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
+		defer fsDone()
 
 		stat, err := statPath(path)
 
@@ -948,8 +954,10 @@ func (f *FS) readStreamReadFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	}
 
 	f.rt.EventLoop().AddPendingWork()
+	fsDone := f.rt.FilesystemWork()
 	go func() {
 		defer f.rt.EventLoop().DonePendingWork()
+		defer fsDone()
 
 		toRead := size
 		if h.limited {

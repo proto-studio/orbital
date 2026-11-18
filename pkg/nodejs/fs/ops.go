@@ -83,8 +83,10 @@ func (f *FS) asyncCall(op fsOp) v8.FunctionCallback {
 		}
 		loop := f.rt.EventLoop()
 		loop.AddPendingWork()
+		fsDone := f.rt.FilesystemWork()
 		f.schedule(fd, func() {
 			defer loop.DonePendingWork()
+			defer fsDone()
 			r := work()
 			loop.EnqueueMicrotask(func() {
 				value := f.describe(ctx, r)
