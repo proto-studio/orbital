@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,4 +128,27 @@ func TestFSMemoryLinks_PlatformCasesMatchDisk(t *testing.T) {
 	got := runOnMemory(t, mem, script)
 	disk := runJS(t, &runtime.Config{Timeout: 60 * time.Second}, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", t.TempDir(), script))
 	wantJSON(t, got, disk)
+}
+
+// realpath of a long path that ends in a link cycle reports the cycle quickly: the error is
+// built from a few calls, not one for each name in the path.
+func TestFSMemoryLinks_RealpathLoopInLongPath(t *testing.T) {
+	mem := runtime.NewMemoryFilesystem()
+	deep := strings.TrimSuffix(strings.Repeat("/d", 480), "/")
+	if err := mem.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Symlink("loop", deep+"/loop"); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: mem}, fmt.Sprintf(`
+const fs = require('fs');
+const start = Date.now();
+let err;
+for (let i = 0; i < 20; i++) {
+  try { fs.realpathSync(%q); } catch (e) { err = e; }
+}
+done({ code: err.code, syscall: err.syscall, path: err.path, fast: Date.now() - start < 2000 });
+`, deep+"/loop/x"))
+	wantJSON(t, got, map[string]any{"code": "ELOOP", "syscall": "stat", "path": deep + "/loop", "fast": true})
 }
