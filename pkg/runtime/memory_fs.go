@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -342,6 +343,15 @@ func (m *MemoryFilesystem) Rename(oldPath, newPath string) error {
 	if f == nil {
 		return fs.ErrNotExist
 	}
+	if existing == nil && to.dirOnly && !f.isDir {
+		// Only a directory can take a name with a "/" after it: Linux refuses a file with
+		// ENOTDIR, macOS with ENOENT.
+		errno := syscall.ENOTDIR
+		if goruntime.GOOS == "darwin" {
+			errno = syscall.ENOENT
+		}
+		return &fs.PathError{Op: "rename", Path: newPath, Err: errno}
+	}
 	if existing == f {
 		// Two names for one file: rename(2) leaves both.
 		return nil
@@ -361,10 +371,11 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	dst, existing, err := m.resolve("copyfile", dst, true)
+	to, err := m.walk("copyfile", dst, followFinal)
 	if err != nil {
 		return err
 	}
+	dst, existing := to.path, to.file
 	if f == nil || f.isDir {
 		return fs.ErrNotExist
 	}
@@ -375,6 +386,11 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 		existing.mode = f.mode
 		existing.modTime = time.Now()
 		return nil
+	}
+	if existing == nil {
+		if err := fileAt("copyfile", to); err != nil {
+			return err
+		}
 	}
 	m.files[dst] = m.newFile(&memFile{
 		data:    append([]byte(nil), f.data...),
