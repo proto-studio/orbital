@@ -151,6 +151,11 @@ async function main() {
   attempt('symlink_onto_loop', () => fs.symlinkSync('x', file('loop')));
   attempt('symlink_missing_parent', () => fs.symlinkSync('x', file('nodir/l')));
   attempt('symlink_parent_file', () => fs.symlinkSync('x', file('f/l')));
+  attempt('symlink_slash', () => fs.symlinkSync('x', file('newl') + '/'));
+  attempt('symlink_slash_made', () => !!fs.lstatSync(file('newl'), { throwIfNoEntry: false }));
+  attempt('symlink_slash_onto_dir', () => fs.symlinkSync('x', file('b') + '/'));
+  attempt('link_slash', () => fs.linkSync(file('f'), file('newh') + '/'));
+  attempt('link_slash_made', () => fs.existsSync(file('newh')));
   attempt('symlink_through_link', () => { fs.symlinkSync('../f', file('bl/viabl')); return fs.readFileSync(file('b/viabl'), 'utf8'); });
   attempt('readlink_file', () => fs.readlinkSync(file('f')));
   attempt('readlink_dir', () => fs.readlinkSync(file('b')));

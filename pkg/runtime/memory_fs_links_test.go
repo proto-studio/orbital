@@ -217,3 +217,46 @@ func TestMemoryFS_LongPathsResolveQuickly(t *testing.T) {
 		t.Errorf("1000 lookups of a %d-byte path took %v", len(path), elapsed)
 	}
 }
+
+// unlink and rename take a "/" after a link to a file as Linux and current macOS do: the name
+// isn't a directory, so the call fails and leaves both.
+func TestMemoryFS_SlashAfterFileLinkIsKept(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "WriteFile", m.WriteFile("/f", []byte("f"), 0o644))
+	mustDo(t, "Symlink", m.Symlink("f", "/lf"))
+	if err := m.Remove("/lf/"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Remove(lf/) = %v, want ENOTDIR", err)
+	}
+	if err := m.Rename("/lf/", "/moved"); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Rename(lf/) = %v, want ENOTDIR", err)
+	}
+	if !m.Exists("/f") || !m.Exists("/lf") || m.Exists("/moved") {
+		t.Errorf("f %v, lf %v, moved %v; want f and lf kept", m.Exists("/f"), m.Exists("/lf"), m.Exists("/moved"))
+	}
+}
+
+// A new link's name with a "/" after it can't be made. If the name is a link already, macOS
+// follows it, so one that leads nowhere is ENOENT and one to a file ENOTDIR; Linux takes the
+// name as taken.
+func TestMemoryFS_NewLinkNameWithSlash(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "WriteFile", m.WriteFile("/f", []byte("f"), 0o644))
+	mustDo(t, "Symlink", m.Symlink("f", "/lf"))
+	mustDo(t, "Symlink", m.Symlink("nowhere", "/dangling"))
+	if err := m.Symlink("x", "/new/"); !errors.Is(err, syscall.ENOENT) || m.Exists("/new") {
+		t.Errorf("Symlink(new/) = %v, want ENOENT and nothing made", err)
+	}
+	if err := m.Link("/f", "/new/"); !errors.Is(err, syscall.ENOENT) || m.Exists("/new") {
+		t.Errorf("Link(new/) = %v, want ENOENT and nothing made", err)
+	}
+	dangling, file := syscall.EEXIST, syscall.EEXIST
+	if goruntime.GOOS == "darwin" {
+		dangling, file = syscall.ENOENT, syscall.ENOTDIR
+	}
+	if err := m.Symlink("x", "/dangling/"); !errors.Is(err, dangling) || m.Exists("/nowhere") {
+		t.Errorf("Symlink(dangling/) = %v, want %v and nothing made", err, dangling)
+	}
+	if err := m.Link("/f", "/lf/"); !errors.Is(err, file) {
+		t.Errorf("Link(lf/) = %v, want %v", err, file)
+	}
+}

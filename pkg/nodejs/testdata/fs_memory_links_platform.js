@@ -1,7 +1,8 @@
 // Run by TestFSMemoryLinks_PlatformCasesMatchDisk on the in-memory filesystem and on the real
 // disk, which must agree. These cases differ between platforms, so no single capture from
 // Node covers them: a "/" after a link makes unlink, rmdir and rename act on where the link
-// leads on macOS, and Linux refuses it.
+// leads on macOS, and Linux refuses it. A "/" after a link to a file is left out: older macOS
+// ignores it.
 const fs = require('fs');
 
 const dir = globalThis.FS_DIR;
@@ -30,14 +31,17 @@ const cases = {
   unlink_link: (d) => fs.unlinkSync(d + '/elink'),
   unlink_link_slash: (d) => fs.unlinkSync(d + '/link/'),
   unlink_empty_link_slash: (d) => fs.unlinkSync(d + '/elink/'),
-  unlink_file_link_slash: (d) => fs.unlinkSync(d + '/flink/'),
   unlink_dangling_slash: (d) => fs.unlinkSync(d + '/dangling/'),
   rmdir_link: (d) => fs.rmdirSync(d + '/elink'),
   rmdir_link_slash: (d) => fs.rmdirSync(d + '/elink/'),
   rmdir_full_link_slash: (d) => fs.rmdirSync(d + '/link/'),
   rmdir_full: (d) => fs.rmdirSync(d + '/target'),
   rename_link_slash: (d) => fs.renameSync(d + '/elink/', d + '/moved'),
-  rename_file_link_slash: (d) => fs.renameSync(d + '/flink/', d + '/moved'),
+  mkdir_dangling_slash: (d) => fs.mkdirSync(d + '/dangling/'),
+  mkdir_dir_link_slash: (d) => fs.mkdirSync(d + '/link/'),
+  symlink_dangling_slash: (d) => fs.symlinkSync('x', d + '/dangling/'),
+  link_dangling_slash: (d) => fs.linkSync(d + '/f', d + '/dangling/'),
+  symlink_dir_link_slash: (d) => fs.symlinkSync('x', d + '/link/'),
   mkdirp_file_link_child: (d) => fs.mkdirSync(d + '/flink/a', { recursive: true }),
   mkdirp_link: (d) => fs.mkdirSync(d + '/link', { recursive: true }),
   mkdirp_through_link: (d) => fs.mkdirSync(d + '/link/a/b', { recursive: true }),

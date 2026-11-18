@@ -223,10 +223,11 @@ func (m *MemoryFilesystem) Mkdir(path string, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path, f, err := m.resolve("mkdir", path, false)
+	r, err := m.walk("mkdir", path, createFinal)
 	if err != nil {
 		return err
 	}
+	path, f := r.path, r.file
 	if f != nil {
 		return fs.ErrExist
 	}

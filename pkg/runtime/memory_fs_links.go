@@ -57,7 +57,25 @@ const (
 	// entryFinal acts on the directory entry, as unlink, rmdir and rename do. A "/" after a
 	// link follows it on macOS, as keepFinal does; Linux refuses it with ENOTDIR.
 	entryFinal
+	// newFinal names the entry a call makes, as symlink and link do: a final link is kept
+	// even with a "/" after it, so the name is taken.
+	newFinal
 )
+
+// createFinal is how mkdir, symlink and link treat the final link in the name they are to
+// make: macOS follows one with a "/" after it, so mkdir makes the directory it leads to and a
+// link to a file is ENOTDIR; Linux takes the name as taken.
+var createFinal = func() finalLink {
+	if goruntime.GOOS == "darwin" {
+		return keepFinal
+	}
+	return newFinal
+}()
+
+// trailingSlash reports whether p ends in "/" or "/.", which asks for a directory.
+func trailingSlash(p string) bool {
+	return strings.HasSuffix(p, "/") || strings.HasSuffix(p, "/.")
+}
 
 // entrySlashFollows is whether unlink, rmdir and rename follow a final link with a "/" after
 // it, as macOS's do; Linux's refuse it.
@@ -160,8 +178,13 @@ func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, er
 			}
 			continue
 		}
-		if mf.isLink() && final && trailing && finalLink == entryFinal && !entrySlashFollows {
-			return fail(syscall.ENOTDIR)
+		if mf.isLink() && final && trailing {
+			switch {
+			case finalLink == newFinal:
+				continue // the link itself, whose name is taken
+			case finalLink == entryFinal && !entrySlashFollows:
+				return fail(syscall.ENOTDIR)
+			}
 		}
 		if mf.isLink() && (!final || finalLink == followFinal || trailing) {
 			links++
@@ -208,12 +231,13 @@ func (m *MemoryFilesystem) hasChildren(canonical string) bool {
 }
 
 // newName checks that canonical, which a link is to be made at, is free and its directory is
-// there, as link(2) and symlink(2) do. The caller holds m.mu.
-func (m *MemoryFilesystem) newName(op, canonical string) error {
+// there, as link(2) and symlink(2) do. A link is never a directory, so a name given with a "/"
+// after it can't be made. The caller holds m.mu.
+func (m *MemoryFilesystem) newName(op, canonical string, trailing bool) error {
 	if m.present(canonical) {
 		return &fs.PathError{Op: op, Path: canonical, Err: syscall.EEXIST}
 	}
-	if !m.present(path.Dir(canonical)) {
+	if trailing || !m.present(path.Dir(canonical)) {
 		return &fs.PathError{Op: op, Path: canonical, Err: syscall.ENOENT}
 	}
 	return nil
@@ -231,13 +255,14 @@ func (m *MemoryFilesystem) Symlink(target, p string) error {
 	if len(target) >= pathMax {
 		return &fs.PathError{Op: "symlink", Path: p, Err: syscall.ENAMETOOLONG}
 	}
-	canonical, _, err := m.resolve("symlink", p, false)
+	r, err := m.walk("symlink", p, createFinal)
 	if err != nil {
 		return err
 	}
-	if err := m.newName("symlink", canonical); err != nil {
+	if err := m.newName("symlink", r.path, trailingSlash(p)); err != nil {
 		return err
 	}
+	canonical := r.path
 	m.files[canonical] = m.newFile(&memFile{mode: fs.ModeSymlink | 0o755, target: target})
 	return nil
 }
@@ -274,14 +299,15 @@ func (m *MemoryFilesystem) Link(existing, p string) error {
 	if err != nil {
 		return err
 	}
-	canonical, _, err := m.resolve("link", p, false)
+	r, err := m.walk("link", p, createFinal)
 	if err != nil {
 		return err
 	}
+	canonical := r.path
 	if mf == nil {
 		return &fs.PathError{Op: "link", Path: existing, Err: syscall.ENOENT}
 	}
-	if err := m.newName("link", canonical); err != nil {
+	if err := m.newName("link", canonical, trailingSlash(p)); err != nil {
 		return err
 	}
 	if mf.isDir {
