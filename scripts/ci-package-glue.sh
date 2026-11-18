@@ -36,7 +36,11 @@ work="$(mktemp -d)"
 tar -C "$work" -xzf "$base/$asset"
 cp "deps/v8/$platform/lib/libv8go_glue.a" "$work/lib/libv8go_glue.a"
 
+# Keep the license notices a V8 build packaged with the libraries.
+paths=(lib)
+[ -d "$work/licenses" ] && paths+=(licenses)
+
 mkdir -p dist
-python3 scripts/reproducible-tar.py "dist/$asset" "$work" lib
+python3 scripts/reproducible-tar.py "dist/$asset" "$work" "${paths[@]}"
 ( cd dist && shasum -a 256 "$asset" > "$asset.sha256" )
 cat "dist/$asset.sha256"

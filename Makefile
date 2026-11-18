@@ -434,8 +434,11 @@ v8-glue:
 
 # Package a built platform's libraries into a checksum-verified release asset:
 #   $(DIST_DIR)/v8-<goos>-<goarch>.tar.gz  (+ .sha256)
-# The archive contains only the lib/ directory (consumers never compile V8's
-# headers — pkg/v8 uses its own v8go.h). This is what CI uploads and publishes.
+# The archive contains lib/ and licenses/, no headers (consumers never compile
+# V8's headers — pkg/v8 uses its own v8go.h). licenses/ holds the notices that
+# V8's license and those of the code it bundles require binary redistributions
+# to carry, collected from the V8 build in V8_OUT_DIR (see
+# scripts/collect-v8-licenses.py). This is what CI uploads and publishes.
 # Headers ship separately as dist/v8-headers.tar.gz (see package-v8-headers).
 # gzip (not zstd) keeps the consumer-side extractor pure Go stdlib.
 .PHONY: package-v8
@@ -444,10 +447,19 @@ package-v8:
 		echo "Error: no built libraries for $(TARGET_OS)/$(TARGET_ARCH); run 'make v8-$(TARGET_OS)-$(TARGET_ARCH)' first." >&2; \
 		exit 1; \
 	fi
+	@if [ ! -f "$(V8_OUT_DIR)/build.ninja" ]; then \
+		echo "Error: $(V8_OUT_DIR) is not a V8 build directory; the license notices are collected from it." >&2; \
+		exit 1; \
+	fi
+	@PATH="$(CURDIR)/$(DEPOT_TOOLS_DIR):$$PATH" python3 scripts/collect-v8-licenses.py \
+		--src "$(V8_SRC_DIR)" --out-dir "$(V8_OUT_DIR)" --dest "$(V8_PLATFORM_DIR)/licenses" \
+		obj/libv8_monolith.a \
+		obj/buildtools/third_party/libc++/libc++.a \
+		obj/buildtools/third_party/libc++abi/libc++abi.a
 	@mkdir -p $(DIST_DIR)
 	@asset="v8-$(GOOS)-$(GOARCH).tar.gz"; \
 	echo ">>> Packaging $(DIST_DIR)/$$asset"; \
-	python3 scripts/reproducible-tar.py "$(DIST_DIR)/$$asset" "$(V8_PLATFORM_DIR)" lib; \
+	python3 scripts/reproducible-tar.py "$(DIST_DIR)/$$asset" "$(V8_PLATFORM_DIR)" lib licenses; \
 	( cd $(DIST_DIR) && shasum -a 256 "$$asset" > "$$asset.sha256" ); \
 	echo ">>> Wrote $(DIST_DIR)/$$asset ($$(du -h "$(DIST_DIR)/$$asset" | cut -f1))"; \
 	cat "$(DIST_DIR)/$$asset.sha256"
