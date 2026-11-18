@@ -113,3 +113,26 @@ done({ env: Object.keys(process.env), hostname: require('os').hostname(), kill }
 		})
 	}
 }
+
+// With a filesystem, process.chdir still reaches the OS, and throws what it refuses as
+// Node does (captured from Node v20.18.1).
+func TestChdirWithFilesystemThrowsAsNode(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{}, `
+let err = null;
+try { process.chdir('no-such-dir'); } catch (e) {
+  err = { code: e.code, errno: e.errno, syscall: e.syscall, path: e.path, dest: e.dest, message: e.message };
+}
+done({ err, unchanged: process.cwd() === `+fmt.Sprintf("%q", cwd)+` });
+`)
+	wantJSON(t, got, map[string]any{
+		"err": map[string]any{
+			"code": "ENOENT", "errno": float64(-2), "syscall": "chdir", "path": cwd, "dest": "no-such-dir",
+			"message": "ENOENT: no such file or directory, chdir '" + cwd + "' -> 'no-such-dir'",
+		},
+		"unchanged": true,
+	})
+}

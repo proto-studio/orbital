@@ -1,4 +1,13 @@
 {
+  "chdir": {
+    "code": "EACCES",
+    "dest": "\u003cdir\u003e",
+    "errno": -13,
+    "message": "EACCES: permission denied, chdir '\u003ccwd\u003e' -\u003e '\u003cdir\u003e'",
+    "name": "Error",
+    "path": "\u003ccwd\u003e",
+    "syscall": "chdir"
+  },
   "dgram.send": {
     "address": "0.0.0.0",
     "code": "EPERM",
