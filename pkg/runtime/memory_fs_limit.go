@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"proto.zip/studio/orbital/pkg/v8"
@@ -99,4 +100,14 @@ func (rt *Runtime) SampleHeapUsage() {
 	if rt.fsLimit != nil {
 		rt.fsLimit.sample(rt.filesystem.(memoryLimited).memoryInUse())
 	}
+}
+
+// FilesystemWork counts work on the runtime's filesystem that runs off the JavaScript thread,
+// until done is called. Dispose waits for it before it stops counting a MemoryFilesystem
+// against the runtime's memory limit, so work still running when the runtime stops can't
+// grow the filesystem past it. Call it on the JavaScript thread, before starting the work.
+func (rt *Runtime) FilesystemWork() (done func()) {
+	rt.fsWork.Add(1)
+	var once sync.Once
+	return func() { once.Do(rt.fsWork.Done) }
 }

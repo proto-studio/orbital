@@ -35,6 +35,7 @@ type Runtime struct {
 	filesystem        Filesystem
 	fsLimit           *isolateMemoryLimit // the isolate's limit on a MemoryFilesystem, if fs is one
 	unlimitFS         func()              // removes fsLimit from the filesystem
+	fsWork            sync.WaitGroup      // filesystem work running off the JavaScript thread
 	systemInfo        SystemInfo
 	httpClient        HTTPClient
 	environment       Environment
@@ -718,6 +719,14 @@ func (rt *Runtime) Dispose() {
 
 	// Close all tracked resources (files, sockets, etc.)
 	rt.resourceTracker.CloseAll()
+
+	// Filesystem work the runtime started may still be running, as after process.exit, and
+	// a memory filesystem's growth is counted against the runtime's limit only while it's
+	// attached. So the limit stays until that work is done. A memory filesystem's calls
+	// don't block, so this doesn't wait long. The work may need rt.mu, so it isn't held.
+	if rt.unlimitFS != nil {
+		rt.fsWork.Wait()
+	}
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
