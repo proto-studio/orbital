@@ -300,3 +300,59 @@ udp.bind(0, '127.0.0.1', () => {
 		t.Error("the first connection was not dropped")
 	}
 }
+
+// Each socket or listener made from an inherited descriptor wraps a duplicate of it, so
+// it counts against the cap like any other, and closing it frees its place.
+func TestCaps_InheritedDescriptorsCount(t *testing.T) {
+	t.Run("sockets", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { r.Close(); w.Close() })
+		fd := int(r.Fd())
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowInheritedDescriptors(fd)
+		got := runCapped(t, &runtime.Config{SocketFactory: factory, MaxOpenSockets: 1}, `
+const net = require('net');
+const wrap = () => { try { return { s: new net.Socket({ fd: `+strconv.Itoa(fd)+` }) }; } catch (e) { return { e }; } };
+const a = wrap(), b = wrap();
+a.s.destroy();
+setTimeout(() => {
+  const c = wrap();
+  done({ a: !!a.s, b: describe(b.e), c: c.s ? 'wrapped' : describe(c.e) });
+  if (c.s) c.s.destroy();
+}, 50);
+`)
+		wantJSON(t, got, map[string]any{
+			"a": true,
+			"b": "Error|EMFILE|-24|open|undefined|undefined|undefined|undefined|open EMFILE",
+			"c": "wrapped",
+		})
+	})
+	t.Run("listeners", func(t *testing.T) {
+		fd, _ := inheritedListener(t)
+		factory := runtime.NewRealSocketFactory()
+		factory.AllowInheritedDescriptors(fd)
+		got := runCapped(t, &runtime.Config{SocketFactory: factory, MaxOpenSockets: 1}, `
+const net = require('net');
+const listen = () => new Promise((resolve) => {
+  const server = net.createServer();
+  server.on('error', (e) => resolve({ e }));
+  server.listen({ fd: `+strconv.Itoa(fd)+` }, () => resolve({ server }));
+});
+(async () => {
+  const a = await listen(), b = await listen();
+  await new Promise((r) => a.server.close(r));
+  const c = await listen();
+  done({ a: !!a.server, b: describe(b.e), c: c.server ? 'listening' : describe(c.e) });
+  if (c.server) c.server.close();
+})();
+`)
+		wantJSON(t, got, map[string]any{
+			"a": true,
+			"b": "Error|EMFILE|-24|listen|null|undefined|undefined|undefined|listen EMFILE: too many open files",
+			"c": "listening",
+		})
+	})
+}

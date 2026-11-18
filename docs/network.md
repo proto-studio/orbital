@@ -98,8 +98,8 @@ as a pipe or a Unix socket, is refused.
 `Config.MaxOpenSockets` caps how many sockets scripts have open at once, across the runtime and
 the workers and loader realms it starts. It counts TCP connections and listeners, including the
 connections under TLS, HTTP and HTTP/2, UDP sockets once they bind, and requests in flight through
-`HTTPClient`, including `fetch`. Sockets from inherited descriptors don't count, since they open
-nothing new. 0, the default, allows none; a negative value means no limit beyond the OS's.
+`HTTPClient`, including `fetch`. A socket or listener a script makes from an inherited descriptor
+counts too, since Orbital duplicates the descriptor for each one. 0, the default, allows none; a negative value means no limit beyond the OS's.
 
 Going over the cap gives the error Node gives at the OS's descriptor limit: `net.connect`,
 `http.request` and `fetch` fail with `open EMFILE`, `listen` with

@@ -38,9 +38,10 @@
   function listenError(desc, address, port) {
     const text = kListenMessages[desc.code];
     if (text) {
-      // As Node's, the port is left out when it is 0.
-      const where = port === undefined || port === 0 ? address : `${address}:${port}`;
-      desc.message = `listen ${desc.code}: ${text} ${where}`;
+      // As Node's, the port is left out when it is 0, and the address too when there is
+      // none, as for a listener on a descriptor.
+      const where = address == null ? '' : port === undefined || port === 0 ? ` ${address}` : ` ${address}:${port}`;
+      desc.message = `listen ${desc.code}: ${text}${where}`;
     }
     return nodeError(desc);
   }
