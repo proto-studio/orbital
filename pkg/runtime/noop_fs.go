@@ -156,7 +156,7 @@ func (n *NoOpFilesystem) Link(existing, path string) error {
 
 // Realpath always fails with EACCES.
 func (n *NoOpFilesystem) Realpath(path string) (string, error) {
-	return "", denied("lstat", path)
+	return "", denied("realpath", path)
 }
 
 // Statfs always fails with EACCES.

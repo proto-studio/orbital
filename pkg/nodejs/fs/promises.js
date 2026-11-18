@@ -233,10 +233,6 @@
       return new Promise((resolve, reject) => {
         try {
           const openFlags = flags === undefined || flags === null ? 'r' : flags;
-          if (!fs.existsSync(path) && String(openFlags).startsWith('r')) {
-            reject(fs.__makeFsError(`ENOENT: no such file or directory, open '${path}'`, 'ENOENT', path, 'open'));
-            return;
-          }
           resolve(fileHandle(fs.openSync(path, openFlags, mode), path));
         } catch (e) {
           reject(e);

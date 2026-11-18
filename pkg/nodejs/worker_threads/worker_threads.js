@@ -308,6 +308,7 @@
           const nl = data.indexOf('\n');
           const err = new Error(data.slice(nl + 1));
           err.code = data.slice(0, nl);
+          if (err.code === 'MODULE_NOT_FOUND') err.requireStack = [];
           w.emit('error', err);
           break;
         }

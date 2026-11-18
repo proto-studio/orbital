@@ -125,6 +125,13 @@ See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DN
 and [`docs/child-processes.md`](docs/child-processes.md) for `ProcessSpawner`: the built-in
 spawners, `SandboxProcessConfig`, and wrapping one with your own policy.
 
+For no filesystem at all, use `runtime.NewNoOpFilesystem()`. Every `fs` call then fails with
+`EACCES`, as Node's do for a path the OS won't let it access. Loading code from files goes through
+the filesystem too, so `require` and `import` of files and `new Worker(file)` fail with
+`MODULE_NOT_FOUND` (`ERR_MODULE_NOT_FOUND` for `import`). Pass scripts as source instead, or grant
+a filesystem that holds them. `runtime.NewMemoryFilesystem()` starts empty but still lets scripts
+write to it.
+
 ## Uncaught exceptions and `process.exit`
 
 An exception no one catches, or a promise left rejected, follows Node's rules:

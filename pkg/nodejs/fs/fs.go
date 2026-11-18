@@ -832,11 +832,8 @@ func (f *FS) readStreamOpenFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 
 	file, err := f.fs().OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
-		code := "ENOENT"
-		if f.fs().Exists(path) {
-			code = "EACCES"
-		}
-		errStr, _ := ctx.NewString(err.Error())
+		code, description, _ := errnoOf(err)
+		errStr, _ := ctx.NewString(fsErrorMessage(code, description, "open", path))
 		codeStr, _ := ctx.NewString(code)
 		result.Set("error", errStr)
 		result.Set("code", codeStr)
