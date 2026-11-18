@@ -226,6 +226,11 @@ func New(cfg *Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
+	if iso.OutOfMemory() {
+		// Its heap was too small for V8 to set it up.
+		iso.Dispose()
+		return nil, &OutOfMemoryError{}
+	}
 
 	ctx, err := iso.NewContext()
 	if err != nil {

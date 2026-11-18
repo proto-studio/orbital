@@ -308,8 +308,10 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 		var oom *goruntime.OutOfMemoryError
 		switch {
 		case errors.As(err, &oom):
-			// It ran out while it was being set up, as a Node worker can.
+			// It ran out while it was being set up, as a Node worker can. Node's then
+			// exits with 0, having never set a code of its own.
 			wk.fromWorker <- wtEvent{kind: "codedError", data: outOfMemoryError}
+			return 0
 		case errors.Is(err, goruntime.ErrOutOfMemory):
 			// The MemoryBudget had no room for its heap.
 			wk.fromWorker <- wtEvent{kind: "codedError", data: initFailedError + err.Error()}
@@ -362,10 +364,11 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	initCode := fmt.Sprintf("__wt_init_worker(%s, %s);", jsStringLiteral(wk.workerData), jsStringLiteral(limitsJSON))
 	if _, err := wrt.RunScript(initCode, "worker_bootstrap.js"); err != nil {
 		if wrt.OutOfMemory() {
+			// Still setting up: as above, Node's worker exits with 0.
 			wk.fromWorker <- wtEvent{kind: "codedError", data: outOfMemoryError}
-		} else {
-			wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
+			return 0
 		}
+		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
 		return 1
 	}
 	deliverFn, _ := wrt.GetGlobal("__wt_deliver")

@@ -219,9 +219,12 @@ func (i *Isolate) GetHeapSpaceStatistics() ([]HeapSpaceStatistics, error) {
 // instead of letting V8 FatalProcessOutOfMemory and kill the process.
 type NearHeapLimitCallback func(currentHeapLimit, initialHeapLimit uint64) (newHeapLimit uint64)
 
-// AddNearHeapLimitCallback registers a near-heap-limit callback on this isolate.
-// Only the most recently added callback is invoked by V8; replacing clears any
-// previous Go-side registration for this isolate.
+// AddNearHeapLimitCallback registers a near-heap-limit callback on this isolate,
+// replacing any added before. It is asked first each time V8 nears the limit. A
+// limit it raises past what's in use is taken, charged to the MemoryBudget when
+// there is one (when the budget can't cover it, the isolate runs out of memory);
+// otherwise the isolate grows from its budget or runs out of memory as it would
+// without the callback.
 func (i *Isolate) AddNearHeapLimitCallback(cb NearHeapLimitCallback) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -241,7 +244,8 @@ func (i *Isolate) AddNearHeapLimitCallback(cb NearHeapLimitCallback) error {
 
 // RemoveNearHeapLimitCallback removes the near-heap-limit callback and restores
 // the heap limit. If heapLimit is 0 it is ignored by V8; otherwise V8 restores
-// toward that limit (clamped to the current heap size).
+// toward that limit (clamped to the current heap size). An isolate with a
+// MemoryBudget keeps the limit it has.
 func (i *Isolate) RemoveNearHeapLimitCallback(heapLimit uint64) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()

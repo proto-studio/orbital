@@ -108,5 +108,16 @@
       "event": "exit",
       "limits": {}
     }
+  ],
+  "tiny": [
+    {
+      "code": "ERR_WORKER_OUT_OF_MEMORY",
+      "event": "error",
+      "message": "Worker terminated due to reaching memory limit: JS heap out of memory"
+    },
+    {
+      "code": 0,
+      "event": "exit"
+    }
   ]
 }

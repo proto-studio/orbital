@@ -38,6 +38,15 @@ async function run(given) {
   out.ignored = await run({ maxOldGenerationSizeMb: '16', maxYoungGenerationSizeMb: -1, codeRangeSizeMb: 0 });
   out.none = await run(undefined);
 
+  // An old generation too small to start in: Node reads 0 as its 2 MiB minimum.
+  const tiny = new Worker('1', { eval: true, resourceLimits: { maxOldGenerationSizeMb: 0 } });
+  const tinyEvents = [];
+  tiny.on('error', (e) => tinyEvents.push({ event: 'error', code: e.code, message: e.message }));
+  out.tiny = await new Promise((resolve) => tiny.on('exit', (code) => {
+    tinyEvents.push({ event: 'exit', code });
+    resolve(tinyEvents);
+  }));
+
   const w = new Worker('const a = []; for (;;) a.push({ x: Math.random(), y: [1, 2, 3] });', {
     eval: true,
     resourceLimits: { maxOldGenerationSizeMb: 8 },
