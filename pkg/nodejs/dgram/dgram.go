@@ -24,7 +24,9 @@ type Dgram struct {
 	sockets map[int64]runtime.UDPSocket
 	holds   map[int64]*holdState
 	// slots give back each bound socket's place under Config.MaxOpenSockets.
-	slots    map[int64]func()
+	slots map[int64]func()
+	// inflight counts each socket's binds and sends that may open its descriptor.
+	inflight map[int64]int
 	socketID int64
 	mu       sync.Mutex
 }
@@ -40,9 +42,10 @@ type holdState struct {
 // New creates a new Dgram module.
 func New() *Dgram {
 	return &Dgram{
-		sockets: make(map[int64]runtime.UDPSocket),
-		holds:   make(map[int64]*holdState),
-		slots:   make(map[int64]func()),
+		sockets:  make(map[int64]runtime.UDPSocket),
+		holds:    make(map[int64]*holdState),
+		slots:    make(map[int64]func()),
+		inflight: make(map[int64]int),
 	}
 }
 
@@ -166,16 +169,35 @@ func (d *Dgram) takeSlot(id int64) error {
 	return nil
 }
 
-// dropSlotIfUnbound gives back the slot takeSlot took for a socket whose bind failed
-// before it opened anything, explicitly or on its first send, so failed binds don't use
-// up the cap.
-func (d *Dgram) dropSlotIfUnbound(id int64, socket runtime.UDPSocket) {
-	if socket.LocalAddr() != nil {
+// begin records a bind or send that may open the socket's descriptor, after takeSlot.
+func (d *Dgram) begin(id int64) {
+	d.mu.Lock()
+	d.inflight[id]++
+	d.mu.Unlock()
+}
+
+// finish ends a bind or send that begin recorded. A descriptor it opened after the script
+// closed the socket is closed, since nothing else will close it. Once the last one ends
+// with the socket still unbound, as after a failed bind, its place goes back, so failed
+// binds don't use up the cap; while another is still running, the place stays, since
+// that one may yet open the descriptor.
+func (d *Dgram) finish(id int64, socket runtime.UDPSocket) {
+	d.mu.Lock()
+	d.inflight[id]--
+	last := d.inflight[id] <= 0
+	if last {
+		delete(d.inflight, id)
+	}
+	if current, open := d.sockets[id]; !open || current != socket {
+		d.mu.Unlock()
+		socket.Close()
 		return
 	}
-	d.mu.Lock()
-	release := d.slots[id]
-	delete(d.slots, id)
+	var release func()
+	if last && socket.LocalAddr() == nil {
+		release = d.slots[id]
+		delete(d.slots, id)
+	}
 	d.mu.Unlock()
 	if release != nil {
 		release()
@@ -205,15 +227,14 @@ func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallback(callback, err.Error()) })
 		return nil
 	}
+	d.begin(id)
 
 	d.rt.EventLoop().AddPendingWork()
 	go func() {
 		defer d.rt.EventLoop().DonePendingWork()
 
 		err := socket.Bind(nil, address, port)
-		if err != nil {
-			d.dropSlotIfUnbound(id, socket)
-		}
+		d.finish(id, socket)
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
@@ -253,10 +274,11 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallbackWithBytes(callback, err.Error(), 0) })
 		return nil
 	}
+	d.begin(id)
 
 	data, err := base64.StdEncoding.DecodeString(msg)
 	if err != nil {
-		d.dropSlotIfUnbound(id, socket)
+		d.finish(id, socket)
 		d.callCallbackWithBytes(callback, err.Error(), 0)
 		return nil
 	}
@@ -266,9 +288,7 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		defer d.rt.EventLoop().DonePendingWork()
 
 		n, err := d.send(socket, data, address, port, family)
-		if err != nil {
-			d.dropSlotIfUnbound(id, socket)
-		}
+		d.finish(id, socket)
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
 			if err != nil {
