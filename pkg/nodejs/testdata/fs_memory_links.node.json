@@ -463,6 +463,20 @@
       "syscall": "link"
     }
   },
+  "link_slash": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/newh/",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/newh/'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "link_slash_made": {
+    "value": false
+  },
   "loop_access": {
     "error": {
       "code": "ELOOP",
@@ -916,6 +930,31 @@
       "dest": "\u003cdir\u003e/f/l",
       "errno": "matches code",
       "message": "ENOTDIR: not a directory, symlink 'x' -\u003e '\u003cdir\u003e/f/l'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_slash": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/newl/",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, symlink 'x' -\u003e '\u003cdir\u003e/newl/'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_slash_made": {
+    "value": false
+  },
+  "symlink_slash_onto_dir": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/b/",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/b/'",
       "name": "Error",
       "path": "x",
       "syscall": "symlink"
