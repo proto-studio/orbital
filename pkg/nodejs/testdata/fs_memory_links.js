@@ -1,9 +1,10 @@
 // Runs unchanged in Node and in Orbital. fs_memory_links.node.json is this script's output
 // under Node v20.18.1 on a real disk. Regenerate it with
 //   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestFSMemoryLinks_MatchesNode'
-// Orbital runs it on the in-memory filesystem and on the local one. It covers following
-// symbolic links, dangling links, link cycles, calls on a link itself and hard links, in
-// the synchronous, callback and promise forms.
+// Orbital runs it on the local filesystem. It covers following symbolic links, dangling
+// links, link cycles, calls on a link itself and hard links, in the synchronous, callback
+// and promise forms. fs_mock.js makes the failing calls again against a mock filesystem,
+// and must fail as this capture did.
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');

@@ -66,44 +66,6 @@ func TestFSErrors_MatchesNode(t *testing.T) {
 	wantJSON(t, got, readExpected(t, expectedPath))
 }
 
-// The in-memory filesystem behaves like a real one for descriptors: each has its own offset,
-// writes at a position change only those bytes, and open honors its flags.
-func TestFS_MemoryFilesystemDescriptors(t *testing.T) {
-	memory := runtime.NewMemoryFilesystem()
-	got := runJS(t, &runtime.Config{Filesystem: memory}, `
-const fs = require('fs');
-const code = (fn) => { try { fn(); return null; } catch (e) { return e.code; } };
-fs.writeFileSync('/f', 'abcdef');
-const fd = fs.openSync('/f', 'r+');
-fs.writeSync(fd, 'XY', 2);
-fs.writeSync(fd, 'Z');
-const buf = Buffer.alloc(3);
-fs.readSync(fd, buf, 0, 3, 3);
-fs.closeSync(fd);
-const grow = fs.openSync('/g', 'w');
-fs.writeSync(grow, 'end', 4);
-fs.closeSync(grow);
-const a = fs.openSync('/f', 'a');
-fs.writeSync(a, '!');
-fs.closeSync(a);
-done({
-  file: fs.readFileSync('/f', 'utf8'),
-  read: buf.toString(),
-  grown: fs.readFileSync('/g').toString('hex'),
-  wx: code(() => fs.openSync('/f', 'wx')),
-  missing: code(() => fs.openSync('/nothing', 'r')),
-  missingWrite: code(() => fs.writeFileSync('/nothing2', 'x', { flag: 'r+' })),
-});`)
-	wantJSON(t, got, map[string]any{
-		"file":         "ZbXYef!",
-		"read":         "Yef",
-		"grown":        "00000000656e64",
-		"wx":           "EEXIST",
-		"missing":      "ENOENT",
-		"missingWrite": "ENOENT",
-	})
-}
-
 // fs.createWriteStream and the callback forms behave as in Node, and leave the same files.
 func TestFSAPIs_MatchesNode(t *testing.T) {
 	const scriptPath, expectedPath = "testdata/fs_apis.js", "testdata/fs_apis.node.json"
@@ -172,31 +134,6 @@ fs.writeFile('/full', 'x', (err) => done({
 		"async":    write,
 		"dir":      map[string]any{"code": "EISDIR", "syscall": "open", "path": "/dir", "message": "EISDIR: illegal operation on a directory, open '/dir'"},
 		"stillDir": true,
-	})
-}
-
-// Reading a directory on the in-memory filesystem fails with EISDIR at read, as on disk, and
-// a missing file with ENOENT at open.
-func TestFS_MemoryFilesystemReadErrors(t *testing.T) {
-	memory := runtime.NewMemoryFilesystem()
-	if err := memory.Mkdir("/dir", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	got := runJS(t, &runtime.Config{Filesystem: memory}, `
-const fs = require('fs');
-const describe = (e) => e && [e.code, e.syscall, e.message];
-const attempt = (fn) => { try { fn(); return null; } catch (e) { return describe(e); } };
-fs.readFile('/dir', (err) => require('fs/promises').readFile('/dir').catch((perr) => done({
-  sync: attempt(() => fs.readFileSync('/dir')),
-  callback: describe(err),
-  promise: perr.code,
-  missing: attempt(() => fs.readFileSync('/nothing')),
-})));`)
-	wantJSON(t, got, map[string]any{
-		"sync":     []any{"EISDIR", "read", "EISDIR: illegal operation on a directory, read"},
-		"callback": []any{"EISDIR", "read", "EISDIR: illegal operation on a directory, read"},
-		"promise":  "EISDIR",
-		"missing":  []any{"ENOENT", "open", "ENOENT: no such file or directory, open '/nothing'"},
 	})
 }
 

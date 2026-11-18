@@ -20,6 +20,8 @@ func TestErrnoOf(t *testing.T) {
 		{&fs.PathError{Op: "write", Path: "/a", Err: syscall.EFBIG}, "EFBIG", "file too large", -int(syscall.EFBIG)},
 		{syscall.EIO, "EIO", "i/o error", -int(syscall.EIO)},
 		{fs.ErrNotExist, "ENOENT", "no such file or directory", -int(syscall.ENOENT)},
+		{&fs.PathError{Op: "mkdir", Path: "/a", Err: fs.ErrExist}, "EEXIST", "file already exists", -int(syscall.EEXIST)},
+		{fs.ErrPermission, "EACCES", "permission denied", -int(syscall.EACCES)},
 		{syscall.Errno(250), "UNKNOWN", "unknown error", -250},
 	}
 	for _, c := range cases {
