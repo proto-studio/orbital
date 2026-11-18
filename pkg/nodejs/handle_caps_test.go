@@ -356,3 +356,34 @@ const listen = () => new Promise((resolve) => {
 		})
 	})
 }
+
+// A UDP bind that fails before opening a socket, explicitly or on a first send, gives
+// its place back, so failed binds don't use up the cap even if the script never closes
+// the socket.
+func TestCaps_FailedDgramBindsGiveBackTheirPlace(t *testing.T) {
+	taken, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	port := strconv.Itoa(taken.LocalAddr().(*net.UDPAddr).Port)
+	got := runCapped(t, &runtime.Config{MaxOpenSockets: 1}, `
+const dgram = require('dgram');
+const results = {};
+const attempt = (start) => new Promise((resolve) => {
+  const s = dgram.createSocket('udp4');
+  s.on('error', (e) => resolve(e.code));
+  start(s, () => resolve('ok'));
+});
+(async () => {
+  results.send = await attempt((s) => s.send('x', 9999, 'host.invalid'));
+  results.bind = await attempt((s) => s.bind(`+port+`, '127.0.0.1'));
+  const ok = dgram.createSocket('udp4');
+  ok.on('error', (e) => done({ ...results, after: e.code }));
+  ok.bind(0, '127.0.0.1', () => { ok.close(); done({ ...results, after: 'bound' }); });
+})();
+`)
+	if got["send"] == "EMFILE" || got["bind"] != "EADDRINUSE" || got["after"] != "bound" {
+		t.Fatalf("got %v, want a failed send and an EADDRINUSE bind, then a bind that works", got)
+	}
+}
