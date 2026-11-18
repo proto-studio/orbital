@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"io/fs"
 	"path"
 	goruntime "runtime"
@@ -82,70 +83,104 @@ func (m *MemoryFilesystem) resolve(op, p string, follow bool) (string, *memFile,
 	return r.path, r.file, err
 }
 
+// The OS's limits on a path, a name in it and a link's target, past which it gives
+// ENAMETOOLONG: PATH_MAX and NAME_MAX.
+var pathMax = func() int {
+	if goruntime.GOOS == "darwin" {
+		return 1024
+	}
+	return 4096
+}()
+
+const nameMax = 255
+
 // walk resolves p. Links along the way are followed, and a final one as final says. A
 // missing directory along the way is taken as an empty one, since files here need no parent;
-// a file that isn't a directory is ENOTDIR. The caller holds m.mu.
+// a file that isn't a directory is ENOTDIR. It takes time linear in the path and the targets
+// of the links it follows. The caller holds m.mu.
 func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, error) {
-	if p == "" {
-		return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOENT}
+	fail := func(errno syscall.Errno) (resolved, error) {
+		return resolved{}, &fs.PathError{Op: op, Path: p, Err: errno}
 	}
-	rest := strings.Split(p, "/")
-	// The last given names in rest are p's own; any before them come from link targets.
-	given := len(rest)
-	cur := "/"
+	if p == "" {
+		return fail(syscall.ENOENT)
+	}
+	if len(p) >= pathMax {
+		return fail(syscall.ENAMETOOLONG)
+	}
+	// The names still to take, last first, so a link's target is pushed on top of them. The
+	// bottom given of them are p's own; any above come from link targets. names counts those
+	// that aren't "" or ".", so the last name in the path is known at once.
+	var stack []string
+	names := 0
+	push := func(path string) {
+		parts := strings.Split(path, "/")
+		for i := len(parts) - 1; i >= 0; i-- {
+			stack = append(stack, parts[i])
+			if parts[i] != "" && parts[i] != "." {
+				names++
+			}
+		}
+	}
+	push(p)
+	given := len(stack)
+	cur := make([]byte, 1, len(p)+1)
+	cur[0] = '/'
 	links := 0
 	missingTarget := false
-	for len(rest) > 0 {
-		name := rest[0]
-		fromTarget := len(rest) > given
-		rest = rest[1:]
+	for len(stack) > 0 {
+		fromTarget := len(stack) > given
+		name := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
 		if !fromTarget {
 			given--
 		}
-		switch name {
-		case "", ".":
-			continue
-		case "..":
-			cur = path.Dir(cur)
+		if name == "" || name == "." {
 			continue
 		}
-		next := path.Join(cur, name)
-		mf, ok := m.files[next]
+		names--
+		if len(name) > nameMax {
+			return fail(syscall.ENAMETOOLONG)
+		}
+		if name == ".." {
+			cur = cur[:max(bytes.LastIndexByte(cur, '/'), 1)]
+			continue
+		}
+		parent := len(cur)
+		if parent > 1 {
+			cur = append(cur, '/')
+		}
+		cur = append(cur, name...)
+		mf, ok := m.files[string(cur)]
 		// final is set for the last name in the path; a "/" after it still asks for a directory.
-		final, trailing := true, len(rest) > 0
-		for _, r := range rest {
-			if r != "" && r != "." {
-				final = false
-				break
-			}
-		}
+		final, trailing := names == 0, len(stack) > 0
 		if !ok {
 			if fromTarget {
 				missingTarget = true
 			}
-			cur = next
 			continue
 		}
 		if mf.isLink() && final && trailing && finalLink == entryFinal && !entrySlashFollows {
-			return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOTDIR}
+			return fail(syscall.ENOTDIR)
 		}
 		if mf.isLink() && (!final || finalLink == followFinal || trailing) {
 			links++
 			if links > maxSymlinks {
-				return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ELOOP}
+				return fail(syscall.ELOOP)
 			}
+			cur = cur[:parent]
 			if strings.HasPrefix(mf.target, "/") {
-				cur = "/"
+				cur = cur[:1]
 			}
-			rest = append(strings.Split(mf.target, "/"), rest...)
+			push(mf.target)
 			continue
 		}
 		if (!final || trailing) && !mf.isDir {
-			return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOTDIR}
+			return fail(syscall.ENOTDIR)
 		}
-		cur = next
 	}
-	return resolved{path: cur, file: m.files[cur], missingTarget: missingTarget}, nil
+	canonical := string(cur)
+	return resolved{path: canonical, file: m.files[canonical], missingTarget: missingTarget}, nil
 }
 
 // present reports whether there is anything at canonical: a file, a link, the root, or a
@@ -192,6 +227,9 @@ func (m *MemoryFilesystem) Symlink(target, p string) error {
 
 	if target == "" {
 		return &fs.PathError{Op: "symlink", Path: p, Err: syscall.ENOENT}
+	}
+	if len(target) >= pathMax {
+		return &fs.PathError{Op: "symlink", Path: p, Err: syscall.ENAMETOOLONG}
 	}
 	canonical, _, err := m.resolve("symlink", p, false)
 	if err != nil {

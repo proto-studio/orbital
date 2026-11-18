@@ -139,6 +139,11 @@ async function main() {
   attempt('file_trailing_slash_lstat', () => fs.lstatSync(raw('f/')));
   attempt('read_through_file', () => fs.readFileSync(file('f/x')));
 
+  // Names longer than every OS allows.
+  attempt('name_too_long_stat', () => fs.statSync(file('n'.repeat(256))));
+  attempt('name_too_long_write', () => fs.writeFileSync(file('n'.repeat(256)), 'x'));
+  attempt('name_too_long_symlink', () => fs.symlinkSync('f', file('n'.repeat(256))));
+
   // Errors from the link calls themselves.
   attempt('symlink_onto_file', () => fs.symlinkSync('x', file('f')));
   attempt('symlink_onto_dir', () => fs.symlinkSync('x', file('b')));

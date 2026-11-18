@@ -7,8 +7,10 @@ import (
 	"os"
 	goruntime "runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func mustDo(t *testing.T, what string, err error) {
@@ -176,5 +178,42 @@ func TestMemoryFS_TrailingSlashAfterLink(t *testing.T) {
 	}
 	if info, err := m.Lstat("/ld/"); err != nil || !info.IsDir {
 		t.Errorf("Lstat(ld/) = %+v, %v; want the directory", info, err)
+	}
+}
+
+// Paths, names and link targets past the OS's limits are ENAMETOOLONG, as on disk.
+func TestMemoryFS_NameTooLong(t *testing.T) {
+	m := NewMemoryFilesystem()
+	long := "/" + strings.Repeat("./", pathMax/2)
+	if _, err := m.Stat(long); !errors.Is(err, syscall.ENAMETOOLONG) {
+		t.Errorf("Stat of a %d-byte path: %v, want ENAMETOOLONG", len(long), err)
+	}
+	if _, err := m.Stat("/" + strings.Repeat("./", (pathMax-2)/2)); err == nil || errors.Is(err, syscall.ENAMETOOLONG) {
+		t.Errorf("Stat of a path under the limit: %v, want the root's own result", err)
+	}
+	if err := m.WriteFile("/"+strings.Repeat("n", nameMax+1), nil, 0o644); !errors.Is(err, syscall.ENAMETOOLONG) {
+		t.Errorf("WriteFile of a %d-byte name: %v, want ENAMETOOLONG", nameMax+1, err)
+	}
+	mustDo(t, "WriteFile", m.WriteFile("/"+strings.Repeat("n", nameMax), nil, 0o644))
+	if err := m.Symlink(strings.Repeat("a", pathMax), "/l"); !errors.Is(err, syscall.ENAMETOOLONG) {
+		t.Errorf("Symlink to a %d-byte target: %v, want ENAMETOOLONG", pathMax, err)
+	}
+}
+
+// Resolving a path with as many names as the limit allows takes time linear in it, so a
+// script can't stall a call with one.
+func TestMemoryFS_LongPathsResolveQuickly(t *testing.T) {
+	m := NewMemoryFilesystem()
+	mustDo(t, "MkdirAll", m.MkdirAll("/a", 0o755))
+	mustDo(t, "Symlink", m.Symlink("a/"+strings.Repeat("./", (pathMax-8)/2), "/l"))
+	path := "/" + strings.Repeat("a/../", (pathMax-8)/5) + "l"
+	start := time.Now()
+	for range 1000 {
+		if _, err := m.Stat(path); err != nil {
+			t.Fatalf("Stat(%d-byte path): %v", len(path), err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("1000 lookups of a %d-byte path took %v", len(path), elapsed)
 	}
 }
