@@ -45,7 +45,7 @@ func (m *MemoryFilesystem) unname(canonical string) {
 	if mf, ok := m.files[canonical]; ok {
 		mf.nlink--
 		delete(m.files, canonical)
-		m.used -= nameCost(canonical)
+		m.release(nameCost(canonical))
 		m.forget(mf)
 	}
 }

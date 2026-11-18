@@ -9,8 +9,21 @@ import (
 // memoryLimited is a Filesystem whose memory can be counted against a limit, such as a
 // MemoryFilesystem, or a type that embeds one.
 type memoryLimited interface {
-	limitMemory(limit memoryLimit) (remove func())
+	limitMemory(limit memoryLimit) (remove func(), ok bool)
 	memoryInUse() int64
+}
+
+// budgetLimit charges a filesystem's memory to a MemoryBudget, which the heaps of the runtime
+// and its workers draw from too. A heap that would grow into what the filesystem holds runs
+// out of memory, and a filesystem that would grow into what the heaps hold fails with ENOSPC.
+type budgetLimit struct{ budget *MemoryBudget }
+
+func (l budgetLimit) charge(_, delta int64) bool {
+	return l.budget.Charge(uint64(delta)) == nil
+}
+
+func (l budgetLimit) release(n int64) {
+	l.budget.Release(uint64(n))
 }
 
 // isolateMemoryLimit keeps a filesystem's memory and an isolate's heap together within the
@@ -65,15 +78,21 @@ func (l *isolateMemoryLimit) sample(fsUsed int64) {
 	l.heapUsed.Store(used)
 }
 
-func (l *isolateMemoryLimit) fits(total int64) bool {
+// charge checks the filesystem's usage after growing by delta, with the heap's, against the
+// heap limit. Nothing is taken, so there is nothing to release.
+func (l *isolateMemoryLimit) charge(used, delta int64) bool {
 	if l.limit == 0 {
 		return true // V8 reported no limit
 	}
+	total := used + delta
 	return total >= 0 && l.heapUsed.Load()+uint64(total) <= l.limit
 }
 
+func (l *isolateMemoryLimit) release(int64) {}
+
 // SampleHeapUsage records the isolate's heap usage, which a MemoryFilesystem's growth is
-// checked with, together with what it holds, against the isolate's heap limit. The fs module
+// checked with, together with what it holds, against the isolate's heap limit when the
+// runtime has no MemoryBudget. The fs module
 // calls it as each call starts, on the goroutine running JavaScript, so work it does off that
 // goroutine is checked with the usage when the call was made.
 func (rt *Runtime) SampleHeapUsage() {
