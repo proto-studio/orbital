@@ -88,6 +88,21 @@ type resolved struct {
 	// missingTarget is set when a name a link's target gives is missing, as for a link that
 	// leads nowhere.
 	missingTarget bool
+	// dirOnly is set when a "/" follows the last name, given or from a link's target, so
+	// only a directory can be there.
+	dirOnly bool
+}
+
+// fileAt checks that a file may be made at r, which is missing: a name that must be a
+// directory can't be a file. Linux's open(2) refuses it with EISDIR, macOS's with ENOENT.
+func fileAt(op string, r resolved) error {
+	if !r.dirOnly {
+		return nil
+	}
+	if goruntime.GOOS == "darwin" {
+		return &fs.PathError{Op: op, Path: r.path, Err: syscall.ENOENT}
+	}
+	return &fs.PathError{Op: op, Path: r.path, Err: syscall.EISDIR}
 }
 
 // resolve gives the canonical path p names, and the file there, or nil if there is none,
@@ -145,7 +160,7 @@ func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, er
 	cur := make([]byte, 1, len(p)+1)
 	cur[0] = '/'
 	links := 0
-	missingTarget := false
+	missingTarget, dirOnly := false, false
 	for len(stack) > 0 {
 		fromTarget := len(stack) > given
 		name := stack[len(stack)-1]
@@ -172,6 +187,7 @@ func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, er
 		mf, ok := m.files[string(cur)]
 		// final is set for the last name in the path; a "/" after it still asks for a directory.
 		final, trailing := names == 0, len(stack) > 0
+		dirOnly = final && trailing
 		if !ok {
 			if fromTarget {
 				missingTarget = true
@@ -203,7 +219,7 @@ func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, er
 		}
 	}
 	canonical := string(cur)
-	return resolved{path: canonical, file: m.files[canonical], missingTarget: missingTarget}, nil
+	return resolved{path: canonical, file: m.files[canonical], missingTarget: missingTarget, dirOnly: dirOnly}, nil
 }
 
 // present reports whether there is anything at canonical: a file, a link, the root, or a

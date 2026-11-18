@@ -169,9 +169,15 @@ func (m *MemoryFilesystem) WriteFile(path string, data []byte, perm fs.FileMode)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path, mf, err := m.resolve("open", path, true)
+	r, err := m.walk("open", path, followFinal)
 	if err != nil {
 		return err
+	}
+	path, mf := r.path, r.file
+	if mf == nil {
+		if err := fileAt("open", r); err != nil {
+			return err
+		}
 	}
 	// An existing file keeps its identity and mode, as a real one does, so handles open on it
 	// see the new contents.
@@ -197,11 +203,15 @@ func (m *MemoryFilesystem) AppendFile(path string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path, f, err := m.resolve("open", path, true)
+	r, err := m.walk("open", path, followFinal)
 	if err != nil {
 		return err
 	}
+	path, f := r.path, r.file
 	if f == nil {
+		if err := fileAt("open", r); err != nil {
+			return err
+		}
 		m.files[path] = m.newFile(&memFile{
 			data:    append([]byte(nil), data...),
 			mode:    0644,
@@ -254,9 +264,6 @@ func (m *MemoryFilesystem) MkdirAll(path string, perm fs.FileMode) error {
 		return &fs.PathError{Op: "mkdir", Path: path, Err: syscall.ENOENT}
 	}
 	path = r.path
-	if path == "/" {
-		return nil
-	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	current := ""
 	for _, part := range parts {
@@ -510,21 +517,33 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// O_EXCL with O_CREATE fails on a final link, even one that leads nowhere, as open(2) does.
+	// O_EXCL with O_CREATE fails on a final link, even one that leads nowhere, and O_NOFOLLOW
+	// refuses one with ELOOP, as open(2) does.
 	excl := flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0
-	path, mf, err := m.resolve("open", path, !excl)
+	nofollow := flag&syscall.O_NOFOLLOW != 0
+	final := followFinal
+	if excl || nofollow {
+		final = keepFinal
+	}
+	r, err := m.walk("open", path, final)
 	if err != nil {
 		return nil, err
 	}
+	path, mf := r.path, r.file
 	exists := mf != nil
 	switch {
-	case exists && flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0:
+	case exists && excl:
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EEXIST}
+	case exists && nofollow && mf.isLink():
+		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ELOOP}
 	case !exists && flag&os.O_CREATE == 0:
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ENOENT}
 	case exists && mf.isDir && writable:
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 	case !exists:
+		if err := fileAt("open", r); err != nil {
+			return nil, err
+		}
 		mf = m.newFile(&memFile{mode: perm & fs.ModePerm, modTime: time.Now()})
 		m.files[path] = mf
 	}

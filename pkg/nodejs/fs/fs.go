@@ -559,6 +559,7 @@ func openFlagConstants(ctx *v8.Context) (*v8.Value, error) {
 		{"O_TRUNC", os.O_TRUNC},
 		{"O_APPEND", os.O_APPEND},
 		{"O_SYNC", os.O_SYNC},
+		{"O_NOFOLLOW", syscall.O_NOFOLLOW},
 	} {
 		if err := obj.Set(flag.name, ctx.NewInteger(int64(flag.value))); err != nil {
 			return nil, err
