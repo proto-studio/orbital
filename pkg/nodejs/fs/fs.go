@@ -440,7 +440,8 @@ func (f *FS) createStatObject(ctx *v8.Context, stat *runtime.FileInfo) *v8.Value
 	dev, ino, nlink, rdev := float64(stat.Dev), float64(stat.Ino), float64(stat.Nlink), float64(stat.Rdev)
 	blksize, blocks := float64(stat.Blksize), float64(stat.Blocks)
 	if !stat.HasDetails {
-		nlink, blksize, blocks = 1, 4096, float64((stat.Size+511)/512)
+		// A Filesystem may count a file's names without the rest, as the in-memory one does.
+		nlink, blksize, blocks = max(nlink, 1), 4096, float64((stat.Size+511)/512)
 	}
 	num("dev", dev)
 	num("mode", float64(posixMode(stat.Mode)))

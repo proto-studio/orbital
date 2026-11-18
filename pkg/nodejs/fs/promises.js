@@ -190,7 +190,10 @@
     symlink: (target, path, type) => viaCallback('symlink', target, path, type),
     readlink: (path, options) => viaCallback('readlink', path, options),
     link: (existingPath, newPath) => viaCallback('link', existingPath, newPath),
-    realpath: (path, options) => viaCallback('realpath', path, options),
+    // Node's promise realpath is the native one, which names realpath in its errors.
+    realpath: (path, options) => new Promise((resolve, reject) => {
+      fs.realpath.native(path, options, (err, value) => (err ? reject(err) : resolve(value)));
+    }),
 
     chmod: function(path, mode) {
       return viaCallback('chmod', path, mode);

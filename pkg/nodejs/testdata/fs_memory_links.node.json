@@ -1,0 +1,895 @@
+{
+  "absolute": {
+    "value": [
+      "hi",
+      "\u003cdir\u003e/f"
+    ]
+  },
+  "cb_link": {
+    "value": 2
+  },
+  "cb_link_dir": {
+    "error": {
+      "code": "EPERM",
+      "dest": "\u003cdir\u003e/cbbh",
+      "errno": "matches code",
+      "message": "EPERM: operation not permitted, link '\u003cdir\u003e/b' -\u003e '\u003cdir\u003e/cbbh'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/b",
+      "syscall": "link"
+    }
+  },
+  "cb_link_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/cbh",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/cbh'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "cb_lstat": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "cb_read_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "open"
+    }
+  },
+  "cb_readlink": {
+    "value": "f"
+  },
+  "cb_readlink_file": {
+    "error": {
+      "code": "EINVAL",
+      "errno": "matches code",
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "readlink"
+    }
+  },
+  "cb_realpath": {
+    "value": "\u003cdir\u003e/f"
+  },
+  "cb_realpath_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "stat"
+    }
+  },
+  "cb_realpath_native_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, realpath '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "realpath"
+    }
+  },
+  "cb_stat_dangling": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling2'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling2",
+      "syscall": "stat"
+    }
+  },
+  "cb_stat_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "stat"
+    }
+  },
+  "cb_symlink": {
+    "value": "H"
+  },
+  "cb_symlink_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/cbl",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'f' -\u003e '\u003cdir\u003e/cbl'",
+      "name": "Error",
+      "path": "f",
+      "syscall": "symlink"
+    }
+  },
+  "cb_unlink_link": {
+    "value": true
+  },
+  "chain": {
+    "value": [
+      "hi",
+      "\u003cdir\u003e/f",
+      "\u003cdir\u003e/f"
+    ]
+  },
+  "copy_through_links": {
+    "value": [
+      "HI",
+      "HI",
+      true
+    ]
+  },
+  "dangling_exists": {
+    "value": false
+  },
+  "dangling_lstat": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "dangling_mkdir": {
+    "error": {
+      "code": "EEXIST",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, mkdir '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "mkdir"
+    }
+  },
+  "dangling_open_excl": {
+    "error": {
+      "code": "EEXIST",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, open '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "open"
+    }
+  },
+  "dangling_read": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, open '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "open"
+    }
+  },
+  "dangling_readlink": {
+    "value": "nowhere"
+  },
+  "dangling_realpath": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "stat"
+    }
+  },
+  "dangling_realpath_native": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, realpath '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "realpath"
+    }
+  },
+  "dangling_stat": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "stat"
+    }
+  },
+  "dangling_write": {
+    "value": [
+      "made",
+      true
+    ]
+  },
+  "dir_link": {
+    "value": [
+      [
+        false,
+        false,
+        true,
+        "40000"
+      ],
+      [
+        true,
+        false,
+        false,
+        "120000"
+      ],
+      [
+        false,
+        false,
+        true,
+        "40000"
+      ],
+      [
+        "f",
+        "made",
+        "sub",
+        "up",
+        "w"
+      ],
+      "hi"
+    ]
+  },
+  "dirents": {
+    "value": [
+      [
+        "abs",
+        true,
+        false,
+        false
+      ],
+      [
+        "alias",
+        true,
+        false,
+        false
+      ],
+      [
+        "b",
+        false,
+        false,
+        true
+      ],
+      [
+        "bl",
+        true,
+        false,
+        false
+      ],
+      [
+        "chain1",
+        true,
+        false,
+        false
+      ],
+      [
+        "chain2",
+        true,
+        false,
+        false
+      ],
+      [
+        "f",
+        false,
+        true,
+        false
+      ]
+    ]
+  },
+  "dotdot_mkdir": {
+    "value": true
+  },
+  "dotdot_write": {
+    "value": [
+      "f",
+      "sub",
+      "w"
+    ]
+  },
+  "example": {
+    "value": [
+      "b/sub",
+      true,
+      "inner",
+      "\u003cdir\u003e/b/sub",
+      "\u003cdir\u003e/b/f"
+    ]
+  },
+  "file_trailing_slash": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/abs/'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/abs/",
+      "syscall": "stat"
+    }
+  },
+  "file_trailing_slash_lstat": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, lstat '\u003cdir\u003e/abs/'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/abs/",
+      "syscall": "lstat"
+    }
+  },
+  "handle_through_link": {
+    "value": [
+      "HI",
+      true
+    ]
+  },
+  "hard": {
+    "value": [
+      "two+",
+      2,
+      2,
+      true,
+      "640",
+      false
+    ]
+  },
+  "hard_handle": {
+    "value": "two+!"
+  },
+  "hard_rename_onto_other": {
+    "value": [
+      true,
+      true,
+      2
+    ]
+  },
+  "hard_rename_over": {
+    "value": [
+      1,
+      "other"
+    ]
+  },
+  "hard_through_symlink_dir": {
+    "value": [
+      "inner",
+      2
+    ]
+  },
+  "hard_unlink": {
+    "value": [
+      "two+!",
+      1
+    ]
+  },
+  "link_dir": {
+    "error": {
+      "code": "EPERM",
+      "dest": "\u003cdir\u003e/bh",
+      "errno": "matches code",
+      "message": "EPERM: operation not permitted, link '\u003cdir\u003e/b' -\u003e '\u003cdir\u003e/bh'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/b",
+      "syscall": "link"
+    }
+  },
+  "link_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/copied",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/copied'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "link_loop_path": {
+    "error": {
+      "code": "ELOOP",
+      "dest": "\u003cdir\u003e/cyc_a/h",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/cyc_a/h'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "link_missing": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/h0",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/nope' -\u003e '\u003cdir\u003e/h0'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "link"
+    }
+  },
+  "link_missing_parent": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/nodir/h",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/nodir/h'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "link_onto_link": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/dangling",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "link"
+    }
+  },
+  "loop_access": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, access '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "access"
+    }
+  },
+  "loop_chmod": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, chmod '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "chmod"
+    }
+  },
+  "loop_copy": {
+    "error": {
+      "code": "ELOOP",
+      "dest": "\u003cdir\u003e/cyc_a",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, copyfile '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "copyfile"
+    }
+  },
+  "loop_exists": {
+    "value": false
+  },
+  "loop_inner": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a/x",
+      "syscall": "stat"
+    }
+  },
+  "loop_lstat": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "loop_mkdir_inner": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, mkdir '\u003cdir\u003e/cyc_a/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a/x",
+      "syscall": "mkdir"
+    }
+  },
+  "loop_open": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_b'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_b",
+      "syscall": "open"
+    }
+  },
+  "loop_read": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "open"
+    }
+  },
+  "loop_readdir": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, scandir '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "scandir"
+    }
+  },
+  "loop_readlink": {
+    "value": "loop"
+  },
+  "loop_realpath": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "stat"
+    }
+  },
+  "loop_realpath_native": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, realpath '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "realpath"
+    }
+  },
+  "loop_stat": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/loop'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/loop",
+      "syscall": "stat"
+    }
+  },
+  "loop_write": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "open"
+    }
+  },
+  "lstat_link": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000",
+      3
+    ]
+  },
+  "metadata_through_link": {
+    "value": [
+      "600",
+      2000000,
+      1
+    ]
+  },
+  "mkdir_recursive_through_link": {
+    "value": true
+  },
+  "p_handle_through_link": {
+    "value": "H"
+  },
+  "p_link": {
+    "value": 3
+  },
+  "p_link_missing": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/ph2",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/nope' -\u003e '\u003cdir\u003e/ph2'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "link"
+    }
+  },
+  "p_lstat": {
+    "value": [
+      true,
+      false,
+      false,
+      "120000"
+    ]
+  },
+  "p_open_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "open"
+    }
+  },
+  "p_read_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, open '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "open"
+    }
+  },
+  "p_readlink": {
+    "value": "b"
+  },
+  "p_readlink_dir": {
+    "error": {
+      "code": "EINVAL",
+      "errno": "matches code",
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/b'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/b",
+      "syscall": "readlink"
+    }
+  },
+  "p_realpath": {
+    "value": "\u003cdir\u003e/b"
+  },
+  "p_realpath_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, realpath '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "realpath"
+    }
+  },
+  "p_stat_loop": {
+    "error": {
+      "code": "ELOOP",
+      "errno": "matches code",
+      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/cyc_a",
+      "syscall": "stat"
+    }
+  },
+  "p_symlink": {
+    "value": [
+      "deep",
+      "f",
+      "made",
+      "sub",
+      "up",
+      "viabl",
+      "w"
+    ]
+  },
+  "p_symlink_exists": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/pl",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'b' -\u003e '\u003cdir\u003e/pl'",
+      "name": "Error",
+      "path": "b",
+      "syscall": "symlink"
+    }
+  },
+  "p_unlink_link": {
+    "value": [
+      false,
+      true
+    ]
+  },
+  "read_through_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, open '\u003cdir\u003e/f/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f/x",
+      "syscall": "open"
+    }
+  },
+  "readlink_dir": {
+    "error": {
+      "code": "EINVAL",
+      "errno": "matches code",
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/b'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/b",
+      "syscall": "readlink"
+    }
+  },
+  "readlink_file": {
+    "error": {
+      "code": "EINVAL",
+      "errno": "matches code",
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/f",
+      "syscall": "readlink"
+    }
+  },
+  "readlink_missing": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, readlink '\u003cdir\u003e/nope'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/nope",
+      "syscall": "readlink"
+    }
+  },
+  "readlink_trailing_slash": {
+    "error": {
+      "code": "EINVAL",
+      "errno": "matches code",
+      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/bl/'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/bl/",
+      "syscall": "readlink"
+    }
+  },
+  "relative_in_subdir": {
+    "value": "hi"
+  },
+  "rename_link": {
+    "value": [
+      false,
+      "f",
+      "H"
+    ]
+  },
+  "rename_onto_link": {
+    "value": [
+      false,
+      "src",
+      "H"
+    ]
+  },
+  "rm_link": {
+    "value": [
+      false,
+      true
+    ]
+  },
+  "rm_tree_with_links": {
+    "value": [
+      false,
+      true
+    ]
+  },
+  "rmdir_link": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, rmdir '\u003cdir\u003e/bl'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/bl",
+      "syscall": "rmdir"
+    }
+  },
+  "stat_link": {
+    "value": [
+      false,
+      true,
+      false,
+      "100000",
+      2
+    ]
+  },
+  "symlink_missing_parent": {
+    "error": {
+      "code": "ENOENT",
+      "dest": "\u003cdir\u003e/nodir/l",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, symlink 'x' -\u003e '\u003cdir\u003e/nodir/l'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_onto_dir": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/b",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/b'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_onto_file": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/f",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/f'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_onto_link": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/dangling",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_onto_loop": {
+    "error": {
+      "code": "EEXIST",
+      "dest": "\u003cdir\u003e/loop",
+      "errno": "matches code",
+      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/loop'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_parent_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "dest": "\u003cdir\u003e/f/l",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, symlink 'x' -\u003e '\u003cdir\u003e/f/l'",
+      "name": "Error",
+      "path": "x",
+      "syscall": "symlink"
+    }
+  },
+  "symlink_through_link": {
+    "value": "H"
+  },
+  "through_file": {
+    "error": {
+      "code": "ENOTDIR",
+      "errno": "matches code",
+      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/abs/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/abs/x",
+      "syscall": "stat"
+    }
+  },
+  "unlink_dir_link": {
+    "value": true
+  },
+  "unlink_link": {
+    "value": [
+      false,
+      true
+    ]
+  },
+  "unlink_loop": {
+    "value": false
+  }
+}

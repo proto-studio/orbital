@@ -15,7 +15,9 @@ import (
 // Useful for testing or temporary file operations.
 type MemoryFilesystem struct {
 	mu    sync.RWMutex
-	files map[string]*memFile
+	files map[string]*memFile // by canonical path; hard links share a memFile
+
+	lastIno uint64
 }
 
 type memFile struct {
@@ -27,6 +29,10 @@ type memFile struct {
 	// Set by Chown and Chtimes; zero until then.
 	uid, gid   int
 	accessTime time.Time
+
+	target string // a symbolic link's target, as given; mode has fs.ModeSymlink
+	ino    uint64
+	nlink  uint64 // the names the file has
 }
 
 // NewMemoryFilesystem creates a new in-memory filesystem.
@@ -36,22 +42,16 @@ func NewMemoryFilesystem() *MemoryFilesystem {
 	}
 }
 
-func (m *MemoryFilesystem) normalizePath(path string) string {
-	path = filepath.Clean(path)
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return path
-}
-
 // ReadFile reads the entire contents of a file.
 func (m *MemoryFilesystem) ReadFile(path string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	path = m.normalizePath(path)
-	f, ok := m.files[path]
-	if !ok {
+	path, f, err := m.resolve("open", path, true)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.ENOENT}
 	}
 	if f.isDir {
@@ -60,15 +60,31 @@ func (m *MemoryFilesystem) ReadFile(path string) ([]byte, error) {
 	return append([]byte(nil), f.data...), nil
 }
 
-// Stat returns file information.
+// Stat returns file information, following symbolic links.
 func (m *MemoryFilesystem) Stat(path string) (*FileInfo, error) {
+	return m.stat(path, true)
+}
+
+// Lstat returns file information like Stat, but describes a final symbolic link itself.
+func (m *MemoryFilesystem) Lstat(path string) (*FileInfo, error) {
+	return m.stat(path, false)
+}
+
+func (m *MemoryFilesystem) stat(path string, follow bool) (*FileInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	path = m.normalizePath(path)
-	f, ok := m.files[path]
-	if !ok {
+	path, f, err := m.resolve("stat", path, follow)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
 		return nil, fs.ErrNotExist
+	}
+	size := int64(len(f.data))
+	if f.isLink() {
+		// A link's size is its target's length, as lstat gives it.
+		size = int64(len(f.target))
 	}
 	atime := f.accessTime
 	if atime.IsZero() {
@@ -76,19 +92,16 @@ func (m *MemoryFilesystem) Stat(path string) (*FileInfo, error) {
 	}
 	return &FileInfo{
 		Name:       filepath.Base(path),
-		Size:       int64(len(f.data)),
+		Size:       size,
 		Mode:       f.mode,
 		ModTime:    f.modTime,
 		IsDir:      f.isDir,
 		AccessTime: atime,
 		Uid:        f.uid,
 		Gid:        f.gid,
+		Ino:        f.ino,
+		Nlink:      f.nlink,
 	}, nil
-}
-
-// Lstat is Stat: the in-memory filesystem has no symbolic links.
-func (m *MemoryFilesystem) Lstat(path string) (*FileInfo, error) {
-	return m.Stat(path)
 }
 
 // Exists checks if a path exists.
@@ -96,9 +109,8 @@ func (m *MemoryFilesystem) Exists(path string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	path = m.normalizePath(path)
-	_, ok := m.files[path]
-	return ok
+	_, f, err := m.resolve("stat", path, true)
+	return err == nil && f != nil
 }
 
 // ReadDir reads the contents of a directory.
@@ -106,11 +118,16 @@ func (m *MemoryFilesystem) ReadDir(path string) ([]DirEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	path = m.normalizePath(path)
+	path, f, err := m.resolve("scandir", path, true)
+	if err != nil {
+		return nil, err
+	}
 	if path != "/" {
-		f, ok := m.files[path]
-		if !ok || !f.isDir {
+		if f == nil {
 			return nil, fs.ErrNotExist
+		}
+		if !f.isDir {
+			return nil, &fs.PathError{Op: "scandir", Path: path, Err: syscall.ENOTDIR}
 		}
 	}
 
@@ -137,10 +154,11 @@ func (m *MemoryFilesystem) ReadDir(path string) ([]DirEntry, error) {
 			continue
 		}
 		seen[name] = true
-		entries = append(entries, DirEntry{
-			Name:  name,
-			IsDir: len(parts) > 1 || f.isDir,
-		})
+		entry := DirEntry{Name: name, IsDir: len(parts) > 1 || f.isDir}
+		if len(parts) == 1 && f.isLink() {
+			entry.Type = fs.ModeSymlink
+		}
+		entries = append(entries, entry)
 	}
 
 	return entries, nil
@@ -151,10 +169,13 @@ func (m *MemoryFilesystem) WriteFile(path string, data []byte, perm fs.FileMode)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
+	path, mf, err := m.resolve("open", path, true)
+	if err != nil {
+		return err
+	}
 	// An existing file keeps its identity and mode, as a real one does, so handles open on it
 	// see the new contents.
-	if mf, ok := m.files[path]; ok {
+	if mf != nil {
 		if mf.isDir {
 			return &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 		}
@@ -162,12 +183,12 @@ func (m *MemoryFilesystem) WriteFile(path string, data []byte, perm fs.FileMode)
 		mf.modTime = time.Now()
 		return nil
 	}
-	m.files[path] = &memFile{
+	m.files[path] = m.newFile(&memFile{
 		data:    append([]byte(nil), data...),
 		mode:    perm,
 		modTime: time.Now(),
 		isDir:   false,
-	}
+	})
 	return nil
 }
 
@@ -176,15 +197,17 @@ func (m *MemoryFilesystem) AppendFile(path string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
-	f, ok := m.files[path]
-	if !ok {
-		m.files[path] = &memFile{
+	path, f, err := m.resolve("open", path, true)
+	if err != nil {
+		return err
+	}
+	if f == nil {
+		m.files[path] = m.newFile(&memFile{
 			data:    append([]byte(nil), data...),
 			mode:    0644,
 			modTime: time.Now(),
 			isDir:   false,
-		}
+		})
 		return nil
 	}
 	if f.isDir {
@@ -200,15 +223,18 @@ func (m *MemoryFilesystem) Mkdir(path string, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
-	if _, ok := m.files[path]; ok {
+	path, f, err := m.resolve("mkdir", path, false)
+	if err != nil {
+		return err
+	}
+	if f != nil {
 		return fs.ErrExist
 	}
-	m.files[path] = &memFile{
+	m.files[path] = m.newFile(&memFile{
 		mode:    perm | fs.ModeDir,
 		modTime: time.Now(),
 		isDir:   true,
-	}
+	})
 	return nil
 }
 
@@ -217,17 +243,24 @@ func (m *MemoryFilesystem) MkdirAll(path string, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
+	// The canonical path names no link, so the directories to make are those along it.
+	path, _, err := m.resolve("mkdir", path, true)
+	if err != nil {
+		return err
+	}
+	if path == "/" {
+		return nil
+	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	current := ""
 	for _, part := range parts {
 		current += "/" + part
 		if _, ok := m.files[current]; !ok {
-			m.files[current] = &memFile{
+			m.files[current] = m.newFile(&memFile{
 				mode:    perm | fs.ModeDir,
 				modTime: time.Now(),
 				isDir:   true,
-			}
+			})
 		}
 	}
 	return nil
@@ -238,11 +271,15 @@ func (m *MemoryFilesystem) Remove(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
-	if _, ok := m.files[path]; !ok {
+	// A final link is removed itself, not what it leads to.
+	path, f, err := m.resolve("unlink", path, false)
+	if err != nil {
+		return err
+	}
+	if f == nil {
 		return fs.ErrNotExist
 	}
-	delete(m.files, path)
+	m.unname(path)
 	return nil
 }
 
@@ -251,7 +288,11 @@ func (m *MemoryFilesystem) RemoveAll(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path = m.normalizePath(path)
+	// A final link is removed itself; what it leads to is left alone.
+	path, _, err := m.resolve("rm", path, false)
+	if err != nil {
+		return err
+	}
 	prefix := path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -259,7 +300,7 @@ func (m *MemoryFilesystem) RemoveAll(path string) error {
 
 	for p := range m.files {
 		if p == path || strings.HasPrefix(p, prefix) {
-			delete(m.files, p)
+			m.unname(p)
 		}
 	}
 	return nil
@@ -270,13 +311,23 @@ func (m *MemoryFilesystem) Rename(oldPath, newPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	oldPath = m.normalizePath(oldPath)
-	newPath = m.normalizePath(newPath)
-
-	f, ok := m.files[oldPath]
-	if !ok {
+	// A link at either path is renamed or replaced itself.
+	oldPath, f, err := m.resolve("rename", oldPath, false)
+	if err != nil {
+		return err
+	}
+	newPath, existing, err := m.resolve("rename", newPath, false)
+	if err != nil {
+		return err
+	}
+	if f == nil {
 		return fs.ErrNotExist
 	}
+	if existing == f {
+		// Two names for one file: rename(2) leaves both.
+		return nil
+	}
+	m.unname(newPath)
 	m.files[newPath] = f
 	delete(m.files, oldPath)
 	return nil
@@ -287,27 +338,31 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	src = m.normalizePath(src)
-	dst = m.normalizePath(dst)
-
-	f, ok := m.files[src]
-	if !ok || f.isDir {
+	src, f, err := m.resolve("copyfile", src, true)
+	if err != nil {
+		return err
+	}
+	dst, existing, err := m.resolve("copyfile", dst, true)
+	if err != nil {
+		return err
+	}
+	if f == nil || f.isDir {
 		return fs.ErrNotExist
 	}
 	// An existing destination keeps its identity, so handles open on it see the copy, and
 	// takes the source's mode, as a real copy does.
-	if existing, ok := m.files[dst]; ok && !existing.isDir {
+	if existing != nil && !existing.isDir {
 		existing.data = append([]byte(nil), f.data...)
 		existing.mode = f.mode
 		existing.modTime = time.Now()
 		return nil
 	}
-	m.files[dst] = &memFile{
+	m.files[dst] = m.newFile(&memFile{
 		data:    append([]byte(nil), f.data...),
 		mode:    f.mode,
 		modTime: time.Now(),
 		isDir:   false,
-	}
+	})
 	return nil
 }
 
@@ -438,13 +493,18 @@ func (m *MemoryFilesystem) Create(path string) (File, error) {
 // OpenFile opens a file with the given flags, as os.OpenFile does. Parent directories are not
 // checked, because WriteFile has never required them here.
 func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (File, error) {
-	path = m.normalizePath(path)
 	writable := flag&(os.O_WRONLY|os.O_RDWR) != 0
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	mf, exists := m.files[path]
+	// O_EXCL with O_CREATE fails on a final link, even one that leads nowhere, as open(2) does.
+	excl := flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0
+	path, mf, err := m.resolve("open", path, !excl)
+	if err != nil {
+		return nil, err
+	}
+	exists := mf != nil
 	switch {
 	case exists && flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0:
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EEXIST}
@@ -453,7 +513,7 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 	case exists && mf.isDir && writable:
 		return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 	case !exists:
-		mf = &memFile{mode: perm & fs.ModePerm, modTime: time.Now()}
+		mf = m.newFile(&memFile{mode: perm & fs.ModePerm, modTime: time.Now()})
 		m.files[path] = mf
 	}
 	if writable && flag&os.O_TRUNC != 0 {
@@ -474,9 +534,11 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 func (m *MemoryFilesystem) change(op, path string, apply func(*memFile) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	path = m.normalizePath(path)
-	mf, ok := m.files[path]
-	if !ok {
+	path, mf, err := m.resolve(op, path, true)
+	if err != nil {
+		return err
+	}
+	if mf == nil {
 		return &fs.PathError{Op: op, Path: path, Err: syscall.ENOENT}
 	}
 	return apply(mf)
