@@ -36,14 +36,22 @@ func (l *handleLimit) acquire() (func(), error) {
 // OpenSocket takes one of Config.MaxOpenSockets, for a socket a script opens: a TCP
 // connection or listener, a UDP socket, or a request through the HTTP client. It fails
 // with syscall.EMFILE when none is left. The caller calls release once the socket closes.
+// A runtime whose sockets and HTTP client refuse everything opens none, so it counts none.
 func (rt *Runtime) OpenSocket() (release func(), err error) {
+	if rt.socketsClosed {
+		return func() {}, nil
+	}
 	return rt.sockets.acquire()
 }
 
 // OpenFile takes one of Config.MaxOpenFiles, for a file a script opens through fs,
 // including one a call such as readFile opens only briefly. It fails with syscall.EMFILE
 // when none is left. The caller calls release once the file closes.
+// A runtime whose filesystem refuses everything opens none, so it counts none.
 func (rt *Runtime) OpenFile() (release func(), err error) {
+	if rt.filesClosed {
+		return func() {}, nil
+	}
 	return rt.files.acquire()
 }
 

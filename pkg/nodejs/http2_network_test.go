@@ -397,10 +397,11 @@ func TestHTTP2NoSilentFallback(t *testing.T) {
 		// so sockets it granted still carry HTTP/2. runJS would fill HTTPClient in.
 		open := newH2Server(t, ca.issue(t, "127.0.0.1"))
 		inst, err := New(&runtime.Config{
-			EnableConsole: true,
-			EnableTimers:  true,
-			Timeout:       20 * time.Second,
-			SocketFactory: runtime.NewRealSocketFactory(),
+			EnableConsole:  true,
+			EnableTimers:   true,
+			Timeout:        20 * time.Second,
+			SocketFactory:  runtime.NewRealSocketFactory(),
+			MaxOpenSockets: -1,
 		})
 		if err != nil {
 			t.Fatal(err)
