@@ -28,6 +28,9 @@ extern int goModuleResolve(int resolverID, char* specifier, char* referrer,
 // so TerminateExecution can unwind without FatalProcessOutOfMemory.
 extern size_t goNearHeapLimitCallback(int callbackID, size_t currentHeapLimit,
                                       size_t initialHeapLimit);
+// Called on the isolate's thread, from inside V8's garbage collector, once the
+// isolate runs out of memory and its execution has been terminated.
+extern void goIsolateOutOfMemory(void* isolate);
 
 #ifdef __cplusplus
 }

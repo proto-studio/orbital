@@ -278,6 +278,12 @@ func exitWithError(err error) {
 	if errors.As(err, &exit) {
 		os.Exit(exit.Code)
 	}
+	// Node aborts when its heap runs out, which a shell reports as 134 (SIGABRT).
+	var oom *runtime.OutOfMemoryError
+	if errors.As(err, &oom) {
+		fmt.Fprintln(os.Stderr, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory")
+		os.Exit(134)
+	}
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	os.Exit(1)
 }

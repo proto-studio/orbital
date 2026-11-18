@@ -12,6 +12,7 @@ package worker_threads
 import (
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -45,6 +46,10 @@ type worker struct {
 	// instead when there was none. Both are set before the worker's goroutines start.
 	slot     func()
 	startErr error
+	// limits is what the script asked for in resourceLimits, in Node's order
+	// (maxYoungGenerationSizeMb, maxOldGenerationSizeMb, codeRangeSizeMb,
+	// stackSizeMb); a value that isn't positive asks for nothing.
+	limits [4]float64
 }
 
 // Close terminates the worker when its parent runtime is disposed.
@@ -60,8 +65,24 @@ type WorkerThreads struct {
 	workers    map[int]*worker
 	nextID     int
 	dispatcher *v8.Value // parent-side JS event dispatcher
-	provider   func() (*goruntime.Runtime, error)
+	provider   Provider
 }
+
+// Provider builds the runtime a worker runs on. It applies configure to the
+// configuration it builds it from: configure lowers the heap limits to those the
+// script asked for in the Worker's resourceLimits.
+type Provider func(configure func(*goruntime.Config)) (*goruntime.Runtime, error)
+
+// defaultStackSizeMb is the stack size Node gives a worker, in MiB. Workers here run
+// on V8's own stack limit, so a worker's stackSizeMb only reports this, or the lower
+// value the script asked for.
+const defaultStackSizeMb = 4
+
+// Node's errors for a worker that ran out of memory or couldn't be started.
+const (
+	outOfMemoryError = "ERR_WORKER_OUT_OF_MEMORY\nWorker terminated due to reaching memory limit: JS heap out of memory"
+	initFailedError  = "ERR_WORKER_INIT_FAILED\nWorker initialization failure: "
+)
 
 // New creates a WorkerThreads module without a runtime provider: constructing a
 // Worker throws because workers are unavailable.
@@ -73,7 +94,7 @@ func New() *WorkerThreads {
 // built by provider. provider is called from the worker's goroutine, possibly
 // after this module's runtime has been disposed, so it must not depend on that
 // runtime; it should return a runtime configured as the module's owner intends.
-func NewWithProvider(provider func() (*goruntime.Runtime, error)) *WorkerThreads {
+func NewWithProvider(provider Provider) *WorkerThreads {
 	return &WorkerThreads{workers: make(map[int]*worker), provider: provider}
 }
 
@@ -143,7 +164,8 @@ func (w *WorkerThreads) setDispatcherFunc(info *v8.FunctionCallbackInfo) *v8.Val
 	return nil
 }
 
-// __wt_spawn(target, workerDataJson, isEval) -> id
+// __wt_spawn(target, workerDataJson, isEval, young, old, codeRange, stack) -> id, the last
+// four the resourceLimits the script asked for.
 func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 	ctx := info.Context()
 	args := info.Args()
@@ -156,6 +178,12 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		dataJSON = args[1].String()
 	}
 	eval := len(args) > 2 && args[2] != nil && args[2].Boolean()
+	var limits [4]float64
+	for i := range limits {
+		if len(args) > 3+i && args[3+i] != nil && args[3+i].IsNumber() {
+			limits[i] = args[3+i].Number()
+		}
+	}
 
 	w.mu.Lock()
 	w.nextID++
@@ -168,6 +196,7 @@ func (w *WorkerThreads) spawnFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		toWorker:   make(chan string, 64),
 		fromWorker: make(chan wtEvent, 64),
 		terminate:  make(chan struct{}),
+		limits:     limits,
 	}
 	w.workers[id] = wk
 	w.mu.Unlock()
@@ -270,19 +299,30 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	// Over Config.MaxWorkers the worker fails to start, as Node reports a worker it
 	// couldn't set up: an 'error' with ERR_WORKER_INIT_FAILED, then 'exit'.
 	if wk.startErr != nil {
-		wk.fromWorker <- wtEvent{kind: "codedError", data: "ERR_WORKER_INIT_FAILED\nWorker initialization failure: " + wk.startErr.Error()}
+		wk.fromWorker <- wtEvent{kind: "codedError", data: initFailedError + wk.startErr.Error()}
 		return 1
 	}
 
-	wrt, err := w.provider()
+	wrt, err := w.provider(wk.configure)
 	if err != nil {
-		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
+		var oom *goruntime.OutOfMemoryError
+		switch {
+		case errors.As(err, &oom):
+			// It ran out while it was being set up, as a Node worker can.
+			wk.fromWorker <- wtEvent{kind: "codedError", data: outOfMemoryError}
+		case errors.Is(err, goruntime.ErrOutOfMemory):
+			// The MemoryBudget had no room for its heap.
+			wk.fromWorker <- wtEvent{kind: "codedError", data: initFailedError + err.Error()}
+		default:
+			wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
+		}
 		return 1
 	}
 	// Workers it starts count against the same cap.
 	wrt.ShareIsolateLimit(w.rt)
 	// The worker's sockets and files count against its parent's caps.
 	wrt.ShareHandleLimits(w.rt)
+	limitsJSON := wk.effectiveLimits(wrt)
 
 	// The pump below may call wrt.Kill, so it must be finished before the isolate
 	// is disposed. Deferred calls run in reverse: stop the pump, then dispose.
@@ -319,9 +359,13 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 	})
 
 	// Initialize parentPort / workerData inside the worker.
-	initCode := fmt.Sprintf("__wt_init_worker(%s);", jsStringLiteral(wk.workerData))
+	initCode := fmt.Sprintf("__wt_init_worker(%s, %s);", jsStringLiteral(wk.workerData), jsStringLiteral(limitsJSON))
 	if _, err := wrt.RunScript(initCode, "worker_bootstrap.js"); err != nil {
-		wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
+		if wrt.OutOfMemory() {
+			wk.fromWorker <- wtEvent{kind: "codedError", data: outOfMemoryError}
+		} else {
+			wk.fromWorker <- wtEvent{kind: "error", data: err.Error()}
+		}
 		return 1
 	}
 	deliverFn, _ := wrt.GetGlobal("__wt_deliver")
@@ -355,7 +399,7 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 		}
 	}()
 
-	wk.fromWorker <- wtEvent{kind: "online"}
+	wk.fromWorker <- wtEvent{kind: "online", data: limitsJSON}
 
 	// Resolve and run the entry.
 	source := wk.target
@@ -414,7 +458,12 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 			wk.fromWorker <- ev
 		}
 	}
-	if errors.As(runErr, &exit) {
+	if wrt.OutOfMemory() {
+		// As Node stops a worker whose heap reaches its limit: an 'error', then 'exit'
+		// with 1. Here the heap may also have been unable to grow from the MemoryBudget.
+		wk.fromWorker <- wtEvent{kind: "codedError", data: outOfMemoryError}
+		code = 1
+	} else if errors.As(runErr, &exit) {
 		// process.exit() in a worker ends only the worker, with that code and no error.
 		code = exit.Code
 	} else if runErr != nil {
@@ -436,6 +485,58 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 		}
 	}
 	return code
+}
+
+// configure lowers a worker's heap limits to those its script asked for. They can only
+// lower the limits the worker would have had: its configuration's, made smaller still
+// to fit the MemoryBudget when the worker starts.
+func (wk *worker) configure(cfg *goruntime.Config) {
+	opts := &cfg.IsolateOptions
+	if b := mbToBytes(wk.limits[0]); b > 0 {
+		opts.CapYoungGenerationSizeInBytes = b
+	}
+	if b := mbToBytes(wk.limits[1]); b > 0 {
+		opts.CapOldGenerationSizeInBytes = b
+	}
+	if b := mbToBytes(wk.limits[2]); b > 0 {
+		opts.CapCodeRangeSizeInBytes = b
+	}
+}
+
+// effectiveLimits answers the worker's limits as Node reports them in resourceLimits, a JSON
+// array in Node's order: the ones its heap was made with, which with a MemoryBudget are
+// what the budget had room for then. The budget is shared, so the worker may still run out
+// before it reaches them.
+func (wk *worker) effectiveLimits(wrt *goruntime.Runtime) string {
+	limits := wrt.Isolate().Limits()
+	stack := float64(defaultStackSizeMb)
+	if s := wk.limits[3]; s > 0 && s < stack {
+		stack = s
+	}
+	values := []float64{
+		float64(limits.MaxYoungGenerationSizeInBytes) / (1 << 20),
+		float64(limits.MaxOldGenerationSizeInBytes) / (1 << 20),
+		float64(limits.CodeRangeSizeInBytes) / (1 << 20),
+		stack,
+	}
+	data, _ := json.Marshal(values)
+	return string(data)
+}
+
+// mbToBytes converts a resourceLimits value in MiB to bytes: 0 for one that asks for nothing
+// (not positive, or NaN), and at least 1 for any that does.
+func mbToBytes(mb float64) uint64 {
+	if !(mb > 0) {
+		return 0
+	}
+	b := mb * (1 << 20)
+	if b >= 1<<63 {
+		return 1 << 63
+	}
+	if b < 1 {
+		return 1
+	}
+	return uint64(b)
 }
 
 // serializeFunc implements __wt_serialize(value, bufferPrototype): the value serialized by

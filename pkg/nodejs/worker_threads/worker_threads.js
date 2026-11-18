@@ -239,6 +239,49 @@
   const workersById = new Map();
   let Worker;
 
+  // resourceLimits, kept in Node's order, as its lib/internal/worker.js keeps them.
+  const kMaxYoungGenerationSizeMb = 0;
+  const kMaxOldGenerationSizeMb = 1;
+  const kCodeRangeSizeMb = 2;
+  const kStackSizeMb = 3;
+  const kDefaultStackSizeMb = 4;
+
+  // What the script asked for, as Node reads it: numbers only, as given except that the old
+  // generation is at least 2 MiB, -1 for what it didn't give, and Node's default stack for
+  // one that isn't positive. Values that aren't positive ask for nothing. They read back
+  // like this until the worker starts and reports what it got. A stack larger than the
+  // default isn't given here, as no limit is raised.
+  function parseResourceLimits(obj) {
+    const ret = [-1, -1, -1, kDefaultStackSizeMb];
+    if (typeof obj !== 'object' || obj === null) return ret;
+    if (typeof obj.maxOldGenerationSizeMb === 'number')
+      ret[kMaxOldGenerationSizeMb] = Math.max(obj.maxOldGenerationSizeMb, 2);
+    if (typeof obj.maxYoungGenerationSizeMb === 'number')
+      ret[kMaxYoungGenerationSizeMb] = obj.maxYoungGenerationSizeMb;
+    if (typeof obj.codeRangeSizeMb === 'number')
+      ret[kCodeRangeSizeMb] = obj.codeRangeSizeMb;
+    if (typeof obj.stackSizeMb === 'number' && obj.stackSizeMb > 0)
+      ret[kStackSizeMb] = Math.min(obj.stackSizeMb, kDefaultStackSizeMb);
+    return ret;
+  }
+
+  function makeResourceLimits(limits) {
+    return {
+      maxYoungGenerationSizeMb: limits[kMaxYoungGenerationSizeMb],
+      maxOldGenerationSizeMb: limits[kMaxOldGenerationSizeMb],
+      codeRangeSizeMb: limits[kCodeRangeSizeMb],
+      stackSizeMb: limits[kStackSizeMb],
+    };
+  }
+
+  function parseLimitsJSON(json) {
+    try {
+      const limits = JSON.parse(json);
+      if (Array.isArray(limits) && limits.length === 4) return limits;
+    } catch (e) {}
+    return null;
+  }
+
   if (typeof global.__wt_spawn === 'function') {
     Worker = class Worker extends EventEmitter {
       constructor(filename, options) {
@@ -256,10 +299,20 @@
         const dataJson = JSON.stringify(
           options.workerData === undefined ? null : options.workerData
         );
-        const id = global.__wt_spawn(String(target), dataJson, isEval);
+        const limits = parseResourceLimits(options.resourceLimits);
+        const id = global.__wt_spawn(String(target), dataJson, isEval,
+          limits[kMaxYoungGenerationSizeMb], limits[kMaxOldGenerationSizeMb],
+          limits[kCodeRangeSizeMb], limits[kStackSizeMb]);
         this._id = id;
+        // null once the worker has exited.
+        this._resourceLimits = limits;
         this.threadId = id;
         workersById.set(id, this);
+      }
+
+      get resourceLimits() {
+        if (this._resourceLimits === null) return {};
+        return makeResourceLimits(this._resourceLimits);
       }
 
       postMessage(value) {
@@ -287,9 +340,13 @@
       const w = workersById.get(id);
       if (!w) return;
       switch (kind) {
-        case 'online':
+        case 'online': {
+          // The limits the worker started with.
+          const limits = parseLimitsJSON(data);
+          if (limits !== null) w._resourceLimits = limits;
           w.emit('online');
           break;
+        }
         case 'message': {
           let v;
           try {
@@ -309,6 +366,9 @@
           const err = new Error(data.slice(nl + 1));
           err.code = data.slice(0, nl);
           if (err.code === 'MODULE_NOT_FOUND') err.requireStack = [];
+          // Node reports these as the worker exits, when its limits are gone.
+          if (err.code === 'ERR_WORKER_OUT_OF_MEMORY' || err.code === 'ERR_WORKER_INIT_FAILED')
+            w._resourceLimits = null;
           w.emit('error', err);
           break;
         }
@@ -324,6 +384,7 @@
         }
         case 'exit':
           workersById.delete(id);
+          w._resourceLimits = null;
           w.emit('exit', code);
           break;
       }
@@ -341,10 +402,12 @@
   // Called from Go (worker runtime) once the native worker bridges are set up.
   global.__wt_serialize_thrown = serializeThrown;
 
-  global.__wt_init_worker = function(dataJson) {
+  global.__wt_init_worker = function(dataJson, limitsJson) {
     const mod = global.__worker_threads_module;
     if (!mod) return;
     mod.isMainThread = false;
+    const limits = parseLimitsJSON(limitsJson);
+    if (limits !== null) mod.resourceLimits = makeResourceLimits(limits);
     mod.threadId = 1;
     try {
       mod.workerData = JSON.parse(dataJson);

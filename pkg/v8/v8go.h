@@ -16,11 +16,44 @@ void v8go_dispose();
 // Prefer max_heap_size_in_bytes (ConfigureDefaultsFromHeapSize) for a hard
 // isolate ceiling; max_old_generation_size_in_bytes is an alternative when you
 // only want to cap the old generation. Heap limits are create-time only.
+// A memory budget shared by isolates and their embedder: each isolate's
+// ArrayBuffer contents and heap draw from it. Reference counted; the creator
+// holds one reference, and each isolate made with it holds its own.
+typedef struct v8go_budget v8go_budget;
+
+v8go_budget* v8go_budget_new(size_t limit);
+void v8go_budget_unref(v8go_budget* budget);
+// Takes n bytes from the budget: 1 if they fit, 0 (taking nothing) if not.
+int v8go_budget_charge(v8go_budget* budget, size_t n);
+void v8go_budget_release(v8go_budget* budget, size_t n);
+size_t v8go_budget_used(v8go_budget* budget);
+size_t v8go_budget_limit(v8go_budget* budget);
+
 typedef struct v8go_isolate_create_params {
     size_t initial_heap_size_in_bytes;
     size_t max_heap_size_in_bytes;
     size_t max_old_generation_size_in_bytes;
+    // Lower the limits worked out from the fields above, never raising them;
+    // 0 leaves a limit as it is.
+    size_t cap_old_generation_size_in_bytes;
+    size_t cap_young_generation_size_in_bytes;
+    size_t cap_code_range_size_in_bytes;
+    // When set, the isolate's heap and ArrayBuffer contents draw from it.
+    v8go_budget* budget;
 } v8go_isolate_create_params;
+
+// The limits an isolate was created with.
+typedef struct v8go_isolate_limits {
+    size_t max_old_generation_size_in_bytes;
+    size_t max_young_generation_size_in_bytes;
+    size_t code_range_size_in_bytes;
+} v8go_isolate_limits;
+
+// Why v8go_isolate_new_with_params returned NULL.
+enum {
+    V8GO_ISOLATE_FAILED = 1,
+    V8GO_ISOLATE_OUT_OF_MEMORY = 2
+};
 
 typedef struct v8go_heap_statistics {
     size_t total_heap_size;
@@ -63,6 +96,13 @@ enum {
 // Isolate operations
 void* v8go_isolate_new();
 void* v8go_isolate_new_with_params(const v8go_isolate_create_params* params);
+// Like v8go_isolate_new_with_params, also giving the limits it was made with,
+// and on failure (NULL) why, as V8GO_ISOLATE_*.
+void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
+                                   v8go_isolate_limits* limits, int* failure);
+// 1 once the isolate has run out of memory: its heap reached its limit and
+// could not grow, so its execution was terminated.
+int v8go_isolate_out_of_memory(void* isolate);
 void v8go_isolate_dispose(void* isolate);
 
 void v8go_isolate_get_heap_statistics(void* isolate, v8go_heap_statistics* out);

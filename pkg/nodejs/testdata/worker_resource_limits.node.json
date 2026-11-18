@@ -1,0 +1,112 @@
+{
+  "ignored": {
+    "afterExit": {},
+    "constructed": {
+      "codeRangeSizeMb": 0,
+      "maxOldGenerationSizeMb": -1,
+      "maxYoungGenerationSizeMb": -1,
+      "stackSizeMb": 4
+    },
+    "exitCode": 0,
+    "inside": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": "number",
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "online": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": "number",
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "sameInside": true
+  },
+  "lowered": {
+    "afterExit": {},
+    "constructed": {
+      "codeRangeSizeMb": 8,
+      "maxOldGenerationSizeMb": 16,
+      "maxYoungGenerationSizeMb": 4,
+      "stackSizeMb": 2
+    },
+    "exitCode": 0,
+    "inside": {
+      "codeRangeSizeMb": 8,
+      "maxOldGenerationSizeMb": 16,
+      "maxYoungGenerationSizeMb": 4,
+      "stackSizeMb": 2
+    },
+    "online": {
+      "codeRangeSizeMb": 8,
+      "maxOldGenerationSizeMb": 16,
+      "maxYoungGenerationSizeMb": 4,
+      "stackSizeMb": 2
+    },
+    "sameInside": true
+  },
+  "main": {},
+  "none": {
+    "afterExit": {},
+    "constructed": {
+      "codeRangeSizeMb": -1,
+      "maxOldGenerationSizeMb": -1,
+      "maxYoungGenerationSizeMb": -1,
+      "stackSizeMb": 4
+    },
+    "exitCode": 0,
+    "inside": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": "number",
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "online": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": "number",
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "sameInside": true
+  },
+  "oldOnly": {
+    "afterExit": {},
+    "constructed": {
+      "codeRangeSizeMb": -1,
+      "maxOldGenerationSizeMb": 24,
+      "maxYoungGenerationSizeMb": -1,
+      "stackSizeMb": 4
+    },
+    "exitCode": 0,
+    "inside": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": 24,
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "online": {
+      "codeRangeSizeMb": "number",
+      "maxOldGenerationSizeMb": 24,
+      "maxYoungGenerationSizeMb": "number",
+      "stackSizeMb": "number"
+    },
+    "sameInside": true
+  },
+  "outOfMemory": [
+    {
+      "code": "ERR_WORKER_OUT_OF_MEMORY",
+      "event": "error",
+      "keys": [
+        "code"
+      ],
+      "limits": {},
+      "message": "Worker terminated due to reaching memory limit: JS heap out of memory",
+      "name": "Error"
+    },
+    {
+      "code": 1,
+      "event": "exit",
+      "limits": {}
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import "C"
 import (
 	"errors"
 	"runtime"
+	"unsafe"
 	"weak"
 )
 
@@ -16,16 +17,45 @@ import (
 // Heap limits can only be set at creation time — V8 will not let you change
 // them later. Prefer MaxHeapSizeInBytes (ConfigureDefaultsFromHeapSize) for a
 // hard per-isolate ceiling (e.g. 64–128 MiB per function).
+//
+// An isolate that reaches its heap limit runs out of memory: its execution is
+// terminated (OutOfMemory reports it, and OnOutOfMemory is called) rather
+// than V8 aborting the process.
 type IsolateOptions struct {
 	// InitialHeapSizeInBytes is the initial heap size, or 0 for V8's default.
 	InitialHeapSizeInBytes uint64
-	// MaxHeapSizeInBytes is the hard total heap limit, or 0 for V8's default.
+	// MaxHeapSizeInBytes is the hard total heap limit, or 0 for V8's default
+	// (or, with a MemoryBudget, a heap as large as the budget).
 	// When either this or InitialHeapSizeInBytes is non-zero, V8's
 	// ConfigureDefaultsFromHeapSize is used.
 	MaxHeapSizeInBytes uint64
 	// MaxOldGenerationSizeInBytes caps only the old generation, or 0 to leave
 	// unset. Can be combined with ConfigureDefaultsFromHeapSize; applied after.
 	MaxOldGenerationSizeInBytes uint64
+	// CapOldGenerationSizeInBytes, CapYoungGenerationSizeInBytes and
+	// CapCodeRangeSizeInBytes lower the limits the fields above work out to,
+	// when they're smaller; they never raise one. 0 leaves a limit as it is.
+	CapOldGenerationSizeInBytes   uint64
+	CapYoungGenerationSizeInBytes uint64
+	CapCodeRangeSizeInBytes       uint64
+	// MemoryBudget, when set, is what the isolate's heap and ArrayBuffer
+	// contents draw from. The young generation is taken from it when the
+	// isolate is made, and the old generation starts small and grows from it
+	// as needed, up to its limit or what the budget had room for then,
+	// whichever is less. NewIsolateWithOptions fails with ErrOutOfMemory when
+	// the budget has no room for the heap to start.
+	MemoryBudget *MemoryBudget
+}
+
+// IsolateLimits are the heap limits an isolate was made with.
+type IsolateLimits struct {
+	// MaxOldGenerationSizeInBytes is the most the old generation may grow to.
+	// With a MemoryBudget it may run out of memory sooner, when the budget is
+	// used up.
+	MaxOldGenerationSizeInBytes   uint64
+	MaxYoungGenerationSizeInBytes uint64
+	// CodeRangeSizeInBytes is 0 for V8's default.
+	CodeRangeSizeInBytes uint64
 }
 
 // NewIsolateWithOptions creates a V8 isolate with the given create-time options.
@@ -38,16 +68,66 @@ func NewIsolateWithOptions(opts IsolateOptions) (*Isolate, error) {
 	params.initial_heap_size_in_bytes = C.size_t(opts.InitialHeapSizeInBytes)
 	params.max_heap_size_in_bytes = C.size_t(opts.MaxHeapSizeInBytes)
 	params.max_old_generation_size_in_bytes = C.size_t(opts.MaxOldGenerationSizeInBytes)
+	params.cap_old_generation_size_in_bytes = C.size_t(opts.CapOldGenerationSizeInBytes)
+	params.cap_young_generation_size_in_bytes = C.size_t(opts.CapYoungGenerationSizeInBytes)
+	params.cap_code_range_size_in_bytes = C.size_t(opts.CapCodeRangeSizeInBytes)
+	if opts.MemoryBudget != nil {
+		params.budget = opts.MemoryBudget.ptr
+	}
 
-	ptr := C.v8go_isolate_new_with_params(&params)
+	var limits C.v8go_isolate_limits
+	var failure C.int
+	ptr := C.v8go_isolate_new_with_limits(&params, &limits, &failure)
+	runtime.KeepAlive(opts.MemoryBudget)
 	if ptr == nil {
+		if failure == C.V8GO_ISOLATE_OUT_OF_MEMORY {
+			return nil, ErrOutOfMemory
+		}
 		return nil, errors.New("failed to create V8 isolate")
 	}
 
-	iso := &Isolate{ptr: ptr}
+	iso := &Isolate{ptr: ptr, limits: IsolateLimits{
+		MaxOldGenerationSizeInBytes:   uint64(limits.max_old_generation_size_in_bytes),
+		MaxYoungGenerationSizeInBytes: uint64(limits.max_young_generation_size_in_bytes),
+		CodeRangeSizeInBytes:          uint64(limits.code_range_size_in_bytes),
+	}}
 	runtime.SetFinalizer(iso, (*Isolate).release)
 	isolates.Store(ptr, weak.Make(iso))
 	return iso, nil
+}
+
+// Limits are the heap limits the isolate was made with.
+func (i *Isolate) Limits() IsolateLimits {
+	return i.limits
+}
+
+// OutOfMemory reports whether the isolate has run out of memory: its heap
+// reached its limit, or the MemoryBudget had no room for it to grow, so its
+// execution was terminated.
+func (i *Isolate) OutOfMemory() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.ptr != nil && C.v8go_isolate_out_of_memory(i.ptr) != 0
+}
+
+// OnOutOfMemory sets fn to be called once the isolate runs out of memory, after
+// its execution is terminated. fn is called on the thread running the
+// isolate, from inside V8's garbage collector, possibly with the isolate's
+// locks held, so it must not use the isolate or block; it should hand off
+// anything more to another goroutine.
+func (i *Isolate) OnOutOfMemory(fn func()) {
+	i.onOutOfMemory.Store(&fn)
+}
+
+//export goIsolateOutOfMemory
+func goIsolateOutOfMemory(ptr unsafe.Pointer) {
+	iso := isolateFor(ptr)
+	if iso == nil {
+		return
+	}
+	if fn := iso.onOutOfMemory.Load(); fn != nil && *fn != nil {
+		(*fn)()
+	}
 }
 
 // HeapStatistics is a snapshot of V8 isolate heap usage.

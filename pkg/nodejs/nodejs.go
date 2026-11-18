@@ -100,14 +100,22 @@ func Modules() []runtime.Module {
 }
 
 func newInstance(cfg *runtime.Config) (*Instance, error) {
-	rt, err := runtime.New(cfg)
+	return newChild(cfg, cfg)
+}
+
+// newChild makes a runtime from own, whose workers and loader realms are built from cfg.
+// A worker's own configuration lowers its heap limits to what the script asked for; its
+// workers start from cfg again.
+func newChild(cfg, own *runtime.Config) (*Instance, error) {
+	rt, err := runtime.New(own)
 	if err != nil {
 		return nil, err
 	}
 
 	// Children are built from this instance's configuration only. The provider
 	// holds cfg, not rt, so it stays valid if this runtime is disposed first, and
-	// nested workers and loader realms inherit the same configuration.
+	// nested workers and loader realms inherit the same configuration, sharing its
+	// MemoryBudget.
 	provider := func() (*runtime.Runtime, error) {
 		inst, err := newInstance(cfg)
 		if err != nil {
@@ -115,10 +123,26 @@ func newInstance(cfg *runtime.Config) (*Instance, error) {
 		}
 		return inst.Runtime, nil
 	}
+	workerProvider := func(configure func(*runtime.Config)) (*runtime.Runtime, error) {
+		workerCfg := *cfg
+		if configure != nil {
+			configure(&workerCfg)
+		}
+		inst, err := newChild(cfg, &workerCfg)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Runtime, nil
+	}
 
 	loader := esm.NewWithLoaderProvider(provider)
-	if err := registerModules(rt, loader, worker_threads.NewWithProvider(provider)); err != nil {
+	if err := registerModules(rt, loader, worker_threads.NewWithProvider(workerProvider)); err != nil {
+		oom := rt.OutOfMemory()
 		rt.Dispose()
+		if oom {
+			// The heap ran out while the modules were set up.
+			return nil, &runtime.OutOfMemoryError{}
+		}
 		return nil, err
 	}
 
