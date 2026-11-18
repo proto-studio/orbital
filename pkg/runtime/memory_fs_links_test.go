@@ -290,6 +290,7 @@ func TestMemoryFS_RemoveAllSlashAfterLink(t *testing.T) {
 func TestMemoryFS_FileWhereOnlyADirectoryFits(t *testing.T) {
 	m := NewMemoryFilesystem()
 	mustDo(t, "Symlink", m.Symlink("missing/", "/ds"))
+	mustDo(t, "WriteFile", m.WriteFile("/src", []byte("s"), 0o644))
 	want := syscall.EISDIR
 	if goruntime.GOOS == "darwin" {
 		want = syscall.ENOENT
@@ -304,6 +305,21 @@ func TestMemoryFS_FileWhereOnlyADirectoryFits(t *testing.T) {
 		if _, err := m.OpenFile(p, os.O_WRONLY|os.O_CREATE, 0o644); !errors.Is(err, want) {
 			t.Errorf("OpenFile(%s, O_CREATE) = %v, want %v", p, err, want)
 		}
+		if err := m.Copy("/src", p); !errors.Is(err, want) {
+			t.Errorf("Copy(src, %s) = %v, want %v", p, err, want)
+		}
+	}
+	renameWant := syscall.ENOTDIR
+	if goruntime.GOOS == "darwin" {
+		renameWant = syscall.ENOENT
+	}
+	if err := m.Rename("/src", "/new/"); !errors.Is(err, renameWant) {
+		t.Errorf("Rename(src, new/) = %v, want %v", err, renameWant)
+	}
+	mustDo(t, "MkdirAll", m.MkdirAll("/dir", 0o755))
+	mustDo(t, "Rename dir", m.Rename("/dir", "/moved/"))
+	if info, err := m.Stat("/moved"); err != nil || !info.IsDir {
+		t.Errorf("Stat(moved) = %+v, %v; want the directory renamed", info, err)
 	}
 	if m.Exists("/missing") || m.Exists("/new") {
 		t.Errorf("a file was made: missing %v, new %v", m.Exists("/missing"), m.Exists("/new"))
