@@ -1,0 +1,154 @@
+{
+  "dgram.send": {
+    "address": "0.0.0.0",
+    "code": "EPERM",
+    "errno": -1,
+    "message": "bind EPERM 0.0.0.0",
+    "name": "Error",
+    "syscall": "bind"
+  },
+  "dns.lookup": {
+    "code": "ENOTFOUND",
+    "errno": -3008,
+    "hostname": "example.com",
+    "message": "getaddrinfo ENOTFOUND example.com",
+    "name": "Error",
+    "syscall": "getaddrinfo"
+  },
+  "dns.lookup localhost": null,
+  "dns.resolve4": {
+    "code": "ECONNREFUSED",
+    "hostname": "example.com",
+    "message": "queryA ECONNREFUSED example.com",
+    "name": "Error",
+    "syscall": "queryA"
+  },
+  "dns.resolveMx": {
+    "code": "ECONNREFUSED",
+    "hostname": "example.com",
+    "message": "queryMx ECONNREFUSED example.com",
+    "name": "Error",
+    "syscall": "queryMx"
+  },
+  "dns.reverse": {
+    "code": "ENOTFOUND",
+    "hostname": "192.0.2.1",
+    "message": "getHostByAddr ENOTFOUND 192.0.2.1",
+    "name": "Error",
+    "syscall": "getHostByAddr"
+  },
+  "exec": {
+    "code": "EPERM",
+    "errno": -1,
+    "message": "spawn EPERM",
+    "name": "Error",
+    "syscall": "spawn"
+  },
+  "execFileSync": {
+    "code": "EPERM",
+    "errno": -1,
+    "message": "spawnSync /usr/bin/id EPERM",
+    "name": "Error",
+    "path": "/usr/bin/id",
+    "syscall": "spawnSync /usr/bin/id"
+  },
+  "execSync": {
+    "code": "EPERM",
+    "errno": -1,
+    "message": "spawnSync /bin/sh EPERM",
+    "name": "Error",
+    "path": "/bin/sh",
+    "syscall": "spawnSync /bin/sh"
+  },
+  "fetch": {
+    "address": "127.0.0.1",
+    "code": "EPERM",
+    "errno": -1,
+    "message": "connect EPERM 127.0.0.1:8124 - Local (0.0.0.0:0)",
+    "name": "Error",
+    "port": 8124,
+    "syscall": "connect"
+  },
+  "fetch name": {
+    "code": "ENOTFOUND",
+    "errno": -3008,
+    "hostname": "example.com",
+    "message": "getaddrinfo ENOTFOUND example.com",
+    "name": "Error",
+    "syscall": "getaddrinfo"
+  },
+  "http.get": {
+    "address": "127.0.0.1",
+    "code": "EPERM",
+    "errno": -1,
+    "message": "connect EPERM 127.0.0.1:8124 - Local (0.0.0.0:0)",
+    "name": "Error",
+    "port": 8124,
+    "syscall": "connect"
+  },
+  "net.connect": {
+    "address": "127.0.0.1",
+    "code": "EPERM",
+    "errno": -1,
+    "message": "connect EPERM 127.0.0.1:8124 - Local (0.0.0.0:0)",
+    "name": "Error",
+    "port": 8124,
+    "syscall": "connect"
+  },
+  "net.connect name": {
+    "code": "ENOTFOUND",
+    "errno": -3008,
+    "hostname": "example.com",
+    "message": "getaddrinfo ENOTFOUND example.com",
+    "name": "Error",
+    "syscall": "getaddrinfo"
+  },
+  "net.listen": {
+    "address": "127.0.0.1",
+    "code": "EPERM",
+    "errno": -1,
+    "message": "listen EPERM: operation not permitted 127.0.0.1:8123",
+    "name": "Error",
+    "port": 8123,
+    "syscall": "listen"
+  },
+  "promises.readdir": {
+    "code": "EACCES",
+    "errno": -13,
+    "message": "EACCES: permission denied, scandir '\u003cdir\u003e'",
+    "name": "Error",
+    "path": "\u003cdir\u003e",
+    "syscall": "scandir"
+  },
+  "readFileSync": {
+    "code": "EACCES",
+    "errno": -13,
+    "message": "EACCES: permission denied, open '\u003cdir\u003e/a.txt'",
+    "name": "Error",
+    "path": "\u003cdir\u003e/a.txt",
+    "syscall": "open"
+  },
+  "spawn": {
+    "code": "EPERM",
+    "errno": -1,
+    "message": "spawn EPERM",
+    "name": "Error",
+    "syscall": "spawn"
+  },
+  "spawnSync": {
+    "code": "EPERM",
+    "errno": -1,
+    "message": "spawnSync /usr/bin/id EPERM",
+    "name": "Error",
+    "path": "/usr/bin/id",
+    "syscall": "spawnSync /usr/bin/id"
+  },
+  "writeFileSync": {
+    "code": "EACCES",
+    "errno": -13,
+    "message": "EACCES: permission denied, open '\u003cdir\u003e/b.txt'",
+    "name": "Error",
+    "path": "\u003cdir\u003e/b.txt",
+    "syscall": "open"
+  }
+}

@@ -23,8 +23,11 @@ var (
 	ErrSocketClosed = errors.New("ENOTCONN: socket is closed")
 	// ErrAddressInUse is returned when address is already in use
 	ErrAddressInUse = errors.New("EADDRINUSE: address already in use")
-	// ErrNetworkUnreachable is returned in sandbox mode
+	// ErrNetworkUnreachable reports a network that cannot be reached.
 	ErrNetworkUnreachable = errors.New("ENETUNREACH: network unreachable (sandboxed)")
+	// ErrNetworkRefused is what NoOpSocketFactory's sockets return: EPERM, as the OS
+	// reports a socket operation the process may not perform.
+	ErrNetworkRefused error = syscall.EPERM
 )
 
 // TCPSocket represents a TCP connection interface.
@@ -856,7 +859,10 @@ func (s *RealUDPSocket) Ref() { s.ref = true }
 // Unref marks the socket as unreferenced for the event loop.
 func (s *RealUDPSocket) Unref() { s.ref = false }
 
-// NoOpSocketFactory creates sandboxed sockets that block all operations.
+// NoOpSocketFactory creates sockets that refuse every operation, as the OS refuses a
+// process that may not use the network: connect, listen and bind fail with EPERM, so
+// scripts see the errors Node reports there. It is the default when Config.SocketFactory
+// is nil.
 type NoOpSocketFactory struct{}
 
 // NewNoOpSocketFactory creates a factory that blocks all socket operations.
@@ -876,7 +882,7 @@ func (f *NoOpSocketFactory) CreateTCPServer() TCPServer {
 
 // CreateUDPSocket creates a no-op UDP socket that blocks all operations.
 func (f *NoOpSocketFactory) CreateUDPSocket(socketType string) UDPSocket {
-	return &NoOpUDPSocket{}
+	return &NoOpUDPSocket{ipv6: socketType == "udp6"}
 }
 
 // CreateTLSSocket creates a no-op TLS socket that blocks all operations.
@@ -887,16 +893,16 @@ func (f *NoOpSocketFactory) CreateTLSSocket(socket TCPSocket, config *tls.Config
 // NoOpTCPSocket blocks all TCP operations.
 type NoOpTCPSocket struct{}
 
-// Connect always returns ErrNetworkUnreachable.
+// Connect always returns ErrNetworkRefused.
 func (s *NoOpTCPSocket) Connect(ctx context.Context, address string, port int) error {
-	return ErrNetworkUnreachable
+	return ErrNetworkRefused
 }
 
-// Write always returns ErrNetworkUnreachable.
-func (s *NoOpTCPSocket) Write(data []byte) (int, error) { return 0, ErrNetworkUnreachable }
+// Write always returns ErrNetworkRefused.
+func (s *NoOpTCPSocket) Write(data []byte) (int, error) { return 0, ErrNetworkRefused }
 
-// Read always returns ErrNetworkUnreachable.
-func (s *NoOpTCPSocket) Read(buf []byte) (int, error) { return 0, ErrNetworkUnreachable }
+// Read always returns ErrNetworkRefused.
+func (s *NoOpTCPSocket) Read(buf []byte) (int, error) { return 0, ErrNetworkRefused }
 
 // Close is a no-op.
 func (s *NoOpTCPSocket) Close() error { return nil }
@@ -925,14 +931,14 @@ func (s *NoOpTCPSocket) Unref() {}
 // NoOpTCPServer blocks all TCP server operations.
 type NoOpTCPServer struct{}
 
-// Listen always returns ErrNetworkUnreachable.
+// Listen always returns ErrNetworkRefused.
 func (s *NoOpTCPServer) Listen(ctx context.Context, address string, port int) error {
-	return ErrNetworkUnreachable
+	return ErrNetworkRefused
 }
 
-// Accept always returns ErrNetworkUnreachable.
+// Accept always returns ErrNetworkRefused.
 func (s *NoOpTCPServer) Accept(ctx context.Context) (TCPSocket, error) {
-	return nil, ErrNetworkUnreachable
+	return nil, ErrNetworkRefused
 }
 
 // Close is a no-op.
@@ -947,22 +953,40 @@ func (s *NoOpTCPServer) Ref() {}
 // Unref is a no-op.
 func (s *NoOpTCPServer) Unref() {}
 
+// BindError is a UDP socket's refusal of the bind it makes on its first send, to Address
+// (the wildcard address for its family) and a random port. Node reports that as the
+// socket's error rather than the send's.
+type BindError struct {
+	Address string
+	Err     error
+}
+
+func (e *BindError) Error() string { return e.Err.Error() }
+func (e *BindError) Unwrap() error { return e.Err }
+
 // NoOpUDPSocket blocks all UDP operations.
-type NoOpUDPSocket struct{}
+type NoOpUDPSocket struct {
+	ipv6 bool
+}
 
-// Bind always returns ErrNetworkUnreachable.
+// Bind always returns ErrNetworkRefused.
 func (s *NoOpUDPSocket) Bind(ctx context.Context, address string, port int) error {
-	return ErrNetworkUnreachable
+	return ErrNetworkRefused
 }
 
-// Send always returns ErrNetworkUnreachable.
+// Send always fails: the socket refuses the bind a first send makes, with a BindError
+// for ErrNetworkRefused.
 func (s *NoOpUDPSocket) Send(data []byte, address string, port int) (int, error) {
-	return 0, ErrNetworkUnreachable
+	wildcard := "0.0.0.0"
+	if s.ipv6 {
+		wildcard = "::"
+	}
+	return 0, &BindError{Address: wildcard, Err: ErrNetworkRefused}
 }
 
-// Receive always returns ErrNetworkUnreachable.
+// Receive always returns ErrNetworkRefused.
 func (s *NoOpUDPSocket) Receive(buf []byte) (int, string, int, error) {
-	return 0, "", 0, ErrNetworkUnreachable
+	return 0, "", 0, ErrNetworkRefused
 }
 
 // Close is a no-op.
@@ -974,14 +998,14 @@ func (s *NoOpUDPSocket) SetBroadcast(enable bool) error { return nil }
 // SetMulticastTTL is a no-op.
 func (s *NoOpUDPSocket) SetMulticastTTL(ttl int) error { return nil }
 
-// AddMembership always returns ErrNetworkUnreachable.
+// AddMembership always returns ErrNetworkRefused.
 func (s *NoOpUDPSocket) AddMembership(multicastAddr string, interfaceAddr string) error {
-	return ErrNetworkUnreachable
+	return ErrNetworkRefused
 }
 
-// DropMembership always returns ErrNetworkUnreachable.
+// DropMembership always returns ErrNetworkRefused.
 func (s *NoOpUDPSocket) DropMembership(multicastAddr string, interfaceAddr string) error {
-	return ErrNetworkUnreachable
+	return ErrNetworkRefused
 }
 
 // LocalAddr always returns nil.

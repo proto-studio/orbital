@@ -613,7 +613,7 @@ func parseURLHostPort(urlStr string) (string, int, error) {
 // embedder's own and must see every request.
 func (rt *Runtime) HTTPOverSockets() bool {
 	switch client := rt.httpClient.(type) {
-	case *RealHTTPClient:
+	case *RealHTTPClient, *refusingHTTPClient:
 		return true
 	case *FilteredHTTPClient:
 		if _, real := client.underlying.(*RealHTTPClient); !real {

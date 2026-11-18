@@ -10,11 +10,12 @@ import (
 	"proto.zip/studio/orbital/pkg/runtime"
 )
 
-// runWorkersCapped runs source with exactly the MaxWorkers cfg sets, unlike runJS.
+// runWorkersCapped runs source with exactly the MaxWorkers cfg sets, unlike runJS, and
+// with the host access runJS gives.
 func runWorkersCapped(t *testing.T, cfg *runtime.Config, source string) map[string]any {
 	t.Helper()
 	cfg.EnableConsole, cfg.EnableTimers, cfg.Timeout = true, true, 20*time.Second
-	inst, err := New(cfg)
+	inst, err := New(hostAccess(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}

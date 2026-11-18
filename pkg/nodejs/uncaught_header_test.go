@@ -25,7 +25,7 @@ func runFileUncaught(t *testing.T, files map[string]string, entry string) (*runt
 			t.Fatal(err)
 		}
 	}
-	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second}))
+	inst, err := New(openCaps(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,7 @@ func TestProcess_BeforeExitNotForPreloads(t *testing.T) {
 	if err := os.WriteFile(entry, []byte("note('entry');\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}

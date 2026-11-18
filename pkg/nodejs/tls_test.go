@@ -563,7 +563,7 @@ func TestTLSConnect_InjectedSockets(t *testing.T) {
 	})
 	t.Run("no-op factory", func(t *testing.T) {
 		result := runJS(t, &runtime.Config{SocketFactory: &runtime.NoOpSocketFactory{}, DNSResolver: resolver()}, tlsScript("", script))
-		wantTLS(t, result, false, nil, tlsFailed("ENETUNREACH")...)
+		wantTLS(t, result, false, nil, tlsFailed("EPERM")...)
 	})
 }
 
@@ -1594,7 +1594,7 @@ server.on('secure', () => { for (let i = 0; i < 50; i++) server.write(Buffer.all
 const client = tls.connect({ socket: a, servername: 'localhost', ca: cert }, () => { globalThis.secured = true; client.pause(); });`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			inst, err := New(&runtime.Config{Timeout: 10 * time.Second, EnableTimers: true, EnableConsole: true})
+			inst, err := New(hostAccess(&runtime.Config{Timeout: 10 * time.Second, EnableTimers: true, EnableConsole: true}))
 			if err != nil {
 				t.Fatal(err)
 			}

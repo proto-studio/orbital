@@ -62,30 +62,41 @@ type Module interface {
 }
 
 // Config contains configuration options for creating a runtime.
+//
+// Every field that grants access to the host is closed when nil: a zero Config gives
+// scripts no filesystem, no network and no processes, and they see the errors Node
+// reports when the OS refuses those operations. Set a field to grant that access, for
+// example NewLocalFilesystem(root), NewRealSocketFactory() or NewRealProcessSpawner().
+// The orbital CLI sets the real implementations, as Node behaves.
 type Config struct {
 	// EnableConsole enables the console global object
 	EnableConsole bool
 	// EnableTimers enables setTimeout, setInterval, etc.
 	EnableTimers bool
 	// Filesystem is the filesystem implementation to use.
-	// If nil, a local filesystem with no restrictions is used.
+	// If nil, NewNoOpFilesystem() refuses every operation with EACCES, and require and
+	// import of files fail as they do in Node for a file it can't read.
 	Filesystem Filesystem
 	// SystemInfo is the system information provider.
-	// If nil, real system information is used.
+	// If nil, NewSandboxedSystemInfo(nil) reports a made-up host instead of this one.
 	SystemInfo SystemInfo
 	// HTTPClient is the HTTP client for fetch, and for node:http and node:https when
 	// it is set to anything but the real client. It then sees every such request.
-	// If nil, a real HTTP client with no restrictions is used, and node:http and
-	// node:https connect through SocketFactory instead.
+	// If nil, fetch fails as it does in Node without network access: a name the
+	// DNSResolver doesn't resolve fails with ENOTFOUND, and connecting fails with EPERM.
+	// node:http and node:https then connect through SocketFactory, as with the real
+	// client.
 	HTTPClient HTTPClient
 	// Environment is the environment variable provider.
-	// If nil, real system environment variables are used.
+	// If nil, NewSandboxedEnvironment(nil) starts empty and exposes nothing of the
+	// host's environment.
 	Environment Environment
 	// DNSResolver resolves names for node:dns and for everything that connects by name.
-	// If nil, the system's DNS resolver is used.
+	// If nil, NewNoOpResolver() resolves only localhost, as a host without network
+	// access does.
 	DNSResolver Resolver
 	// SocketFactory creates TCP/UDP sockets.
-	// If nil, real sockets with no restrictions are used.
+	// If nil, NewNoOpSocketFactory() refuses every connect, listen and bind with EPERM.
 	SocketFactory SocketFactory
 	// ClientTLSConfig, when non-nil, is the authoritative client TLS configuration
 	// for node:tls, node:https and node:http2: JavaScript options such as rejectUnauthorized,
@@ -116,7 +127,7 @@ type Config struct {
 	// doesn't count. A runtime's workers and loader realms count against the same cap.
 	MaxOpenFiles int
 	// ProcessSpawner spawns child processes.
-	// If nil, real process spawning with no restrictions is used.
+	// If nil, NewNoOpProcessSpawner() refuses every spawn with EPERM.
 	ProcessSpawner ProcessSpawner
 	// ProcessSignaler sends the signals of process.kill().
 	// If nil, every signal is refused with EPERM: process.kill() can reach any process
@@ -164,19 +175,12 @@ type Config struct {
 	CryptoMemoryLimit int64
 }
 
-// DefaultConfig returns a configuration with common modules enabled.
+// DefaultConfig returns a configuration with the console and timers enabled. Like a zero
+// Config, it gives scripts no filesystem, no network and no processes.
 func DefaultConfig() *Config {
 	return &Config{
-		EnableConsole:  true,
-		EnableTimers:   true,
-		Filesystem:     nil, // Will default to unrestricted local filesystem
-		SystemInfo:     nil, // Will default to real system info
-		HTTPClient:     nil, // Will default to real HTTP client
-		Environment:    nil, // Will default to real environment
-		DNSResolver:    nil, // Will default to system DNS resolver
-		SocketFactory:  nil, // Will default to real sockets
-		ProcessSpawner: nil, // Will default to real process spawning
-		// ProcessSignaler: nil defaults to refusing process.kill()
+		EnableConsole: true,
+		EnableTimers:  true,
 	}
 }
 
@@ -209,50 +213,38 @@ func New(cfg *Config) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to set up global alias: %w", err)
 	}
 
-	// Set up filesystem
+	// Every field that grants access to the host refuses it when nil.
 	fs := cfg.Filesystem
 	if fs == nil {
-		fs = NewLocalFilesystem("")
+		fs = NewNoOpFilesystem()
 	}
-
-	// Set up system info
 	sysInfo := cfg.SystemInfo
 	if sysInfo == nil {
-		sysInfo = NewRealSystemInfo()
+		sysInfo = NewSandboxedSystemInfo(nil)
 	}
-
-	// Set up HTTP client
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = NewRealHTTPClient()
-	}
-
-	// Set up environment
 	env := cfg.Environment
 	if env == nil {
-		env = NewRealEnvironment()
+		env = NewSandboxedEnvironment(nil)
 	}
-
-	// Set up DNS resolver
 	dnsResolver := cfg.DNSResolver
 	if dnsResolver == nil {
-		dnsResolver = NewRealResolver()
+		dnsResolver = NewNoOpResolver()
 	}
-
-	// Set up socket factory
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &refusingHTTPClient{resolver: dnsResolver}
+	}
 	socketFactory := cfg.SocketFactory
 	if socketFactory == nil {
-		socketFactory = NewRealSocketFactory()
+		socketFactory = NewNoOpSocketFactory()
 	}
-
-	// Set up process spawner
 	processSignaler := cfg.ProcessSignaler
 	if processSignaler == nil {
 		processSignaler = NewNoOpProcessSignaler()
 	}
 	processSpawner := cfg.ProcessSpawner
 	if processSpawner == nil {
-		processSpawner = NewRealProcessSpawner()
+		processSpawner = NewNoOpProcessSpawner()
 	}
 
 	// Create resource tracker

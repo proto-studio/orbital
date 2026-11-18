@@ -692,6 +692,6 @@ done({ v });`, options)
 
 	t.Run("no-op factory", func(t *testing.T) {
 		result := runScript(t, &runtime.Config{SocketFactory: &runtime.NoOpSocketFactory{}, DNSResolver: &recordingResolver{hosts: map[string][]string{"api.test": {"203.0.113.5"}}}}, dial(`{ host: 'api.test', port: 80 }`))
-		wantJSON(t, result, map[string]any{"v": "ENETUNREACH"})
+		wantJSON(t, result, map[string]any{"v": "EPERM"})
 	})
 }

@@ -58,7 +58,7 @@ await import('./slow.mjs');`,
 			t.Fatal(err)
 		}
 	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true}))
 	if err != nil {
 		t.Fatal(err)
 	}

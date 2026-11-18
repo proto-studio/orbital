@@ -105,16 +105,35 @@ Flags are documented in [`docs/cli-flags.md`](docs/cli-flags.md).
 
 ## Sandboxing
 
-In library code, pass a `runtime.Config` with sandboxed implementations:
+A library runtime starts closed. With a zero `runtime.Config` or `runtime.DefaultConfig()`,
+scripts have no filesystem, no network and no processes, and see the errors Node reports when the
+OS refuses those operations: `EACCES` from `fs`, `EPERM` from connecting, listening and spawning,
+and `ENOTFOUND` for any name but `localhost`. `process.env` starts empty, and `os` describes a
+made-up host. Each `Config` field grants one kind of access when you set it:
+
+| Field | Closed default | To grant access |
+| --- | --- | --- |
+| `Filesystem` | `NewNoOpFilesystem()` | `NewLocalFilesystem(root)`, `NewMemoryFilesystem()` |
+| `SocketFactory` | `NewNoOpSocketFactory()` | `NewRealSocketFactory()`, `NewFilteredSocketFactory(nil, policy)` |
+| `HTTPClient` | refuses `fetch` | `NewRealHTTPClient()`, `NewFilteredHTTPClient(nil, policy)` |
+| `DNSResolver` | `NewNoOpResolver()` | `NewRealResolver()` |
+| `ProcessSpawner` | `NewNoOpProcessSpawner()` | `NewRealProcessSpawner()`, `NewSandboxedProcessSpawner(cfg)` |
+| `ProcessSignaler` | `NewNoOpProcessSignaler()` | `NewRealProcessSignaler()` |
+| `Environment` | `NewSandboxedEnvironment(nil)` | `NewRealEnvironment()` |
+| `SystemInfo` | `NewSandboxedSystemInfo(nil)` | `NewRealSystemInfo()` |
+
+The `orbital` CLI sets the real implementations, so it behaves as Node does unless a flag such
+as `--sandbox` restricts it.
+
+To grant a sandboxed subset, set those fields:
 
 ```go
 policy := runtime.CommonPolicies.NoPrivateNetworks()
 cfg := &runtime.Config{
 	Filesystem:     runtime.NewLocalFilesystem("/sandbox"),
-	SystemInfo:     runtime.NewSandboxedSystemInfo(nil),
+	DNSResolver:    runtime.NewRealResolver(),
 	HTTPClient:     runtime.NewFilteredHTTPClient(nil, policy),
 	SocketFactory:  runtime.NewFilteredSocketFactory(nil, policy),
-	ProcessSpawner: runtime.NewNoOpProcessSpawner(),
 	MaxOpenSockets: 64,
 	MaxOpenFiles:   64,
 	DocumentRoot:   "/sandbox",
@@ -132,12 +151,11 @@ See [`docs/network.md`](docs/network.md) for how the network modules, TLS and DN
 and [`docs/child-processes.md`](docs/child-processes.md) for `ProcessSpawner`: the built-in
 spawners, `SandboxProcessConfig`, and wrapping one with your own policy.
 
-For no filesystem at all, use `runtime.NewNoOpFilesystem()`. Every `fs` call then fails with
-`EACCES`, as Node's do for a path the OS won't let it access. Loading code from files goes through
-the filesystem too, so `require` and `import` of files and `new Worker(file)` fail with
-`MODULE_NOT_FOUND` (`ERR_MODULE_NOT_FOUND` for `import`). Pass scripts as source instead, or grant
-a filesystem that holds them. `runtime.NewMemoryFilesystem()` starts empty but still lets scripts
-write to it.
+Without a `Filesystem`, every `fs` call fails with `EACCES`, as Node's do for a path the OS won't
+let it access. Loading code from files goes through the filesystem too, so `require` and `import`
+of files and `new Worker(file)` fail with `MODULE_NOT_FOUND` (`ERR_MODULE_NOT_FOUND` for
+`import`). Pass scripts as source instead, or grant a filesystem that holds them.
+`runtime.NewMemoryFilesystem()` starts empty but still lets scripts write to it.
 
 ## Uncaught exceptions and `process.exit`
 

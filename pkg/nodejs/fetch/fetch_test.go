@@ -351,7 +351,7 @@ func TestFetch_RealClientStreamsAndCancelCloses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rt := setupStreamingRuntime(t, nil)
+	rt := setupStreamingRuntime(t, &runtime.Config{HTTPClient: runtime.NewRealHTTPClient()})
 	defer rt.Dispose()
 
 	start := time.Now()
@@ -491,7 +491,7 @@ func TestFetch_DeadlineReleasesBody(t *testing.T) {
 
 	// The deadline starts when the runtime is created, before modules register,
 	// so leave room for setup and still release a body the script never cancels.
-	rt := setupStreamingRuntime(t, &runtime.Config{Timeout: 2 * time.Second})
+	rt := setupStreamingRuntime(t, &runtime.Config{HTTPClient: runtime.NewRealHTTPClient(), Timeout: 2 * time.Second})
 	defer rt.Dispose()
 
 	got := runJS(t, rt, `(async () => {

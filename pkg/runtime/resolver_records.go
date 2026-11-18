@@ -70,11 +70,14 @@ func SystemDNSServers() []string {
 type realRecords struct{}
 
 // RecordsFor returns how resolver queries records directly, or nil if it does not.
-// RealResolver offers this only as itself: a type that embeds it to restrict lookups must
-// not inherit a way around those restrictions.
+// RealResolver and NoOpResolver offer this only as themselves: a type that embeds one to
+// restrict or answer lookups must not inherit a way around them.
 func RecordsFor(resolver Resolver) RecordResolver {
-	if _, real := resolver.(*RealResolver); real {
+	switch resolver.(type) {
+	case *RealResolver:
 		return realRecords{}
+	case *NoOpResolver:
+		return noOpRecords{}
 	}
 	if records, ok := resolver.(RecordResolver); ok {
 		return records

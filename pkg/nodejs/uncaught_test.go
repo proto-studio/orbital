@@ -15,7 +15,7 @@ import (
 // runUncaught runs source and returns what it passed to note(), and Run's error.
 func runUncaught(t *testing.T, source string) ([]string, error) {
 	t.Helper()
-	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second}))
+	inst, err := New(openCaps(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 20 * time.Second})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func runUncaught(t *testing.T, source string) ([]string, error) {
 
 func supportsRejections(t *testing.T) {
 	t.Helper()
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ setTimeout(() => note('later'), 20);
 func runModuleUncaught(t *testing.T, source string) ([]string, error) {
 	t.Helper()
 	const timeout = 2 * time.Second
-	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: timeout}))
+	inst, err := New(openCaps(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: timeout})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +742,7 @@ throw new Error('boom');
 
 // A runtime that has ended runs nothing more, whichever way it is asked to.
 func TestRunModuleAfterUncaught(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -791,7 +791,7 @@ if (typeof Float16Array !== 'function') {
 func runUncaughtWith(t *testing.T, cfg *runtime.Config, source string) ([]string, error) {
 	t.Helper()
 	cfg.EnableConsole, cfg.EnableTimers, cfg.Timeout = true, true, 20*time.Second
-	inst, err := New(openCaps(cfg))
+	inst, err := New(openCaps(hostAccess(cfg)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +874,7 @@ setTimeout(() => note('still running', process.exitCode), 20);
 			}
 		})
 	}
-	if _, err := New(&runtime.Config{UnhandledRejections: "sometimes"}); err == nil {
+	if _, err := New(hostAccess(&runtime.Config{UnhandledRejections: "sometimes"})); err == nil {
 		t.Error("an unknown mode was accepted")
 	}
 }

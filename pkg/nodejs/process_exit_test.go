@@ -15,7 +15,7 @@ import (
 // what the script recorded in globalThis.log.
 func runExit(t *testing.T, script string) (int, string) {
 	t.Helper()
-	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
+	inst, err := New(openCaps(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ w.on('exit', (code) => {
 // A top-level process.exit in an ES module ends evaluation, and RunModule reports the exit,
 // not the evaluation error V8 gives for it.
 func TestProcessExit_InModule(t *testing.T) {
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func runExitModule(t *testing.T, files map[string]string) (int, string) {
 			t.Fatal(err)
 		}
 	}
-	inst, err := New(openCaps(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second}))
+	inst, err := New(openCaps(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 30 * time.Second})))
 	if err != nil {
 		t.Fatal(err)
 	}

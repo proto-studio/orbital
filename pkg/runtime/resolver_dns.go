@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"net"
+	"strings"
 )
 
 // Resolver defines the interface for DNS resolution.
@@ -202,50 +203,145 @@ func (r *SandboxedResolver) LookupAddr(ctx context.Context, addr string) ([]stri
 	return nil, &net.DNSError{Err: "reverse lookup not allowed in sandbox", Name: addr, IsNotFound: true}
 }
 
-// NoOpResolver returns errors for all DNS operations.
+// NoOpResolver resolves as a host does when the process may not use the network: only
+// localhost resolves, as the hosts file says, other names are not found (ENOTFOUND), and
+// queries that would ask a DNS server, such as dns.resolve4(), fail with ECONNREFUSED, as
+// Node reports when it can't reach one. It is the default when Config.DNSResolver is nil.
 type NoOpResolver struct{}
 
-// NewNoOpResolver creates a NoOpResolver that blocks all DNS operations.
+// NewNoOpResolver creates a NoOpResolver.
 func NewNoOpResolver() *NoOpResolver {
 	return &NoOpResolver{}
 }
 
-// LookupHost always returns a DNS error.
+// noOpLocalhost is what localhost resolves to, in the order the usual hosts file lists it.
+var noOpLocalhost = []string{"127.0.0.1", "::1"}
+
+func noOpNotFound(name string) error {
+	return &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+}
+
+func isLocalhost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+// LookupHost resolves localhost and reports every other name as not found.
 func (r *NoOpResolver) LookupHost(ctx context.Context, host string) ([]string, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: host, IsNotFound: true}
+	if isLocalhost(host) {
+		return append([]string(nil), noOpLocalhost...), nil
+	}
+	return nil, noOpNotFound(host)
 }
 
-// LookupIP always returns a DNS error.
+// LookupIP resolves localhost and reports every other name as not found.
 func (r *NoOpResolver) LookupIP(ctx context.Context, network, host string) ([]net.IP, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: host, IsNotFound: true}
+	if !isLocalhost(host) {
+		return nil, noOpNotFound(host)
+	}
+	var ips []net.IP
+	for _, addr := range noOpLocalhost {
+		ip := net.ParseIP(addr)
+		switch {
+		case network == "ip4" && ip.To4() == nil, network == "ip6" && ip.To4() != nil:
+			continue
+		}
+		ips = append(ips, ip)
+	}
+	if len(ips) == 0 {
+		return nil, noOpNotFound(host)
+	}
+	return ips, nil
 }
 
-// LookupCNAME always returns a DNS error.
+// LookupCNAME fails as a query no DNS server answers.
 func (r *NoOpResolver) LookupCNAME(ctx context.Context, host string) (string, error) {
-	return "", &net.DNSError{Err: "DNS not available", Name: host, IsNotFound: true}
+	return "", noOpRefused
 }
 
-// LookupMX always returns a DNS error.
+// LookupMX fails as a query no DNS server answers.
 func (r *NoOpResolver) LookupMX(ctx context.Context, domain string) ([]*net.MX, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: domain, IsNotFound: true}
+	return nil, noOpRefused
 }
 
-// LookupNS always returns a DNS error.
+// LookupNS fails as a query no DNS server answers.
 func (r *NoOpResolver) LookupNS(ctx context.Context, domain string) ([]*net.NS, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: domain, IsNotFound: true}
+	return nil, noOpRefused
 }
 
-// LookupTXT always returns a DNS error.
+// LookupTXT fails as a query no DNS server answers.
 func (r *NoOpResolver) LookupTXT(ctx context.Context, domain string) ([]string, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: domain, IsNotFound: true}
+	return nil, noOpRefused
 }
 
-// LookupSRV always returns a DNS error.
+// LookupSRV fails as a query no DNS server answers.
 func (r *NoOpResolver) LookupSRV(ctx context.Context, service, proto, name string) (string, []*net.SRV, error) {
-	return "", nil, &net.DNSError{Err: "DNS not available", Name: name, IsNotFound: true}
+	return "", nil, noOpRefused
 }
 
-// LookupAddr always returns a DNS error.
+// LookupAddr names the loopback addresses localhost and reports every other address as
+// not found.
 func (r *NoOpResolver) LookupAddr(ctx context.Context, addr string) ([]string, error) {
-	return nil, &net.DNSError{Err: "DNS not available", Name: addr, IsNotFound: true}
+	if ip := net.ParseIP(addr); ip != nil && ip.IsLoopback() {
+		return []string{"localhost"}, nil
+	}
+	return nil, noOpNotFound(addr)
 }
+
+// noOpRecords answers record queries for NoOpResolver. RecordsFor offers it only for
+// NoOpResolver itself, so a type that embeds NoOpResolver keeps its own lookups.
+type noOpRecords struct{}
+
+// LookupRecords fails as a query no DNS server answers, with ECONNREFUSED. A reverse
+// lookup (PTR for an in-addr.arpa or ip6.arpa name) is answered from the hosts file as
+// Node's resolver answers it: a loopback address is localhost, and any other address is
+// not found.
+func (noOpRecords) LookupRecords(ctx context.Context, name, rrtype string, servers []string) ([]map[string]any, error) {
+	if rrtype == "PTR" {
+		if ip, ok := reverseAddress(name); ok {
+			if ip.IsLoopback() {
+				return []map[string]any{{"type": "PTR", "value": "localhost"}}, nil
+			}
+			return nil, &DNSQueryError{Code: "ENOTFOUND"}
+		}
+	}
+	return nil, noOpRefused
+}
+
+// reverseAddress parses the address a reverse lookup name such as 1.0.0.127.in-addr.arpa
+// stands for.
+func reverseAddress(name string) (net.IP, bool) {
+	name = strings.TrimSuffix(strings.ToLower(name), ".")
+	if rest, ok := strings.CutSuffix(name, ".in-addr.arpa"); ok {
+		parts := strings.Split(rest, ".")
+		if len(parts) != 4 {
+			return nil, false
+		}
+		for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+			parts[i], parts[j] = parts[j], parts[i]
+		}
+		ip := net.ParseIP(strings.Join(parts, ".")).To4()
+		return ip, ip != nil
+	}
+	if rest, ok := strings.CutSuffix(name, ".ip6.arpa"); ok {
+		nibbles := strings.Split(rest, ".")
+		if len(nibbles) != 32 {
+			return nil, false
+		}
+		var hex strings.Builder
+		for i := len(nibbles) - 1; i >= 0; i-- {
+			if len(nibbles[i]) != 1 {
+				return nil, false
+			}
+			hex.WriteString(nibbles[i])
+			if i%4 == 0 && i != 0 {
+				hex.WriteByte(':')
+			}
+		}
+		ip := net.ParseIP(hex.String())
+		return ip, ip != nil
+	}
+	return nil, false
+}
+
+var noOpRefused = &DNSQueryError{Code: "ECONNREFUSED"}

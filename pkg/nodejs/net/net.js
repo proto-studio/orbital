@@ -31,6 +31,7 @@
   const kListenMessages = {
     EADDRINUSE: 'address already in use',
     EACCES: 'permission denied',
+    EPERM: 'operation not permitted',
     EADDRNOTAVAIL: 'address not available',
     EMFILE: 'too many open files'
   };

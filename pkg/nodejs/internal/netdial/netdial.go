@@ -134,9 +134,26 @@ func DialOne(ctx context.Context, rt *runtime.Runtime, host, ip string, isName b
 	}
 	if err != nil {
 		socket.Close()
-		return nil, &AddressError{Err: err, Address: ip, Port: port}
+		return nil, &AddressError{Err: err, Address: ip, Port: port, Local: refusedLocal(err, ip, opts.LocalAddress, opts.LocalPort)}
 	}
 	return socket, nil
+}
+
+// refusedLocal is the local address Node names when the OS refuses a connection outright,
+// with EPERM or EACCES from connect(2) itself: Node then reports the socket's address too,
+// which is the wildcard address with port 0 unless the script chose one.
+func refusedLocal(err error, ip, localAddress string, localPort int) string {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) || (errno != syscall.EPERM && errno != syscall.EACCES) {
+		return ""
+	}
+	if localAddress == "" {
+		localAddress = "0.0.0.0"
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+			localAddress = "::"
+		}
+	}
+	return localAddress + ":" + strconv.Itoa(localPort)
 }
 
 // AddressError records the address a connection attempt was made to.
@@ -144,6 +161,9 @@ type AddressError struct {
 	Err     error
 	Address string
 	Port    int
+	// Local, when set, is the "address:port" the socket had, which Node adds to the
+	// message of a connection the OS refused outright.
+	Local string
 }
 
 func (e *AddressError) Error() string { return e.Err.Error() }
@@ -167,10 +187,24 @@ var codePrefix = regexp.MustCompile(`^([A-Z][A-Z0-9_]+): (.*)$`)
 func Describe(err error, syscallName, host string, port int) NodeError {
 	out := NodeError{Syscall: syscallName, Address: host, Port: port}
 
-	var addrErr *AddressError
+	var (
+		addrErr *AddressError
+		opErr   *net.OpError
+		local   string
+	)
 	if errors.As(err, &addrErr) {
 		out.Address = addrErr.Address
 		out.Port = addrErr.Port
+		local = addrErr.Local
+	} else if errors.As(err, &opErr) {
+		// Such as an HTTP client's dial: Node names the address it connected to.
+		if tcp, ok := opErr.Addr.(*net.TCPAddr); ok {
+			out.Address = tcp.IP.String()
+			out.Port = tcp.Port
+			if opErr.Op == "dial" {
+				local = refusedLocal(err, out.Address, "", 0)
+			}
+		}
 	}
 
 	var (
@@ -179,9 +213,10 @@ func Describe(err error, syscallName, host string, port int) NodeError {
 	)
 	switch {
 	case errors.As(err, &dnsErr), errors.Is(err, ErrInvalidHost):
-		out.Code = "ENOTFOUND"
+		// libuv's UV_EAI_NONAME and UV_EAI_AGAIN.
+		out.Code, out.Errno = "ENOTFOUND", -3008
 		if dnsErr != nil && dnsErr.IsTimeout {
-			out.Code = "EAI_AGAIN"
+			out.Code, out.Errno = "EAI_AGAIN", -3001
 		}
 		out.Syscall = "getaddrinfo"
 		out.Hostname = host
@@ -220,6 +255,9 @@ func Describe(err error, syscallName, host string, port int) NodeError {
 			out.Message += " " + out.Address + ":" + strconv.Itoa(out.Port)
 		} else {
 			out.Message += " " + out.Address
+		}
+		if local != "" {
+			out.Message += " - Local (" + local + ")"
 		}
 	}
 	return out

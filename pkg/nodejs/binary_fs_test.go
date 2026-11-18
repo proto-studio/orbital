@@ -187,7 +187,7 @@ func TestBinaryStdioChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst, err := New(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 60 * time.Second})
+	inst, err := New(hostAccess(&runtime.Config{EnableConsole: true, EnableTimers: true, Timeout: 60 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}

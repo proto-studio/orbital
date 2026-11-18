@@ -284,9 +284,16 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		d.finish(id, socket)
 
 		d.rt.EventLoop().EnqueueMicrotask(func() {
-			if err != nil {
+			var bindErr *runtime.BindError
+			switch {
+			case errors.As(err, &bindErr):
+				ctx := d.rt.Context()
+				errVal, _ := ctx.NewString(bindErr.Err.Error())
+				address, _ := ctx.NewString(bindErr.Address)
+				d.rt.MakeCallback(callback, ctx.Undefined(), errVal, ctx.NewNumber(0), address)
+			case err != nil:
 				d.callCallbackWithBytes(callback, err.Error(), 0)
-			} else {
+			default:
 				d.callCallbackWithBytes(callback, "", n)
 			}
 		})
