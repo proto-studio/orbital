@@ -357,6 +357,32 @@ func TestMemoryFilesystemGrowsGeometricallyNearTheLimit(t *testing.T) {
 	}
 }
 
+// A call that reaches a handle after it closed, as one in flight when a runtime is disposed
+// can, fails with EBADF and charges nothing: the file it had open may have no names left, and
+// its memory has been given back.
+func TestMemoryFilesystemClosedHandleChangesNothing(t *testing.T) {
+	m := NewMemoryFilesystem()
+	f, err := m.OpenFile("/f", os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remove("/f"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.(*memFileHandle).Truncate(1 << 20); !errors.Is(err, syscall.EBADF) {
+		t.Errorf("Truncate after Close: %v, want EBADF", err)
+	}
+	if _, err := f.Write([]byte("x")); !errors.Is(err, syscall.EBADF) {
+		t.Errorf("Write after Close: %v, want EBADF", err)
+	}
+	if got := m.memoryInUse(); got != 0 {
+		t.Fatalf("calls on a closed handle left %d bytes charged", got)
+	}
+}
+
 // A file written in chunks still fills the filesystem to its limit: when doubling its
 // capacity doesn't fit, it grows by what the write needs.
 func TestMemoryFilesystemGrowsToTheLimit(t *testing.T) {
