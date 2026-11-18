@@ -153,30 +153,25 @@ func (c closeAll) Close() error {
 }
 
 // takeSlot counts a socket against Config.MaxOpenSockets once, when it binds, explicitly
-// or on its first send; closing it gives the slot back. Over the cap it fails with an
-// "EMFILE: ..." error, which dgram.js reports as Node does.
+// or on its first send; closing it gives the slot back. It also records the bind or send
+// as running, in the same critical section, so finish can't give the slot back between
+// the two while this one may yet open the socket; finish ends it. Over the cap it fails
+// with an "EMFILE: ..." error, which dgram.js reports as Node does.
 func (d *Dgram) takeSlot(id int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.slots[id] != nil {
-		return nil
+	if d.slots[id] == nil {
+		release, err := d.rt.OpenSocket()
+		if err != nil {
+			return errors.New("EMFILE: too many open files")
+		}
+		d.slots[id] = release
 	}
-	release, err := d.rt.OpenSocket()
-	if err != nil {
-		return errors.New("EMFILE: too many open files")
-	}
-	d.slots[id] = release
+	d.inflight[id]++
 	return nil
 }
 
-// begin records a bind or send that may open the socket's descriptor, after takeSlot.
-func (d *Dgram) begin(id int64) {
-	d.mu.Lock()
-	d.inflight[id]++
-	d.mu.Unlock()
-}
-
-// finish ends a bind or send that begin recorded. A descriptor it opened after the script
+// finish ends a bind or send that takeSlot recorded. A descriptor it opened after the script
 // closed the socket is closed, since nothing else will close it. Once the last one ends
 // with the socket still unbound, as after a failed bind, its place goes back, so failed
 // binds don't use up the cap; while another is still running, the place stays, since
@@ -227,7 +222,6 @@ func (d *Dgram) bindFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallback(callback, err.Error()) })
 		return nil
 	}
-	d.begin(id)
 
 	d.rt.EventLoop().AddPendingWork()
 	go func() {
@@ -274,7 +268,6 @@ func (d *Dgram) sendFunc(info *v8.FunctionCallbackInfo) *v8.Value {
 		d.rt.EventLoop().EnqueueMicrotask(func() { d.callCallbackWithBytes(callback, err.Error(), 0) })
 		return nil
 	}
-	d.begin(id)
 
 	data, err := base64.StdEncoding.DecodeString(msg)
 	if err != nil {
