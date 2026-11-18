@@ -252,3 +252,29 @@ async function limits(resourceLimits) {
 		t.Errorf("lowered: old generation %v, want 32", old)
 	}
 }
+
+// A script's resourceLimits can't raise a cap the configuration set.
+func TestWorkerResourceLimitsKeepConfiguredCaps(t *testing.T) {
+	inst, err := New(&runtime.Config{
+		EnableConsole: true,
+		EnableTimers:  true,
+		Timeout:       20 * time.Second,
+		MaxWorkers:    -1,
+		IsolateOptions: v8.IsolateOptions{
+			MaxHeapSizeInBytes:          1 << 30,
+			CapOldGenerationSizeInBytes: 32 * mib,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Runtime.Dispose()
+	got := runIn(t, inst, `
+const { Worker } = require('worker_threads');
+const w = new Worker('require("worker_threads").parentPort.postMessage(require("worker_threads").resourceLimits)', { eval: true, resourceLimits: { maxOldGenerationSizeMb: 128 } });
+w.once('message', (limits) => done(limits));
+`)
+	if old := got["maxOldGenerationSizeMb"]; old != float64(32) {
+		t.Fatalf("old generation %v with a 32 MiB cap configured and 128 asked for, want 32", old)
+	}
+}

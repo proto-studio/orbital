@@ -492,15 +492,18 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 // to fit the MemoryBudget when the worker starts.
 func (wk *worker) configure(cfg *goruntime.Config) {
 	opts := &cfg.IsolateOptions
-	if b := mbToBytes(wk.limits[0]); b > 0 {
-		opts.CapYoungGenerationSizeInBytes = b
+	opts.CapYoungGenerationSizeInBytes = lowerCap(opts.CapYoungGenerationSizeInBytes, mbToBytes(wk.limits[0]))
+	opts.CapOldGenerationSizeInBytes = lowerCap(opts.CapOldGenerationSizeInBytes, mbToBytes(wk.limits[1]))
+	opts.CapCodeRangeSizeInBytes = lowerCap(opts.CapCodeRangeSizeInBytes, mbToBytes(wk.limits[2]))
+}
+
+// lowerCap answers the lower of two caps, where 0 is none, so the script's can't raise
+// one the configuration set.
+func lowerCap(configured, asked uint64) uint64 {
+	if asked == 0 || (configured != 0 && configured < asked) {
+		return configured
 	}
-	if b := mbToBytes(wk.limits[1]); b > 0 {
-		opts.CapOldGenerationSizeInBytes = b
-	}
-	if b := mbToBytes(wk.limits[2]); b > 0 {
-		opts.CapCodeRangeSizeInBytes = b
-	}
+	return asked
 }
 
 // effectiveLimits answers the worker's limits as Node reports them in resourceLimits, a JSON

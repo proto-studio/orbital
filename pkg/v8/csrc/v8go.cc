@@ -3073,8 +3073,19 @@ class ViewDeserializerDelegate : public ValueDeserializer::Delegate {
           String::NewFromUtf8Literal(isolate, "Unable to deserialize cloned data.")));
       return MaybeLocal<Object>();
     }
-    Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, length);
-    if (length > 0) memcpy(buffer->Data(), data, length);
+    // ArrayBuffer::New aborts the process when the allocator refuses, as a
+    // MemoryBudget does when it's full, so this asks for null instead and
+    // fails as JavaScript's own allocation does.
+    std::unique_ptr<BackingStore> store = ArrayBuffer::NewBackingStore(
+        isolate, length, BackingStoreInitializationMode::kUninitialized,
+        BackingStoreOnFailureMode::kReturnNull);
+    if (!store) {
+      isolate->ThrowException(Exception::RangeError(
+          String::NewFromUtf8Literal(isolate, "Array buffer allocation failed")));
+      return MaybeLocal<Object>();
+    }
+    if (length > 0) memcpy(store->Data(), data, length);
+    Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, std::move(store));
     Local<Object> view = makeView(isolate, context_, type, buffer, length, buffer_proto_);
     if (view.IsEmpty()) return MaybeLocal<Object>();
     return view;
