@@ -1,21 +1,26 @@
 // Run by TestFS_CallFormsMapToFilesystem against a mock runtime.Filesystem (fs_mock_test.go).
 // Each case marks where it starts (see mockFS), so the test can check the interface calls it
-// made. Error cases fail at the interface with a chosen errno; those named for a case in
-// fs_memory_links.js make the same call, and must fail as Node did there.
+// made. Error cases fail at the interface with a chosen errno, and must fail as Node does.
+//
+// Under Node, the script makes on disk the files and links that make each error case fail
+// with its errno, and runs only those cases. fs_mock.node.json is that output under Node
+// v20.18.1. Regenerate it with
+//   ORBITAL_CAPTURE_NODE=1 go test ./pkg/nodejs -run 'TestFS_CallFormsMapToFilesystem'
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 
-const dir = globalThis.FS_DIR;
+const inNode = !globalThis.done;
+const dir = inNode ? fs.realpathSync(process.argv[2]) : globalThis.FS_DIR;
 const file = (name) => path.join(dir, name);
 const raw = (name) => dir + '/' + name;
 const results = {};
 
-// As in fs_memory_links.js, so results compare with fs_memory_links.node.json.
 const local = (s) => (typeof s === 'string' ? s.split(dir).join('<dir>') : Array.isArray(s) ? s.map(local) : s);
 function describe(e) {
   if (!e) return null;
+  // errno differs between Linux and macOS for some codes, so it is checked against the code.
   const errno = typeof e.errno === 'number' && os.constants.errno[e.code] === -e.errno ? 'matches code' : e.errno;
   return { name: e.name, code: e.code, errno, syscall: e.syscall, path: local(e.path), dest: local(e.dest), message: local(e.message) };
 }
@@ -25,6 +30,27 @@ const drain = (stream) => new Promise((resolve, reject) => {
   stream.on('data', (c) => chunks.push(c)).on('error', reject).on('end', () => resolve(Buffer.concat(chunks).toString()));
 });
 const finished = (stream) => new Promise((resolve, reject) => stream.on('error', reject).on('close', () => resolve(null)));
+const opened = (stream) => new Promise((resolve, reject) => {
+  stream.on('error', reject).on('open', () => { stream.destroy(); resolve('opened'); });
+});
+
+// The files and links on disk that make the error cases fail under Node. "locked" can't be
+// searched, so every call on a name in it fails with EACCES; the Go test gives it its mode back.
+function layout() {
+  fs.writeFileSync(file('f'), 'hi');
+  fs.writeFileSync(file('copied'), 'hi');
+  fs.mkdirSync(file('b'));
+  fs.mkdirSync(file('dirfull'));
+  fs.writeFileSync(file('dirfull/x'), 'x');
+  for (const [target, name] of [['f', 'abs'], ['b', 'bl'], ['loop', 'loop'], ['cyc_b', 'cyc_a'], ['cyc_a', 'cyc_b'],
+    ['nowhere', 'dangling'], ['nowhere2', 'dangling2'], ['f', 'cbl'], ['b', 'pl']]) {
+    fs.symlinkSync(target, file(name));
+  }
+  fs.linkSync(file('f'), file('cbh'));
+  fs.mkdirSync(file('locked/d'), { recursive: true });
+  fs.writeFileSync(file('locked/x'), 'x');
+  fs.chmodSync(file('locked'), 0);
+}
 
 // The same call in its synchronous, callback and promise forms.
 function forms(name, ...args) {
@@ -139,10 +165,71 @@ const cases = [
   ['p_realpath_loop', 'ELOOP', undefined, () => fsp.realpath(file('cyc_a'))],
   ['p_read_loop', 'ELOOP', undefined, () => fsp.readFile(file('cyc_a'))],
   ['p_open_loop', 'ELOOP', undefined, () => fsp.open(file('cyc_a'), 'r')],
+  ['isdir_write', 'EISDIR', undefined, () => fs.writeFileSync(file('dirfull'), 'x')],
+  ['isdir_read', 'EISDIR', 'File.Read', () => fs.readFileSync(file('dirfull'))],
+  ['notempty_rmdir', 'ENOTEMPTY', 'Remove', () => fs.rmdirSync(file('dirfull'))],
+  ['badf_write', 'EBADF', 'File.Write', () => {
+    const fd = fs.openSync(file('f'), 'r');
+    try { return fs.writeSync(fd, 'x'); } finally { fs.closeSync(fd); }
+  }],
+
+  // A refused name, as the closed filesystem refuses every one, in each call that takes one.
+  ...[
+    ['readFileSync', () => fs.readFileSync(file('locked/x'), 'utf8')],
+    ['writeFileSync', () => fs.writeFileSync(file('locked/new'), 'x')],
+    ['appendFileSync', () => fs.appendFileSync(file('locked/x'), 'x')],
+    ['openSync', () => fs.openSync(file('locked/x'), 'r')],
+    ['openSyncWrite', () => fs.openSync(file('locked/new'), 'w')],
+    ['statSync', () => fs.statSync(file('locked/x'))],
+    ['lstatSync', () => fs.lstatSync(file('locked/x'))],
+    ['readdirSync', () => fs.readdirSync(file('locked/d'))],
+    ['opendirSync', () => fs.opendirSync(file('locked/d'))],
+    ['mkdirSync', () => fs.mkdirSync(file('locked/e'))],
+    ['mkdirSyncRecursive', () => fs.mkdirSync(file('locked/e/f'), { recursive: true })],
+    ['unlinkSync', () => fs.unlinkSync(file('locked/x'))],
+    ['rmdirSync', () => fs.rmdirSync(file('locked/d'))],
+    ['rmSync', () => fs.rmSync(file('locked/x'))],
+    ['renameSync', () => fs.renameSync(file('locked/x'), file('locked/y'))],
+    ['copyFileSync', () => fs.copyFileSync(file('locked/x'), file('locked/y'))],
+    ['accessSync', () => fs.accessSync(file('locked/x'))],
+    ['chmodSync', () => fs.chmodSync(file('locked/x'), 0o644)],
+    ['chownSync', () => fs.chownSync(file('locked/x'), 1, 2)],
+    ['utimesSync', () => fs.utimesSync(file('locked/x'), 1, 1)],
+    ['truncateSync', () => fs.truncateSync(file('locked/x'))],
+    ['symlinkSync', () => fs.symlinkSync('target', file('locked/link'))],
+    ['readlinkSync', () => fs.readlinkSync(file('locked/x'))],
+    ['linkSync', () => fs.linkSync(file('locked/x'), file('locked/hard'))],
+    ['statfsSync', () => fs.statfsSync(file('locked/x'))],
+    ['existsSync', () => fs.existsSync(file('locked/x'))],
+    ['readFile', () => callback((cb) => fs.readFile(file('locked/x'), cb))],
+    ['writeFile', () => callback((cb) => fs.writeFile(file('locked/new'), 'x', cb))],
+    ['open', () => callback((cb) => fs.open(file('locked/x'), 'r', cb))],
+    ['stat', () => callback((cb) => fs.stat(file('locked/x'), cb))],
+    ['readdir', () => callback((cb) => fs.readdir(file('locked/d'), cb))],
+    ['mkdir', () => callback((cb) => fs.mkdir(file('locked/e'), cb))],
+    ['unlink', () => callback((cb) => fs.unlink(file('locked/x'), cb))],
+    ['rename', () => callback((cb) => fs.rename(file('locked/x'), file('locked/y'), cb))],
+    ['access', () => callback((cb) => fs.access(file('locked/x'), cb))],
+    ['exists', () => new Promise((resolve) => fs.exists(file('locked/x'), resolve))],
+    ['promises.readFile', () => fsp.readFile(file('locked/x'), 'utf8')],
+    ['promises.writeFile', () => fsp.writeFile(file('locked/new'), 'x')],
+    ['promises.open', () => fsp.open(file('locked/x'), 'r')],
+    ['promises.stat', () => fsp.stat(file('locked/x'))],
+    ['promises.readdir', () => fsp.readdir(file('locked/d'))],
+    ['promises.opendir', () => fsp.opendir(file('locked/d'))],
+    ['promises.mkdir', () => fsp.mkdir(file('locked/e'))],
+    ['promises.rm', () => fsp.rm(file('locked/x'))],
+    ['promises.access', () => fsp.access(file('locked/x'))],
+    ['promises.copyFile', () => fsp.copyFile(file('locked/x'), file('locked/y'))],
+    ['createReadStream', () => opened(fs.createReadStream(file('locked/x')))],
+    ['createWriteStream', () => opened(fs.createWriteStream(file('locked/new')))],
+  ].map(([n, fn]) => ['refused_' + n, 'EACCES', undefined, fn]),
 ];
 
 async function main() {
+  if (inNode) layout();
   for (const [name, errno, method, fn] of cases) {
+    if (inNode && errno === '-') continue;
     fs.existsSync('/@mark/' + name + '/' + errno + (method ? '/' + method : ''));
     try {
       const value = await fn();
@@ -155,4 +242,10 @@ async function main() {
   return results;
 }
 
-main().then(done, (err) => done({ failed: String(err && err.stack || err) }));
+main().then((value) => {
+  if (inNode) process.stdout.write(JSON.stringify(value));
+  else done(value);
+}, (err) => {
+  if (inNode) throw err;
+  done({ failed: String(err && err.stack || err) });
+});

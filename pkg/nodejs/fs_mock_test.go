@@ -51,7 +51,7 @@ func (m *mockFS) callsIn(name string) []string {
 }
 
 var mockErrnos = map[string]syscall.Errno{
-	"EACCES": syscall.EACCES, "EEXIST": syscall.EEXIST, "EINVAL": syscall.EINVAL,
+	"EACCES": syscall.EACCES, "EBADF": syscall.EBADF, "EEXIST": syscall.EEXIST, "EINVAL": syscall.EINVAL,
 	"EISDIR": syscall.EISDIR, "ELOOP": syscall.ELOOP, "ENAMETOOLONG": syscall.ENAMETOOLONG,
 	"ENOENT": syscall.ENOENT, "ENOSPC": syscall.ENOSPC, "ENOTDIR": syscall.ENOTDIR,
 	"ENOTEMPTY": syscall.ENOTEMPTY, "EPERM": syscall.EPERM,
