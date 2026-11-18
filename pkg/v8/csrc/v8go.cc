@@ -495,16 +495,11 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     }
     size_t old_cap = constraints.max_old_generation_size_in_bytes();
     size_t young = constraints.max_young_generation_size_in_bytes();
-    size_t code_range = constraints.code_range_size_in_bytes();
     if (params->cap_old_generation_size_in_bytes > 0) {
         old_cap = std::min(old_cap, params->cap_old_generation_size_in_bytes);
     }
     if (params->cap_young_generation_size_in_bytes > 0) {
         young = std::min(young, params->cap_young_generation_size_in_bytes);
-    }
-    if (params->cap_code_range_size_in_bytes > 0 &&
-        (code_range == 0 || params->cap_code_range_size_in_bytes < code_range)) {
-        code_range = params->cap_code_range_size_in_bytes;
     }
 
     // With a budget, the young generation is taken whole and the old one
@@ -529,7 +524,6 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     }
     constraints.set_max_old_generation_size_in_bytes(old_start);
     constraints.set_max_young_generation_size_in_bytes(young);
-    if (code_range > 0) constraints.set_code_range_size_in_bytes(code_range);
 
     ArrayBuffer::Allocator* allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
     if (budget) allocator = new BudgetAllocator(allocator, budget);
@@ -556,7 +550,6 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     if (limits) {
         limits->max_old_generation_size_in_bytes = old_cap;
         limits->max_young_generation_size_in_bytes = young;
-        limits->code_range_size_in_bytes = code_range;
     }
     if (failure) *failure = 0;
     return isolate;

@@ -226,6 +226,14 @@ func New(cfg *Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolate: %w", err)
 	}
+	// setupFailed is what New returns for a setup step that failed: running out of
+	// memory, when the heap ran out, as it can at any step for a small heap.
+	setupFailed := func(err error) error {
+		if iso.OutOfMemory() {
+			return &OutOfMemoryError{}
+		}
+		return err
+	}
 	if iso.OutOfMemory() {
 		// Its heap was too small for V8 to set it up.
 		iso.Dispose()
@@ -234,17 +242,19 @@ func New(cfg *Config) (*Runtime, error) {
 
 	ctx, err := iso.NewContext()
 	if err != nil {
+		err = setupFailed(fmt.Errorf("failed to create context: %w", err))
 		iso.Dispose()
-		return nil, fmt.Errorf("failed to create context: %w", err)
+		return nil, err
 	}
 
 	// Node.js exposes the global object under the name `global` in addition to
 	// the standard `globalThis`. Many npm packages (and their bundled deps)
 	// reference `global` directly, so alias it here for compatibility.
 	if _, err := ctx.RunScript("if (typeof global === 'undefined') { globalThis.global = globalThis; }", "<bootstrap:global>"); err != nil {
+		err = setupFailed(fmt.Errorf("failed to set up global alias: %w", err))
 		ctx.Dispose()
 		iso.Dispose()
-		return nil, fmt.Errorf("failed to set up global alias: %w", err)
+		return nil, err
 	}
 
 	// Every field that grants access to the host refuses it when nil.
@@ -342,9 +352,10 @@ func New(cfg *Config) (*Runtime, error) {
 	})
 
 	if err := rt.installUncaught(); err != nil {
+		err = setupFailed(fmt.Errorf("failed to set up exception handling: %w", err))
 		ctx.Dispose()
 		iso.Dispose()
-		return nil, fmt.Errorf("failed to set up exception handling: %w", err)
+		return nil, err
 	}
 
 	return rt, nil

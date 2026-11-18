@@ -208,6 +208,10 @@ spec-exact · **[perf]** correctness OK, performance/architecture shortcut.
   through V8's sandbox page allocator instead, which has no per-isolate hook, so they aren't
   counted. A large object can also take a heap past its limit in one allocation; the isolate
   then runs out of memory at the next collection.
+- **[approx] A worker's `stackSizeMb` and `codeRangeSizeMb` are reported, not enforced.**
+  Workers run on V8's own stack limit, and pointer compression gives every isolate one shared
+  code range, set up by the first. `resourceLimits` reports them as Node does: what the
+  script asked for (the stack no larger than Node's default 4 MiB), or the defaults.
 
 ## util.inspect and console.log (`pkg/nodejs/internal/inspectjs`, `console`, `util`)
 
