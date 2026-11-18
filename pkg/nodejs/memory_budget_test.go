@@ -278,3 +278,36 @@ w.once('message', (limits) => done(limits));
 		t.Fatalf("old generation %v with a 32 MiB cap configured and 128 asked for, want 32", old)
 	}
 }
+
+// Workers with old generations from nothing up to a few MiB either run or stop with
+// ERR_WORKER_OUT_OF_MEMORY; none takes the process down. V8 counts the heap's pages
+// against the limit, not just what's in them, which matters most in heaps this small.
+func TestWorkerTinyHeapsRunOutOfMemory(t *testing.T) {
+	got := runJS(t, &runtime.Config{MaxWorkers: -1}, `
+const { Worker } = require('worker_threads');
+const outcomes = {};
+let pending = 0;
+for (let mb = 0; mb <= 12; mb += 0.25) {
+  for (let k = 0; k < 2; k++) {
+    pending++;
+    const w = new Worker('const a = []; for (let i = 0; i < 2e4; i++) a.push("x" + i); require("worker_threads").parentPort.postMessage(a.length)',
+      { eval: true, resourceLimits: { maxOldGenerationSizeMb: mb } });
+    let outcome = 'exited';
+    w.on('message', () => { outcome = 'ran'; });
+    w.on('error', (e) => { outcome = e.code; });
+    w.on('exit', () => {
+      outcomes[outcome] = (outcomes[outcome] || 0) + 1;
+      if (--pending === 0) done(outcomes);
+    });
+  }
+}
+`)
+	for outcome := range got {
+		if outcome != "ran" && outcome != "ERR_WORKER_OUT_OF_MEMORY" {
+			t.Fatalf("outcome %q: %v", outcome, got)
+		}
+	}
+	if got["ran"] == nil || got["ERR_WORKER_OUT_OF_MEMORY"] == nil {
+		t.Fatalf("want some workers to run and some to run out: %v", got)
+	}
+}

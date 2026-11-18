@@ -337,10 +337,11 @@ static const size_t kOldGenerationStep = 16 * kMB;
 // V8 aborts the process.
 static const size_t kOutOfMemoryAllowance = 16 * kMB;
 
-// oldGenerationUsed is how much of the heap the near-heap-limit callback's limit
-// applies to is in use: every space but the young generation's (and the
-// read-only one, which is shared).
-static size_t oldGenerationUsed(Isolate* isolate) {
+// oldGenerationCommitted is how much of the heap the near-heap-limit
+// callback's limit applies to is taken: every space but the young
+// generation's (and the read-only one, which is shared), counted in whole
+// pages, as V8 counts it against the limit (Heap::OldGenerationCapacity).
+static size_t oldGenerationCommitted(Isolate* isolate) {
     size_t used = 0;
     HeapSpaceStatistics stats;
     for (size_t i = 0; i < isolate->NumberOfHeapSpaces(); i++) {
@@ -351,7 +352,7 @@ static size_t oldGenerationUsed(Isolate* isolate) {
                      strcmp(name, "read_only_space") == 0)) {
             continue;
         }
-        used += stats.space_used_size();
+        used += stats.space_size();
     }
     return used;
 }
@@ -360,15 +361,16 @@ static size_t oldGenerationUsed(Isolate* isolate) {
 // the old generation from the budget while the cap and the budget allow, and
 // otherwise stops the isolate as out of memory instead of letting V8 abort.
 //
-// V8 also calls it from the collections it runs before failing an ArrayBuffer
-// allocation, which the budget may have refused with the heap nearly empty.
-// Only when the heap is near its limit does it grow it or run out: V8 aborts
-// only when the old generation is (almost) full after the callback.
+// V8 also calls it at the start of a last-resort collection, such as those it
+// runs before failing an ArrayBuffer allocation the budget refused, whatever
+// the heap holds. It grows the heap or runs out only when the heap is near its
+// limit: V8 aborts only when the old generation's pages still reach the limit
+// after the callback (Heap::CheckHeapLimitReached).
 static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
                               size_t initial_heap_limit) {
     Isolate* isolate = static_cast<Isolate*>(data);
     IsolateState* state = isolateState(isolate);
-    size_t used = oldGenerationUsed(isolate);
+    size_t used = oldGenerationCommitted(isolate);
     // A large object can take the heap past its limit in one allocation, so
     // whatever the callback returns has to cover what's in use already.
     size_t in_use = std::max(current_heap_limit, used);
@@ -392,7 +394,7 @@ static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
             return in_use + kOutOfMemoryAllowance;
         }
     }
-    if (used < current_heap_limit - current_heap_limit / 4) {
+    if (used < current_heap_limit - current_heap_limit / 8) {
         return current_heap_limit;
     }
     if (state->budget && current_heap_limit < state->old_generation_cap) {
