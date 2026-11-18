@@ -210,3 +210,31 @@ func TestMemoryBudgetRefusedArrayBuffersLeaveHeap(t *testing.T) {
 		t.Fatalf("OutOfMemory %v, used %d after refusals, %d before", iso.OutOfMemory(), b.Used(), before)
 	}
 }
+
+// A cloned view whose contents don't fit in the receiving isolate's budget fails to
+// deserialize, as an allocation from JavaScript fails, rather than aborting the process.
+func TestMemoryBudgetDeserializeRefused(t *testing.T) {
+	_, from := newBudgetContext(t, v8.IsolateOptions{})
+	view, err := from.RunScript(`new Uint8Array(64 * 1024 * 1024)`, "view.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proto, err := from.RunScript(`Uint8Array.prototype`, "proto.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := from.SerializeValue(view, proto)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := v8.NewMemoryBudget(48 * mb)
+	_, to := newBudgetContext(t, v8.IsolateOptions{MaxHeapSizeInBytes: 32 * mb, MemoryBudget: b})
+	toProto, err := to.RunScript(`Uint8Array.prototype`, "proto.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := to.DeserializeValue(data, toProto); err == nil || !strings.Contains(err.Error(), "Array buffer allocation failed") {
+		t.Fatalf("deserializing past the budget: %v, want Array buffer allocation failed", err)
+	}
+}
