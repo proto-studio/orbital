@@ -398,7 +398,7 @@ func (m *MemoryFilesystem) AppendFile(path string, data []byte) error {
 		return nil
 	}
 	if f.isDir {
-		return fs.ErrInvalid
+		return &fs.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 	}
 	if !m.reserve(f, int64(len(f.data)+len(data))) {
 		return noSpace("write", path)

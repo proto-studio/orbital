@@ -119,6 +119,7 @@ func TestFilesystemContract_ReadWrite(t *testing.T) {
 		wantErrno(t, "Stat through a file", err, syscall.ENOTDIR)
 		wantErrno(t, "WriteFile through a file", c.fs.WriteFile(c.path("f/x"), nil, 0o644), syscall.ENOTDIR)
 		wantErrno(t, "WriteFile onto a dir", c.fs.WriteFile(c.dir, nil, 0o644), syscall.EISDIR)
+		wantErrno(t, "AppendFile onto a dir", c.fs.AppendFile(c.dir, []byte("x")), syscall.EISDIR)
 	})
 }
 
