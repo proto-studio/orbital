@@ -149,7 +149,7 @@ s.on('error', (e) => parentPort.postMessage(e.code));
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runCapped(t, &runtime.Config{MaxOpenSockets: 1, MaxOpenFiles: -1}, `
+	got := runCapped(t, &runtime.Config{MaxOpenSockets: 1, MaxOpenFiles: -1, MaxWorkers: -1}, `
 const held = require('net').connect(`+port+`, '`+host+`');
 held.on('connect', () => {
   const { Worker } = require('worker_threads');
@@ -235,7 +235,7 @@ require('worker_threads').parentPort.postMessage('opened');
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runCapped(t, &runtime.Config{MaxOpenFiles: 1}, `
+	got := runCapped(t, &runtime.Config{MaxOpenFiles: 1, MaxWorkers: -1}, `
 const fs = require('fs');
 const { Worker } = require('worker_threads');
 const w = new Worker(`+strconv.Quote(filepath.Join(dir, "worker.js"))+`);
