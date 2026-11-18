@@ -291,6 +291,71 @@ func TestMemoryFilesystemChargesOpenUnlinkedFiles(t *testing.T) {
 	}
 }
 
+// Copying over a directory replaces it, and gives back what it held.
+func TestMemoryFilesystemCopyOverDirectory(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/f", make([]byte, 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Mkdir("/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Copy("/f", "/d"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := m.memoryInUse(), nodeCost("/f")+nodeCost("/d")+200; got != want {
+		t.Fatalf("after copying over a directory: %d bytes, want %d", got, want)
+	}
+	for _, p := range []string{"/f", "/d"} {
+		if err := m.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := m.memoryInUse(); got != 0 {
+		t.Fatalf("with everything removed, the filesystem counts %d bytes", got)
+	}
+
+	// A copy that doesn't fit leaves the directory.
+	if err := m.Mkdir("/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.WriteFile("/f", make([]byte, 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.limitMemory(byteLimit(m.memoryInUse() + 50))
+	wantNoSpaceAt(t, "Copy over a directory", m.Copy("/f", "/d"), "copyfile", "/d")
+	if info, err := m.Stat("/d"); err != nil || !info.IsDir {
+		t.Fatalf("a copy that didn't fit replaced the directory: %v, %v", info, err)
+	}
+}
+
+// Near the limit, where doubling a file doesn't fit, small writes still grow it by a share of
+// the room left, not by only what each needs, which would copy the file for every write.
+func TestMemoryFilesystemGrowsGeometricallyNearTheLimit(t *testing.T) {
+	m := NewMemoryFilesystem()
+	f, err := m.OpenFile("/f", os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	m.limitMemory(byteLimit(nodeCost("/f") + 3<<19)) // 1.5 MiB
+	grows := 0
+	for range 1000 {
+		before := cap(m.files["/f"].data)
+		if _, err := f.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if cap(m.files["/f"].data) != before {
+			grows++
+		}
+	}
+	if grows > 2 {
+		t.Fatalf("1000 one-byte writes near the limit grew the file %d times", grows)
+	}
+}
+
 // A file written in chunks still fills the filesystem to its limit: when doubling its
 // capacity doesn't fit, it grows by what the write needs.
 func TestMemoryFilesystemGrowsToTheLimit(t *testing.T) {

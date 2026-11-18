@@ -134,24 +134,27 @@ func noSpace(op, path string) error {
 }
 
 // reserve makes room in mf.data for size bytes. Capacity grows geometrically, as append's
-// does, so writing a file in chunks costs linear time; when that doesn't fit under the limit
-// it grows to size alone. It reports false when even that doesn't fit. Callers hold m.mu.
+// does, so writing a file in chunks costs linear time. Near the limit, where doubling doesn't
+// fit, it tries half as much growth each time, so writes still grow the file by a share of
+// the room left rather than copying it for every write. It reports false when even size
+// doesn't fit. Callers hold m.mu.
 func (m *MemoryFilesystem) reserve(mf *memFile, size int64) bool {
 	old := int64(cap(mf.data))
 	if size <= old {
 		return true
 	}
-	newCap := max(size, 2*old)
-	if !m.account(newCap - old) {
-		newCap = size
-		if !m.account(newCap - old) {
+	for step := old; ; step /= 2 {
+		newCap := max(size, old+step)
+		if m.account(newCap - old) {
+			grown := make([]byte, len(mf.data), newCap)
+			copy(grown, mf.data)
+			mf.data = grown
+			return true
+		}
+		if newCap == size {
 			return false
 		}
 	}
-	grown := make([]byte, len(mf.data), newCap)
-	copy(grown, mf.data)
-	mf.data = grown
-	return true
 }
 
 // setData replaces mf's contents with a copy of data, or reports false when it doesn't fit.
@@ -570,12 +573,22 @@ func (m *MemoryFilesystem) Copy(src, dst string) error {
 		existing.modTime = time.Now()
 		return nil
 	}
-	if existing == nil {
-		if err := fileAt("copyfile", to); err != nil {
-			return err
-		}
-	}
 	copied := &memFile{mode: f.mode, modTime: time.Now()}
+	if existing != nil {
+		// A directory, which the copy replaces under its name. The copy is charged first, so
+		// one that doesn't fit leaves the directory as it was.
+		if !m.account(fileCost(copied) + int64(len(f.data))) {
+			return noSpace("copyfile", dst)
+		}
+		copied.data = append(make([]byte, 0, len(f.data)), f.data...)
+		existing.nlink--
+		m.forget(existing)
+		m.files[dst] = m.newFile(copied)
+		return nil
+	}
+	if err := fileAt("copyfile", to); err != nil {
+		return err
+	}
 	if !m.add(dst, copied) {
 		return noSpace("copyfile", dst)
 	}
