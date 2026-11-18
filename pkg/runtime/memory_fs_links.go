@@ -47,20 +47,61 @@ func (m *MemoryFilesystem) unname(canonical string) {
 	}
 }
 
-// resolve gives the canonical path p names, and the file there, or nil if there is none.
-// Links along the way are followed, and so is a final one if follow is set or the path ends
-// in "/" or "/.". A missing directory along the way is taken as an empty one, since files
-// here need no parent; a file that isn't a directory is ENOTDIR. The caller holds m.mu.
+// How resolve treats a final symbolic link.
+type finalLink int
+
+const (
+	followFinal finalLink = iota // follow it, as stat and open do
+	keepFinal                    // act on it, as lstat and readlink do; a "/" after it follows it
+	// entryFinal acts on the directory entry, as unlink, rmdir and rename do. A "/" after a
+	// link follows it on macOS, as keepFinal does; Linux refuses it with ENOTDIR.
+	entryFinal
+)
+
+// entrySlashFollows is whether unlink, rmdir and rename follow a final link with a "/" after
+// it, as macOS's do; Linux's refuse it.
+var entrySlashFollows = goruntime.GOOS == "darwin"
+
+// resolved is where a path leads.
+type resolved struct {
+	path string   // the canonical path
+	file *memFile // the file there, or nil
+	// missingTarget is set when a name a link's target gives is missing, as for a link that
+	// leads nowhere.
+	missingTarget bool
+}
+
+// resolve gives the canonical path p names, and the file there, or nil if there is none,
+// following a final link if follow is set.
 func (m *MemoryFilesystem) resolve(op, p string, follow bool) (string, *memFile, error) {
+	final := keepFinal
+	if follow {
+		final = followFinal
+	}
+	r, err := m.walk(op, p, final)
+	return r.path, r.file, err
+}
+
+// walk resolves p. Links along the way are followed, and a final one as final says. A
+// missing directory along the way is taken as an empty one, since files here need no parent;
+// a file that isn't a directory is ENOTDIR. The caller holds m.mu.
+func (m *MemoryFilesystem) walk(op, p string, finalLink finalLink) (resolved, error) {
 	if p == "" {
-		return "", nil, &fs.PathError{Op: op, Path: p, Err: syscall.ENOENT}
+		return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOENT}
 	}
 	rest := strings.Split(p, "/")
+	// The last given names in rest are p's own; any before them come from link targets.
+	given := len(rest)
 	cur := "/"
 	links := 0
+	missingTarget := false
 	for len(rest) > 0 {
 		name := rest[0]
+		fromTarget := len(rest) > given
 		rest = rest[1:]
+		if !fromTarget {
+			given--
+		}
 		switch name {
 		case "", ".":
 			continue
@@ -79,13 +120,19 @@ func (m *MemoryFilesystem) resolve(op, p string, follow bool) (string, *memFile,
 			}
 		}
 		if !ok {
+			if fromTarget {
+				missingTarget = true
+			}
 			cur = next
 			continue
 		}
-		if mf.isLink() && (!final || follow || trailing) {
+		if mf.isLink() && final && trailing && finalLink == entryFinal && !entrySlashFollows {
+			return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOTDIR}
+		}
+		if mf.isLink() && (!final || finalLink == followFinal || trailing) {
 			links++
 			if links > maxSymlinks {
-				return "", nil, &fs.PathError{Op: op, Path: p, Err: syscall.ELOOP}
+				return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ELOOP}
 			}
 			if strings.HasPrefix(mf.target, "/") {
 				cur = "/"
@@ -94,11 +141,11 @@ func (m *MemoryFilesystem) resolve(op, p string, follow bool) (string, *memFile,
 			continue
 		}
 		if (!final || trailing) && !mf.isDir {
-			return "", nil, &fs.PathError{Op: op, Path: p, Err: syscall.ENOTDIR}
+			return resolved{}, &fs.PathError{Op: op, Path: p, Err: syscall.ENOTDIR}
 		}
 		cur = next
 	}
-	return cur, m.files[cur], nil
+	return resolved{path: cur, file: m.files[cur], missingTarget: missingTarget}, nil
 }
 
 // present reports whether there is anything at canonical: a file, a link, the root, or a
@@ -110,7 +157,13 @@ func (m *MemoryFilesystem) present(canonical string) bool {
 	if _, ok := m.files[canonical]; ok {
 		return true
 	}
-	prefix := canonical + "/"
+	return m.hasChildren(canonical)
+}
+
+// hasChildren reports whether anything is under the directory at canonical. The caller
+// holds m.mu.
+func (m *MemoryFilesystem) hasChildren(canonical string) bool {
+	prefix := strings.TrimSuffix(canonical, "/") + "/"
 	for p := range m.files {
 		if strings.HasPrefix(p, prefix) {
 			return true

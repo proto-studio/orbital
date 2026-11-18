@@ -5,6 +5,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	goruntime "runtime"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -314,8 +316,40 @@ func (f *FS) unlinkOp(ctx *v8.Context, args []*v8.Value) (func() opResult, int, 
 	path := stringArg(args, 0)
 	fsys := f.fs()
 	return func() opResult {
+		if err := unlinkRefusal(fsys, path); err != nil {
+			return failed(err, "unlink", path)
+		}
 		return failed(fsys.Remove(path), "unlink", path)
 	}, -1, nil
+}
+
+// unlinkRefusal gives the error unlink(2) gives for a directory, which Remove would take:
+// EPERM on macOS and EISDIR on Linux. Linux doesn't follow a final link for unlink even with a
+// "/" after it, so there a "/" after anything but a directory is ENOTDIR. A path that can't be
+// described is left for Remove to report.
+func unlinkRefusal(fsys runtime.Filesystem, path string) error {
+	if goruntime.GOOS == "linux" && strings.HasSuffix(path, "/") {
+		name := strings.TrimRight(path, "/")
+		if name == "" {
+			return syscall.EISDIR
+		}
+		info, err := runtime.Lstat(fsys, name)
+		switch {
+		case err != nil:
+			return nil
+		case !info.IsDir:
+			return syscall.ENOTDIR
+		}
+		return syscall.EISDIR
+	}
+	info, err := runtime.Lstat(fsys, path)
+	if err != nil || !info.IsDir {
+		return nil
+	}
+	if goruntime.GOOS == "darwin" {
+		return syscall.EPERM
+	}
+	return syscall.EISDIR
 }
 
 // readdirOp backs readdir(path[, { withFileTypes }]): names, or { name, type } objects that

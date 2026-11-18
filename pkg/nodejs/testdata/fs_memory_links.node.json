@@ -156,6 +156,29 @@
       "syscall": "mkdir"
     }
   },
+  "dangling_mkdir_recursive": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, mkdir '\u003cdir\u003e/dangling'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling",
+      "syscall": "mkdir"
+    }
+  },
+  "dangling_mkdir_recursive_child": {
+    "error": {
+      "code": "ENOENT",
+      "errno": "matches code",
+      "message": "ENOENT: no such file or directory, mkdir '\u003cdir\u003e/dangling/a/b'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dangling/a/b",
+      "syscall": "mkdir"
+    }
+  },
+  "dangling_mkdir_recursive_made": {
+    "value": false
+  },
   "dangling_open_excl": {
     "error": {
       "code": "EEXIST",

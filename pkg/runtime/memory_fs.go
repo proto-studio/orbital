@@ -243,11 +243,16 @@ func (m *MemoryFilesystem) MkdirAll(path string, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// The canonical path names no link, so the directories to make are those along it.
-	path, _, err := m.resolve("mkdir", path, true)
+	// The canonical path names no link, so the directories to make are those along it. A
+	// link that leads nowhere is not made to lead somewhere: mkdir fails on it, as on disk.
+	r, err := m.walk("mkdir", path, followFinal)
 	if err != nil {
 		return err
 	}
+	if r.missingTarget {
+		return &fs.PathError{Op: "mkdir", Path: path, Err: syscall.ENOENT}
+	}
+	path = r.path
 	if path == "/" {
 		return nil
 	}
@@ -272,14 +277,17 @@ func (m *MemoryFilesystem) Remove(path string) error {
 	defer m.mu.Unlock()
 
 	// A final link is removed itself, not what it leads to.
-	path, f, err := m.resolve("unlink", path, false)
+	r, err := m.walk("unlink", path, entryFinal)
 	if err != nil {
 		return err
 	}
-	if f == nil {
+	if r.file == nil {
 		return fs.ErrNotExist
 	}
-	m.unname(path)
+	if r.file.isDir && m.hasChildren(r.path) {
+		return &fs.PathError{Op: "rmdir", Path: path, Err: syscall.ENOTEMPTY}
+	}
+	m.unname(r.path)
 	return nil
 }
 
@@ -312,14 +320,15 @@ func (m *MemoryFilesystem) Rename(oldPath, newPath string) error {
 	defer m.mu.Unlock()
 
 	// A link at either path is renamed or replaced itself.
-	oldPath, f, err := m.resolve("rename", oldPath, false)
+	from, err := m.walk("rename", oldPath, entryFinal)
 	if err != nil {
 		return err
 	}
-	newPath, existing, err := m.resolve("rename", newPath, false)
+	to, err := m.walk("rename", newPath, entryFinal)
 	if err != nil {
 		return err
 	}
+	oldPath, f, newPath, existing := from.path, from.file, to.path, to.file
 	if f == nil {
 		return fs.ErrNotExist
 	}
