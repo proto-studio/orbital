@@ -20,6 +20,8 @@ type Runtime struct {
 	isolates            *isolateLimit
 	sockets             *handleLimit
 	files               *handleLimit
+	socketsClosed       bool  // SocketFactory and HTTPClient refuse everything, so OpenSocket counts nothing
+	filesClosed         bool  // Filesystem refuses everything, so OpenFile counts nothing
 	cryptoMemoryLimit   int64 // Config.CryptoMemoryLimit
 
 	isolate           *v8.Isolate
@@ -117,7 +119,9 @@ type Config struct {
 	// sockets, and requests through HTTPClient. One more fails with EMFILE, as at the
 	// OS's own limit. 0 allows none, so an embedder that grants network access sets
 	// it too; a negative value means no limit beyond the OS's, which the orbital CLI
-	// uses. A runtime's workers and loader realms count against the same cap.
+	// uses. A runtime's workers and loader realms count against the same cap. It
+	// doesn't apply while SocketFactory and HTTPClient are both nil, since they then
+	// refuse every connection with EPERM and nothing opens.
 	MaxOpenSockets int
 	// MaxOpenFiles is how many files scripts may have open at once through fs: file
 	// descriptors from fs.open and FileHandles, streams, directories being read, and
@@ -125,6 +129,7 @@ type Config struct {
 	// more fails with EMFILE. 0 allows none; a negative value means no limit beyond
 	// the OS's, which the orbital CLI uses. Loading modules and worker entry files
 	// doesn't count. A runtime's workers and loader realms count against the same cap.
+	// It doesn't apply to a NoOpFilesystem, the default, which opens nothing.
 	MaxOpenFiles int
 	// ProcessSpawner spawns child processes.
 	// If nil, NewNoOpProcessSpawner() refuses every spawn with EPERM.
@@ -247,6 +252,15 @@ func New(cfg *Config) (*Runtime, error) {
 		processSpawner = NewNoOpProcessSpawner()
 	}
 
+	// Implementations that refuse everything never open a socket or file, so there is
+	// nothing to count, and the runtime fails as Node does when the OS refuses access, not
+	// with EMFILE. Only this runtime skips the count: the limits themselves stay as
+	// configured, since workers and loader realms with access of their own share them.
+	_, filesClosed := fs.(*NoOpFilesystem)
+	_, closedSockets := socketFactory.(*NoOpSocketFactory)
+	_, closedClient := httpClient.(*refusingHTTPClient)
+	socketsClosed := closedSockets && closedClient
+
 	// Create resource tracker
 	resourceTracker := NewResourceTracker()
 
@@ -281,6 +295,8 @@ func New(cfg *Config) (*Runtime, error) {
 		isolates:            &isolateLimit{max: cfg.MaxWorkers},
 		sockets:             &handleLimit{max: cfg.MaxOpenSockets},
 		files:               &handleLimit{max: cfg.MaxOpenFiles},
+		socketsClosed:       socketsClosed,
+		filesClosed:         filesClosed,
 		cryptoMemoryLimit:   cfg.CryptoMemoryLimit,
 	}
 
