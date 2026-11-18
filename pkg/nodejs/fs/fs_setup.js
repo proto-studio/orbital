@@ -1230,12 +1230,18 @@
   // first name it can't get past, with that name's lstat error, or its stat error if the name
   // is a link, by the path the links before it led to. Once a prefix of the path fails to
   // resolve every longer one does, so that name is found by halving: a few calls, however
-  // many names the path has.
+  // many names the path has. A prefix fails if the filesystem's realpath can't resolve it, or
+  // if stat finds a loop there: a filesystem's realpath may follow more links than stat does.
   function asJsRealpathError(e, path) {
     if (!e || e.syscall !== 'realpath' || typeof path !== 'string' || !path.startsWith('/')) return e;
     const names = path.split('/').filter((name) => name !== '' && name !== '.');
     const prefix = (k) => '/' + names.slice(0, k).join('/');
     const fails = (k) => {
+      try {
+        fs.statSync(prefix(k));
+      } catch (s) {
+        if (s && s.code === 'ELOOP') return true;
+      }
       try {
         realpathNativeSync(prefix(k));
         return false;

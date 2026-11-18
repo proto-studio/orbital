@@ -324,6 +324,33 @@ done({ plain: code(() => fs.realpathSync(%q)), native: code(() => fs.realpathSyn
 `, filepath.Join(dir, "loop"), filepath.Join(dir, "loop")))
 	wantJSON(t, got, map[string]any{"plain": "ELOOP", "native": "ELOOP"})
 
+	// A chain of more links than the system follows, ahead of a cycle: Node's walk stops at
+	// the chain's first link, whose stat fails, even where the filesystem's own realpath
+	// follows more links than stat and gets as far as the cycle.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(real, "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("cycle", filepath.Join(real, "target", "cycle")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(real, "c41")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 40; i >= 0; i-- {
+		if err := os.Symlink(fmt.Sprintf("c%d", i+1), filepath.Join(real, fmt.Sprintf("c%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got = runJS(t, &runtime.Config{}, fmt.Sprintf(`
+const fs = require('fs');
+try { fs.realpathSync(%q); done({}); } catch (e) { done({ code: e.code, syscall: e.syscall, path: e.path }); }
+`, filepath.Join(real, "c0", "cycle", "x")))
+	wantJSON(t, got, map[string]any{"code": "ELOOP", "syscall": "stat", "path": filepath.Join(real, "c0")})
+
 	if err := os.WriteFile(filepath.Join(dir, "r\xff"), []byte("bytes"), 0o644); err != nil {
 		t.Skipf("the filesystem refuses names that aren't UTF-8: %v", err)
 	}
