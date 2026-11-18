@@ -366,8 +366,7 @@ func (w *WorkerThreads) runWorker(wk *worker) int {
 		// first, and reports one it can't stat, missing or refused, as not found.
 		if _, statErr := wrt.Filesystem().Stat(wk.target); statErr != nil {
 			wk.fromWorker <- wtEvent{kind: "codedError", data: "MODULE_NOT_FOUND\nCannot find module '" + wk.target + "'"}
-			wk.fromWorker <- wtEvent{kind: "exit", code: 1}
-			return
+			return 1
 		}
 		data, readErr := goruntime.ReadFileLimited(wrt.Filesystem(), wk.target, goruntime.MaxSourceSize)
 		var tooLarge *goruntime.FileTooLargeError
