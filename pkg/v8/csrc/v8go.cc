@@ -325,13 +325,6 @@ static IsolateState* isolateState(Isolate* isolate) {
     return static_cast<IsolateState*>(isolate->GetData(kIsolateStateSlot));
 }
 
-static size_t nearHeapLimitThunk(void* data, size_t current_heap_limit,
-                                 size_t initial_heap_limit) {
-    int callback_id = static_cast<int>(reinterpret_cast<intptr_t>(data));
-    return goNearHeapLimitCallback(callback_id, current_heap_limit,
-                                   initial_heap_limit);
-}
-
 static const size_t kMB = 1024 * 1024;
 // How much of the old generation an isolate with a budget starts with. It
 // grows from there, drawing from the budget, up to its cap.
@@ -381,6 +374,23 @@ static size_t budgetHeapLimit(void* data, size_t current_heap_limit,
     size_t in_use = std::max(current_heap_limit, used);
     if (!state || state->out_of_memory.load()) {
         return in_use + kOutOfMemoryAllowance;
+    }
+    // An embedder's callback (Isolate.AddNearHeapLimitCallback) is asked first.
+    // The heap it grows is charged to the budget like any other, and when it
+    // doesn't grow it past what's in use, this decides as it otherwise would.
+    if (state->near_heap_limit_cb_id >= 0) {
+        size_t want = goNearHeapLimitCallback(state->near_heap_limit_cb_id,
+                                              current_heap_limit, initial_heap_limit);
+        if (want > in_use) {
+            size_t extra = want - current_heap_limit;
+            if (!state->budget || budgetChargeUpTo(state->budget, extra, extra) == extra) {
+                if (state->budget) state->heap_charged += extra;
+                return want;
+            }
+        }
+        if (state->out_of_memory.load()) {
+            return in_use + kOutOfMemoryAllowance;
+        }
     }
     if (used < current_heap_limit - current_heap_limit / 4) {
         return current_heap_limit;
@@ -523,13 +533,14 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     if (budget) allocator = new BudgetAllocator(allocator, budget);
     create_params.array_buffer_allocator = allocator;
 
-    Isolate* isolate = Isolate::New(create_params);
+    // The callback goes in before V8 sets the isolate up, so a heap too small
+    // for the snapshot runs out of memory rather than aborting the process.
+    Isolate* isolate = Isolate::Allocate();
     if (!isolate) {
         delete allocator;
         v8go_budget_release(budget, heap_charged);
         return nullptr;
     }
-
     IsolateState* state = new IsolateState();
     state->allocator = allocator;
     state->budget = budget;
@@ -538,6 +549,7 @@ void* v8go_isolate_new_with_limits(const v8go_isolate_create_params* params,
     state->old_generation_cap = old_cap;
     isolate->SetData(kIsolateStateSlot, state);
     isolate->AddNearHeapLimitCallback(budgetHeapLimit, isolate);
+    Isolate::Initialize(isolate, create_params);
 
     if (limits) {
         limits->max_old_generation_size_in_bytes = old_cap;
@@ -613,28 +625,25 @@ int v8go_isolate_get_heap_space_statistics(void* ptr, size_t index,
     return 1;
 }
 
+// The embedder's callback isn't registered with V8, which would call only it:
+// budgetHeapLimit asks it first, so the budget and the out-of-memory handling
+// still apply.
 void v8go_isolate_add_near_heap_limit_callback(void* ptr, int callback_id) {
-    if (!ptr) return;
-    Isolate* isolate = static_cast<Isolate*>(ptr);
-    IsolateState* state = isolateState(isolate);
-    if (state) {
-        if (state->near_heap_limit_cb_id >= 0) {
-            isolate->RemoveNearHeapLimitCallback(nearHeapLimitThunk, 0);
-        }
-        state->near_heap_limit_cb_id = callback_id;
-    }
-    isolate->AddNearHeapLimitCallback(
-        nearHeapLimitThunk,
-        reinterpret_cast<void*>(static_cast<intptr_t>(callback_id)));
+    IsolateState* state = isolateState(static_cast<Isolate*>(ptr));
+    if (state) state->near_heap_limit_cb_id = callback_id;
 }
 
 void v8go_isolate_remove_near_heap_limit_callback(void* ptr, size_t heap_limit) {
     if (!ptr) return;
     Isolate* isolate = static_cast<Isolate*>(ptr);
     IsolateState* state = isolateState(isolate);
-    isolate->RemoveNearHeapLimitCallback(nearHeapLimitThunk, heap_limit);
-    if (state) {
-        state->near_heap_limit_cb_id = -1;
+    if (!state) return;
+    state->near_heap_limit_cb_id = -1;
+    // Restoring a lower limit is V8's, through removing the callback that
+    // raised it. With a budget the heap keeps what it was charged for.
+    if (heap_limit > 0 && !state->budget) {
+        isolate->RemoveNearHeapLimitCallback(budgetHeapLimit, heap_limit);
+        isolate->AddNearHeapLimitCallback(budgetHeapLimit, isolate);
     }
 }
 

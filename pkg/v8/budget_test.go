@@ -238,3 +238,25 @@ func TestMemoryBudgetDeserializeRefused(t *testing.T) {
 		t.Fatalf("deserializing past the budget: %v, want Array buffer allocation failed", err)
 	}
 }
+
+// An embedder's near-heap-limit callback is asked first, and a limit it raises is charged
+// to the budget; when the budget can't cover it, the isolate runs out of memory rather
+// than V8 aborting the process.
+func TestNearHeapLimitCallbackChargedToBudget(t *testing.T) {
+	b := v8.NewMemoryBudget(96 * mb)
+	iso, ctx := newBudgetContext(t, v8.IsolateOptions{MaxHeapSizeInBytes: 32 * mb, MemoryBudget: b})
+	var calls atomic.Int32
+	if err := iso.AddNearHeapLimitCallback(func(current, initial uint64) uint64 {
+		calls.Add(1)
+		return current + 512*mb
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = ctx.RunScript(`const a = []; for (;;) a.push({ x: Math.random(), y: [1, 2, 3] })`, "oom.js")
+	if calls.Load() == 0 || !iso.OutOfMemory() {
+		t.Fatalf("callback called %d times, OutOfMemory %v; want called and out of memory", calls.Load(), iso.OutOfMemory())
+	}
+	if used := b.Used(); used > b.Limit() {
+		t.Fatalf("budget used %d past its limit %d", used, b.Limit())
+	}
+}
