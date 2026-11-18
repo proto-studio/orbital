@@ -3,6 +3,7 @@ package nodejs
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"testing"
@@ -53,7 +54,15 @@ func TestFSMemoryLinks_MatchesNode(t *testing.T) {
 	})
 	t.Run("local", func(t *testing.T) {
 		cfg := &runtime.Config{Timeout: 60 * time.Second}
-		wantJSON(t, runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", t.TempDir(), script)), want)
+		got := runJS(t, cfg, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", t.TempDir(), script))
+		// The local filesystem's recursive mkdir is os.MkdirAll, which reports a link that
+		// leads nowhere as EEXIST where Node gives ENOENT.
+		local := maps.Clone(want)
+		for _, key := range []string{"dangling_mkdir_recursive", "dangling_mkdir_recursive_child"} {
+			delete(local, key)
+			delete(got, key)
+		}
+		wantJSON(t, got, local)
 	})
 }
 
@@ -103,4 +112,19 @@ func TestFSMemoryLinks_LocalScripts(t *testing.T) {
 		delete(got, "relative")
 		wantJSON(t, got, want)
 	})
+}
+
+// Where Linux and macOS differ, the in-memory filesystem does what the disk under it does.
+func TestFSMemoryLinks_PlatformCasesMatchDisk(t *testing.T) {
+	script, err := os.ReadFile("testdata/fs_memory_links_platform.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem := runtime.NewMemoryFilesystem()
+	if err := mem.Mkdir(memoryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runOnMemory(t, mem, script)
+	disk := runJS(t, &runtime.Config{Timeout: 60 * time.Second}, fmt.Sprintf("globalThis.FS_DIR = %q;\n%s", t.TempDir(), script))
+	wantJSON(t, got, disk)
 }

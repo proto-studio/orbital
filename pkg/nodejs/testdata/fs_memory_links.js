@@ -106,6 +106,9 @@ async function main() {
   attempt('dangling_realpath_native', () => fs.realpathSync.native(file('dangling')));
   attempt('dangling_open_excl', () => fs.openSync(file('dangling'), 'wx'));
   attempt('dangling_mkdir', () => fs.mkdirSync(file('dangling')));
+  attempt('dangling_mkdir_recursive', () => fs.mkdirSync(file('dangling'), { recursive: true }));
+  attempt('dangling_mkdir_recursive_child', () => fs.mkdirSync(file('dangling/a/b'), { recursive: true }));
+  attempt('dangling_mkdir_recursive_made', () => fs.existsSync(file('nowhere')));
   attempt('dangling_write', () => { fs.writeFileSync(file('dangling'), 'made'); return [fs.readFileSync(file('nowhere'), 'utf8'), fs.lstatSync(file('dangling')).isSymbolicLink()]; });
 
   // Link cycles.
