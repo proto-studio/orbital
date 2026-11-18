@@ -16,23 +16,26 @@ import (
 // MemoryFilesystem implements Filesystem using in-memory storage.
 // Useful for testing or temporary file operations.
 //
-// A runtime given a MemoryFilesystem counts the memory it holds against the isolate's heap
-// limit: a call that would take the filesystem and the heap together over it fails with
-// ENOSPC, as on a full disk.
+// A runtime given a MemoryFilesystem counts the memory it holds against the runtime's
+// MemoryBudget, or, without one, the isolate's heap limit: a call that would take the
+// filesystem over it fails with ENOSPC, as on a full disk.
 type MemoryFilesystem struct {
 	mu    sync.RWMutex
 	files map[string]*memFile // by canonical path; hard links share a memFile
 
 	lastIno uint64
 
-	used   int64         // bytes held: each name, and each file's node, contents and link target
-	limits []memoryLimit // what used is checked against before it grows
+	used   int64               // bytes held: each name, and each file's node, contents and link target
+	limits map[memoryLimit]int // what used is charged to, with how many runtimes attached each
 }
 
 // memoryLimit limits how much memory a MemoryFilesystem may hold.
 type memoryLimit interface {
-	// fits reports whether the filesystem may hold total bytes.
-	fits(total int64) bool
+	// charge takes delta more bytes for a filesystem holding used, or reports false, taking
+	// nothing, when they don't fit.
+	charge(used, delta int64) bool
+	// release gives back n bytes taken with charge.
+	release(n int64)
 }
 
 // What the filesystem counts besides contents: a name costs its entry in the map of files and
@@ -57,25 +60,33 @@ func fileCost(mf *memFile) int64 {
 	return memFileOverhead + int64(cap(mf.data)) + int64(len(mf.target))
 }
 
-// limitMemory checks the filesystem's growth against limit too, until the returned function
-// is called.
-func (m *MemoryFilesystem) limitMemory(limit memoryLimit) (remove func()) {
+// limitMemory charges what the filesystem holds, and its growth, to limit too, until the
+// returned function is called. A limit attached more than once, as when a runtime and its
+// workers share a budget, is charged once, and given back when the last of them is removed.
+// It reports false, attaching nothing, when what the filesystem holds doesn't fit.
+func (m *MemoryFilesystem) limitMemory(limit memoryLimit) (remove func(), ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.limits = append(m.limits, limit)
+	if m.limits[limit] == 0 {
+		if m.used > 0 && !limit.charge(0, m.used) {
+			return nil, false
+		}
+		if m.limits == nil {
+			m.limits = make(map[memoryLimit]int)
+		}
+	}
+	m.limits[limit]++
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			for i, l := range m.limits {
-				if l == limit {
-					m.limits = append(m.limits[:i:i], m.limits[i+1:]...)
-					break
-				}
+			if m.limits[limit]--; m.limits[limit] == 0 {
+				delete(m.limits, limit)
+				limit.release(m.used)
 			}
 		})
-	}
+	}, true
 }
 
 // memoryInUse is how many bytes the filesystem holds.
@@ -85,27 +96,36 @@ func (m *MemoryFilesystem) memoryInUse() int64 {
 	return m.used
 }
 
-// fits reports whether the filesystem may grow by delta bytes. Callers hold m.mu.
-func (m *MemoryFilesystem) fits(delta int64) bool {
+// account changes how much memory the filesystem holds by delta, charging growth to every
+// limit, or reports false, changing nothing, when it doesn't fit one. Callers hold m.mu.
+func (m *MemoryFilesystem) account(delta int64) bool {
 	if delta <= 0 {
+		m.release(-delta)
 		return true
 	}
-	for _, l := range m.limits {
-		if !l.fits(m.used + delta) {
+	charged := make([]memoryLimit, 0, len(m.limits))
+	for l := range m.limits {
+		if !l.charge(m.used, delta) {
+			for _, c := range charged {
+				c.release(delta)
+			}
 			return false
 		}
-	}
-	return true
-}
-
-// account changes how much memory the filesystem holds by delta, or reports false, changing
-// nothing, when growing by delta would go over a limit. Callers hold m.mu.
-func (m *MemoryFilesystem) account(delta int64) bool {
-	if !m.fits(delta) {
-		return false
+		charged = append(charged, l)
 	}
 	m.used += delta
 	return true
+}
+
+// release gives back n bytes the filesystem no longer holds. Callers hold m.mu.
+func (m *MemoryFilesystem) release(n int64) {
+	if n == 0 {
+		return
+	}
+	m.used -= n
+	for l := range m.limits {
+		l.release(n)
+	}
 }
 
 // noSpace is the failure of op on path when the memory it needs is over the limit.
@@ -158,7 +178,7 @@ func (m *MemoryFilesystem) add(path string, mf *memFile) bool {
 // a disk keeps an unlinked file's blocks while it is open. Callers hold m.mu.
 func (m *MemoryFilesystem) forget(mf *memFile) {
 	if mf.nlink == 0 && mf.handles == 0 {
-		m.used -= fileCost(mf)
+		m.release(fileCost(mf))
 		mf.data = nil
 	}
 }
@@ -508,19 +528,16 @@ func (m *MemoryFilesystem) Rename(oldPath, newPath string) error {
 		// Two names for one file: rename(2) leaves both.
 		return nil
 	}
-	// The file takes the new name, replacing what had it.
-	delta := nameCost(newPath) - nameCost(oldPath)
-	if existing != nil {
-		delta -= nameCost(newPath)
-		if existing.nlink == 1 && existing.handles == 0 {
-			delta -= fileCost(existing)
-		}
-	}
-	if !m.fits(delta) {
+	// The file takes the new name, replacing what had it. A longer name is charged first, so
+	// a rename that doesn't fit leaves both names as they were.
+	grow := nameCost(newPath) - nameCost(oldPath)
+	if grow > 0 && !m.account(grow) {
 		return noSpace("rename", oldPath)
 	}
 	m.unname(newPath)
-	m.used += nameCost(newPath) - nameCost(oldPath)
+	if grow < 0 {
+		m.release(-grow)
+	}
 	m.files[newPath] = f
 	delete(m.files, oldPath)
 	return nil
@@ -741,7 +758,7 @@ func (m *MemoryFilesystem) OpenFile(path string, flag int, perm fs.FileMode) (Fi
 		}
 	}
 	if writable && flag&os.O_TRUNC != 0 {
-		m.used -= int64(cap(mf.data))
+		m.release(int64(cap(mf.data)))
 		mf.data = nil
 		mf.modTime = time.Now()
 	}

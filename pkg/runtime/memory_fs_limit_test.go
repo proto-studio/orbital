@@ -14,7 +14,9 @@ import (
 // byteLimit lets a filesystem hold at most its value in bytes.
 type byteLimit int64
 
-func (l byteLimit) fits(total int64) bool { return total <= int64(l) }
+func (l byteLimit) charge(used, delta int64) bool { return used+delta <= int64(l) }
+
+func (byteLimit) release(int64) {}
 
 func wantNoSpace(t *testing.T, what string, err error) {
 	t.Helper()
@@ -379,5 +381,139 @@ func TestRuntimeLimitsMemoryFilesystemByHeapUsage(t *testing.T) {
 			wantNoSpace(t, tc.script, err)
 		}
 		rt.Dispose()
+	}
+}
+
+// A budget is charged what the filesystem holds when attached, then each change: growth is
+// charged and what's freed, by removing or truncating, given back.
+func TestMemoryFilesystemChargesBudget(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/f", make([]byte, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	budget := NewMemoryBudget(1 << 20)
+	remove, ok := m.limitMemory(budgetLimit{budget})
+	if !ok {
+		t.Fatal("a small filesystem didn't fit a 1 MiB budget")
+	}
+	wantCharged := func(what string) {
+		t.Helper()
+		if got, want := budget.Used(), uint64(m.memoryInUse()); got != want {
+			t.Fatalf("%s: the budget is charged %d bytes, the filesystem holds %d", what, got, want)
+		}
+	}
+	wantCharged("attached")
+	if err := m.Truncate("/f", 100<<10); err != nil {
+		t.Fatal(err)
+	}
+	wantCharged("grown")
+	if err := m.Truncate("/f", 0); err != nil {
+		t.Fatal(err)
+	}
+	f, err := m.OpenFile("/f", os.O_RDWR|os.O_TRUNC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	wantCharged("truncated")
+	if err := m.Link("/f", "/g"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Rename("/g", "/a-longer-name"); err != nil {
+		t.Fatal(err)
+	}
+	wantCharged("linked and renamed")
+
+	// What doesn't fit fails with ENOSPC and takes nothing.
+	before := budget.Used()
+	wantNoSpaceAt(t, "Truncate past the budget", m.Truncate("/f", 2<<20), "truncate", "/f")
+	if budget.Used() != before {
+		t.Fatalf("a failed truncate changed the budget from %d to %d bytes", before, budget.Used())
+	}
+
+	// Attached twice, as by a runtime and its worker, the budget is charged once, and given
+	// back when both are removed.
+	removeAgain, ok := m.limitMemory(budgetLimit{budget})
+	if !ok {
+		t.Fatal("attaching the budget again failed")
+	}
+	wantCharged("attached twice")
+	remove()
+	remove() // removing twice gives nothing back twice
+	wantCharged("one of two removed")
+	removeAgain()
+	if got := budget.Used(); got != 0 {
+		t.Fatalf("with the filesystem detached, the budget is charged %d bytes", got)
+	}
+	if err := m.Remove("/f"); err != nil {
+		t.Fatal(err)
+	}
+	if got := budget.Used(); got != 0 {
+		t.Fatalf("a detached filesystem gave back to the budget: %d bytes charged", got)
+	}
+}
+
+// A filesystem that already holds more than a budget doesn't attach to it.
+func TestMemoryFilesystemOverBudgetDoesNotAttach(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/f", make([]byte, 2<<10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	budget := NewMemoryBudget(1 << 10)
+	if _, ok := m.limitMemory(budgetLimit{budget}); ok {
+		t.Fatal("a filesystem holding 2 KiB attached to a 1 KiB budget")
+	}
+	if budget.Used() != 0 || len(m.limits) != 0 {
+		t.Fatalf("a failed attach left %d bytes charged and %d limits", budget.Used(), len(m.limits))
+	}
+}
+
+// Growth that one limit refuses is charged to none: what another limit took is given back.
+func TestMemoryFilesystemChargesAllLimitsOrNone(t *testing.T) {
+	m := NewMemoryFilesystem()
+	budget := NewMemoryBudget(1 << 20)
+	m.limitMemory(budgetLimit{budget})
+	m.limitMemory(byteLimit(1 << 10))
+	if err := m.WriteFile("/f", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := budget.Used()
+	for range 10 { // the limits are tried in no fixed order
+		wantNoSpace(t, "Truncate past one limit", m.Truncate("/f", 4<<10))
+		if budget.Used() != before {
+			t.Fatalf("growth the other limit refused left the budget charged %d bytes, not %d", budget.Used(), before)
+		}
+	}
+}
+
+// A runtime with a MemoryBudget charges its memory filesystem to it, and gives that back when
+// disposed; one whose filesystem doesn't fit the budget doesn't start.
+func TestRuntimeChargesMemoryFilesystemToBudget(t *testing.T) {
+	m := NewMemoryFilesystem()
+	if err := m.WriteFile("/f", make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	budget := NewMemoryBudget(256 << 20)
+	rt, err := New(&Config{Filesystem: m, MemoryBudget: budget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heapAndFS := budget.Used()
+	if heapAndFS < uint64(m.memoryInUse()) {
+		t.Fatalf("the budget is charged %d bytes, less than the filesystem's %d", heapAndFS, m.memoryInUse())
+	}
+	if err := m.Truncate("/f", 2<<20); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := budget.Used(), heapAndFS+1<<20; got != want {
+		t.Fatalf("after growing the file 1 MiB, the budget is charged %d bytes, want %d", got, want)
+	}
+	rt.Dispose()
+	if got := budget.Used(); got != 0 {
+		t.Fatalf("a disposed runtime left %d bytes charged to its budget", got)
+	}
+
+	if _, err := New(&Config{Filesystem: m, MemoryBudget: NewMemoryBudget(1 << 20)}); !errors.Is(err, ErrOutOfMemory) {
+		t.Fatalf("New with a filesystem bigger than its budget = %v, want ErrOutOfMemory", err)
 	}
 }

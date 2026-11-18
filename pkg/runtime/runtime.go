@@ -188,6 +188,14 @@ type Config struct {
 	// stops, with Run returning an *OutOfMemoryError. A worker the budget has no room
 	// to start fails with ERR_WORKER_INIT_FAILED.
 	//
+	// A MemoryFilesystem given as Filesystem is charged to the budget too, with what it
+	// already holds when the runtime starts, so files and heaps can't together pass it:
+	// a write that doesn't fit fails with ENOSPC, as on a full disk. A runtime whose
+	// filesystem already holds more than the budget has free fails to start with an
+	// *OutOfMemoryError. Without a budget, the filesystem's growth is checked against
+	// the isolate's heap limit, together with the heap's usage, but the heap's growth
+	// isn't checked against the filesystem.
+	//
 	// nil means no limit beyond each heap's own, as in Node. Whether or not one is set,
 	// a heap that reaches its limit stops its runtime rather than the process.
 	MemoryBudget *MemoryBudget
@@ -264,12 +272,23 @@ func New(cfg *Config) (*Runtime, error) {
 		fs = NewNoOpFilesystem()
 	}
 
-	// A memory filesystem's contents count against the isolate's memory limit.
+	// A memory filesystem's contents are charged to the runtime's MemoryBudget, which the
+	// heaps draw from too, or, without one, checked with the heap against its limit. One that
+	// already holds more than that leaves the runtime no room to start.
 	var fsLimit *isolateMemoryLimit
 	var unlimitFS func()
 	if limited, ok := fs.(memoryLimited); ok {
-		fsLimit = newIsolateMemoryLimit(iso, cfg.IsolateOptions)
-		unlimitFS = limited.limitMemory(fsLimit)
+		var limit memoryLimit = budgetLimit{isolateOptions.MemoryBudget}
+		if isolateOptions.MemoryBudget == nil {
+			fsLimit = newIsolateMemoryLimit(iso, cfg.IsolateOptions)
+			limit = fsLimit
+		}
+		var attached bool
+		if unlimitFS, attached = limited.limitMemory(limit); !attached {
+			ctx.Dispose()
+			iso.Dispose()
+			return nil, &OutOfMemoryError{}
+		}
 	}
 
 	sysInfo := cfg.SystemInfo
