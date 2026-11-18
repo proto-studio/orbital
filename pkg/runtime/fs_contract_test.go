@@ -248,6 +248,16 @@ func TestFilesystemContract_Handles(t *testing.T) {
 		wantErrno(t, "Read dir", err, syscall.EISDIR)
 		mustDo(t, "Close dir", d.Close())
 
+		// A handle opened for reading refuses writes, and no offset comes before the start.
+		r, err := c.fs.OpenFile(p, os.O_RDONLY, 0)
+		mustDo(t, "OpenFile read-only", err)
+		_, err = r.Write([]byte("x"))
+		wantErrno(t, "Write read-only", err, syscall.EBADF)
+		_, err = r.Seek(-1, io.SeekStart)
+		wantErrno(t, "Seek before the start", err, syscall.EINVAL)
+		mustDo(t, "Close read-only", r.Close())
+		wantContents(t, c.fs, p, "abcdef")
+
 		_, err = c.fs.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		wantErrno(t, "OpenFile excl on existing", err, syscall.EEXIST)
 		_, err = c.fs.Open(c.path("missing"))
@@ -281,6 +291,8 @@ func TestFilesystemContract_Metadata(t *testing.T) {
 		mustDo(t, "Access", m.Access(p, 4|2))
 		wantErrno(t, "Access missing", m.Access(c.path("missing"), 0), syscall.ENOENT)
 		wantErrno(t, "Truncate missing", m.Truncate(c.path("missing"), 0), syscall.ENOENT)
+		wantErrno(t, "Truncate a dir", m.Truncate(c.dir, 0), syscall.EISDIR)
+		wantErrno(t, "Truncate to a negative size", m.Truncate(p, -1), syscall.EINVAL)
 		wantErrno(t, "Chmod missing", m.Chmod(c.path("missing"), 0o644), syscall.ENOENT)
 	})
 }

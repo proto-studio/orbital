@@ -1,12 +1,12 @@
 {
-  "absolute": {
-    "value": [
-      "hi",
-      "\u003cdir\u003e/f"
-    ]
-  },
-  "cb_link": {
-    "value": 2
+  "badf_write": {
+    "error": {
+      "code": "EBADF",
+      "errno": "matches code",
+      "message": "EBADF: bad file descriptor, write",
+      "name": "Error",
+      "syscall": "write"
+    }
   },
   "cb_link_dir": {
     "error": {
@@ -30,14 +30,6 @@
       "syscall": "link"
     }
   },
-  "cb_lstat": {
-    "value": [
-      true,
-      false,
-      false,
-      "120000"
-    ]
-  },
   "cb_read_loop": {
     "error": {
       "code": "ELOOP",
@@ -48,9 +40,6 @@
       "syscall": "open"
     }
   },
-  "cb_readlink": {
-    "value": "f"
-  },
   "cb_readlink_file": {
     "error": {
       "code": "EINVAL",
@@ -59,19 +48,6 @@
       "name": "Error",
       "path": "\u003cdir\u003e/f",
       "syscall": "readlink"
-    }
-  },
-  "cb_realpath": {
-    "value": "\u003cdir\u003e/f"
-  },
-  "cb_realpath_loop": {
-    "error": {
-      "code": "ELOOP",
-      "errno": "matches code",
-      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/cyc_a",
-      "syscall": "stat"
     }
   },
   "cb_realpath_native_loop": {
@@ -104,9 +80,6 @@
       "syscall": "stat"
     }
   },
-  "cb_symlink": {
-    "value": "H"
-  },
   "cb_symlink_exists": {
     "error": {
       "code": "EEXIST",
@@ -118,34 +91,6 @@
       "syscall": "symlink"
     }
   },
-  "cb_unlink_link": {
-    "value": true
-  },
-  "chain": {
-    "value": [
-      "hi",
-      "\u003cdir\u003e/f",
-      "\u003cdir\u003e/f"
-    ]
-  },
-  "copy_through_links": {
-    "value": [
-      "HI",
-      "HI",
-      true
-    ]
-  },
-  "dangling_exists": {
-    "value": false
-  },
-  "dangling_lstat": {
-    "value": [
-      true,
-      false,
-      false,
-      "120000"
-    ]
-  },
   "dangling_mkdir": {
     "error": {
       "code": "EEXIST",
@@ -155,29 +100,6 @@
       "path": "\u003cdir\u003e/dangling",
       "syscall": "mkdir"
     }
-  },
-  "dangling_mkdir_recursive": {
-    "error": {
-      "code": "ENOENT",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, mkdir '\u003cdir\u003e/dangling'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/dangling",
-      "syscall": "mkdir"
-    }
-  },
-  "dangling_mkdir_recursive_child": {
-    "error": {
-      "code": "ENOENT",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, mkdir '\u003cdir\u003e/dangling/a/b'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/dangling/a/b",
-      "syscall": "mkdir"
-    }
-  },
-  "dangling_mkdir_recursive_made": {
-    "value": false
   },
   "dangling_open_excl": {
     "error": {
@@ -197,19 +119,6 @@
       "name": "Error",
       "path": "\u003cdir\u003e/dangling",
       "syscall": "open"
-    }
-  },
-  "dangling_readlink": {
-    "value": "nowhere"
-  },
-  "dangling_realpath": {
-    "error": {
-      "code": "ENOENT",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, stat '\u003cdir\u003e/dangling'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/dangling",
-      "syscall": "stat"
     }
   },
   "dangling_realpath_native": {
@@ -232,117 +141,6 @@
       "syscall": "stat"
     }
   },
-  "dangling_write": {
-    "value": [
-      "made",
-      true
-    ]
-  },
-  "dir_link": {
-    "value": [
-      [
-        false,
-        false,
-        true,
-        "40000"
-      ],
-      [
-        true,
-        false,
-        false,
-        "120000"
-      ],
-      [
-        false,
-        false,
-        true,
-        "40000"
-      ],
-      [
-        "f",
-        "made",
-        "sub",
-        "up",
-        "w"
-      ],
-      "hi"
-    ]
-  },
-  "dirents": {
-    "value": [
-      [
-        "abs",
-        true,
-        false,
-        false
-      ],
-      [
-        "alias",
-        true,
-        false,
-        false
-      ],
-      [
-        "b",
-        false,
-        false,
-        true
-      ],
-      [
-        "bl",
-        true,
-        false,
-        false
-      ],
-      [
-        "chain1",
-        true,
-        false,
-        false
-      ],
-      [
-        "chain2",
-        true,
-        false,
-        false
-      ],
-      [
-        "f",
-        false,
-        true,
-        false
-      ]
-    ]
-  },
-  "dotdot_mkdir": {
-    "value": true
-  },
-  "dotdot_write": {
-    "value": [
-      "f",
-      "sub",
-      "w"
-    ]
-  },
-  "example": {
-    "value": [
-      "b/sub",
-      true,
-      "inner",
-      "\u003cdir\u003e/b/sub",
-      "\u003cdir\u003e/b/f"
-    ]
-  },
-  "file_trailing_slash": {
-    "error": {
-      "code": "ENOTDIR",
-      "errno": "matches code",
-      "message": "ENOTDIR: not a directory, stat '\u003cdir\u003e/f/'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/f/",
-      "syscall": "stat"
-    }
-  },
   "file_trailing_slash_lstat": {
     "error": {
       "code": "ENOTDIR",
@@ -353,49 +151,24 @@
       "syscall": "lstat"
     }
   },
-  "handle_through_link": {
-    "value": [
-      "HI",
-      true
-    ]
+  "isdir_read": {
+    "error": {
+      "code": "EISDIR",
+      "errno": "matches code",
+      "message": "EISDIR: illegal operation on a directory, read",
+      "name": "Error",
+      "syscall": "read"
+    }
   },
-  "hard": {
-    "value": [
-      "two+",
-      2,
-      2,
-      true,
-      "640",
-      false
-    ]
-  },
-  "hard_handle": {
-    "value": "two+!"
-  },
-  "hard_rename_onto_other": {
-    "value": [
-      true,
-      true,
-      2
-    ]
-  },
-  "hard_rename_over": {
-    "value": [
-      1,
-      "other"
-    ]
-  },
-  "hard_through_symlink_dir": {
-    "value": [
-      "inner",
-      2
-    ]
-  },
-  "hard_unlink": {
-    "value": [
-      "two+!",
-      1
-    ]
+  "isdir_write": {
+    "error": {
+      "code": "EISDIR",
+      "errno": "matches code",
+      "message": "EISDIR: illegal operation on a directory, open '\u003cdir\u003e/dirfull'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dirfull",
+      "syscall": "open"
+    }
   },
   "link_dir": {
     "error": {
@@ -441,42 +214,6 @@
       "syscall": "link"
     }
   },
-  "link_missing_parent": {
-    "error": {
-      "code": "ENOENT",
-      "dest": "\u003cdir\u003e/nodir/h",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/nodir/h'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/f",
-      "syscall": "link"
-    }
-  },
-  "link_onto_link": {
-    "error": {
-      "code": "EEXIST",
-      "dest": "\u003cdir\u003e/dangling",
-      "errno": "matches code",
-      "message": "EEXIST: file already exists, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/dangling'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/f",
-      "syscall": "link"
-    }
-  },
-  "link_slash": {
-    "error": {
-      "code": "ENOENT",
-      "dest": "\u003cdir\u003e/newh/",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, link '\u003cdir\u003e/f' -\u003e '\u003cdir\u003e/newh/'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/f",
-      "syscall": "link"
-    }
-  },
-  "link_slash_made": {
-    "value": false
-  },
   "loop_access": {
     "error": {
       "code": "ELOOP",
@@ -507,27 +244,6 @@
       "path": "\u003cdir\u003e/f",
       "syscall": "copyfile"
     }
-  },
-  "loop_exists": {
-    "value": false
-  },
-  "loop_inner": {
-    "error": {
-      "code": "ELOOP",
-      "errno": "matches code",
-      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a/x'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/cyc_a/x",
-      "syscall": "stat"
-    }
-  },
-  "loop_lstat": {
-    "value": [
-      true,
-      false,
-      false,
-      "120000"
-    ]
   },
   "loop_mkdir_inner": {
     "error": {
@@ -569,19 +285,6 @@
       "syscall": "scandir"
     }
   },
-  "loop_readlink": {
-    "value": "loop"
-  },
-  "loop_realpath": {
-    "error": {
-      "code": "ELOOP",
-      "errno": "matches code",
-      "message": "ELOOP: too many symbolic links encountered, stat '\u003cdir\u003e/cyc_a'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/cyc_a",
-      "syscall": "stat"
-    }
-  },
   "loop_realpath_native": {
     "error": {
       "code": "ELOOP",
@@ -611,25 +314,6 @@
       "path": "\u003cdir\u003e/cyc_a",
       "syscall": "open"
     }
-  },
-  "lstat_link": {
-    "value": [
-      true,
-      false,
-      false,
-      "120000",
-      3
-    ]
-  },
-  "metadata_through_link": {
-    "value": [
-      "600",
-      2000000,
-      1
-    ]
-  },
-  "mkdir_recursive_through_link": {
-    "value": true
   },
   "name_too_long_stat": {
     "error": {
@@ -662,20 +346,15 @@
       "syscall": "open"
     }
   },
-  "nofollow": {
-    "value": [
-      [
-        "ELOOP open",
-        "ELOOP open"
-      ],
-      "HI"
-    ]
-  },
-  "p_handle_through_link": {
-    "value": "H"
-  },
-  "p_link": {
-    "value": 3
+  "notempty_rmdir": {
+    "error": {
+      "code": "ENOTEMPTY",
+      "errno": "matches code",
+      "message": "ENOTEMPTY: directory not empty, rmdir '\u003cdir\u003e/dirfull'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/dirfull",
+      "syscall": "rmdir"
+    }
   },
   "p_link_missing": {
     "error": {
@@ -687,14 +366,6 @@
       "path": "\u003cdir\u003e/nope",
       "syscall": "link"
     }
-  },
-  "p_lstat": {
-    "value": [
-      true,
-      false,
-      false,
-      "120000"
-    ]
   },
   "p_open_loop": {
     "error": {
@@ -716,9 +387,6 @@
       "syscall": "open"
     }
   },
-  "p_readlink": {
-    "value": "b"
-  },
   "p_readlink_dir": {
     "error": {
       "code": "EINVAL",
@@ -728,9 +396,6 @@
       "path": "\u003cdir\u003e/b",
       "syscall": "readlink"
     }
-  },
-  "p_realpath": {
-    "value": "\u003cdir\u003e/b"
   },
   "p_realpath_loop": {
     "error": {
@@ -752,17 +417,6 @@
       "syscall": "stat"
     }
   },
-  "p_symlink": {
-    "value": [
-      "deep",
-      "f",
-      "made",
-      "sub",
-      "up",
-      "viabl",
-      "w"
-    ]
-  },
   "p_symlink_exists": {
     "error": {
       "code": "EEXIST",
@@ -774,12 +428,6 @@
       "syscall": "symlink"
     }
   },
-  "p_unlink_link": {
-    "value": [
-      false,
-      true
-    ]
-  },
   "read_through_file": {
     "error": {
       "code": "ENOTDIR",
@@ -788,16 +436,6 @@
       "name": "Error",
       "path": "\u003cdir\u003e/f/x",
       "syscall": "open"
-    }
-  },
-  "readlink_dir": {
-    "error": {
-      "code": "EINVAL",
-      "errno": "matches code",
-      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/b'",
-      "name": "Error",
-      "path": "\u003cdir\u003e/b",
-      "syscall": "readlink"
     }
   },
   "readlink_file": {
@@ -820,44 +458,476 @@
       "syscall": "readlink"
     }
   },
-  "readlink_trailing_slash": {
+  "refused_access": {
     "error": {
-      "code": "EINVAL",
+      "code": "EACCES",
       "errno": "matches code",
-      "message": "EINVAL: invalid argument, readlink '\u003cdir\u003e/bl/'",
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/locked/x'",
       "name": "Error",
-      "path": "\u003cdir\u003e/bl/",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "access"
+    }
+  },
+  "refused_accessSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "access"
+    }
+  },
+  "refused_appendFileSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_chmodSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, chmod '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "chmod"
+    }
+  },
+  "refused_chownSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, chown '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "chown"
+    }
+  },
+  "refused_copyFileSync": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/y",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, copyfile '\u003cdir\u003e/locked/x' -\u003e '\u003cdir\u003e/locked/y'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "copyfile"
+    }
+  },
+  "refused_createReadStream": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_createWriteStream": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/new'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/new",
+      "syscall": "open"
+    }
+  },
+  "refused_exists": {
+    "value": false
+  },
+  "refused_existsSync": {
+    "value": false
+  },
+  "refused_linkSync": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/hard",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, link '\u003cdir\u003e/locked/x' -\u003e '\u003cdir\u003e/locked/hard'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "link"
+    }
+  },
+  "refused_lstatSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, lstat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "lstat"
+    }
+  },
+  "refused_mkdir": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, mkdir '\u003cdir\u003e/locked/e'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/e",
+      "syscall": "mkdir"
+    }
+  },
+  "refused_mkdirSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, mkdir '\u003cdir\u003e/locked/e'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/e",
+      "syscall": "mkdir"
+    }
+  },
+  "refused_mkdirSyncRecursive": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, mkdir '\u003cdir\u003e/locked/e/f'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/e/f",
+      "syscall": "mkdir"
+    }
+  },
+  "refused_open": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_openSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_openSyncWrite": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/new'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/new",
+      "syscall": "open"
+    }
+  },
+  "refused_opendirSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, opendir",
+      "name": "Error",
+      "syscall": "opendir"
+    }
+  },
+  "refused_promises.access": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, access '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "access"
+    }
+  },
+  "refused_promises.copyFile": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/y",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, copyfile '\u003cdir\u003e/locked/x' -\u003e '\u003cdir\u003e/locked/y'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "copyfile"
+    }
+  },
+  "refused_promises.mkdir": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, mkdir '\u003cdir\u003e/locked/e'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/e",
+      "syscall": "mkdir"
+    }
+  },
+  "refused_promises.open": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_promises.opendir": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, opendir '\u003cdir\u003e/locked/d'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/d",
+      "syscall": "opendir"
+    }
+  },
+  "refused_promises.readFile": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_promises.readdir": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, scandir '\u003cdir\u003e/locked/d'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/d",
+      "syscall": "scandir"
+    }
+  },
+  "refused_promises.rm": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, lstat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "lstat"
+    }
+  },
+  "refused_promises.stat": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, stat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "stat"
+    }
+  },
+  "refused_promises.writeFile": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/new'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/new",
+      "syscall": "open"
+    }
+  },
+  "refused_readFile": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_readFileSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_readdir": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, scandir '\u003cdir\u003e/locked/d'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/d",
+      "syscall": "scandir"
+    }
+  },
+  "refused_readdirSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, scandir '\u003cdir\u003e/locked/d'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/d",
+      "syscall": "scandir"
+    }
+  },
+  "refused_readlinkSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, readlink '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
       "syscall": "readlink"
     }
   },
-  "relative_in_subdir": {
-    "value": "hi"
+  "refused_rename": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/y",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, rename '\u003cdir\u003e/locked/x' -\u003e '\u003cdir\u003e/locked/y'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "rename"
+    }
   },
-  "rename_link": {
-    "value": [
-      false,
-      "f",
-      "H"
-    ]
+  "refused_renameSync": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/y",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, rename '\u003cdir\u003e/locked/x' -\u003e '\u003cdir\u003e/locked/y'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "rename"
+    }
   },
-  "rename_onto_link": {
-    "value": [
-      false,
-      "src",
-      "H"
-    ]
+  "refused_rmSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, lstat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "lstat"
+    }
   },
-  "rm_link": {
-    "value": [
-      false,
-      true
-    ]
+  "refused_rmdirSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, rmdir '\u003cdir\u003e/locked/d'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/d",
+      "syscall": "rmdir"
+    }
   },
-  "rm_tree_with_links": {
-    "value": [
-      false,
-      true
-    ]
+  "refused_stat": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, stat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "stat"
+    }
+  },
+  "refused_statSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, stat '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "stat"
+    }
+  },
+  "refused_statfsSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, statfs '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "statfs"
+    }
+  },
+  "refused_symlinkSync": {
+    "error": {
+      "code": "EACCES",
+      "dest": "\u003cdir\u003e/locked/link",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, symlink 'target' -\u003e '\u003cdir\u003e/locked/link'",
+      "name": "Error",
+      "path": "target",
+      "syscall": "symlink"
+    }
+  },
+  "refused_truncateSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "open"
+    }
+  },
+  "refused_unlink": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, unlink '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "unlink"
+    }
+  },
+  "refused_unlinkSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, unlink '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "unlink"
+    }
+  },
+  "refused_utimesSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, utime '\u003cdir\u003e/locked/x'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/x",
+      "syscall": "utime"
+    }
+  },
+  "refused_writeFile": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/new'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/new",
+      "syscall": "open"
+    }
+  },
+  "refused_writeFileSync": {
+    "error": {
+      "code": "EACCES",
+      "errno": "matches code",
+      "message": "EACCES: permission denied, open '\u003cdir\u003e/locked/new'",
+      "name": "Error",
+      "path": "\u003cdir\u003e/locked/new",
+      "syscall": "open"
+    }
   },
   "rmdir_link": {
     "error": {
@@ -869,32 +939,12 @@
       "syscall": "rmdir"
     }
   },
-  "stat_link": {
-    "value": [
-      false,
-      true,
-      false,
-      "100000",
-      2
-    ]
-  },
   "symlink_missing_parent": {
     "error": {
       "code": "ENOENT",
       "dest": "\u003cdir\u003e/nodir/l",
       "errno": "matches code",
       "message": "ENOENT: no such file or directory, symlink 'x' -\u003e '\u003cdir\u003e/nodir/l'",
-      "name": "Error",
-      "path": "x",
-      "syscall": "symlink"
-    }
-  },
-  "symlink_onto_dir": {
-    "error": {
-      "code": "EEXIST",
-      "dest": "\u003cdir\u003e/b",
-      "errno": "matches code",
-      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/b'",
       "name": "Error",
       "path": "x",
       "syscall": "symlink"
@@ -911,28 +961,6 @@
       "syscall": "symlink"
     }
   },
-  "symlink_onto_link": {
-    "error": {
-      "code": "EEXIST",
-      "dest": "\u003cdir\u003e/dangling",
-      "errno": "matches code",
-      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/dangling'",
-      "name": "Error",
-      "path": "x",
-      "syscall": "symlink"
-    }
-  },
-  "symlink_onto_loop": {
-    "error": {
-      "code": "EEXIST",
-      "dest": "\u003cdir\u003e/loop",
-      "errno": "matches code",
-      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/loop'",
-      "name": "Error",
-      "path": "x",
-      "syscall": "symlink"
-    }
-  },
   "symlink_parent_file": {
     "error": {
       "code": "ENOTDIR",
@@ -944,34 +972,6 @@
       "syscall": "symlink"
     }
   },
-  "symlink_slash": {
-    "error": {
-      "code": "ENOENT",
-      "dest": "\u003cdir\u003e/newl/",
-      "errno": "matches code",
-      "message": "ENOENT: no such file or directory, symlink 'x' -\u003e '\u003cdir\u003e/newl/'",
-      "name": "Error",
-      "path": "x",
-      "syscall": "symlink"
-    }
-  },
-  "symlink_slash_made": {
-    "value": false
-  },
-  "symlink_slash_onto_dir": {
-    "error": {
-      "code": "EEXIST",
-      "dest": "\u003cdir\u003e/b/",
-      "errno": "matches code",
-      "message": "EEXIST: file already exists, symlink 'x' -\u003e '\u003cdir\u003e/b/'",
-      "name": "Error",
-      "path": "x",
-      "syscall": "symlink"
-    }
-  },
-  "symlink_through_link": {
-    "value": "H"
-  },
   "through_file": {
     "error": {
       "code": "ENOTDIR",
@@ -981,17 +981,5 @@
       "path": "\u003cdir\u003e/abs/x",
       "syscall": "stat"
     }
-  },
-  "unlink_dir_link": {
-    "value": true
-  },
-  "unlink_link": {
-    "value": [
-      false,
-      true
-    ]
-  },
-  "unlink_loop": {
-    "value": false
   }
 }

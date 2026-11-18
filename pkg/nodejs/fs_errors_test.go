@@ -155,3 +155,41 @@ done(Object.fromEntries(['O_RDONLY', 'O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_EXCL', 
 		"O_SYNC":   float64(syscall.O_SYNC),
 	})
 }
+
+// With the closed filesystem, scripts passed as source still run, and every file a script
+// reads, writes or loads is refused, as Node refuses a directory it may not search: fs calls
+// fail with EACCES, and require, import and a worker find no module.
+func TestFS_ClosedFilesystem(t *testing.T) {
+	got := runJS(t, &runtime.Config{Filesystem: runtime.NewNoOpFilesystem()}, `
+const fs = require('fs');
+const path = require('path');
+const { Worker } = require('worker_threads');
+const describe = (e) => {
+  let message = e.message;
+  if (e.code.endsWith('MODULE_NOT_FOUND')) message = message.split('\n')[0].split(' imported from ')[0];
+  return [e.code, e.syscall, message];
+};
+const attempt = (fn) => { try { fn(); return null; } catch (e) { return describe(e); } };
+const results = {
+  joined: path.join('a', 'b'),
+  read: attempt(() => fs.readFileSync('/closed/x.js')),
+  write: attempt(() => fs.writeFileSync('/closed/new.txt', 'x')),
+  require: attempt(() => require('/closed/x.js')),
+};
+import('/closed/x.mjs').then(() => null, describe).then((imported) => {
+  results.import = imported;
+  const w = new Worker('/closed/x.js');
+  w.on('error', (e) => { results.worker = describe(e); });
+  w.on('exit', () => done(results));
+});
+`)
+	// As Node v20.18.1 gives them for files in a directory with mode 000.
+	wantJSON(t, got, map[string]any{
+		"joined":  "a/b",
+		"read":    []any{"EACCES", "open", "EACCES: permission denied, open '/closed/x.js'"},
+		"write":   []any{"EACCES", "open", "EACCES: permission denied, open '/closed/new.txt'"},
+		"require": []any{"MODULE_NOT_FOUND", nil, "Cannot find module '/closed/x.js'"},
+		"import":  []any{"ERR_MODULE_NOT_FOUND", nil, "Cannot find module '/closed/x.mjs'"},
+		"worker":  []any{"MODULE_NOT_FOUND", nil, "Cannot find module '/closed/x.js'"},
+	})
+}

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -338,4 +339,28 @@ fs.createReadStream(name).on('data', (c) => chunks.push(c)).on('error', (e) => d
 }));
 `, dir))
 	wantJSON(t, got, map[string]any{"made": true, "real": true, "streamed": "bytes"})
+}
+
+// realpath of a long path on the in-memory filesystem that ends in a link cycle reports the
+// cycle quickly, through the whole stack: the fs module builds the error from a few calls,
+// not one for each name in the path, and each call resolves the path in linear time.
+func TestFSLinks_RealpathLoopInLongPathInMemory(t *testing.T) {
+	mem := runtime.NewMemoryFilesystem()
+	deep := strings.TrimSuffix(strings.Repeat("/d", 480), "/")
+	if err := mem.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Symlink("loop", deep+"/loop"); err != nil {
+		t.Fatal(err)
+	}
+	got := runJS(t, &runtime.Config{Filesystem: mem}, fmt.Sprintf(`
+const fs = require('fs');
+const start = Date.now();
+let err;
+for (let i = 0; i < 20; i++) {
+  try { fs.realpathSync(%q); } catch (e) { err = e; }
+}
+done({ code: err.code, syscall: err.syscall, path: err.path, fast: Date.now() - start < 2000 });
+`, deep+"/loop/x"))
+	wantJSON(t, got, map[string]any{"code": "ELOOP", "syscall": "stat", "path": deep + "/loop", "fast": true})
 }

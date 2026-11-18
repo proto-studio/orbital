@@ -1,8 +1,12 @@
 package nodejs
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"slices"
 	"strings"
@@ -115,6 +119,45 @@ var mockCalls = map[string][]string{
 	"p_realpath_loop":           {"Realpath(/m/cyc_a)"},
 	"p_read_loop":               {"Open(/m/cyc_a)"},
 	"p_open_loop":               {"OpenFile(/m/cyc_a, O_RDONLY, 666)"},
+
+	// Other errnos. readFile of a directory sees from the open file's Stat what it is, and
+	// fails before reading.
+	"isdir_write":    {"OpenFile(/m/dirfull, O_WRONLY|O_CREAT|O_TRUNC, 666)"},
+	"isdir_read":     {"Open(/m/dirfull)", "File.Stat(/m/dirfull)", "File.Close(/m/dirfull)"},
+	"notempty_rmdir": {"Lstat(/m/dirfull)", "Remove(/m/dirfull)"},
+	"badf_write":     {"OpenFile(/m/f, O_RDONLY, 666)", "File.Stat(/m/f)", `File.Write(/m/f, "x")`, "File.Close(/m/f)"},
+
+	// A refused name: every call fails, so each case makes only its first. rmdir, rm and
+	// unlink look at the name first; unlink still tries to remove it.
+	"refused_readFile":          {"Open(/m/locked/x)"},
+	"refused_writeFile":         {"OpenFile(/m/locked/new, O_WRONLY|O_CREAT|O_TRUNC, 666)"},
+	"refused_appendFile":        {"OpenFile(/m/locked/x, O_WRONLY|O_CREAT|O_APPEND, 666)"},
+	"refused_open":              {"OpenFile(/m/locked/x, O_RDONLY, 666)"},
+	"refused_openWrite":         {"OpenFile(/m/locked/new, O_WRONLY|O_CREAT|O_TRUNC, 666)"},
+	"refused_stat":              {"Stat(/m/locked/x)"},
+	"refused_lstat":             {"Lstat(/m/locked/x)"},
+	"refused_readdir":           {"ReadDir(/m/locked/d)"},
+	"refused_opendir":           {"ReadDir(/m/locked/d)"},
+	"refused_mkdir":             {"Mkdir(/m/locked/e, 777)"},
+	"refused_mkdirRecursive":    {"MkdirAll(/m/locked/e/f, 777)"},
+	"refused_unlink":            {"Lstat(/m/locked/x)", "Remove(/m/locked/x)"},
+	"refused_rmdir":             {"Lstat(/m/locked/d)"},
+	"refused_rm":                {"Lstat(/m/locked/x)"},
+	"refused_rename":            {"Rename(/m/locked/x, /m/locked/y)"},
+	"refused_copyFile":          {"Copy(/m/locked/x, /m/locked/y)"},
+	"refused_access":            {"Access(/m/locked/x, 0)"},
+	"refused_chmod":             {"Chmod(/m/locked/x, 644)"},
+	"refused_chown":             {"Chown(/m/locked/x, 1, 2)"},
+	"refused_utimes":            {"Chtimes(/m/locked/x, 1, 1)"},
+	"refused_truncate":          {"Truncate(/m/locked/x, 0)"},
+	"refused_symlink":           {"Symlink(target, /m/locked/link)"},
+	"refused_readlink":          {"Readlink(/m/locked/x)"},
+	"refused_link":              {"Link(/m/locked/x, /m/locked/hard)"},
+	"refused_statfs":            {"Statfs(/m/locked/x)"},
+	"refused_existsSync":        {"Exists(/m/locked/x)"},
+	"refused_exists":            {"Access(/m/locked/x, 0)"},
+	"refused_createReadStream":  {"OpenFile(/m/locked/x, O_RDONLY, 0)"},
+	"refused_createWriteStream": {"OpenFile(/m/locked/new, O_WRONLY|O_CREAT|O_TRUNC, 666)"},
 }
 
 // mockCallsFor gives the calls case name should make: its own entry, or its call's.
@@ -122,17 +165,35 @@ func mockCallsFor(name string) ([]string, bool) {
 	if want, ok := mockCalls[name]; ok {
 		return want, true
 	}
-	call := strings.TrimPrefix(name, "promises.")
+	call := strings.Replace(name, "promises.", "", 1)
 	call = strings.Replace(call, "Sync", "", 1)
 	want, ok := mockCalls[call]
 	return want, ok
 }
 
 // Every form of each fs call makes the interface calls it should, and an errno from the
-// interface reaches scripts as Node gives it. The error cases make the calls that failed in
-// fs_memory_links.js under Node, so its capture is what they must match.
+// interface reaches scripts as Node gives it. Under Node, the error cases fail on disk with
+// the same errno, and fs_mock.node.json is what they must match.
 func TestFS_CallFormsMapToFilesystem(t *testing.T) {
-	script, err := os.ReadFile("testdata/fs_mock.js")
+	const scriptPath, expectedPath = "testdata/fs_mock.js", "testdata/fs_mock.node.json"
+	if captureFromNode(t) {
+		dir := t.TempDir()
+		output, err := exec.Command("node", scriptPath, dir).Output()
+		if chmodErr := os.Chmod(filepath.Join(dir, "locked"), 0o755); chmodErr != nil {
+			t.Fatal(chmodErr)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results map[string]any
+		if err := json.Unmarshal(output, &results); err != nil {
+			t.Fatal(err)
+		}
+		writeExpected(t, expectedPath, results)
+		return
+	}
+
+	script, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +202,12 @@ func TestFS_CallFormsMapToFilesystem(t *testing.T) {
 	if failed, ok := got["failed"]; ok {
 		t.Fatal(failed)
 	}
-	node := readExpected(t, "testdata/fs_memory_links.node.json")
+	node := readExpected(t, expectedPath)
+	for name := range node {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%s: captured from Node but not run", name)
+		}
+	}
 
 	ran := slices.DeleteFunc(slices.Clone(mock.cases), func(name string) bool { return name == "end" })
 	if len(ran) != len(got) {
@@ -151,14 +217,16 @@ func TestFS_CallFormsMapToFilesystem(t *testing.T) {
 	for _, name := range ran {
 		want, ok := mockCallsFor(name)
 		if !ok {
-			t.Errorf("%s: no expected calls", name)
+			t.Errorf("%s: no expected calls; made\n\t%s", name, strings.Join(mock.callsIn(name), "\n\t"))
 		} else if calls := mock.callsIn(name); !slices.Equal(calls, want) {
 			t.Errorf("%s made\n\t%s\nwant\n\t%s", name, strings.Join(calls, "\n\t"), strings.Join(want, "\n\t"))
 		}
 		result, _ := got[name].(map[string]any)
 		if expected, ok := node[name]; ok {
 			errorCases++
-			wantJSON(t, map[string]any{name: result}, map[string]any{name: expected})
+			if !reflect.DeepEqual(any(result), expected) {
+				t.Errorf("%s = %v, want %v as in Node", name, result, expected)
+			}
 		} else if result["error"] != nil {
 			t.Errorf("%s failed: %v", name, result["error"])
 		}
